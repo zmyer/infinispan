@@ -165,6 +165,15 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
    @XmlElement
    VersioningConfigurationBean versioning = new VersioningConfigurationBean().setConfiguration(this);
 
+   private org.infinispan.configuration.cache.Configuration newConfig;
+
+   public Configuration(org.infinispan.configuration.cache.Configuration config) {
+      this.newConfig = config;
+   }
+
+   public Configuration() {
+   }
+
    @SuppressWarnings("unused")
    @Start(priority = 1)
    private void correctIsolationLevels() {
@@ -4870,5 +4879,9 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
                return this;
          }
       }
+   }
+
+   public org.infinispan.configuration.cache.Configuration newConfiguration() {
+      return newConfig;
    }
 }

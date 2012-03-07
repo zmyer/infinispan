@@ -135,26 +135,15 @@ public class RpcManagerImpl implements RpcManager {
       return !sync && replicationQueue != null && replicationQueue.isEnabled();
    }
 
-   public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter) {
+   public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder) {
       if (!configuration.getCacheMode().isClustered())
          throw new IllegalStateException("Trying to invoke a remote command but the cache is not clustered");
 
+      List<Address> clusterMembers = t.getMembers();
+
       //In total order protocol, we should invoke remotely even if we are the only members in the cache
       //the sequencer will order the local transactions.
-      boolean sendInTotalOrder = false;
-      //force the OOB for the Commit and Rollback when using Total Order protocol
-      boolean forceOOB = false;
-      if (rpcCommand instanceof PrepareCommand) {
-         sendInTotalOrder = configuration.isTotalOrder();
-      }
-      if (rpcCommand instanceof CommitCommand || rpcCommand instanceof RollbackCommand) {
-         forceOOB = configuration.isTotalOrder();
-      }
-
-      usePriorityQueue = usePriorityQueue || forceOOB;
-
-      List<Address> clusterMembers = t.getMembers();
-      if (!sendInTotalOrder && clusterMembers.size() < 2) {
+      if (!totalOrder && clusterMembers.size() < 2) {
          log.tracef("We're the only member in the cluster; Don't invoke remotely.");
          return Collections.emptyMap();
       } else {
@@ -167,7 +156,7 @@ public class RpcManagerImpl implements RpcManager {
             if (recipients == null && mode.isSynchronous() && !configuration.getGlobalConfiguration().isStrictPeerToPeer()) {
                List<Address> cacheMembers =  cvm.getCommittedView(configuration.getName()).getMembers();
                // the filter won't work if there is no other member in the cache, so we have to
-               if (!sendInTotalOrder && cacheMembers.size() < 2) {
+               if (!totalOrder && cacheMembers.size() < 2) {
                   log.tracef("We're the only member of cache %s; Don't invoke remotely.", configuration.getName());
                   return Collections.emptyMap();
                }
@@ -177,7 +166,7 @@ public class RpcManagerImpl implements RpcManager {
                   responseFilter = new IgnoreExtraResponsesValidityFilter(cacheMembers, getAddress());
                }
             }
-            Map<Address, Response> result = t.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, responseFilter, sendInTotalOrder);
+            Map<Address, Response> result = t.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, responseFilter, totalOrder);
             if (statisticsEnabled) replicationCount.incrementAndGet();
             return result;
          } catch (CacheException e) {
@@ -197,23 +186,23 @@ public class RpcManagerImpl implements RpcManager {
       }
    }
 
-   public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue) {
-      return invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, null);
+   public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, boolean totalOrder) {
+      return invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, null, totalOrder);
    }
 
    public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout) {
-      return invokeRemotely(recipients, rpcCommand, mode, timeout, false, null);
+      return invokeRemotely(recipients, rpcCommand, mode, timeout, false, null, false);
    }
 
-   public final void broadcastRpcCommand(ReplicableCommand rpc, boolean sync) throws RpcException {
-      broadcastRpcCommand(rpc, sync, false);
+   public final void broadcastRpcCommand(ReplicableCommand rpc, boolean sync, boolean totalOrder) throws RpcException {
+      broadcastRpcCommand(rpc, sync, false, totalOrder);
    }
 
-   public final void broadcastRpcCommand(ReplicableCommand rpc, boolean sync, boolean usePriorityQueue) throws RpcException {
+   public final void broadcastRpcCommand(ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, boolean totalOrder) throws RpcException {
       if (useReplicationQueue(sync)) {
          replicationQueue.add(rpc);
       } else {
-         invokeRemotely(null, rpc, sync, usePriorityQueue);
+         invokeRemotely(null, rpc, sync, usePriorityQueue, totalOrder);
       }
    }
 
@@ -226,19 +215,19 @@ public class RpcManagerImpl implements RpcManager {
    }
 
    public final void invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync) throws RpcException {
-      invokeRemotely(recipients, rpc, sync, false);
+      invokeRemotely(recipients, rpc, sync, false, false);
    }
 
-   public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue) throws RpcException {
-      return invokeRemotely(recipients, rpc, sync, usePriorityQueue, configuration.getSyncReplTimeout());
+   public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, boolean totalOrder) throws RpcException {
+      return invokeRemotely(recipients, rpc, sync, usePriorityQueue, configuration.getSyncReplTimeout(), totalOrder);
    }
 
-   public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, long timeout) throws RpcException {
+   public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, long timeout, boolean totalOrder) throws RpcException {
       ResponseMode responseMode = getResponseMode(sync);
-      return invokeRemotely(recipients, rpc, sync, usePriorityQueue, timeout, responseMode);
+      return invokeRemotely(recipients, rpc, sync, usePriorityQueue, totalOrder, timeout, responseMode);
    }
 
-   private Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, long timeout, ResponseMode responseMode) {
+   private Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, boolean totalOrder, long timeout, ResponseMode responseMode) {
       if (trace) log.tracef("%s broadcasting call %s to recipient list %s", t.getAddress(), rpc, recipients);
 
       if (useReplicationQueue(sync)) {
@@ -248,7 +237,7 @@ public class RpcManagerImpl implements RpcManager {
          if (!(rpc instanceof CacheRpcCommand)) {
             rpc = cf.buildSingleRpcCommand(rpc);
          }
-         Map<Address, Response> rsps = invokeRemotely(recipients, rpc, responseMode, timeout, usePriorityQueue);
+         Map<Address, Response> rsps = invokeRemotely(recipients, rpc, responseMode, timeout, usePriorityQueue, totalOrder);
          if (trace) log.tracef("Response(s) to %s is %s", rpc, rsps);
          if (sync) checkResponses(rsps);
          return rsps;
@@ -278,7 +267,7 @@ public class RpcManagerImpl implements RpcManager {
          public Object call() throws Exception {
             Object result = null;
             try {
-               result = invokeRemotely(recipients, rpc, true, usePriorityQueue, timeout, responseMode);
+               result = invokeRemotely(recipients, rpc, true, usePriorityQueue, false, timeout, responseMode);
             } finally {
                try {
                   futureSet.await();

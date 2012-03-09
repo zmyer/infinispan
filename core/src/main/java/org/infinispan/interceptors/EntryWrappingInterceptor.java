@@ -29,6 +29,7 @@ import org.infinispan.container.DataContainer;
 import org.infinispan.container.EntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.SingleKeyNonTxInvocationContext;
@@ -52,7 +53,7 @@ import java.util.Set;
  */
 public class EntryWrappingInterceptor extends CommandInterceptor {
 
-   private EntryFactory entryFactory;
+   protected EntryFactory entryFactory;
    protected DataContainer dataContainer;
    protected ClusteringDependentLogic cll;
    protected final EntryWrappingVisitor entryWrappingVisitor = new EntryWrappingVisitor();
@@ -73,11 +74,7 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
 
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
-      if (!ctx.isOriginLocal() || command.isReplayEntryWrapping()) {
-         for (WriteCommand c : command.getModifications()) {
-            c.acceptVisitor(ctx, entryWrappingVisitor);
-         }
-      }
+      wrapEntriesForPrepare(ctx, command);
       Object result = invokeNextInterceptor(ctx, command);
       //new commit conditions for total order
       if (shouldCommitEntries(command, ctx)) {
@@ -193,6 +190,12 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       }
    }
 
+   protected final void wrapEntriesForPrepare(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
+      if (!ctx.isOriginLocal() || command.isReplayEntryWrapping()) {
+         for (WriteCommand c : command.getModifications()) c.acceptVisitor(ctx, entryWrappingVisitor);
+      }
+   }
+
    protected void commitContextEntry(CacheEntry entry, InvocationContext ctx, boolean skipOwnershipCheck) {
       cll.commitEntry(entry, null, skipOwnershipCheck);
    }
@@ -203,13 +206,13 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       return result;
    }
 
-   private final class EntryWrappingVisitor extends AbstractVisitor {
+   protected class EntryWrappingVisitor extends AbstractVisitor {
 
       @Override
-      public Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
+      public final Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
          boolean notWrapped = false;
          for (Object key : dataContainer.keySet()) {
-            entryFactory.wrapEntryForClear(ctx, key);
+            wrapEntryForClear(ctx, key);
             notWrapped = true;
          }
          if (notWrapped)
@@ -218,11 +221,11 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       }
 
       @Override
-      public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
+      public final Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
          boolean notWrapped = false;
          for (Object key : command.getMap().keySet()) {
             if (cll.localNodeIsOwner(key)) {
-               entryFactory.wrapEntryForPut(ctx, key, null, true);
+               wrapEntryForPut(ctx, key, false);
                notWrapped = true;
             }
          }
@@ -232,26 +235,26 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       }
 
       @Override
-      public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
+      public final Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
          if (cll.localNodeIsOwner(command.getKey())) {
-            entryFactory.wrapEntryForRemove(ctx, command.getKey());
+            wrapEntryForRemove(ctx, command.getKey());
             invokeNextInterceptor(ctx, command);
          }
          return null;
       }
 
       @Override
-      public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
+      public final Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
          if (cll.localNodeIsOwner(command.getKey())) {
-            entryFactory.wrapEntryForPut(ctx, command.getKey(), null, !command.isPutIfAbsent());
+            wrapEntryForPut(ctx, command.getKey(), command.isPutIfAbsent());
             invokeNextInterceptor(ctx, command);
          }
          return null;
       }
-      
+
       @Override
-      public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable {
-         if (cll.localNodeIsOwner(command.getKey())) {              
+      public final Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable {
+         if (cll.localNodeIsOwner(command.getKey())) {
             entryFactory.wrapEntryForDelta(ctx, command.getDeltaAwareKey(), command.getDelta());
             invokeNextInterceptor(ctx, command);
          }
@@ -259,12 +262,28 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       }
 
       @Override
-      public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      public final Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
          if (cll.localNodeIsOwner(command.getKey())) {
-            entryFactory.wrapEntryForReplace(ctx, command.getKey());
+            wrapEntryForReplace(ctx, command.getKey());
             invokeNextInterceptor(ctx, command);
          }
          return null;
+      }
+
+      protected MVCCEntry wrapEntryForReplace(InvocationContext ctx, Object key) throws InterruptedException {
+         return entryFactory.wrapEntryForReplace(ctx, key);
+      }
+
+      protected MVCCEntry wrapEntryForPut(InvocationContext ctx, Object key, boolean putIfAbsent) throws InterruptedException {
+         return entryFactory.wrapEntryForPut(ctx, key, null, !putIfAbsent);
+      }
+
+      protected MVCCEntry wrapEntryForRemove(InvocationContext ctx, Object key) throws InterruptedException {
+         return entryFactory.wrapEntryForRemove(ctx, key);
+      }
+
+      protected MVCCEntry wrapEntryForClear(InvocationContext ctx, Object key) throws InterruptedException {
+         return entryFactory.wrapEntryForClear(ctx, key);
       }
    }
 

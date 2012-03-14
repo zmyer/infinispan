@@ -85,14 +85,12 @@ public interface Transport extends Lifecycle {
     * @param usePriorityQueue if true, a priority queue is used to deliver messages.  May not be supported by all
     *                         implementations.
     * @param responseFilter   a response filter with which to filter out failed/unwanted/invalid responses.
-    * @param supportReplay    whether replays of missed messages is supported
     * @param totalOrder       the command will be send with total order properties
     * @return a map of responses from each member contacted.
     * @throws Exception in the event of problems.
     */
    Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout,
-                                 boolean usePriorityQueue, ResponseFilter responseFilter, boolean supportReplay,
-                                 boolean totalOrder) throws Exception;
+                                 boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder) throws Exception;
 
    /**
     * @return true if the current Channel is the coordinator of the cluster.

@@ -199,7 +199,7 @@ public class SyncReplTest extends MultipleCacheManagersTest {
          when(
                mockTransport.invokeRemotely((List<Address>) anyObject(),
                      (CacheRpcCommand) anyObject(), eq(ResponseMode.SYNCHRONOUS), anyLong(),
-                     anyBoolean(), (ResponseFilter) anyObject(), anyBoolean(), anyBoolean())).thenReturn(
+                     anyBoolean(), (ResponseFilter) anyObject(), anyBoolean())).thenReturn(
                   emptyResponses);
 
          // check that the replication call was sync
@@ -215,7 +215,7 @@ public class SyncReplTest extends MultipleCacheManagersTest {
          when(
                   mockTransport.invokeRemotely((List<Address>) anyObject(),
                            (CacheRpcCommand) anyObject(), eq(ResponseMode.ASYNCHRONOUS), anyLong(),
-                           anyBoolean(), (ResponseFilter) anyObject(), anyBoolean(), anyBoolean())).thenReturn(
+                           anyBoolean(), (ResponseFilter) anyObject(), anyBoolean())).thenReturn(
                   emptyResponses);
 
          asyncCache1.put("k", "v");

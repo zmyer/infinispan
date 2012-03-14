@@ -151,7 +151,7 @@ public class RpcManagerImpl implements RpcManager {
                   responseFilter = new IgnoreExtraResponsesValidityFilter(cacheMembers, getAddress());
                }
             }
-            Map<Address, Response> result = t.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, responseFilter, stateTransferEnabled, totalOrder);
+            Map<Address, Response> result = t.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, responseFilter, totalOrder);
             if (statisticsEnabled) replicationCount.incrementAndGet();
             return result;
          } catch (CacheException e) {

@@ -1535,6 +1535,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
       transaction.accept(v);
       unsafe.accept(v);
       indexing.accept(v);
+      versioning.accept(v);
    }
 
    /**

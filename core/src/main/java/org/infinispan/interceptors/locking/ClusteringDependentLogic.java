@@ -129,6 +129,12 @@ public interface ClusteringDependentLogic {
                                                                             this);
             context.getCacheTransaction().setUpdatedEntryVersions(uv);
             return uv;
+         } else if (prepareCommand.getModifications().length == 0) {
+            // For situations when there's a local-only put in the prepare,
+            // simply add an empty entry version map. This works because when
+            // a local-only put is executed, this is not added to the prepare
+            // modification list.
+            context.getCacheTransaction().setUpdatedEntryVersions(new EntryVersionsMap());
          }
          return null;
       }

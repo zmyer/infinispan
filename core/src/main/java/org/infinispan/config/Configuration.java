@@ -1769,6 +1769,14 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
       return clustering.hash.activated;
    }
 
+   public long getL1InvalidationCleanupTaskFrequency() {
+      return clustering.l1.getL1InvalidationCleanupTaskFrequency();
+   }
+
+   public void setL1InvalidationCleanupTaskFrequency(long frequencyMillis) {
+      clustering.l1.setL1InvalidationCleanupTaskFrequency(frequencyMillis);
+   }
+
    /**
     * Defines transactional (JTA) characteristics of the cache.
     *
@@ -3837,6 +3845,10 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
       
       @ConfigurationDocRef(bean = Configuration.class, targetElement = "setL1InvalidationThreshold")
       protected Integer invalidationThreshold = 0;
+
+      @ConfigurationDocRef(bean = Configuration.class, targetElement = "setL1InvalidationReaperThreadFrequency")
+      protected Long frequency = 600000L;
+
       @XmlTransient
       public boolean activated = false;
 
@@ -3879,6 +3891,25 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
          activate();
          this.lifespan = lifespan;
          return this;
+      }
+
+      /**
+       * @deprecated The visibility of this will be reduced, use {@link #invalidationReaperThreadFrequency(Long)}
+       */
+      @Deprecated
+      public L1Config setL1InvalidationCleanupTaskFrequency(long frequencyMillis) {
+         testImmutability("frequency");
+         this.frequency = frequencyMillis;
+         return this;
+      }
+
+      public L1Config cleanupTaskFrequency(Long frequencyMillis) {
+         return setL1InvalidationCleanupTaskFrequency(frequencyMillis);
+      }
+
+      @XmlAttribute (name = "cleanupTaskFrequency")
+      public Long getL1InvalidationCleanupTaskFrequency() {
+         return frequency;
       }
 
       @Override

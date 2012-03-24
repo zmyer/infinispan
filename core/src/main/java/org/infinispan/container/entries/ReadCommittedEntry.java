@@ -163,8 +163,8 @@ public class ReadCommittedEntry implements MVCCEntry {
       // only do stuff if there are changes.
       if (isChanged()) {
          if (trace)
-            log.tracef("Updating entry (key=%s removed=%s valid=%s changed=%s created=%s value=%s]", getKey(),
-                      isRemoved(), isValid(), isChanged(), isCreated(), value);
+            log.tracef("Updating entry (key=%s removed=%s valid=%s changed=%s created=%s value=%s newVersion=%s]", getKey(),
+                      isRemoved(), isValid(), isChanged(), isCreated(), value, newVersion);
 
          // Ugh!
          if (value instanceof AtomicHashMap) {
@@ -197,6 +197,11 @@ public class ReadCommittedEntry implements MVCCEntry {
 
    public final boolean isChanged() {
       return isFlagSet(CHANGED);
+   }
+
+   @Override
+   public final void setChanged(boolean b) {
+      unsetFlag(CHANGED);
    }
 
    protected final void setChanged() {

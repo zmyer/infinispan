@@ -81,6 +81,7 @@ public class PutKeyValueCommand extends AbstractDataWriteCommand {
       MVCCEntry e = (MVCCEntry) ctx.lookupEntry(key);
       Object entryValue = e.getValue();
       if (entryValue != null && putIfAbsent && !e.isRemoved()) {
+         e.setChanged(false);
          successful = false;
          return entryValue;
       } else {

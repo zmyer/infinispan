@@ -58,6 +58,7 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
    private static final boolean trace = log.isTraceEnabled();
 
    private Set<Address> remoteLockedNodes;
+   protected Set<Object> readKeys = null;
 
    /** mark as volatile as this might be set from the tx thread code on view change*/
    private volatile boolean isMarkedForRollback;
@@ -233,5 +234,16 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
       }
 
       prepareResult.countDown();
+   }
+
+   @Override
+   public void addReadKey(Object key) {
+      if (readKeys == null) readKeys = new HashSet<Object>(2);
+      readKeys.add(key);
+   }
+
+   @Override
+   public boolean keyRead(Object key) {
+      return readKeys != null && readKeys.contains(key);
    }
 }

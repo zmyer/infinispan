@@ -256,11 +256,17 @@ public class TransactionConfigurationBuilder extends AbstractConfigurationChildB
          }
       }
 
-      if(transactionProtocol != TransactionProtocol.TOTAL_ORDER) {
-         //no total order => no validation needed
+      if(transactionProtocol.isTotalOrder()) {
+         validateTotalOrder();
          return;
       }
 
+      if (transactionProtocol.isPassiveReplication()) {
+         validatePassiveReplication();
+      }
+   }
+   
+   private void validateTotalOrder() {
       //total order only supports transactional caches
       if(transactionMode == TransactionMode.NON_TRANSACTIONAL) {
          log.tracef("Non transactional cache is not supported in Total Order protocol. Total Order protocol will" +
@@ -278,6 +284,20 @@ public class TransactionConfigurationBuilder extends AbstractConfigurationChildB
       //eager locking is no longer needed
       if(useEagerLocking) {
          log.tracef("Eager locking will be ignore with Total Order protocol");
+      }
+   }
+
+   private void validatePassiveReplication() {
+      //passive replication only supports transactional caches
+      if(transactionMode == TransactionMode.NON_TRANSACTIONAL) {
+         log.tracef("Non transactional cache is not supported in Passive Replication protocol. Passive Replication " +
+               "protocol will be ignored.");
+         return ;
+      }
+      
+      if(!clustering().cacheMode().isReplicated()) {
+         log.cacheModeNotSupportedByPRProtocol(clustering().cacheMode().friendlyCacheModeString());
+         transactionProtocol = TransactionProtocol.TWO_PHASE_COMMIT;         
       }
    }
 

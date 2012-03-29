@@ -852,7 +852,7 @@ public interface Log extends BasicLogger {
          "we're assuming you meant stateTransfer. Please see XML schema for more information.", id = 184)
    void stateRetrievalConfigurationDeprecaced();
 
-   @LogMessage(level = TRACE)
+   @LogMessage(level = INFO)
    @Message(value = "The cache mode %s is not supported with Total Order protocol. Changing to 2PC protocol", id = 185)
    void cacheModeNotSupportedByTOProtocol(String cacheMode);
 
@@ -877,4 +877,9 @@ public interface Log extends BasicLogger {
    @LogMessage(level = WARN)
    @Message(value = "Cannot insert jgroups sequencer", id = 190)
    void cannotInsertJGroupsSequencer(@Cause Throwable t);
+   
+   @LogMessage(level = INFO)
+   @Message(value = "The cache mode %s is not supported with Passive Replication protocol. Changing to 2PC protocol", 
+         id = 191)
+   void cacheModeNotSupportedByPRProtocol(String cacheMode);
 }

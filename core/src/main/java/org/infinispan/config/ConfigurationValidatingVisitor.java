@@ -189,11 +189,30 @@ public class ConfigurationValidatingVisitor extends AbstractConfigurationBeanVis
             cfg.setVersioningScheme(VersioningScheme.SIMPLE);
          }
 
+         //eager locking is no longer needed
+         if(bean.isUseEagerLocking()) {
+            log.tracef("Eager locking will be ignore with Total Order protocol");
+         }
       }
 
-      //eager locking is no longer needed
-      if(bean.isUseEagerLocking()) {
-         log.tracef("Eager locking will be ignore with Total Order protocol");
+      if (bean.transactionProtocol.isPassiveReplication()) {
+         if (bean.transactionMode == TransactionMode.NON_TRANSACTIONAL) {
+            log.tracef("Non transactional cache is not supported in Passive Replication protocol. Passive Replication " +
+                  "protocol will be ignored.");
+            return;
+         }
+
+         //for now, only supports full replication
+         if (!cfg.getCacheMode().isReplicated()) {
+            log.cacheModeNotSupportedByPRProtocol(cfg.getCacheModeString());
+            bean.transactionProtocol(TransactionProtocol.TWO_PHASE_COMMIT);
+            return;
+         }
+
+         if (cfg.isRequireVersioning() && cfg.getVersioningScheme() == null) {
+            log.trace("No versioning scheme specified but versioning is required, defaulting to simple versioning.");
+            cfg.setVersioningScheme(VersioningScheme.SIMPLE);
+         }
       }
    }
 }

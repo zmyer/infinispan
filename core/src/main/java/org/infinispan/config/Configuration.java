@@ -1501,6 +1501,15 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
             transaction.transactionMode == TransactionMode.TRANSACTIONAL;
    }
 
+   /**
+    * check if the Passive Replication protocol is enabled or not
+    * @return true if passive replication protocol is enabled, false otherwise
+    */
+   public boolean isPassiveReplication() {
+      return transaction.transactionProtocol.isPassiveReplication() &&
+            transaction.transactionMode == TransactionMode.TRANSACTIONAL;
+   }
+
    // ------------------------------------------------------------------------------------------------------------
    //   HELPERS
    // ------------------------------------------------------------------------------------------------------------

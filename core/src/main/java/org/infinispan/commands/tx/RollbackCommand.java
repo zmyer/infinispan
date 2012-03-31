@@ -24,9 +24,12 @@ package org.infinispan.commands.tx;
 
 import org.infinispan.commands.Visitor;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.context.impl.RemoteTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.transaction.RemoteTransaction;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 /**
  * Command corresponding to a transaction rollback.
@@ -37,6 +40,9 @@ import org.infinispan.transaction.RemoteTransaction;
  */
 public class RollbackCommand extends AbstractTransactionBoundaryCommand {
    public static final byte COMMAND_ID = 13;
+
+   private static final Log log = LogFactory.getLog(RollbackCommand.class);
+   private boolean trace = log.isTraceEnabled();
 
    private RollbackCommand() {
       super(null); // For command id uniqueness test
@@ -78,10 +84,6 @@ public class RollbackCommand extends AbstractTransactionBoundaryCommand {
     */
    @Override
    public Object perform(InvocationContext ctx) throws Throwable {
-      if (configuration.isTotalOrder()) {
          return super.performIgnoringUnexistingTransaction(ctx);
-      } else {
-         return super.perform(ctx);
-      }
    }
 }

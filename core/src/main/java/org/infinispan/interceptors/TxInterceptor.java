@@ -47,6 +47,7 @@ import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.transaction.LocalTransaction;
+import org.infinispan.transaction.RemoteTransaction;
 import org.infinispan.transaction.TransactionCoordinator;
 import org.infinispan.transaction.TransactionTable;
 import org.infinispan.util.logging.Log;
@@ -104,10 +105,29 @@ public class TxInterceptor extends CommandInterceptor {
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       //if it is remote and 2PC then first log the tx only after replying mods
       if (this.statisticsEnabled) prepares.incrementAndGet();
-      Object result = invokeNextInterceptor(ctx, command);
+
+      boolean shouldInvokeNext = true;
+      Object result = null;
+      if (!ctx.isOriginLocal()) {
+         RemoteTransaction remoteTransaction = (RemoteTransaction) ctx.getCacheTransaction();
+         remoteTransaction.markForPreparing();
+         shouldInvokeNext = !remoteTransaction.isMarkedForRollback();
+      }
+
+      if (shouldInvokeNext) {
+         try {
+            result = invokeNextInterceptor(ctx, command);
+         } finally {
+            if (!ctx.isOriginLocal()) {
+               ((RemoteTransaction)ctx.getCacheTransaction()).markPreparedAndNotify();
+            }
+         }
+      }
       if (!ctx.isOriginLocal()) {
          if (command.isOnePhaseCommit()) {
             txTable.remoteTransactionCommitted(command.getGlobalTransaction());
+         } else if (!shouldInvokeNext) {
+            txTable.remoteTransactionRollback(command.getGlobalTransaction());
          } else {
             txTable.remoteTransactionPrepared(command.getGlobalTransaction());
          }
@@ -130,7 +150,12 @@ public class TxInterceptor extends CommandInterceptor {
       if (this.statisticsEnabled) rollbacks.incrementAndGet();
       //In total order, we have remote transaction corresponding a local transaction
       if (!ctx.isOriginLocal()) {
-         txTable.remoteTransactionRollback(command.getGlobalTransaction());
+         RemoteTransaction remoteTransaction = (RemoteTransaction) ctx.getCacheTransaction();
+         //its return true if the prepare was received before
+         boolean shouldRemove = remoteTransaction.waitPrepared(false);
+         if (shouldRemove) {
+            txTable.remoteTransactionRollback(command.getGlobalTransaction());
+         }
       }
       return invokeNextInterceptor(ctx, command);
    }
@@ -150,7 +175,7 @@ public class TxInterceptor extends CommandInterceptor {
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
       return enlistWriteAndInvokeNext(ctx, command);
    }
-   
+
    @Override
    public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable {
       return enlistWriteAndInvokeNext(ctx, command);

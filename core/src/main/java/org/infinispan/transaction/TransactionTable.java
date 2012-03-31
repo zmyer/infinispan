@@ -485,6 +485,7 @@ public class TransactionTable {
       RemoteTransaction remoteTransaction = remoteTransactions.get(globalTransaction);
       if (remoteTransaction == null) {
          remoteTransaction = txFactory.newRemoteTransaction(globalTransaction, currentViewId);
+         //try to register
          RemoteTransaction existing = remoteTransactions.putIfAbsent(globalTransaction, remoteTransaction);
          if (existing != null) {
             remoteTransaction = existing;

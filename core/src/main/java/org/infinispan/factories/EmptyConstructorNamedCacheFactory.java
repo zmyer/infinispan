@@ -45,6 +45,7 @@ import org.infinispan.statetransfer.StateTransferLockImpl;
 import org.infinispan.totalorder.ParallelTotalOrderManager;
 import org.infinispan.totalorder.SequentialTotalOrderManager;
 import org.infinispan.totalorder.TotalOrderManager;
+import org.infinispan.stats.StreamLibContainer;
 import org.infinispan.transaction.TransactionCoordinator;
 import org.infinispan.transaction.xa.recovery.RecoveryAdminOperations;
 import org.infinispan.util.concurrent.IsolationLevel;
@@ -67,7 +68,7 @@ import static org.infinispan.util.Util.getInstance;
                               CacheLoaderManager.class, InvocationContextContainer.class, PassivationManager.class,
                               BatchContainer.class, EvictionManager.class,
                               TransactionCoordinator.class, RecoveryAdminOperations.class, StateTransferLock.class,
-                              ClusteringDependentLogic.class, LockContainer.class, TotalOrderManager.class})
+                              ClusteringDependentLogic.class, LockContainer.class, TotalOrderManager.class, StreamLibContainer.class})
 public class EmptyConstructorNamedCacheFactory extends AbstractNamedCacheComponentFactory implements AutoInstantiableFactory {
 
    @Override
@@ -115,8 +116,11 @@ public class EmptyConstructorNamedCacheFactory extends AbstractNamedCacheCompone
       } else if (componentType.equals(TotalOrderManager.class)) {
          boolean needsMultiThreadValidation = configuration.getIsolationLevel() == IsolationLevel.REPEATABLE_READ &&
                configuration.isWriteSkewCheck() && !configuration.isUseSynchronizationForTransactions();
-
          return needsMultiThreadValidation ? (T) new ParallelTotalOrderManager() : (T) new SequentialTotalOrderManager();
+      } else if (componentType.equals(StreamLibContainer.class)) {
+         StreamLibContainer streamLibContainer = StreamLibContainer.getInstance();
+         streamLibContainer.setActive(configuration.isExposeJmxStatistics());
+         return (T) streamLibContainer;
       }
 
       throw new ConfigurationException("Don't know how to create a " + componentType.getName());

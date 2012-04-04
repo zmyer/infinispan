@@ -71,6 +71,9 @@ public class VersionedReplicationInterceptor extends ReplicationInterceptor {
          Response r = resps.get(rpcManager.getTransport().getCoordinator());  // We only really care about the coordinator's response.
          readVersionsFromResponse(r, context.getCacheTransaction());
       } else {
+         if (command.isOnePhaseCommit()) {
+            setVersionsSeenOnPrepareCommand((VersionedPrepareCommand) command, context);
+         }
          super.broadcastPrepare(context, command);
       }
    }

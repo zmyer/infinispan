@@ -169,7 +169,7 @@ public class TransactionCoordinator {
       LocalTxInvocationContext ctx = icc.createTxInvocationContext();
       ctx.setLocalTransaction(localTransaction);
       if (configuration.isOnePhaseCommit() || isOnePhase || is1PcForAutoCommitTransaction(localTransaction) ||
-            isOnePhaseTotalOrder() || configuration.isPassiveReplication()) {
+            isOnePhaseTotalOrder() || isOnePhasePassiveReplication()) {
          validateNotMarkedForRollback(localTransaction);
 
          if (trace) log.trace("Doing an 1PC prepare call on the interceptor chain");

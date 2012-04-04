@@ -122,7 +122,7 @@ public class ReplicationInterceptor extends BaseRpcInterceptor {
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       Object retVal = invokeNextInterceptor(ctx, command);
-      if (shouldInvokeRemoteTxCommand(ctx) && shouldInvokeRemoteTxCommandInPassiveReplication(command)) {
+      if (shouldInvokeRemoteTxCommand(ctx)) {
          stateTransferLock.waitForStateTransferToEnd(ctx, command, -1);
 
          broadcastPrepare(ctx, command);
@@ -196,14 +196,5 @@ public class ReplicationInterceptor extends BaseRpcInterceptor {
     */
    private void populateCommandFlags(WriteCommand command, InvocationContext ctx) {
       command.setFlags(ctx.getFlags());
-   }
-
-   /**
-    * check if the prepare command should be invoked remotely when passive replicaion is used
-    * @param command the prepare command
-    * @return true to invoke remotely, false otherwise
-    */
-   private boolean shouldInvokeRemoteTxCommandInPassiveReplication(PrepareCommand command) {
-      return configuration.isPassiveReplication() && command.isOnePhaseCommit();
    }
 }

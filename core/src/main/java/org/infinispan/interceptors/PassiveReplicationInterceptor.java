@@ -1,8 +1,6 @@
 package org.infinispan.interceptors;
 
-import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
-import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.*;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
@@ -13,7 +11,7 @@ import org.infinispan.remoting.rpc.RpcManager;
 /**
  * This interceptor has the behavior needed for passive replication, namely, it now allow the processing of write 
  * operations / transactions in non-primary node (i.e. in backup nodes)
- * 
+ *
  * The Passive Replication protocol was developed by Diego Didona and Sebastiano Peluso
  *
  * @author Pedro Ruivo
@@ -79,18 +77,6 @@ public class PassiveReplicationInterceptor extends CommandInterceptor {
          throw new IllegalStateException("Write transaction not allowed in Passive Replication, in backup node");
       }
       return invokeNextInterceptor(ctx, command);
-   }
-
-   @Override
-   public Object visitRollbackCommand(TxInvocationContext ctx, RollbackCommand command) throws Throwable {
-      //rollback command is not used in passive replication
-      return null;
-   }
-
-   @Override
-   public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
-      //commit command is not used in passive replication
-      return null;
    }
 
    private Object handleWriteCommand(InvocationContext ctx, WriteCommand command) throws Throwable {

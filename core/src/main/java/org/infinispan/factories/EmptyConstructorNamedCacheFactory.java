@@ -74,7 +74,7 @@ public class EmptyConstructorNamedCacheFactory extends AbstractNamedCacheCompone
    @Override
    @SuppressWarnings("unchecked")
    public <T> T construct(Class<T> componentType) {
-      Class componentImpl;
+      Class<?> componentImpl;
       if (componentType.equals(ClusteringDependentLogic.class)) {
          if (configuration.getCacheMode().isReplicated() || !configuration.getCacheMode().isClustered() || configuration.getCacheMode().isInvalidation()) {
             if (configuration.isTotalOrder()) {
@@ -109,7 +109,7 @@ public class EmptyConstructorNamedCacheFactory extends AbstractNamedCacheCompone
          return (T) new EvictionManagerImpl();
       } else if (componentType.equals(LockContainer.class)) {
          boolean  notTransactional = !configuration.isTransactionalCache();
-         LockContainer lockContainer = configuration.isUseLockStriping() ?
+         LockContainer<?> lockContainer = configuration.isUseLockStriping() ?
                notTransactional ? new ReentrantStripedLockContainer(configuration.getConcurrencyLevel()) : new OwnableReentrantStripedLockContainer(configuration.getConcurrencyLevel()) :
                notTransactional ? new ReentrantPerEntryLockContainer(configuration.getConcurrencyLevel()) : new OwnableReentrantPerEntryLockContainer(configuration.getConcurrencyLevel());
          return (T) lockContainer;

@@ -196,6 +196,7 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
       return true;
    }
 
+   @Override
    public <T> T invokeAny(Collection<? extends Callable<T>> tasks) throws InterruptedException,
             ExecutionException {
       try {
@@ -205,6 +206,7 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
       }
    }
 
+   @Override
    public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit)
             throws InterruptedException, ExecutionException, TimeoutException {
       return doInvokeAny(tasks, true, unit.toNanos(timeout));
@@ -537,14 +539,17 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
          return distCommand;
       }
 
+      @Override
       public boolean isCancelled() {
          return f.isCancelled();
       }
 
+      @Override
       public boolean isDone() {
          return f.isDone();
       }
 
+      @Override
       public boolean cancel(boolean mayInterruptIfRunning) {
          return f.cancel(mayInterruptIfRunning);
       }
@@ -552,6 +557,7 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
       /**
        *
        */
+      @Override
       public V get() throws InterruptedException, ExecutionException {
          Object response = f.get();
          return retrieveResult(response);
@@ -560,6 +566,7 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
       /**
        *
        */
+      @Override
       public V get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException,
                TimeoutException {
          Object response = f.get(timeout, unit);
@@ -570,6 +577,7 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
       public void run() {
       }
 
+      @Override
       public void notifyDone() {
          listenerLock.writeLock().lock();
          try {
@@ -580,6 +588,7 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
          }
       }
 
+      @Override
       public NotifyingFuture<V> attachListener(FutureListener<V> listener) {
          listenerLock.readLock().lock();
          try {
@@ -645,6 +654,7 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
          this.result = result;
       }
 
+      @Override
       public T call() {
          task.run();
          return result;

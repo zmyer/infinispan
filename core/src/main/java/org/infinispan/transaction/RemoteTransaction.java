@@ -93,6 +93,7 @@ public class RemoteTransaction extends AbstractCacheTransaction implements Clone
       valid = false;
    }
 
+   @Override
    public void putLookedUpEntry(Object key, CacheEntry e) {
       if (!valid) {
          throw new InvalidTransactionException("This remote transaction " + getGlobalTransaction() + " is invalid");
@@ -103,6 +104,7 @@ public class RemoteTransaction extends AbstractCacheTransaction implements Clone
       lookedUpEntries.put(key, e);
    }
 
+   @Override
    public void putLookedUpEntries(Map<Object, CacheEntry> entries) {
       if (!valid) {
          throw new InvalidTransactionException("This remote transaction " + getGlobalTransaction() + " is invalid");

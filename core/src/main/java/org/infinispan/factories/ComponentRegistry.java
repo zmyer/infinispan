@@ -105,6 +105,7 @@ public final class ComponentRegistry extends AbstractComponentRegistry {
       }
    }
 
+   @Override
    protected Log getLog() {
       return log;
    }

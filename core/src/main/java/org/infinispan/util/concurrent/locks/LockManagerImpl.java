@@ -75,6 +75,7 @@ public class LockManagerImpl implements LockManager {
       this.streamLibContainer = streamLibContainer;
    }
 
+   @Override
    public boolean lockAndRecord(Object key, InvocationContext ctx, long timeoutMillis) throws InterruptedException {
       if (trace) log.tracef("Attempting to lock %s with acquisition timeout of %s millis", key, timeoutMillis);
 
@@ -121,11 +122,13 @@ public class LockManagerImpl implements LockManager {
             0 : configuration.getLockAcquisitionTimeout();
    }
 
+   @Override
    public void unlock(Collection<Object> lockedKeys, Object lockOwner) {
       log.tracef("Attempting to unlock keys %s", lockedKeys);
       for (Object k : lockedKeys) lockContainer.releaseLock(lockOwner, k);
    }
 
+   @Override
    @SuppressWarnings("unchecked")
    public void unlockAll(InvocationContext ctx) {
       for (Object k : ctx.getLockedKeys()) {
@@ -135,14 +138,17 @@ public class LockManagerImpl implements LockManager {
       ctx.clearLockedKeys();
    }
 
+   @Override
    public boolean ownsLock(Object key, Object owner) {
       return lockContainer.ownsLock(key, owner);
    }
 
+   @Override
    public boolean isLocked(Object key) {
       return lockContainer.isLocked(key);
    }
 
+   @Override
    public Object getOwner(Object key) {
       if (lockContainer.isLocked(key)) {
          Lock l = lockContainer.getLock(key);
@@ -156,10 +162,12 @@ public class LockManagerImpl implements LockManager {
       } else return null;
    }
 
+   @Override
    public String printLockInfo() {
       return lockContainer.toString();
    }
 
+   @Override
    public final boolean possiblyLocked(CacheEntry entry) {
       return entry == null || entry.isChanged() || entry.isNull() || entry.isLockPlaceholder();
    }
@@ -170,6 +178,7 @@ public class LockManagerImpl implements LockManager {
       return configuration.getConcurrencyLevel();
    }
 
+   @Override
    @ManagedAttribute(description = "The number of exclusive locks that are held.")
    @Metric(displayName = "Number of locks held")
    public int getNumberOfLocksHeld() {
@@ -182,10 +191,12 @@ public class LockManagerImpl implements LockManager {
       return lockContainer.size() - lockContainer.getNumLocksHeld();
    }
 
+   @Override
    public int getLockId(Object key) {
       return lockContainer.getLockId(key);
    }
 
+   @Override
    public final boolean acquireLock(InvocationContext ctx, Object key) throws InterruptedException, TimeoutException {
       return acquireLock(ctx, key, -1);
    }
@@ -204,6 +215,7 @@ public class LockManagerImpl implements LockManager {
       return false;
    }
 
+   @Override
    public final boolean acquireLockNoCheck(InvocationContext ctx, Object key) throws InterruptedException, TimeoutException {
       if (!ctx.hasFlag(Flag.SKIP_LOCKING)) {
          return lock(ctx, key, getLockAcquisitionTimeout(ctx));

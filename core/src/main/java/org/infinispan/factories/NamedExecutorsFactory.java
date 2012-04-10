@@ -55,6 +55,7 @@ public class NamedExecutorsFactory extends NamedComponentFactory implements Auto
    private ScheduledExecutorService asyncReplicationExecutor;
    private ExecutorService totalOrderExecutor;
 
+   @Override
    @SuppressWarnings("unchecked")
    public <T> T construct(Class<T> componentType, String componentName) {
       try {

@@ -201,6 +201,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
       v1.override(v2);
    }
 
+   @Override
    public void inject(ComponentRegistry cr) {
       this.accept(new InjectComponentRegistryVisitor(cr));
    }
@@ -581,6 +582,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
    /**
     * @deprecated Use {@link #getExpirationWakeUpInterval()}
     */
+   @Deprecated
    public long getEvictionWakeUpInterval() {
       return getExpirationWakeUpInterval();
    }
@@ -3167,6 +3169,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
          return setDataContainerClass(dataContainerClass.getName());
       }
 
+      @Override
       public DataContainerConfig withProperties(Properties properties) {
          testImmutability("properties");
          this.properties = toTypedProperties(properties);
@@ -3522,6 +3525,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
          this.replTimeout = replTimeout;
       }
 
+      @Override
       public SyncConfig replTimeout(Long replTimeout) {
          setReplTimeout(replTimeout);
          return this;
@@ -3657,6 +3661,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
          return numVirtualNodes;
       }
       
+      @Override
       public HashConfig numVirtualNodes(Integer numVirtualNodes) {
          setNumVirtualNodes(numVirtualNodes);
          return this;
@@ -3755,6 +3760,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
          return this;
       }
       
+      @Override
       public GroupsConfiguration groups() {
          groups.setConfiguration(config);
          activate();
@@ -3906,6 +3912,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
          return this;
       }
 
+      @Override
       public L1Config cleanupTaskFrequency(Long frequencyMillis) {
          return setL1InvalidationCleanupTaskFrequency(frequencyMillis);
       }
@@ -4137,6 +4144,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
          v.visitStoreAsBinaryType(this);
       }
 
+      @Override
       public StoreAsBinary clone() {
          try {
             StoreAsBinary dolly = (StoreAsBinary) super.clone();
@@ -4701,6 +4709,7 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
          this.indexLocalOnly = indexLocalOnly;
       }
 
+      @Override
       public IndexingConfig indexLocalOnly(Boolean indexLocalOnly) {
          setIndexLocalOnly(indexLocalOnly);
          return this;

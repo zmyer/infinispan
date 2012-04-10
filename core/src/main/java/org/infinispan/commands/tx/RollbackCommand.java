@@ -57,6 +57,7 @@ public class RollbackCommand extends AbstractTransactionBoundaryCommand {
       super(cacheName);
    }
 
+   @Override
    public Object acceptVisitor(InvocationContext ctx, Visitor visitor) throws Throwable {
       return visitor.visitRollbackCommand((TxInvocationContext) ctx, this);
    }
@@ -66,6 +67,7 @@ public class RollbackCommand extends AbstractTransactionBoundaryCommand {
       tx.invalidate();
    }
 
+   @Override
    public byte getCommandId() {
       return COMMAND_ID;
    }

@@ -132,6 +132,7 @@ public class RpcManagerImpl implements RpcManager {
       return !sync && replicationQueue != null && replicationQueue.isEnabled();
    }
 
+   @Override
    public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder) {
       if (!configuration.getCacheMode().isClustered())
          throw new IllegalStateException("Trying to invoke a remote command but the cache is not clustered");
@@ -183,18 +184,22 @@ public class RpcManagerImpl implements RpcManager {
       }
    }
 
+   @Override
    public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, boolean totalOrder) {
       return invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, null, totalOrder);
    }
 
+   @Override
    public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout) {
       return invokeRemotely(recipients, rpcCommand, mode, timeout, false, null, false);
    }
 
+   @Override
    public final void broadcastRpcCommand(ReplicableCommand rpc, boolean sync, boolean totalOrder) throws RpcException {
       broadcastRpcCommand(rpc, sync, false, totalOrder);
    }
 
+   @Override
    public final void broadcastRpcCommand(ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, boolean totalOrder) throws RpcException {
       if (useReplicationQueue(sync)) {
          replicationQueue.add(rpc);
@@ -203,18 +208,22 @@ public class RpcManagerImpl implements RpcManager {
       }
    }
 
+   @Override
    public final void broadcastRpcCommandInFuture(ReplicableCommand rpc, NotifyingNotifiableFuture<Object> l) {
       broadcastRpcCommandInFuture(rpc, false, l);
    }
 
+   @Override
    public final void broadcastRpcCommandInFuture(ReplicableCommand rpc, boolean usePriorityQueue, NotifyingNotifiableFuture<Object> l) {
       invokeRemotelyInFuture(null, rpc, usePriorityQueue, l);
    }
 
+   @Override
    public final void invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync) throws RpcException {
       invokeRemotely(recipients, rpc, sync, false, false);
    }
 
+   @Override
    public final Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, boolean totalOrder) throws RpcException {
       return invokeRemotely(recipients, rpc, sync, usePriorityQueue, configuration.getSyncReplTimeout(), totalOrder);
    }
@@ -241,14 +250,17 @@ public class RpcManagerImpl implements RpcManager {
       }
    }
 
+   @Override
    public final void invokeRemotelyInFuture(Collection<Address> recipients, ReplicableCommand rpc, NotifyingNotifiableFuture<Object> l) {
       invokeRemotelyInFuture(recipients, rpc, false, l);
    }
 
+   @Override
    public final void invokeRemotelyInFuture(final Collection<Address> recipients, final ReplicableCommand rpc, final boolean usePriorityQueue, final NotifyingNotifiableFuture<Object> l) {
       invokeRemotelyInFuture(recipients, rpc, usePriorityQueue, l, configuration.getSyncReplTimeout());
    }
 
+   @Override
    public final void invokeRemotelyInFuture(final Collection<Address> recipients, final ReplicableCommand rpc, final boolean usePriorityQueue, final NotifyingNotifiableFuture<Object> l, final long timeout) {
       invokeRemotelyInFuture(recipients, rpc, usePriorityQueue, l, timeout, false);
    }
@@ -261,6 +273,7 @@ public class RpcManagerImpl implements RpcManager {
       final ResponseMode responseMode = ignoreLeavers ? ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS : ResponseMode.SYNCHRONOUS;
       final CountDownLatch futureSet = new CountDownLatch(1);
       Callable<Object> c = new Callable<Object>() {
+         @Override
          public Object call() throws Exception {
             Object result = null;
             try {
@@ -281,6 +294,7 @@ public class RpcManagerImpl implements RpcManager {
       futureSet.countDown();
    }
 
+   @Override
    public Transport getTransport() {
       return t;
    }

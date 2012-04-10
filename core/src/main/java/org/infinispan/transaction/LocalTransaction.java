@@ -114,6 +114,7 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
       return transaction;
    }
 
+   @Override
    public Map<Object, CacheEntry> getLookedUpEntries() {
       return (Map<Object, CacheEntry>)
             (lookedUpEntries == null ? Collections.emptyMap() : lookedUpEntries);
@@ -123,6 +124,7 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
       return implicitTransaction;
    }
 
+   @Override
    public void putLookedUpEntry(Object key, CacheEntry e) {
       if (isMarkedForRollback()) {
          throw new CacheException("This transaction is marked for rollback and cannot acquire locks!");
@@ -131,6 +133,7 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
       lookedUpEntries.put(key, e);
    }
 
+   @Override
    public void putLookedUpEntries(Map<Object, CacheEntry> entries) {
       if (isMarkedForRollback()) {
          throw new CacheException("This transaction is marked for rollback and cannot acquire locks!");

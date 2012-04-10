@@ -75,14 +75,17 @@ public abstract class AbstractTransactionBoundaryCommand implements TransactionB
       this.configuration = configuration;
    }
 
+   @Override
    public String getCacheName() {
       return cacheName;
    }
 
+   @Override
    public GlobalTransaction getGlobalTransaction() {
       return globalTx;
    }
 
+   @Override
    public void markTransactionAsRemote(boolean isRemote) {
       globalTx.setRemote(isRemote);
    }
@@ -99,6 +102,7 @@ public abstract class AbstractTransactionBoundaryCommand implements TransactionB
       return null;
    }
 
+   @Override
    public Object perform(InvocationContext ctx) throws Throwable {
       if (ctx != null) throw new IllegalStateException("Expected null context!");
       markGtxAsRemote();
@@ -153,14 +157,17 @@ public abstract class AbstractTransactionBoundaryCommand implements TransactionB
       // to be overridden
    }
 
+   @Override
    public Object[] getParameters() {
       return new Object[]{globalTx};
    }
 
+   @Override
    public void setParameters(int commandId, Object[] args) {
       globalTx = (GlobalTransaction) args[0];
    }
 
+   @Override
    public boolean shouldInvoke(InvocationContext ctx) {
       return true;
    }
@@ -193,10 +200,12 @@ public abstract class AbstractTransactionBoundaryCommand implements TransactionB
       globalTx.setRemote(true);
    }
    
+   @Override
    public Address getOrigin() {
 	   return origin;
    }
    
+   @Override
    public void setOrigin(Address origin) {
 	   this.origin = origin;
    }

@@ -199,6 +199,8 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
       OverrideConfigurationVisitor v2 = new OverrideConfigurationVisitor();
       overrides.accept(v2);
       v1.override(v2);
+      if (newConfig == null && overrides.newConfig != null)
+         this.newConfig = overrides.newConfig;
    }
 
    public void inject(ComponentRegistry cr) {
@@ -1672,6 +1674,8 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
             dolly.indexing = indexing.clone();
             dolly.indexing.setConfiguration(dolly);
          }
+         if (newConfig != null)
+            dolly.newConfig = newConfig;
          dolly.fluentConfig = new FluentConfiguration(dolly);
          return dolly;
       } catch (CloneNotSupportedException e) {

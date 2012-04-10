@@ -57,8 +57,8 @@ import java.util.concurrent.TimeUnit;
  */
 public class StateTransferLockInterceptor extends CommandInterceptor {
 
-   StateTransferLock stateTransferLock;
-   private long rpcTimeout;
+   protected StateTransferLock stateTransferLock;
+   protected long rpcTimeout;
 
    private static final Log log = LogFactory.getLog(StateTransferLockInterceptor.class);
 
@@ -173,7 +173,9 @@ public class StateTransferLockInterceptor extends CommandInterceptor {
    }
 
    private Object handleWriteCommand(InvocationContext ctx, WriteCommand command) throws Throwable {
-      if (!stateTransferLock.acquireForCommand(ctx, command)) {
+      boolean acquired = stateTransferLock.acquireForCommand(ctx, command);
+      log.tracef("Acquired state transfer lock for command %s ? %s", command.getClass().getCanonicalName(), acquired);
+      if (!acquired) {
          signalStateTransferInProgress();
       }
       boolean release = true;
@@ -195,12 +197,12 @@ public class StateTransferLockInterceptor extends CommandInterceptor {
     * If this happens on a remote node however the originator will catch the exception and retry the command.
     * @return
     */
-   private Object signalStateTransferInProgress() {
+   protected final Object signalStateTransferInProgress() {
       int viewId = stateTransferLock.getBlockingCacheViewId();
       throw new StateTransferInProgressException(viewId, "Timed out waiting for the state transfer lock, state transfer in progress for view " + viewId);
    }
 
-   private Object handleWithRetries(InvocationContext ctx, VisitableCommand command, long timeoutMillis) throws Throwable {
+   protected final Object handleWithRetries(InvocationContext ctx, VisitableCommand command, long timeoutMillis) throws Throwable {
       long endNanos = timeoutMillis > 0 ? (System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)) : Long.MAX_VALUE;
       while (true) {
          int newCacheViewId = -1;

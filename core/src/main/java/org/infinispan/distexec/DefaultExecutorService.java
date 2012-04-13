@@ -510,7 +510,7 @@ public class DefaultExecutorService extends AbstractExecutorService implements D
     * @author Mircea Markus
     * @author Vladimir Blagojevic
     */
-   private static class DistributedRunnableFuture<V> implements RunnableFuture<V>, NotifyingNotifiableFuture<V> {
+   protected static class DistributedRunnableFuture<V> implements RunnableFuture<V>, NotifyingNotifiableFuture<V> {
 
       private final DistributedExecuteCommand<V> distCommand;
       private volatile Future<V> f;

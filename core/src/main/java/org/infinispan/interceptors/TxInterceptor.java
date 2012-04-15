@@ -82,6 +82,9 @@ public class TxInterceptor extends CommandInterceptor {
    private final AtomicLong prepares = new AtomicLong(0);
    private final AtomicLong commits = new AtomicLong(0);
    private final AtomicLong rollbacks = new AtomicLong(0);
+   private final AtomicLong localPrepares = new AtomicLong(0);
+   private final AtomicLong localCommits = new AtomicLong(0);
+   private final AtomicLong localRollbacks = new AtomicLong(0);
    @ManagedAttribute(description = "Enables or disables the gathering of statistics by this component", writable = true)
    private boolean statisticsEnabled;
    protected TransactionCoordinator txCoordinator;
@@ -104,7 +107,12 @@ public class TxInterceptor extends CommandInterceptor {
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       //if it is remote and 2PC then first log the tx only after replying mods
-      if (this.statisticsEnabled) prepares.incrementAndGet();
+      if (this.statisticsEnabled) {
+         if (ctx.isOriginLocal()) {
+            localPrepares.incrementAndGet();
+         }
+         prepares.incrementAndGet();
+      }
 
       boolean shouldInvokeNext = true;
       Object result = null;
@@ -137,7 +145,12 @@ public class TxInterceptor extends CommandInterceptor {
 
    @Override
    public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
-      if (this.statisticsEnabled) commits.incrementAndGet();
+      if (this.statisticsEnabled) {
+         if (ctx.isOriginLocal()) {
+            localCommits.incrementAndGet();
+         }
+         commits.incrementAndGet();
+      }
       Object result = invokeNextInterceptor(ctx, command);      
       if (!ctx.isOriginLocal()) {
          txTable.remoteTransactionCommitted(ctx.getGlobalTransaction());
@@ -147,7 +160,12 @@ public class TxInterceptor extends CommandInterceptor {
 
    @Override
    public Object visitRollbackCommand(TxInvocationContext ctx, RollbackCommand command) throws Throwable {
-      if (this.statisticsEnabled) rollbacks.incrementAndGet();
+      if (this.statisticsEnabled) {
+         if (ctx.isOriginLocal()) {
+            localRollbacks.incrementAndGet();
+         }
+         rollbacks.incrementAndGet();
+      }
       //In total order, we have remote transaction corresponding a local transaction
       if (!ctx.isOriginLocal()) {
          RemoteTransaction remoteTransaction = (RemoteTransaction) ctx.getCacheTransaction();
@@ -283,6 +301,9 @@ public class TxInterceptor extends CommandInterceptor {
       prepares.set(0);
       commits.set(0);
       rollbacks.set(0);
+      localCommits.set(0);
+      localPrepares.set(0);
+      localRollbacks.set(0);
    }
 
    @Operation(displayName = "Enable/disable statistics")
@@ -311,5 +332,23 @@ public class TxInterceptor extends CommandInterceptor {
    @Metric(displayName = "Rollbacks", measurementType = MeasurementType.TRENDSUP, displayType = DisplayType.SUMMARY)
    public long getRollbacks() {
       return rollbacks.get();
+   }
+
+   @ManagedAttribute(description = "Number of local originated transaction prepares performed since last reset")
+   @Metric(displayName = "LocalPrepares", measurementType = MeasurementType.TRENDSUP, displayType = DisplayType.SUMMARY)
+   public long getLocalPrepares() {
+      return localPrepares.get();
+   }
+
+   @ManagedAttribute(description = "Number of local originated transaction commits performed since last reset")
+   @Metric(displayName = "LocalCommits", measurementType = MeasurementType.TRENDSUP, displayType = DisplayType.SUMMARY)
+   public long getLocalCommits() {
+      return localCommits.get();
+   }
+
+   @ManagedAttribute(description = "Number of local originated transaction rollbacks performed since last reset")
+   @Metric(displayName = "LocalRollbacks", measurementType = MeasurementType.TRENDSUP, displayType = DisplayType.SUMMARY)
+   public long getLocalRollbacks() {
+      return localRollbacks.get();
    }
 }

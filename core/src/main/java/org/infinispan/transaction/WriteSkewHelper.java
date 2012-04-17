@@ -23,6 +23,7 @@ import org.infinispan.CacheException;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.container.DataContainer;
+import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.ClusteredRepeatableReadEntry;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.container.versioning.EntryVersionsMap;
@@ -34,6 +35,10 @@ import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.SuccessfulResponse;
 import org.infinispan.stats.StreamLibContainer;
 import org.infinispan.transaction.xa.CacheTransaction;
+
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Encapsulates write skew logic in maintaining version maps, etc.
@@ -98,5 +103,32 @@ public class WriteSkewHelper {
    
    public static interface KeySpecificLogic {
       boolean performCheckOnKey(Object key);
+   }
+
+   public static void updateLocalModeCacheEntries(VersionGenerator versionGenerator, VersionedPrepareCommand command,
+                                                   TxInvocationContext context) {
+      Set<Object> keysChecked = new HashSet<Object>();
+      for (WriteCommand writeCommand : command.getModifications()) {
+         keysChecked.addAll(writeCommand.getAffectedKeys());
+      }
+
+      EntryVersionsMap uv = context.getCacheTransaction().getUpdatedEntryVersions();
+      if (uv == null) {
+         uv = new EntryVersionsMap();
+      }
+
+      for (Map.Entry<Object, CacheEntry> entry : context.getLookedUpEntries().entrySet()) {
+         if (keysChecked.contains(entry.getKey()) || !entry.getValue().isChanged()) {
+            continue;
+         }
+         IncrementableEntryVersion version = (IncrementableEntryVersion) entry.getValue().getVersion();
+         if (version == null) {
+            version = versionGenerator.generateNew();
+         } else {
+            version = versionGenerator.increment(version);
+         }
+         uv.put(entry.getKey(), version);
+      }
+      context.getCacheTransaction().setUpdatedEntryVersions(uv);
    }
 }

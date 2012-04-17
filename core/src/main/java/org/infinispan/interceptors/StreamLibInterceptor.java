@@ -72,7 +72,7 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedOperation(description = "Show the top n keys most read remotely by this instance")
    @Operation(displayName = "Top Remote Read Keys")
-   public Map<Object, Long> getRemoteTopGets(int n) {
+   public Map<Object, Long> getNRemoteTopGets(int n) {
       Map<Object, Long> res = streamLibContainer.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET, n);
       streamLibContainer.resetStat(StreamLibContainer.Stat.REMOTE_GET);
       return res;
@@ -86,7 +86,7 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedOperation(description = "Show the top n keys most read locally by this instance")
    @Operation(displayName = "Top Local Read Keys")
-   public Map<Object, Long> getLocalTopGets(int n) {
+   public Map<Object, Long> getNLocalTopGets(int n) {
       Map<Object, Long> res =  streamLibContainer.getTopKFrom(StreamLibContainer.Stat.LOCAL_GET, n);
       streamLibContainer.resetStat(StreamLibContainer.Stat.LOCAL_GET);
       return res;
@@ -100,7 +100,7 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedOperation(description = "Show the top n keys most write remotely by this instance")
    @Operation(displayName = "Top Remote Write Keys")
-   public Map<Object, Long> getRemoteTopPuts(int n) {
+   public Map<Object, Long> getNRemoteTopPuts(int n) {
       Map<Object, Long> res =  streamLibContainer.getTopKFrom(StreamLibContainer.Stat.REMOTE_PUT, n);
       streamLibContainer.resetStat(StreamLibContainer.Stat.REMOTE_PUT);
       return res;
@@ -114,7 +114,7 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedOperation(description = "Show the top n keys most write locally by this instance")
    @Operation(displayName = "Top Local Write Keys")
-   public Map<Object, Long> getLocalTopPuts(int n) {
+   public Map<Object, Long> getNLocalTopPuts(int n) {
       Map<Object, Long> res  = streamLibContainer.getTopKFrom(StreamLibContainer.Stat.LOCAL_PUT, n);
       streamLibContainer.resetStat(StreamLibContainer.Stat.LOCAL_PUT);
       return res;
@@ -128,7 +128,7 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedOperation(description = "Show the top n keys most locked")
    @Operation(displayName = "Top Locked Keys")
-   public Map<Object, Long> getTopLockedKeys(int n) {
+   public Map<Object, Long> getNTopLockedKeys(int n) {
       Map<Object, Long> res = streamLibContainer.getTopKFrom(StreamLibContainer.Stat.MOST_LOCKED_KEYS, n);
       streamLibContainer.resetStat(StreamLibContainer.Stat.MOST_LOCKED_KEYS);
       return res;
@@ -142,7 +142,7 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedOperation(description = "Show the top n keys most contended")
    @Operation(displayName = "Top Contended Keys")
-   public Map<Object, Long> getTopContendedKeys(int n) {
+   public Map<Object, Long> getNTopContendedKeys(int n) {
       Map<Object, Long> res = streamLibContainer.getTopKFrom(StreamLibContainer.Stat.MOST_CONTENDED_KEYS, n);
       streamLibContainer.resetStat(StreamLibContainer.Stat.MOST_CONTENDED_KEYS);
       return res;
@@ -156,7 +156,7 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedOperation(description = "Show the top n keys whose lock acquisition failed ")
    @Operation(displayName = "Top Keys whose Lock Acquisition Failed by Timeout")
-   public Map<Object, Long> getTopLockFailedKeys(int n) {
+   public Map<Object, Long> getNTopLockFailedKeys(int n) {
       Map<Object, Long> res = streamLibContainer.getTopKFrom(StreamLibContainer.Stat.MOST_FAILED_KEYS, n);
       streamLibContainer.resetStat(StreamLibContainer.Stat.MOST_FAILED_KEYS);
       return res;
@@ -170,7 +170,7 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedOperation(description = "Show the top n keys whose write skew check was failed")
    @Operation(displayName = "Top Keys whose Write Skew Check was failed")
-   public Map<Object, Long> getTopWriteSkewFailedKeys(int n) {
+   public Map<Object, Long> getNTopWriteSkewFailedKeys(int n) {
       Map<Object, Long> res = streamLibContainer.getTopKFrom(StreamLibContainer.Stat.MOST_WRITE_SKEW_FAILED_KEYS, n);
       streamLibContainer.resetStat(StreamLibContainer.Stat.MOST_WRITE_SKEW_FAILED_KEYS);
       return res;

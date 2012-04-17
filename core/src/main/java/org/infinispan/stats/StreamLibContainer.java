@@ -8,6 +8,8 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * This contains all the stream lib top keys. Stream lib is a space efficient technique to obtains the top-most
@@ -25,6 +27,7 @@ public class StreamLibContainer {
    private boolean active = false;
 
    private final Map<Stat, StreamSummary<Object>> streamSummaryEnumMap;
+   private final Map<Stat, Lock> lockMap;
 
    public static enum Stat {
       REMOTE_GET,
@@ -40,6 +43,12 @@ public class StreamLibContainer {
 
    private StreamLibContainer() {
       streamSummaryEnumMap = Collections.synchronizedMap(new EnumMap<Stat, StreamSummary<Object>>(Stat.class));
+      lockMap = new EnumMap<Stat, Lock>(Stat.class);
+
+      for (Stat stat : Stat.values()) {
+         lockMap.put(stat, new ReentrantLock());
+      }
+
       clearAll();
    }
 
@@ -67,15 +76,7 @@ public class StreamLibContainer {
       if(!isActive()) {
          return;
       }
-      StreamSummary<Object> streamSummary;
-
-      if(remote) {
-         streamSummary = streamSummaryEnumMap.get(Stat.REMOTE_GET);
-      } else {
-         streamSummary = streamSummaryEnumMap.get(Stat.LOCAL_GET);
-      }
-
-      offer(streamSummary, key);
+      syncOffer(remote ? Stat.REMOTE_GET : Stat.LOCAL_GET, key);
    }
 
    public void addPut(Object key, boolean remote) {
@@ -83,15 +84,7 @@ public class StreamLibContainer {
          return;
       }
 
-      StreamSummary<Object> streamSummary;
-
-      if(remote) {
-         streamSummary = streamSummaryEnumMap.get(Stat.REMOTE_PUT);
-      } else {
-         streamSummary = streamSummaryEnumMap.get(Stat.LOCAL_PUT);
-      }
-
-      offer(streamSummary, key);
+      syncOffer(remote ? Stat.REMOTE_PUT : Stat.LOCAL_PUT, key);
    }
 
    public void addLockInformation(Object key, boolean contention, boolean abort) {
@@ -99,18 +92,18 @@ public class StreamLibContainer {
          return;
       }
 
-      offer(streamSummaryEnumMap.get(Stat.MOST_LOCKED_KEYS), key);
+      syncOffer(Stat.MOST_LOCKED_KEYS, key);
 
       if(contention) {
-         offer(streamSummaryEnumMap.get(Stat.MOST_CONTENDED_KEYS), key);
+         syncOffer(Stat.MOST_CONTENDED_KEYS, key);
       }
       if(abort) {
-         offer(streamSummaryEnumMap.get(Stat.MOST_FAILED_KEYS), key);
+         syncOffer(Stat.MOST_FAILED_KEYS, key);
       }
    }
 
    public void addWriteSkewFailed(Object key) {
-      offer(streamSummaryEnumMap.get(Stat.MOST_WRITE_SKEW_FAILED_KEYS), key);
+      syncOffer(Stat.MOST_WRITE_SKEW_FAILED_KEYS, key);
    }
 
    public Map<Object, Long> getTopKFrom(Stat stat) {
@@ -118,22 +111,24 @@ public class StreamLibContainer {
    }
 
    public Map<Object, Long> getTopKFrom(Stat stat, int topk) {
-      return getStatsFrom(streamSummaryEnumMap.get(stat), topk);
+      try {
+         lockMap.get(stat).lock();
+         return getStatsFrom(streamSummaryEnumMap.get(stat), topk);
+      } finally {
+         lockMap.get(stat).unlock();
+      }
 
    }
 
-   @SuppressWarnings("SynchronizationOnLocalVariableOrMethodParameter")
    private Map<Object, Long> getStatsFrom(StreamSummary<Object> ss, int topk) {
-      synchronized (ss) {
-         List<Counter<Object>> counters = ss.topK(topk <= 0 ? 1 : topk);
-         Map<Object, Long> results = new HashMap<Object, Long>(topk);
+      List<Counter<Object>> counters = ss.topK(topk <= 0 ? 1 : topk);
+      Map<Object, Long> results = new HashMap<Object, Long>(topk);
 
-         for(Counter<Object> c : counters) {
-            results.put(c.getItem(), c.getCount());
-         }
-
-         return results;
+      for(Counter<Object> c : counters) {
+         results.put(c.getItem(), c.getCount());
       }
+
+      return results;
    }
 
    public void resetAll(){
@@ -141,7 +136,12 @@ public class StreamLibContainer {
    }
 
    public void resetStat(Stat stat){
-      streamSummaryEnumMap.put(stat, createNewStreamSummary());
+      try {
+         lockMap.get(stat).lock();
+         streamSummaryEnumMap.put(stat, createNewStreamSummary());
+      } finally {
+         lockMap.get(stat).unlock();
+      }
    }
 
    private StreamSummary<Object> createNewStreamSummary() {
@@ -150,14 +150,16 @@ public class StreamLibContainer {
 
    private void clearAll() {
       for (Stat stat : Stat.values()) {
-         streamSummaryEnumMap.put(stat, createNewStreamSummary());
+         resetStat(stat);
       }
    }
 
-   @SuppressWarnings("SynchronizationOnLocalVariableOrMethodParameter")
-   private void offer(StreamSummary<Object> streamSummary, Object key) {
-      synchronized (streamSummary) {
-         streamSummary.offer(key);
+   private void syncOffer(final Stat stat, Object key) {
+      try {
+         lockMap.get(stat).lock();
+         streamSummaryEnumMap.get(stat).offer(key);
+      } finally {
+         lockMap.get(stat).unlock();
       }
    }
 }

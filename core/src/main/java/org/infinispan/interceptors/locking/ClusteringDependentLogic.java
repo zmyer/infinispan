@@ -23,16 +23,12 @@
 
 package org.infinispan.interceptors.locking;
 
-import org.infinispan.CacheException;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
-import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.config.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.container.entries.ClusteredRepeatableReadEntry;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.container.versioning.EntryVersionsMap;
-import org.infinispan.container.versioning.IncrementableEntryVersion;
 import org.infinispan.container.versioning.VersionGenerator;
 import org.infinispan.context.Flag;
 import org.infinispan.context.impl.TxInvocationContext;
@@ -42,7 +38,6 @@ import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.transaction.WriteSkewHelper;
 import org.infinispan.transaction.xa.CacheTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -50,6 +45,7 @@ import org.infinispan.util.logging.LogFactory;
 import java.util.Collection;
 
 import static org.infinispan.transaction.WriteSkewHelper.performWriteSkewCheckAndReturnNewVersions;
+import static org.infinispan.transaction.WriteSkewHelper.updateLocalModeCacheEntries;
 
 /**
  * Abstractization for logic related to different clustering modes: replicated or distributed. This implements the <a
@@ -128,6 +124,7 @@ public interface ClusteringDependentLogic {
                                                                             versionGenerator, context,
                                                                             this);
             context.getCacheTransaction().setUpdatedEntryVersions(uv);
+            updateLocalModeCacheEntries(versionGenerator, prepareCommand, context);
             return uv;
          } else if (prepareCommand.getModifications().length == 0) {
             // For situations when there's a local-only put in the prepare,
@@ -136,6 +133,7 @@ public interface ClusteringDependentLogic {
             // modification list.
             context.getCacheTransaction().setUpdatedEntryVersions(new EntryVersionsMap());
          }
+         updateLocalModeCacheEntries(versionGenerator, prepareCommand, context);
          return null;
       }
    }
@@ -209,6 +207,7 @@ public interface ClusteringDependentLogic {
             uv = uvOld;
          }
          cacheTransaction.setUpdatedEntryVersions(uv);
+         updateLocalModeCacheEntries(versionGenerator, prepareCommand, context);
          return (uv.isEmpty()) ? null : uv;
       }
    }
@@ -253,6 +252,7 @@ public interface ClusteringDependentLogic {
       public EntryVersionsMap createNewVersionsAndCheckForWriteSkews(VersionGenerator versionGenerator,
                                                                      TxInvocationContext context,
                                                                      VersionedPrepareCommand prepareCommand) {
+         updateLocalModeCacheEntries(versionGenerator, prepareCommand, context);
          if (context.isOriginLocal()) {
             throw new IllegalStateException("This must not be reached");
          }

@@ -150,7 +150,7 @@ public class TxInterceptor extends CommandInterceptor {
          throw t;
       } finally {
          if (shouldAddTxCommitLatency) {
-            updateTxCommitLatency(true, ctx.getTransaction());
+            updateTxCommitLatency(shouldInvokeNext, ctx.getTransaction());
          }
       }
       if (!ctx.isOriginLocal()) {
@@ -204,7 +204,7 @@ public class TxInterceptor extends CommandInterceptor {
 
       Object result = invokeNextInterceptor(ctx, command);
       if (this.statisticsEnabled && ctx.isOriginLocal()) {
-         updateTxCommitLatency(true, ctx.getTransaction());
+         updateTxCommitLatency(false, ctx.getTransaction());
       }
       return result;
    }

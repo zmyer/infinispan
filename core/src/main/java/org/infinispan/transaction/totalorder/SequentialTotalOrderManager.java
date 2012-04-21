@@ -1,0 +1,56 @@
+package org.infinispan.transaction.totalorder;
+
+import org.infinispan.commands.tx.PrepareCommand;
+import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.jmx.annotations.MBean;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
+
+/**
+ * @author mircea.markus@jboss.com
+ * @author Pedro Ruivo
+ * @since 5.2.0
+ */
+@MBean(objectName = "TotalOrderManager", description = "Simple total order management")
+public class SequentialTotalOrderManager extends BaseTotalOrderManager {
+
+   private static final Log log = LogFactory.getLog(SequentialTotalOrderManager.class);
+
+   public final void processTransactionFromSequencer(PrepareCommand prepareCommand, TxInvocationContext ctx, CommandInterceptor invoker) {
+
+      logAndCheckContext(prepareCommand, ctx);
+
+      copyLookedUpEntriesToRemoteContext(ctx);
+      
+      Object result = null;
+      boolean exception = false;
+      long startTime = now();
+      try {
+         result = prepareCommand.acceptVisitor(ctx, invoker);
+      } catch (Throwable t) {
+         log.trace("Exception while processing the rest of the interceptor chain", t);
+         result = t;
+         exception = true;
+      } finally {
+         logProcessingFinalStatus(prepareCommand, result, exception);
+         updateLocalTransaction(result, exception, prepareCommand);
+         updateProcessingDurationStats(startTime, now());
+      }
+   }
+
+   private void updateProcessingDurationStats(long start, long end) {
+      if (statisticsEnabled) {
+         processingDuration.addAndGet(end - start);
+         numberOfTxValidated.incrementAndGet();
+      }
+   }
+
+
+   private void logProcessingFinalStatus(PrepareCommand prepareCommand, Object result, boolean exception) {
+      if (trace)
+         log.tracef("Transaction %s finished processing (%s). Validation result is %s ",
+                    prepareCommand.getGlobalTransaction().prettyPrint(),
+                    (exception ? "failed" : "ok"), (exception ? ((Throwable) result).getMessage() : result));
+   }
+}

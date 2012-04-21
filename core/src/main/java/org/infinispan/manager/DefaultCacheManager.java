@@ -338,7 +338,7 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
     * @throws java.io.IOException if there is a problem with the configuration file.
     */
    public DefaultCacheManager(String configurationFile, boolean start) throws IOException {
-      this(FileLookupFactory.newInstance().lookupFile(configurationFile, Thread.currentThread().getContextClassLoader()), start);
+      this(FileLookupFactory.newInstance().lookupFileStrict(configurationFile, Thread.currentThread().getContextClassLoader()), start);
    }
 
    /**
@@ -594,7 +594,7 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
          if (transport != null) {
             Configuration c = getConfiguration(cacheName);
             // Use sync replication timeout
-            transport.invokeRemotely(null, cmd, ResponseMode.SYNCHRONOUS, c.getSyncReplTimeout(), false, null, false, false);
+            transport.invokeRemotely(null, cmd, ResponseMode.SYNCHRONOUS, c.getSyncReplTimeout(), false, null, false);
          }
          // Once sent to the cluster, remove the local cache
          cmd.perform(null);

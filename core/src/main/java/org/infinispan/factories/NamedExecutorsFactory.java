@@ -100,8 +100,7 @@ public class NamedExecutorsFactory extends NamedComponentFactory implements Auto
             synchronized (this) {
                if (totalOrderExecutor == null) {
                   totalOrderExecutor = buildAndConfigureExecutorService(
-                        //globalConfiguration.getTotalOrderExecutorFactorClass(),
-                        DefaultDynamicExecutorFactory.class.getName(),
+                        globalConfiguration.getTotalOrderExecutorFactoryClass(),
                         globalConfiguration.getTotalOrderExecutorProperties(), componentName);
                }
             }

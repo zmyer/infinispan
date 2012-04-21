@@ -51,6 +51,7 @@ import org.infinispan.util.TypedProperties;
 import org.infinispan.util.Util;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+import org.jboss.marshalling.ClassResolver;
 
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
@@ -70,6 +71,7 @@ import java.util.Properties;
  * A default instance of this bean takes default values for each attribute.  Please see the individual setters for
  * details of what these defaults are.
  * <p/>
+ * @deprecated This class is deprecated.  Use {@link org.infinispan.configuration.global.GlobalConfiguration} instead.
  *
  * @author Manik Surtani
  * @author Vladimir Blagojevic
@@ -408,7 +410,7 @@ public class GlobalConfiguration extends AbstractConfigurationBean {
       totalOrderExecutor.setFactory(totalOrderExecutorFactoryClass);
    }
 
-   public String getTotalOrderExecutorFactorClass() {
+   public String getTotalOrderExecutorFactoryClass() {
       return totalOrderExecutor.factory;
    }
 
@@ -722,6 +724,10 @@ public class GlobalConfiguration extends AbstractConfigurationBean {
 
    public List<AdvancedExternalizerConfig> getExternalizers() {
       return serialization.externalizerTypes.advancedExternalizers;
+   }
+
+   public ClassResolver getClassResolver() {
+      return serialization.classResolver;
    }
 
    public long getDistributedSyncTimeout() {
@@ -1410,6 +1416,9 @@ public class GlobalConfiguration extends AbstractConfigurationBean {
       @XmlElement(name = "advancedExternalizers")
       protected AdvancedExternalizersType externalizerTypes = new AdvancedExternalizersType();
 
+      @XmlTransient
+      private ClassResolver classResolver;
+
       public SerializationType() {
          super();
       }
@@ -1500,6 +1509,12 @@ public class GlobalConfiguration extends AbstractConfigurationBean {
       public <T> SerializationConfig addAdvancedExternalizer(int id, AdvancedExternalizer<T> advancedExternalizer) {
          externalizerTypes.addExternalizer(
                new AdvancedExternalizerConfig().setId(id).setAdvancedExternalizer(advancedExternalizer));
+         return this;
+      }
+
+      @Override
+      public SerializationConfig classResolver(ClassResolver classResolver) {
+         this.classResolver = classResolver;
          return this;
       }
    }

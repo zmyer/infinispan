@@ -29,12 +29,12 @@ import org.infinispan.loaders.CacheStoreConfig;
 import org.infinispan.loaders.decorators.SingletonStoreConfig;
 import org.infinispan.loaders.jdbc.TableManipulation;
 import org.infinispan.loaders.jdbc.connectionfactory.ConnectionFactoryConfig;
-import org.infinispan.loaders.jdbc.connectionfactory.PooledConnectionFactory;
+import org.infinispan.loaders.jdbc.connectionfactory.SimpleConnectionFactory;
 import org.infinispan.loaders.jdbc.stringbased.JdbcStringBasedCacheStore;
 import org.infinispan.loaders.jdbc.stringbased.JdbcStringBasedCacheStoreConfig;
 import org.infinispan.manager.CacheContainer;
-import org.infinispan.manager.DefaultCacheManager;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
 
 import java.io.IOException;
@@ -42,7 +42,7 @@ import java.util.Map;
 
 @Test(groups = "unit", testName = "config.parsing.JdbcConfigurationTest")
 public class JdbcConfigurationTest {
-   
+
    public void testParseCacheLoaders() throws Exception {
       InfinispanConfiguration configuration = InfinispanConfiguration.newInfinispanConfiguration("configs/jdbc-parsing-test.xml", Thread.currentThread().getContextClassLoader());
       Map<String, Configuration> namedConfigurations = configuration.parseNamedConfigurations();
@@ -71,7 +71,7 @@ public class JdbcConfigurationTest {
       assert csConf.isPurgeOnStartup();
       TableManipulation tableManipulation = csConf.getTableManipulation();
       ConnectionFactoryConfig cfc = csConf.getConnectionFactoryConfig();
-      assert cfc.getConnectionFactoryClass().equals(PooledConnectionFactory.class.getName());
+      assert cfc.getConnectionFactoryClass().equals(SimpleConnectionFactory.class.getName());
       assert cfc.getConnectionUrl().equals("jdbc://some-url");
       assert cfc.getUserName().equals("root");
       assert cfc.getDriverClass().equals("org.dbms.Driver");
@@ -91,7 +91,7 @@ public class JdbcConfigurationTest {
    public void testWrongStoreConfiguration() throws IOException {
       CacheContainer cm = null;
       try {
-         cm = new DefaultCacheManager("configs/illegal.xml");
+         cm = TestCacheManagerFactory.fromXml("configs/illegal.xml");
          cm.start();
          //needs to get at least a cache to reproduce:
          cm.getCache("AnyCache");

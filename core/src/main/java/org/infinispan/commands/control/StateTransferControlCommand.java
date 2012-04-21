@@ -107,6 +107,7 @@ public class StateTransferControlCommand extends BaseRpcCommand {
    public Object perform(InvocationContext ctx) throws Throwable {
       final boolean trace = log.isTraceEnabled();
       LogFactory.pushNDC(configuration.getName(), trace);
+      log.tracef("%s waiting for join to start.", sender);
       stateTransferManager.waitForJoinToStart();
       try {
          switch (type) {

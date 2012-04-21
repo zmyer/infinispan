@@ -27,6 +27,8 @@ import org.infinispan.config.FluentConfiguration;
 import org.infinispan.config.GlobalConfiguration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
+import org.infinispan.configuration.parsing.Parser;
 import org.infinispan.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.manager.DefaultCacheManager;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -34,6 +36,7 @@ import org.infinispan.marshall.Marshaller;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.lookup.TransactionManagerLookup;
+import org.infinispan.util.FileLookupFactory;
 import org.infinispan.util.LegacyKeySupportSystemProperties;
 import org.infinispan.util.Util;
 import org.infinispan.util.logging.Log;
@@ -44,6 +47,7 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.infinispan.test.fwk.JGroupsConfigBuilder.getJGroupsConfig;
@@ -62,6 +66,9 @@ public class TestCacheManagerFactory {
 
    public static final String MARSHALLER = LegacyKeySupportSystemProperties.getProperty("infinispan.test.marshaller.class", "infinispan.marshaller.class");
    private static final Log log = LogFactory.getLog(TestCacheManagerFactory.class);
+   
+   private static volatile boolean shuttingDown;
+   private static CountDownLatch shutDownLatch = new CountDownLatch(1);
 
    private static ThreadLocal<PerThreadCacheManagers> perThreadCacheManagers = new ThreadLocal<PerThreadCacheManagers>() {
       @Override
@@ -84,12 +91,32 @@ public class TestCacheManagerFactory {
       return newDefaultCacheManager(start, gc, c);
    }
 
+   private static DefaultCacheManager newDefaultCacheManager(boolean start, ConfigurationBuilderHolder holder, boolean keepJmxDomain) {
+      if (!keepJmxDomain) {
+         holder.getGlobalConfigurationBuilder().globalJmxStatistics().jmxDomain(
+               "infinispan" + jmxDomainPostfix.incrementAndGet());
+      }
+      return newDefaultCacheManager(start, holder);
+   }
+
    public static EmbeddedCacheManager fromXml(String xmlFile) throws IOException {
-      return new DefaultCacheManager(xmlFile);
+      return fromXml(xmlFile, false);
+   }
+
+   public static EmbeddedCacheManager fromXml(String xmlFile, boolean keepJmxDomainName) throws IOException {
+      InputStream is = FileLookupFactory.newInstance().lookupFileStrict(
+            xmlFile, Thread.currentThread().getContextClassLoader());
+      return fromStream(is, keepJmxDomainName);
    }
 
    public static EmbeddedCacheManager fromStream(InputStream is) throws IOException {
-      return new DefaultCacheManager(is);
+      return fromStream(is, false);
+   }
+
+   public static EmbeddedCacheManager fromStream(InputStream is, boolean keepJmxDomainName) throws IOException {
+      ConfigurationBuilderHolder holder = new Parser(
+            Thread.currentThread().getContextClassLoader()).parse(is);
+      return createClusteredCacheManager(holder, keepJmxDomainName);
    }
 
    /**
@@ -178,15 +205,33 @@ public class TestCacheManagerFactory {
       return createClusteredCacheManager(GlobalConfigurationBuilder.defaultClusteredBuilder(), defaultCacheConfig);
    }
 
+   public static EmbeddedCacheManager createClusteredCacheManager(ConfigurationBuilderHolder holder) {
+      return createClusteredCacheManager(holder, false);
+   }
+
+   public static EmbeddedCacheManager createClusteredCacheManager(ConfigurationBuilderHolder holder, boolean keepJmxDomainName) {
+      TransportFlags flags = new TransportFlags();
+      amendGlobalConfiguration(holder.getGlobalConfigurationBuilder(), flags);
+      amendJTA(holder.getDefaultConfigurationBuilder());
+      for (ConfigurationBuilder builder : holder.getNamedConfigurationBuilders().values())
+         amendJTA(builder);
+
+      return newDefaultCacheManager(true, holder, keepJmxDomainName);
+   }
+
    public static EmbeddedCacheManager createClusteredCacheManager(GlobalConfigurationBuilder gcb, ConfigurationBuilder defaultCacheConfig, TransportFlags flags) {
-      amendMarshaller(gcb);
-      minimizeThreads(gcb);
-      amendTransport(gcb, flags);
+      amendGlobalConfiguration(gcb, flags);
       amendJTA(defaultCacheConfig);
       return newDefaultCacheManager(true, gcb, defaultCacheConfig, false);
    }
-   
-   public static EmbeddedCacheManager createCacheManager(ConfigurationBuilder builder) {      
+
+   public static void amendGlobalConfiguration(GlobalConfigurationBuilder gcb, TransportFlags flags) {
+      amendMarshaller(gcb);
+      minimizeThreads(gcb);
+      amendTransport(gcb, flags);
+   }
+
+   public static EmbeddedCacheManager createCacheManager(ConfigurationBuilder builder) {
       return createCacheManager(new GlobalConfigurationBuilder().nonClusteredDefault(), builder);
    }
 
@@ -208,7 +253,7 @@ public class TestCacheManagerFactory {
 
    /**
     * Creates a cache manager that won't try to modify the configured jmx domain name: {@link
-    * org.infinispan.config.GlobalConfiguration#getJmxDomain()}}. This method must be used with care, and one should
+    * org.infinispan.config.GlobalConfiguration#getJmxDomain()}. This method must be used with care, and one should
     * make sure that no domain name collision happens when the parallel suite executes. An approach to ensure this, is
     * to set the domain name to the name of the test class that instantiates the CacheManager.
     */
@@ -351,25 +396,10 @@ public class TestCacheManagerFactory {
 
          String fullTestName = perThreadCacheManagers.get().fullTestName;
          String nextCacheName = perThreadCacheManagers.get().getNextCacheName();
-         if (fullTestName == null) {
-            // Either we're running from within the IDE or it's a
-            // @Test(timeOut=nnn) test. We rely here on some specific TestNG
-            // thread naming convention which can break, but TestNG offers no
-            // other alternative. It does not offer any callbacks within the
-            // thread that runs the test that can timeout.
-            String threadName = Thread.currentThread().getName();
-            String pattern = "TestNGInvoker-";
-            if (threadName.startsWith(pattern)) {
-               // This is a timeout test, so for the moment rely on the test
-               // method name that comes in the thread name.
-               fullTestName = threadName;
-               nextCacheName = threadName.substring(
-                     threadName.indexOf("-") + 1, threadName.indexOf('('));
-            } // else, test is being run from IDE
-         }
+         checkTestName(fullTestName);
 
          newTransportProps.put(JGroupsTransport.CONFIGURATION_STRING,
-            getJGroupsConfig(fullTestName, flags));
+               getJGroupsConfig(fullTestName, flags));
 
          configuration.setTransportProperties(newTransportProps);
          configuration.setTransportNodeName(nextCacheName);
@@ -381,27 +411,31 @@ public class TestCacheManagerFactory {
       if (gc.transport().transport() != null) { //this is local
          String fullTestName = perThreadCacheManagers.get().fullTestName;
          String nextCacheName = perThreadCacheManagers.get().getNextCacheName();
-         if (fullTestName == null) {
-            // Either we're running from within the IDE or it's a
-            // @Test(timeOut=nnn) test. We rely here on some specific TestNG
-            // thread naming convention which can break, but TestNG offers no
-            // other alternative. It does not offer any callbacks within the
-            // thread that runs the test that can timeout.
-            String threadName = Thread.currentThread().getName();
-            String pattern = "TestNGInvoker-";
-            if (threadName.startsWith(pattern)) {
-               // This is a timeout test, so for the moment rely on the test
-               // method name that comes in the thread name.
-               fullTestName = threadName;
-               nextCacheName = threadName.substring(
-                     threadName.indexOf("-") + 1, threadName.indexOf('('));
-            } // else, test is being run from IDE
-         }
+         checkTestName(fullTestName);
+
+         // Remove any configuration file that might have been set.
+         builder.transport().removeProperty(JGroupsTransport.CONFIGURATION_FILE);
 
          builder
                .transport()
-                  .addProperty(JGroupsTransport.CONFIGURATION_STRING, getJGroupsConfig(fullTestName, flags))
-                  .nodeName(nextCacheName);
+               .addProperty(JGroupsTransport.CONFIGURATION_STRING, getJGroupsConfig(fullTestName, flags))
+               .nodeName(nextCacheName);
+      }
+   }
+
+   private static void checkTestName(String fullTestName) {
+      if (fullTestName == null) {
+         // Either we're running from within the IDE or it's a
+         // @Test(timeOut=nnn) test. We rely here on some specific TestNG
+         // thread naming convention which can break, but TestNG offers no
+         // other alternative. It does not offer any callbacks within the
+         // thread that runs the test that can timeout.
+         String threadName = Thread.currentThread().getName();
+         String pattern = "TestNGInvoker-";
+         if (threadName.startsWith(pattern)) {
+            // This is a timeout test, so force the user to call our marking method
+            throw new RuntimeException("Test name is not set! Please call TestCacheManagerFactory.backgroundTestStarted(this) in your test method!");
+         } // else, test is being run from IDE
       }
    }
 
@@ -445,22 +479,33 @@ public class TestCacheManagerFactory {
 
    private static DefaultCacheManager newDefaultCacheManager(boolean start, GlobalConfiguration gc, Configuration c) {
       DefaultCacheManager defaultCacheManager = new DefaultCacheManager(gc, c, start);
-      PerThreadCacheManagers threadCacheManagers = perThreadCacheManagers.get();
-      String methodName = extractMethodName();
-      log.trace("Adding DCM (" + defaultCacheManager.getAddress() + ") for method: '" + methodName + "'");
-      threadCacheManagers.add(methodName, defaultCacheManager);
-      return defaultCacheManager;
+      return addThreadCacheManager(defaultCacheManager);
    }
 
    private static DefaultCacheManager newDefaultCacheManager(boolean start, GlobalConfigurationBuilder gc, ConfigurationBuilder c) {
       DefaultCacheManager defaultCacheManager = new DefaultCacheManager(gc.build(), c.build(), start);
-      PerThreadCacheManagers threadCacheManagers = perThreadCacheManagers.get();
-      String methodName = extractMethodName();
-      log.trace("Adding DCM (" + defaultCacheManager.getAddress() + ") for method: '" + methodName + "'");
-      threadCacheManagers.add(methodName, defaultCacheManager);
-      return defaultCacheManager;
+      return addThreadCacheManager(defaultCacheManager);
    }
 
+   private static DefaultCacheManager newDefaultCacheManager(boolean start, ConfigurationBuilderHolder holder) {
+      DefaultCacheManager defaultCacheManager = new DefaultCacheManager(holder, start);
+      return addThreadCacheManager(defaultCacheManager);
+   }
+
+   private static DefaultCacheManager addThreadCacheManager(DefaultCacheManager cm) {
+      if (shuttingDown) {
+         try {
+            shutDownLatch.await();
+         } catch (InterruptedException e) {
+            throw new IllegalStateException(e);
+         }
+      }
+      PerThreadCacheManagers threadCacheManagers = perThreadCacheManagers.get();
+      String methodName = extractMethodName();
+      log.trace("Adding DCM (" + cm.getAddress() + ") for method: '" + methodName + "'");
+      threadCacheManagers.add(methodName, cm);
+      return cm;
+   }
 
    private static String extractMethodName() {
       StackTraceElement[] stack = Thread.currentThread().getStackTrace();
@@ -474,6 +519,13 @@ public class TestCacheManagerFactory {
       return null;
    }
 
+   public static void backgroundTestStarted(Object testInstance) {
+      String fullName = testInstance.getClass().getName();
+      String testName = testInstance.getClass().getSimpleName();
+
+      TestCacheManagerFactory.testStarted(testName, fullName);
+   }
+
    static void testStarted(String testName, String fullName) {
       perThreadCacheManagers.get().setTestName(testName, fullName);
    }
@@ -481,6 +533,12 @@ public class TestCacheManagerFactory {
    static void testFinished(String testName) {
       perThreadCacheManagers.get().checkManagersClosed(testName);
       perThreadCacheManagers.get().unsetTestName();
+   }
+
+   public static DefaultCacheManager createCacheManager(org.infinispan.configuration.cache.Configuration config) {
+      GlobalConfigurationBuilder globalConfigBuilder = GlobalConfigurationBuilder.defaultClusteredBuilder();
+      TestCacheManagerFactory.amendGlobalConfiguration(globalConfigBuilder, new TransportFlags());
+      return new DefaultCacheManager(globalConfigBuilder.build(), config);
    }
 
    private static class PerThreadCacheManagers {
@@ -499,6 +557,12 @@ public class TestCacheManagerFactory {
                      "!!!!!! (" + thName + ") The still-running cacheManager was created here: " + cmEntry.getValue() + " !!!!!!!\n" +
                      "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
                log.error(errorMessage);
+               shuttingDown = true;//just reduce noise..
+               try {
+                  Thread.sleep(60000); //wait for the thread dump to be logged in case of OOM
+               } catch (InterruptedException e) {
+                  e.printStackTrace();
+               }
                System.err.println(errorMessage);
                System.exit(9);
             }

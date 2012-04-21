@@ -55,8 +55,7 @@ public final class MockTransport implements Transport {
    @Override
    public Map<Address, Response> invokeRemotely(final Collection<Address> recipients,
             final ReplicableCommand rpcCommand, final ResponseMode mode, final long timeout,
-            final boolean usePriorityQueue, final ResponseFilter responseFilter,
-            final boolean supportReplay) throws Exception {
+            final boolean usePriorityQueue, final ResponseFilter responseFilter, boolean totalOrder) throws Exception {
       return null;
    }
 
@@ -106,5 +105,9 @@ public final class MockTransport implements Transport {
    @Override
    public boolean isMulticastCapable() {
       return false;
+   }
+
+   @Override
+   public void checkTotalOrderSupported() {
    }
 }

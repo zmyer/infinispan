@@ -47,7 +47,7 @@ import java.util.Arrays;
  */
 @Test(groups = "functional", testName = "config.SampleConfigFilesCorrectnessTest")
 public class SampleConfigFilesCorrectnessTest {
-   public static final String CONFIG_ROOT = "src/main/resources/config-samples";
+   public static final String CONFIG_ROOT = "src" + File.separator + "main" + File.separator + "resources" + File.separator + "config-samples";
    private static final Log log = LogFactory.getLog(SampleConfigFilesCorrectnessTest.class);
 
    private InMemoryAppender appender;
@@ -74,7 +74,7 @@ public class SampleConfigFilesCorrectnessTest {
    public void testConfigWarnings() throws Exception {
       for (String aConfFile : getConfigFileNames()) {
          log.tracef("Analysing %s", aConfFile);
-         EmbeddedCacheManager dcm = TestCacheManagerFactory.fromXml(getRootFolder() + "/" + aConfFile);
+         EmbeddedCacheManager dcm = TestCacheManagerFactory.fromXml(getRootFolder() + File.separator + aConfFile);
          try {
             dcm.getCache();
             assert !appender.isFoundUnknownWarning() : String.format(
@@ -123,7 +123,6 @@ public class SampleConfigFilesCorrectnessTest {
       }
       return file;
    }
-
 
    private static class InMemoryAppender extends AppenderSkeleton {
       String[] TOLERABLE_WARNINGS =

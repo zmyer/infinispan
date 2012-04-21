@@ -22,6 +22,7 @@
  */
 package org.infinispan.remoting.transport.jgroups;
 
+import org.infinispan.CacheConfigurationException;
 import org.infinispan.CacheException;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
@@ -37,6 +38,7 @@ import org.infinispan.remoting.rpc.ResponseFilter;
 import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.transport.AbstractTransport;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.util.FileLookup;
 import org.infinispan.util.FileLookupFactory;
 import org.infinispan.util.TypedProperties;
 import org.infinispan.util.Util;
@@ -53,7 +55,6 @@ import org.jgroups.View;
 import org.jgroups.blocks.RspFilter;
 import org.jgroups.jmx.JmxConfigurator;
 import org.jgroups.protocols.SEQUENCER;
-import org.jgroups.protocols.pbcast.GMS;
 import org.jgroups.stack.AddressGenerator;
 import org.jgroups.stack.ProtocolStack;
 import org.jgroups.util.Rsp;
@@ -62,6 +63,9 @@ import org.jgroups.util.TopologyUUID;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
+
+import java.io.FileNotFoundException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -331,8 +335,14 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
 
          if (channel == null && props.containsKey(CONFIGURATION_FILE)) {
             cfg = props.getProperty(CONFIGURATION_FILE);
-            try {
-               channel = new JChannel(FileLookupFactory.newInstance().lookupFileLocation(cfg, configuration.getClassLoader()));
+            URL conf = FileLookupFactory.newInstance().lookupFileLocation(cfg, configuration.getClassLoader());
+            if (conf == null) {
+               throw new CacheConfigurationException(CONFIGURATION_FILE
+                        + " property specifies value " + conf + " that could not be read!",
+                        new FileNotFoundException(cfg));
+            }
+            try {                              
+               channel = new JChannel(conf);
             } catch (Exception e) {
                log.errorCreatingChannelFromConfigFile(cfg);
                throw new CacheException(e);
@@ -430,9 +440,8 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
    // ------------------------------------------------------------------------------------------------------------------
 
    @Override
-   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter,
-                                                boolean supportReplay, boolean totalOrder) throws Exception {
-
+   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder)
+         throws Exception {
       if (recipients != null && recipients.isEmpty()) {
          // don't send if dest list is empty
          log.trace("Destination list is empty: no need to send message");
@@ -457,16 +466,16 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       List<org.jgroups.Address> jgAddressList = toJGroupsAddressListExcludingSelf(recipients);
       int membersSize = members.size();
       boolean broadcast = jgAddressList == null || recipients.size() == membersSize;
-      if (membersSize < 3 || (jgAddressList != null && jgAddressList.size() < 2)) broadcast = false;
+      if (!totalOrder && (membersSize < 3 || (jgAddressList != null && jgAddressList.size() < 2))) broadcast = false;
       RspList<Object> rsps = null;
       Response singleResponse = null;
       org.jgroups.Address singleJGAddress = null;
 
       if (broadcast) {
          rsps = dispatcher.broadcastRemoteCommands(rpcCommand, toJGroupsMode(mode), timeout, recipients != null,
-                                                   usePriorityQueue, toJGroupsFilter(responseFilter), supportReplay,
-                                                   asyncMarshalling, totalOrder);
-      } else {         
+                                                   usePriorityQueue, toJGroupsFilter(responseFilter),
+               asyncMarshalling, totalOrder);
+      } else {
          if (jgAddressList == null || !jgAddressList.isEmpty()) {
             boolean singleRecipient = jgAddressList != null && jgAddressList.size() == 1;
             boolean skipRpc = false;
@@ -481,11 +490,11 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
                if (singleRecipient && !totalOrder) {
                   if (singleJGAddress == null) singleJGAddress = jgAddressList.get(0);
                   singleResponse = dispatcher.invokeRemoteCommand(singleJGAddress, rpcCommand, toJGroupsMode(mode), timeout,
-                                                                  usePriorityQueue, supportReplay, asyncMarshalling);
+                                                                  usePriorityQueue, asyncMarshalling);
                } else {
                   rsps = dispatcher.invokeRemoteCommands(jgAddressList, rpcCommand, toJGroupsMode(mode), timeout,
                                                          recipients != null, usePriorityQueue, toJGroupsFilter(responseFilter),
-                                                         supportReplay, asyncMarshalling, totalOrder);
+                                                         asyncMarshalling, totalOrder);
                }
             }
          }
@@ -681,7 +690,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
    public final void checkTotalOrderSupported() {
       if (channel.getProtocolStack().findProtocol(SEQUENCER.class) == null)  {
          throw new ConfigurationException("In order to support total order based transaction, the SEQUENCER protocol " +
-                                                "must be present in the jgorup's config.");
+                                                "must be present in the JGroups' config.");
       }
    }
 }

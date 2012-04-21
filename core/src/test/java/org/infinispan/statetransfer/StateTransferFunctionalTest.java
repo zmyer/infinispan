@@ -33,6 +33,7 @@ import org.infinispan.notifications.cachemanagerlistener.event.ViewChangedEvent;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.test.fwk.TransportFlags;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -46,6 +47,8 @@ import java.io.Serializable;
 import java.lang.reflect.Method;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+
+import static org.testng.Assert.assertEquals;
 
 @Test(groups = "functional", testName = "statetransfer.StateTransferFunctionalTest", enabled = true)
 public class StateTransferFunctionalTest extends MultipleCacheManagersTest {
@@ -62,7 +65,7 @@ public class StateTransferFunctionalTest extends MultipleCacheManagersTest {
    public static final Integer TWENTY = 20;
    public static final Integer FORTY = 40;
 
-   Configuration config;
+   protected Configuration config;
    protected final String cacheName;
 
    private volatile int testCount = 0;
@@ -170,6 +173,8 @@ public class StateTransferFunctionalTest extends MultipleCacheManagersTest {
       cache1 = cm1.getCache(cacheName);
       writeInitialData(cache1);
 
+      log.trace("Here is where state transfer should start.");
+
       JoiningNode node = new JoiningNode();
       cache2 = node.getCache(cacheName);
       node.waitForJoin(60000, cache1, cache2);
@@ -187,11 +192,14 @@ public class StateTransferFunctionalTest extends MultipleCacheManagersTest {
       writeInitialData(cache1);
 
       JoiningNode node = new JoiningNode();
+      
+      log.trace("Here is where state transfer should start.");
+      
       cache2 = node.getCache(cacheName);
       node.waitForJoin(60000, cache1, cache2);
       node.verifyStateTransfer(cache2);
 
-      cacheManager1.defineConfiguration("otherCache", config.clone());
+      cacheManager1.defineConfiguration("otherCache", cache1.getConfiguration().clone());
       cacheManager1.getCache("otherCache");
       logTestEnd(m);
    }
@@ -261,6 +269,7 @@ public class StateTransferFunctionalTest extends MultipleCacheManagersTest {
 
    @Test (timeOut = 120000)
    public void testSTWithWritingNonTxThread(Method m) throws Exception {
+      TestCacheManagerFactory.backgroundTestStarted(this);
       testCount++;
       logTestStart(m);
       writingThreadTest(false);
@@ -269,6 +278,7 @@ public class StateTransferFunctionalTest extends MultipleCacheManagersTest {
 
    @Test (timeOut = 120000)
    public void testSTWithWritingTxThread(Method m) throws Exception {
+      TestCacheManagerFactory.backgroundTestStarted(this);
       testCount++;
       logTestStart(m);
       writingThreadTest(true);
@@ -353,6 +363,10 @@ public class StateTransferFunctionalTest extends MultipleCacheManagersTest {
       c.put(A_B_AGE, TWENTY);
       c.put(A_C_NAME, BOB);
       c.put(A_C_AGE, FORTY);
+      assertEquals(c.get(A_B_NAME), JOE);
+      assertEquals(c.get(A_B_AGE), TWENTY);
+      assertEquals(c.get(A_C_NAME), BOB);
+      assertEquals(c.get(A_C_AGE), FORTY);
    }
 
    private void writingThreadTest(boolean tx) throws InterruptedException {
@@ -441,9 +455,7 @@ public class StateTransferFunctionalTest extends MultipleCacheManagersTest {
 
       void verifyStateTransfer(Cache cache) {
          if (isStateTransferred())
-            StateTransferFunctionalTest.this.verifyInitialData(cache);
+            verifyInitialData(cache);
       }
-
    }
-
 }

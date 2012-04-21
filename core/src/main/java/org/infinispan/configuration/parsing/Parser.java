@@ -348,7 +348,7 @@ public class Parser {
                builder.transaction().autoCommit(Boolean.parseBoolean(value));
                break;
             case CACHE_STOP_TIMEOUT:
-               builder.transaction().cacheStopTimeout(Integer.valueOf(value));
+               builder.transaction().cacheStopTimeout(Long.parseLong(value));
                break;
             case EAGER_LOCK_SINGLE_NODE:
                builder.transaction().eagerLockingSingleNode(Boolean.parseBoolean(value));
@@ -477,13 +477,13 @@ public class Parser {
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case CONCURRENCY_LEVEL:
-               builder.locking().concurrencyLevel(Integer.valueOf(value));
+               builder.locking().concurrencyLevel(Integer.parseInt(value));
                break;
             case ISOLATION_LEVEL:
                builder.locking().isolationLevel(IsolationLevel.valueOf(value));
                break;
             case LOCK_ACQUISITION_TIMEOUT:
-               builder.locking().lockAcquisitionTimeout(Long.valueOf(value));
+               builder.locking().lockAcquisitionTimeout(Long.parseLong(value));
                break;
             case USE_LOCK_STRIPING:
                builder.locking().useLockStriping(Boolean.parseBoolean(value));
@@ -632,7 +632,7 @@ public class Parser {
                   loaderBuilder.singletonStore().disable();
                break;
             case PUSH_STATE_TIMEOUT:
-               loaderBuilder.singletonStore().pushStateTimeout(Long.valueOf(value));
+               loaderBuilder.singletonStore().pushStateTimeout(Long.parseLong(value));
                break;
             case PUSH_STATE_WHEN_COORDINATOR:
                loaderBuilder.singletonStore().pushStateWhenCoordinator(Boolean.parseBoolean(value));
@@ -658,16 +658,16 @@ public class Parser {
                   loaderBuilder.async().disable();
                break;
             case FLUSH_LOCK_TIMEOUT:
-               loaderBuilder.async().flushLockTimeout(Long.valueOf(value));
+               loaderBuilder.async().flushLockTimeout(Long.parseLong(value));
                break;
             case MODIFICTION_QUEUE_SIZE:
-               loaderBuilder.async().modificationQueueSize(Integer.valueOf(value));
+               loaderBuilder.async().modificationQueueSize(Integer.parseInt(value));
                break;
             case SHUTDOWN_TIMEOUT:
-               loaderBuilder.async().shutdownTimeout(Long.valueOf(value));
+               loaderBuilder.async().shutdownTimeout(Long.parseLong(value));
                break;
             case THREAD_POOL_SIZE:
-               loaderBuilder.async().threadPoolSize(Integer.valueOf(value));
+               loaderBuilder.async().threadPoolSize(Integer.parseInt(value));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -764,10 +764,10 @@ public class Parser {
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case LIFESPAN:
-               builder.expiration().lifespan(Long.valueOf(value));
+               builder.expiration().lifespan(Long.parseLong(value));
                break;
             case MAX_IDLE:
-               builder.expiration().maxIdle(Long.valueOf(value));
+               builder.expiration().maxIdle(Long.parseLong(value));
                break;
             case REAPER_ENABLED:
                if (Boolean.parseBoolean(value))
@@ -776,7 +776,7 @@ public class Parser {
                   builder.expiration().disableReaper();
                break;
             case WAKE_UP_INTERVAL:
-               builder.expiration().wakeUpInterval(Long.valueOf(value));
+               builder.expiration().wakeUpInterval(Long.parseLong(value));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -794,7 +794,7 @@ public class Parser {
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case MAX_ENTRIES:
-               builder.eviction().maxEntries(Integer.valueOf(value));
+               builder.eviction().maxEntries(Integer.parseInt(value));
                break;
             case STRATEGY:
                builder.eviction().strategy(EvictionStrategy.valueOf(value));
@@ -830,7 +830,7 @@ public class Parser {
                   builder.deadlockDetection().disable();
                break;
             case SPIN_DURATION:
-               builder.deadlockDetection().spinDuration(Long.valueOf(value).intValue());
+               builder.deadlockDetection().spinDuration(Long.parseLong(value));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -902,7 +902,7 @@ public class Parser {
                interceptorBuilder.interceptor(Util.<CommandInterceptor>getInstance(value, cl));
                break;
             case INDEX:
-               interceptorBuilder.index(Integer.valueOf(value));
+               interceptorBuilder.index(Integer.parseInt(value));
                break;
             case POSITION:
                interceptorBuilder.position(Position.valueOf(value.toUpperCase()));
@@ -1013,7 +1013,7 @@ public class Parser {
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case REPL_TIMEOUT:
-               builder.clustering().sync().replTimeout(Long.valueOf(value));
+               builder.clustering().sync().replTimeout(Long.parseLong(value));
                break;
            
             default:
@@ -1031,12 +1031,12 @@ public class Parser {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
          String value = replaceSystemProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
+         log.stateRetrievalConfigurationDeprecated();
          switch (attribute) {
             case ALWAYS_PROVIDE_IN_MEMORY_STATE:
                log.alwaysProvideInMemoryStateDeprecated();
                break;
             case FETCH_IN_MEMORY_STATE:
-               log.stateRetrievalConfigurationDeprecaced();
                builder.clustering().stateTransfer().fetchInMemoryState(Boolean.parseBoolean(value));
                break;
             case INITIAL_RETRY_WAIT_TIME:
@@ -1055,8 +1055,7 @@ public class Parser {
                log.retryWaitTimeIncreaseFactorDeprecated();
                break;
             case TIMEOUT:
-               log.stateRetrievalConfigurationDeprecaced();
-               builder.clustering().stateTransfer().timeout(Long.valueOf(value));
+               builder.clustering().stateTransfer().timeout(Long.parseLong(value));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -1078,10 +1077,10 @@ public class Parser {
                builder.clustering().stateTransfer().fetchInMemoryState(Boolean.parseBoolean(value));
                break;
             case TIMEOUT:
-               builder.clustering().stateTransfer().timeout(Long.valueOf(value).longValue());
+               builder.clustering().stateTransfer().timeout(Long.parseLong(value));
                break;
             case CHUNK_SIZE:
-               builder.clustering().stateTransfer().chunkSize(Integer.valueOf(value).intValue());
+               builder.clustering().stateTransfer().chunkSize(Integer.parseInt(value));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -1106,10 +1105,13 @@ public class Parser {
                   builder.clustering().l1().disable();
                break;
             case INVALIDATION_THRESHOLD:
-               builder.clustering().l1().invalidationThreshold(Integer.valueOf(value));
+               builder.clustering().l1().invalidationThreshold(Integer.parseInt(value));
                break;
             case LIFESPAN:
-               builder.clustering().l1().lifespan(Long.valueOf(value));
+               builder.clustering().l1().lifespan(Long.parseLong(value));
+               break;
+            case INVALIDATION_CLEANUP_TASK_FREQUENCY:
+               builder.clustering().l1().cleanupTaskFrequency(Long.parseLong(value));
                break;
             case ON_REHASH:
                if (Boolean.parseBoolean(value))
@@ -1137,22 +1139,22 @@ public class Parser {
                builder.clustering().hash().consistentHash(Util.<ConsistentHash> getInstance(value, cl));
                break;
             case NUM_OWNERS:
-               builder.clustering().hash().numOwners(Integer.valueOf(value));
+               builder.clustering().hash().numOwners(Integer.parseInt(value));
                break;
             case NUM_VIRTUAL_NODES:
-               builder.clustering().hash().numVirtualNodes(Integer.valueOf(value));
+               builder.clustering().hash().numVirtualNodes(Integer.parseInt(value));
                break;
             case REHASH_ENABLED:
-               if (Boolean.parseBoolean(value))
-                  builder.clustering().hash().rehashEnabled();
-               else
-                  builder.clustering().hash().rehashDisabled();
+               log.hashRehashEnabledDeprecated();
+               builder.clustering().stateTransfer().fetchInMemoryState(Boolean.parseBoolean(value));
                break;
             case REHASH_RPC_TIMEOUT:
-               builder.clustering().hash().rehashRpcTimeout(Long.valueOf(value));
+               log.hashRehashRpcTimeoutDeprecated();
+               builder.clustering().stateTransfer().timeout(Long.parseLong(value));
                break;
             case REHASH_WAIT:
-               builder.clustering().hash().rehashWait(Long.valueOf(value));
+               log.hashRehashWaitDeprecated();
+               builder.clustering().stateTransfer().timeout(Long.parseLong(value));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -1222,10 +1224,10 @@ public class Parser {
                builder.clustering().async().replQueue(Util.<ReplicationQueue> getInstance(value, cl));
                break;
             case REPL_QUEUE_INTERVAL:
-               builder.clustering().async().replQueueInterval(Long.valueOf(value));
+               builder.clustering().async().replQueueInterval(Long.parseLong(value));
                break;
             case REPL_QUEUE_MAX_ELEMENTS:
-               builder.clustering().async().replQueueMaxElements(Integer.valueOf(value));
+               builder.clustering().async().replQueueMaxElements(Integer.parseInt(value));
                break;
             case USE_REPL_QUEUE:
                builder.clustering().async().useReplQueue(Boolean.parseBoolean(value));
@@ -1310,7 +1312,7 @@ public class Parser {
                break;
             }
             case DISTRIBUTED_SYNC_TIMEOUT: {
-               builder.transport().distributedSyncTimeout(Long.valueOf(value));
+               builder.transport().distributedSyncTimeout(Long.parseLong(value));
                break;
             }
             case MACHINE_ID: {

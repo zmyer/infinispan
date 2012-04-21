@@ -116,6 +116,18 @@ public class RpcManagerImpl implements RpcManager {
       if (configuration.isTotalOrder()) t.checkTotalOrderSupported();
    }
 
+   @ManagedAttribute(description = "Retrieves the committed view.")
+   @Metric(displayName = "Committed view", dataType = DataType.TRAIT)
+   public String getCommittedViewAsString() {
+      return cvm == null ? "N/A" : cvm.getCommittedView(configuration.getName()).toString();
+   }
+
+   @ManagedAttribute(description = "Retrieves the pending view.")
+   @Metric(displayName = "Pending view", dataType = DataType.TRAIT)
+   public String getPendingViewAsString() {
+      return cvm == null ? "N/A" : cvm.getPendingView(configuration.getName()).toString();
+   }
+
    private boolean useReplicationQueue(boolean sync) {
       return !sync && replicationQueue != null && replicationQueue.isEnabled();
    }
@@ -151,7 +163,7 @@ public class RpcManagerImpl implements RpcManager {
                   responseFilter = new IgnoreExtraResponsesValidityFilter(cacheMembers, getAddress());
                }
             }
-            Map<Address, Response> result = t.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, responseFilter, stateTransferEnabled, totalOrder);
+            Map<Address, Response> result = t.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, responseFilter, totalOrder);
             if (statisticsEnabled) replicationCount.incrementAndGet();
             return result;
          } catch (CacheException e) {

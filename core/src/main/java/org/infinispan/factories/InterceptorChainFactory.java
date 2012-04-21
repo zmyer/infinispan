@@ -33,7 +33,9 @@ import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.interceptors.locking.NonTransactionalLockingInterceptor;
 import org.infinispan.interceptors.locking.OptimisticLockingInterceptor;
 import org.infinispan.interceptors.locking.PessimisticLockingInterceptor;
+import org.infinispan.interceptors.totalorder.TotalOrderDistributionInterceptor;
 import org.infinispan.interceptors.totalorder.TotalOrderStateTransferLockInterceptor;
+import org.infinispan.interceptors.totalorder.TotalOrderVersionedDistributionInterceptor;
 import org.infinispan.interceptors.totalorder.TotalOrderVersionedEntryWrappingInterceptor;
 import org.infinispan.interceptors.totalorder.TotalOrderInterceptor;
 import org.infinispan.interceptors.totalorder.TotalOrderReplicationInterceptor;
@@ -164,7 +166,8 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
             }
          } else {
             if (configuration.getIsolationLevel() != IsolationLevel.NONE)
-               interceptorChain.appendInterceptor(createInterceptor(new NonTransactionalLockingInterceptor(), NonTransactionalLockingInterceptor.class), false);         }
+               interceptorChain.appendInterceptor(createInterceptor(new NonTransactionalLockingInterceptor(), NonTransactionalLockingInterceptor.class), false);
+         }
       }
 
       if (needsVersionAwareComponents && configuration.getCacheMode().isClustered()) {
@@ -231,7 +234,15 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
             break;
          case DIST_SYNC:
             if (needsVersionAwareComponents) {
-               interceptorChain.appendInterceptor(createInterceptor(new VersionedDistributionInterceptor(), VersionedDistributionInterceptor.class), false);
+               if (configuration.isTotalOrder()) {
+                  interceptorChain.appendInterceptor(createInterceptor(new TotalOrderVersionedDistributionInterceptor(),
+                        TotalOrderVersionedDistributionInterceptor.class), false);
+               } else {
+                  interceptorChain.appendInterceptor(createInterceptor(new VersionedDistributionInterceptor(), VersionedDistributionInterceptor.class), false);
+               }
+               break;
+            } else if (configuration.isTotalOrder()) {
+               interceptorChain.appendInterceptor(createInterceptor(new TotalOrderDistributionInterceptor(), TotalOrderDistributionInterceptor.class), false);
                break;
             }
          case DIST_ASYNC:

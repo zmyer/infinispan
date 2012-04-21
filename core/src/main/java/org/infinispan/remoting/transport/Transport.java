@@ -90,7 +90,8 @@ public interface Transport extends Lifecycle {
     * @throws Exception in the event of problems.
     */
    Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout,
-                                 boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder) throws Exception;
+                                 boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder,
+                                 boolean distribution) throws Exception;
 
    /**
     * @return true if the current Channel is the coordinator of the cluster.
@@ -151,6 +152,7 @@ public interface Transport extends Lifecycle {
    /**
     * check if the transport has configured with total order deliver properties (has the sequencer in JGroups
     * protocol stack.
+    * @param distributed
     */
-   void checkTotalOrderSupported();
+   void checkTotalOrderSupported(boolean distributed);
 }

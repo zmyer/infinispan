@@ -180,7 +180,7 @@ public class ConfigurationValidatingVisitor extends AbstractConfigurationBeanVis
          }
 
          //for now, only supports full replication
-         if (!cfg.getCacheMode().isReplicated()) {
+         if (!cfg.getCacheMode().isReplicated() && !cfg.getCacheMode().isDistributed()) {
             log.cacheModeNotSupportedByTOProtocol(cfg.getCacheModeString());
             bean.transactionProtocol(TransactionProtocol.TWO_PHASE_COMMIT);
             return;

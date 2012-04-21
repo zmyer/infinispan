@@ -879,4 +879,8 @@ public interface Log extends BasicLogger {
    @Message(value = "The cache mode %s is not supported with Passive Replication protocol. Changing to 2PC protocol",
          id = 191)
    void cacheModeNotSupportedByPRProtocol(String cacheMode);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Exception while sending the Prepare Response Command", id = 192)
+   void exceptionWhileSendingPrepareResponseCommand(@Cause Throwable t);
 }

@@ -862,7 +862,7 @@ public interface Log extends BasicLogger {
    @Message(value = "hash's 'rehashWait' attribute has been deprecated. Please use stateTransfer.timeout instead", id = 187)
    void hashRehashWaitDeprecated();
 
-   @LogMessage(level = INFO)
+   @LogMessage(level = TRACE)
    @Message(value = "The cache mode %s is not supported with Total Order protocol. Changing to 2PC protocol", id = 188)
    void cacheModeNotSupportedByTOProtocol(String cacheMode);
 
@@ -871,25 +871,12 @@ public interface Log extends BasicLogger {
    void remoteTransactionIsNull(String globalTx);
 
    @LogMessage(level = INFO)
-   @Message(value = "Starting Total Order Manager component. Using multiple threads for validation ? %s. " +
-         "Thread Pool configuration: core=%s, maximum=%s, keepAliveTime=%s", id = 190)
-   void startTotalOrderManager(String multiThread, int coreThreads, int maxThread, long keepAliveTime);
-
-   @LogMessage(level = INFO)
-   @Message(value = "Starting Total Order Manager component. Using multiple threads for validation ? %s.", id = 191)
-   void startTotalOrderManager(String multiThread);
-
-   @LogMessage(level = INFO)
    @Message(value = "Timeout while waiting for the transaction validation. The command will not be processed. " +
-         "Transaction is %s", id = 192)
+         "Transaction is %s", id = 190)
    void timeoutWaitingUntilTransactionPrepared(String globalTx);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Cannot insert jgroups sequencer", id = 193)
-   void cannotInsertJGroupsSequencer(@Cause Throwable t);
-   
    @LogMessage(level = INFO)
-   @Message(value = "The cache mode %s is not supported with Passive Replication protocol. Changing to 2PC protocol", 
-         id = 194)
+   @Message(value = "The cache mode %s is not supported with Passive Replication protocol. Changing to 2PC protocol",
+         id = 191)
    void cacheModeNotSupportedByPRProtocol(String cacheMode);
 }

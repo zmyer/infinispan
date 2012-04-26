@@ -199,6 +199,8 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
       OverrideConfigurationVisitor v2 = new OverrideConfigurationVisitor();
       overrides.accept(v2);
       v1.override(v2);
+      if (newConfig == null && overrides.newConfig != null)
+         this.newConfig = overrides.newConfig;
    }
 
    @Override
@@ -1683,6 +1685,8 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
             dolly.indexing = indexing.clone();
             dolly.indexing.setConfiguration(dolly);
          }
+         if (newConfig != null)
+            dolly.newConfig = newConfig;
          dolly.fluentConfig = new FluentConfiguration(dolly);
          return dolly;
       } catch (CloneNotSupportedException e) {
@@ -4899,6 +4903,6 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
       boolean isTransactionalWithTotalOrder = isTotalOrder() &&
             locking.getIsolationLevel() == IsolationLevel.REPEATABLE_READ && locking.isWriteSkewCheck();
 
-      return isOptimisticWithWSCheck || isTransactionalWithTotalOrder;
+      return (isOptimisticWithWSCheck || isTransactionalWithTotalOrder) && getCacheMode().isClustered();
    }
 }

@@ -138,6 +138,11 @@ public class DeltaAwareCacheEntry implements CacheEntry {
    }
 
    @Override
+   public void setChanged(boolean b) {
+      // irrelevant
+   }
+
+   @Override
    public final Object getKey() {
       return key;
    }

@@ -1,4 +1,4 @@
-package org.infinispan.totalorder;
+package org.infinispan.transaction.totalorder;
 
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.configuration.cache.Configuration;
@@ -10,10 +10,10 @@ import org.infinispan.factories.annotations.Start;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.remoting.RpcException;
+import org.infinispan.statetransfer.StateTransferInProgressException;
 import org.infinispan.transaction.LocalTransaction;
 import org.infinispan.transaction.TransactionTable;
 import org.infinispan.transaction.TxDependencyLatch;
-import org.infinispan.transaction.totalorder.TotalOrderRemoteTransaction;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -40,11 +40,11 @@ public abstract class BaseTotalOrderManager implements TotalOrderManager {
 
    protected TransactionTable transactionTable;
 
-   protected final AtomicLong validationDuration = new AtomicLong(0);
+   protected final AtomicLong processingDuration = new AtomicLong(0);
    protected final AtomicInteger numberOfTxValidated = new AtomicInteger(0);
 
    /**
-    * Map between GlobalTransaction and LocalTransaction. used to sync the threads in remote validation and the
+    * Map between GlobalTransaction and LocalTransaction. Used to sync the threads in remote validation and the
     * transaction execution thread.
     */
    private final ConcurrentMap<GlobalTransaction, LocalTransaction> localTransactionMap =
@@ -56,7 +56,6 @@ public abstract class BaseTotalOrderManager implements TotalOrderManager {
     */
    protected volatile boolean statisticsEnabled;
    private boolean isSync;
-   //private long replTimeout;
 
    @Inject
    public void inject(Configuration configuration, InvocationContextContainer invocationContextContainer,
@@ -71,7 +70,6 @@ public abstract class BaseTotalOrderManager implements TotalOrderManager {
       trace = log.isTraceEnabled();
       setStatisticsEnabled(configuration.jmxStatistics().enabled());
       isSync = configuration.clustering().cacheMode().isSynchronous();
-      //replTimeout = configuration.clustering().sync().replTimeout();
    }
 
    @Override
@@ -100,6 +98,14 @@ public abstract class BaseTotalOrderManager implements TotalOrderManager {
                log.tracef(th, "Transaction %s hasn't prepare correctly", ctx.getGlobalTransaction().prettyPrint());
             throw new RpcException(th);
          }
+      }
+   }
+
+   @Override
+   public void notifyStateTransferInProgress(GlobalTransaction globalTransaction, StateTransferInProgressException e) {
+      LocalTransaction localTransaction = localTransactionMap.get(globalTransaction);
+      if (localTransaction != null) {
+         localTransaction.addPrepareResult(e, true);
       }
    }
 
@@ -155,7 +161,7 @@ public abstract class BaseTotalOrderManager implements TotalOrderManager {
    @ManagedAttribute(description = "Average duration of a transaction validation (milliseconds)")
    @Metric(displayName = "Average Validation Duration", units = Units.MILLISECONDS, displayType = DisplayType.SUMMARY)
    public double getAverageValidationDuration() {
-      long time = validationDuration.get();
+      long time = processingDuration.get();
       int tx = numberOfTxValidated.get();
       if (tx == 0) {
          return 0;
@@ -165,7 +171,7 @@ public abstract class BaseTotalOrderManager implements TotalOrderManager {
 
    @ManagedOperation(description = "Resets the statistics")
    public void resetStatistics() {
-      validationDuration.set(0);
+      processingDuration.set(0);
       numberOfTxValidated.set(0);
    }
 
@@ -201,5 +207,11 @@ public abstract class BaseTotalOrderManager implements TotalOrderManager {
       if (localTransaction != null) {
          ctx.putLookedUpEntries(localTransaction.getLookedUpEntries());
       }
-   }  
+   }
+
+   protected final void logAndCheckContext(PrepareCommand prepareCommand, TxInvocationContext ctx) {
+      if (trace) log.tracef("Processing transaction from sequencer: %s", prepareCommand.getGlobalTransaction().prettyPrint());
+
+      if (ctx.isOriginLocal()) throw new IllegalArgumentException("Local invocation not allowed!");
+   }
 }

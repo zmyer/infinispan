@@ -73,6 +73,11 @@ public abstract class AbstractInternalCacheEntry implements InternalCacheEntry {
    }
 
    @Override
+   public final void setChanged(boolean b) {
+      // mo op
+   }
+
+   @Override
    public final boolean isNull() {
       return false;
    }

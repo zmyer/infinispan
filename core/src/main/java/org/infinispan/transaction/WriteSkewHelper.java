@@ -54,7 +54,9 @@ public class WriteSkewHelper {
       EntryVersionsMap vs = new EntryVersionsMap();
       for (WriteCommand wc : command.getModifications()) {
          for (Object k : wc.getAffectedKeys()) {
-            vs.put(k, (IncrementableEntryVersion) context.lookupEntry(k).getVersion());
+            CacheEntry cacheEntry = context.lookupEntry(k);
+            if (cacheEntry != null) //null is possible in the case the entry didn't exist
+               vs.put(k, (IncrementableEntryVersion) cacheEntry.getVersion());
          }
       }
 

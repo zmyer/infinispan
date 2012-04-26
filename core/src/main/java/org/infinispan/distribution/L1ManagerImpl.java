@@ -130,7 +130,6 @@ public class L1ManagerImpl implements L1Manager {
       }
    }
    
-   @Override
    public void addRequestor(Object key, Address origin) {
       //we do a plain get first as that's likely to be enough
       ConcurrentMap<Address, Long> as = requestors.get(key);
@@ -201,7 +200,7 @@ public class L1ManagerImpl implements L1Manager {
                return asyncTransportExecutor.submit(new Callable<Object>() {
                   @Override
                   public Object call() throws Exception {
-                     rpcManager.invokeRemotely(invalidationAddresses, rpc, ResponseMode.SYNCHRONOUS, rpcTimeout);
+                     rpcManager.invokeRemotely(invalidationAddresses, rpc, ResponseMode.SYNCHRONOUS, rpcTimeout, true, false);
                      return retval;
                   }
                });

@@ -236,19 +236,21 @@ public class CommandAwareRpcDispatcher extends RpcDispatcher {
                                            boolean totalOrder) {
       Message msg = new Message();
       msg.setBuffer(buf);
-      if (oob) msg.setFlag(Message.OOB);
+      if (oob) msg.setFlag(Message.OOB.value());
       if (oob || mode != ResponseMode.GET_NONE) {
-         msg.setFlag(Message.DONT_BUNDLE);
+         msg.setFlag(Message.DONT_BUNDLE.value());
          // This is removed since this optimisation is no longer valid.  See ISPN-1878
          // msg.setFlag(Message.NO_FC);
       }
+      if (rsvp) msg.setFlag(Message.RSVP.value());
 
       //In total order protocol, the sequencer is in the protocol stack so we need to bypass the protocol
       if(!totalOrder) {
-         msg.setFlag(Message.NO_TOTAL_ORDER);
+         msg.setFlag(Message.NO_TOTAL_ORDER.value());
       } else {
          //disable flow control -- send immediately to avoid long commit phases
-         msg.setFlag(Message.Flag.NO_FC);
+         msg.setFlag(Message.Flag.NO_FC.value());
+         msg.setFlag(Message.DONT_BUNDLE.value());
       }
 
 

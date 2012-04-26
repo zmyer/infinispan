@@ -5,14 +5,14 @@ import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.interceptors.VersionedReplicationInterceptor;
-import org.infinispan.totalorder.TotalOrderManager;
+import org.infinispan.transaction.totalorder.TotalOrderManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 import static org.infinispan.transaction.WriteSkewHelper.setVersionsSeenOnPrepareCommand;
 
 /**
- * Replication Interceptor for Total Order protocol with versioning
+ * Replication Interceptor for Total Order protocol with versioning.
  *
  * @author Pedro Ruivo
  * @author Mircea.Markus@jboss.com
@@ -37,11 +37,12 @@ public class TotalOrderVersionedReplicationInterceptor extends VersionedReplicat
       }
 
       if (log.isTraceEnabled())
-         log.tracef("Broadcasting prepare for transaction %s with total order", command.getGlobalTransaction().prettyPrint());
+         log.tracef("Broadcasting prepare for transaction %s with total order", command.getGlobalTransaction());
 
       setVersionsSeenOnPrepareCommand((VersionedPrepareCommand) command, ctx);
       //broadcast the command
-      rpcManager.broadcastRpcCommand(command, false, true);
+      boolean sync = configuration.isTransactionRecoveryEnabled();
+      rpcManager.broadcastRpcCommand(command, sync, true);
       if (shouldInvokeRemoteTxCommand(ctx)) {
          //we need to do the waiting here and not in the TotalOrderInterceptor because it is possible for the replication
          //not to take place, e.g. in the case there are no changes in the context. And this is the place where we know

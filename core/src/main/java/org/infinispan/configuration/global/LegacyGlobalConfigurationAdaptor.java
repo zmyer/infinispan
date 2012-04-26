@@ -76,6 +76,8 @@ public class LegacyGlobalConfigurationAdaptor {
 
       legacy.serialization().classResolver(config.serialization().classResolver());
       
+      legacy.serialization().classResolver(config.serialization().classResolver());
+      
       legacy.asyncTransportExecutor()
          .factory(config.asyncTransportExecutor().factory().getClass())
          .withProperties(config.asyncTransportExecutor().properties());
@@ -162,7 +164,7 @@ public class LegacyGlobalConfigurationAdaptor {
       builder.shutdown().hookBehavior(ShutdownHookBehavior.valueOf(legacy.getShutdownHookBehavior().name()));
       
       builder.totalOrderExecutor()
-            .factory(Util.<ExecutorFactory>getInstance(legacy.getTotalOrderExecutorFactorClass(), legacy.getClassLoader()))
+            .factory(Util.<ExecutorFactory>getInstance(legacy.getTotalOrderExecutorFactoryClass(), legacy.getClassLoader()))
             .withProperties(legacy.getTotalOrderExecutorProperties());
 
       return builder.build();

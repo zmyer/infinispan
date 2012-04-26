@@ -103,11 +103,11 @@ public final class MockTransport implements Transport {
    }
 
    @Override
-   public void checkTotalOrderSupported() {
+   public boolean isMulticastCapable() {
+      return false;
    }
 
    @Override
-   public boolean isMulticastCapable() {
-      return false;
+   public void checkTotalOrderSupported() {
    }
 }

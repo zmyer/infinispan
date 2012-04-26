@@ -55,7 +55,6 @@ import org.jgroups.View;
 import org.jgroups.blocks.RspFilter;
 import org.jgroups.jmx.JmxConfigurator;
 import org.jgroups.protocols.SEQUENCER;
-import org.jgroups.protocols.pbcast.GMS;
 import org.jgroups.stack.AddressGenerator;
 import org.jgroups.stack.ProtocolStack;
 import org.jgroups.util.Rsp;
@@ -469,7 +468,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       List<org.jgroups.Address> jgAddressList = toJGroupsAddressListExcludingSelf(recipients);
       int membersSize = members.size();
       boolean broadcast = jgAddressList == null || recipients.size() == membersSize;
-      if (membersSize < 3 || (jgAddressList != null && jgAddressList.size() < 2)) broadcast = false;
+      if (!totalOrder && (membersSize < 3 || (jgAddressList != null && jgAddressList.size() < 2))) broadcast = false;
       RspList<Object> rsps = null;
       Response singleResponse = null;
       org.jgroups.Address singleJGAddress = null;
@@ -692,7 +691,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
    public final void checkTotalOrderSupported() {
       if (channel.getProtocolStack().findProtocol(SEQUENCER.class) == null)  {
          throw new ConfigurationException("In order to support total order based transaction, the SEQUENCER protocol " +
-                                                "must be present in the jgorup's config.");
+                                                "must be present in the JGroups' config.");
       }
    }
 }

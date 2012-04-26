@@ -34,6 +34,7 @@ import org.testng.annotations.Test;
 import javax.transaction.RollbackException;
 import javax.transaction.Transaction;
 
+import static org.testng.AssertJUnit.assertEquals;
 @Test(testName = "container.versioning.ReplWriteSkewTest", groups = "functional")
 @CleanupAfterMethod
 public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
@@ -54,6 +55,8 @@ public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
 
       // Auto-commit is true
       cache0.put("hello", "world 1");
+      assertEquals(cache0.get("hello"), "world 1");
+      assertEventuallyEquals(1, "hello", "world 1");
 
       tm(0).begin();
       assert "world 1".equals(cache0.get("hello"));
@@ -77,6 +80,8 @@ public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
 
       assert "world 3".equals(cache0.get("hello"));
       assert "world 3".equals(cache1.get("hello"));
+
+      assertNoTransactions();
    }
 
    public void testWriteSkewMultiEntries() throws Exception {
@@ -117,26 +122,30 @@ public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
       assert cache0.get("hello2").equals("world 1");
       assert cache1.get("hello").equals("world 3");
       assert cache1.get("hello2").equals("world 1");
+
+      assertNoTransactions();
    }
 
    public void testNullEntries() throws Exception {
-      Cache<Object, Object> cache0 = cache(0);
-      Cache<Object, Object> cache1 = cache(1);
 
       // Auto-commit is true
-      cache0.put("hello", "world");
+      cache(0).put("hello", "world");
+
+      assertEquals(cache(0).get("hello"), "world");
+      assertEventuallyEquals(1, "hello", "world");
+
 
       tm(0).begin();
-      assert "world".equals(cache0.get("hello"));
+      assert "world".equals(cache(0).get("hello"));
       Transaction t = tm(0).suspend();
 
-      cache1.remove("hello");
+      cache(1).remove("hello");
 
-      assert null == cache0.get("hello");
-      assert null == cache1.get("hello");
+      assertEventuallyEquals(0, "hello", null);
+      assertEquals(cache(0).get("hello"), null);
 
       tm(0).resume(t);
-      cache0.put("hello", "world2");
+      cache(0).put("hello", "world2");
 
       try {
          tm(0).commit();
@@ -145,10 +154,17 @@ public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
          // expected
       }
 
-      assert null == cache0.get("hello");
-      assert null == cache1.get("hello");
+      assert null == cache(0).get("hello");
+      assert null == cache(1).get("hello");
+
+      log.tracef("Local tx for cache %s are ", 0, transactionTable(0).getLocalTransactions());
+      log.tracef("Remote tx for cache %s are ", 0, transactionTable(0).getRemoteTransactions());
+      log.tracef("Local tx for cache %s are ", 1, transactionTable(1).getLocalTransactions());
+      log.tracef("Remote tx for cache %s are ", 0, transactionTable(1).getRemoteTransactions());
+
+      assertNoTransactions();
    }
-   
+
    public void testResendPrepare() throws Exception {
       Cache<Object, Object> cache0 = cache(0);
       Cache<Object, Object> cache1 = cache(1);
@@ -159,6 +175,9 @@ public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
       // create a write skew
       tm(0).begin();
       assert "world".equals(cache0.get("hello"));
+      assertEventuallyEquals(1, "hello", "world");
+
+
       Transaction t = tm(0).suspend();
       // Set up cache-1 to force the prepare to retry
       cache(1).getAdvancedCache().addInterceptorAfter(new CommandInterceptor() {
@@ -167,6 +186,7 @@ public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
          public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand c) throws Throwable {
             if (!used) {
                used = true;
+               log.trace("Force resend of prepare!");
                return CommitCommand.RESEND_PREPARE;
             } else {
                return invokeNextInterceptor(ctx, c);
@@ -179,10 +199,10 @@ public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
       }, InvocationContextInterceptor.class);
 
       // Implicit tx.  Prepare should be retried.
-      cache(0).put("hello", "world2");      
+      cache(0).put("hello", "world2");
 
       assert "world2".equals(cache0.get("hello"));
-      assert "world2".equals(cache1.get("hello"));
+      assertEventuallyEquals(1, "hello", "world2");
 
       tm(0).resume(t);
       cache0.put("hello", "world3");
@@ -199,11 +219,14 @@ public class ReplWriteSkewTest extends AbstractClusteredWriteSkewTest {
 
       assert "world2".equals(cache0.get("hello"));
       assert "world2".equals(cache1.get("hello"));
+
+      assertNoTransactions();
    }
 
    public void testLocalOnlyPut() {
       localOnlyPut(this.<Integer, String>cache(0), 1, "v1");
       localOnlyPut(this.<Integer, String>cache(1), 2, "v2");
+      assertNoTransactions();
    }
 
    private void localOnlyPut(Cache<Integer, String> cache, Integer k, String v) {

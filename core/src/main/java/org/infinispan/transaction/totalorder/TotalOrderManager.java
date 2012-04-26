@@ -1,9 +1,10 @@
-package org.infinispan.totalorder;
+package org.infinispan.transaction.totalorder;
 
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.container.versioning.EntryVersionsMap;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.statetransfer.StateTransferInProgressException;
 import org.infinispan.transaction.LocalTransaction;
 import org.infinispan.transaction.totalorder.TotalOrderRemoteTransaction;
 import org.infinispan.transaction.xa.GlobalTransaction;
@@ -19,10 +20,9 @@ import org.infinispan.transaction.xa.GlobalTransaction;
 public interface TotalOrderManager {
 
    /**
-    * Put the transaction in the validation queue for further validation. Transactions can be validated in parallel if
-    * it is possible.
+    * Processes the transaction as received from the sequencer.
     */
-   void validateTransaction(PrepareCommand prepareCommand, TxInvocationContext ctx, CommandInterceptor invoker);
+   void processTransactionFromSequencer(PrepareCommand prepareCommand, TxInvocationContext ctx, CommandInterceptor invoker);
 
    /**
     * This will mark a global transaction as finished. It will be invoked in the processing of the commit command in
@@ -53,4 +53,6 @@ public interface TotalOrderManager {
    void addLocalTransaction(GlobalTransaction globalTransaction, LocalTransaction localTransaction);
 
    void waitForPrepareToSucceed(TxInvocationContext context);
+
+   void notifyStateTransferInProgress(GlobalTransaction globalTransaction, StateTransferInProgressException e);
 }

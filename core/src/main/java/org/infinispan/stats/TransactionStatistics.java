@@ -3,6 +3,8 @@ package org.infinispan.stats;
 import org.infinispan.stats.translations.ExposedStatistics;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.stats.translations.LocalRemoteStatistics;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 import java.util.HashMap;
 
@@ -11,7 +13,8 @@ import java.util.HashMap;
  * User: Davide
  * Date: 20-apr-2011
  * Time: 16.48.47
- * To change this template use File | Settings | File Templates.
+ * @author Pedro Ruivo
+ * @since 5.2
  */
 public abstract class TransactionStatistics implements InfinispanStat {
 
@@ -25,10 +28,9 @@ public abstract class TransactionStatistics implements InfinispanStat {
    private HashMap<Object, Long> takenLocks = new HashMap<Object, Long>();
    protected final static int NON_COMMON_STAT = -1;
 
-
    protected StatisticsContainer statisticsContainer;
 
-   private static org.apache.log4j.Logger log = org.apache.log4j.Logger.getLogger(TransactionStatistics.class);
+   private final Log log = LogFactory.getLog(getClass());
 
 
    public TransactionStatistics() {
@@ -67,21 +69,20 @@ public abstract class TransactionStatistics implements InfinispanStat {
    protected abstract int getIndex(IspnStats param);
 
    public void addValue(IspnStats param, double value){
-
       try{
          int index = this.getIndex(param);
          this.statisticsContainer.addValue(index,value);
-      }
-      catch(NoIspnStatException nise){
+         log.tracef("Add %s to %s", value, param);
+      } catch(NoIspnStatException nise){
          nise.printStackTrace();
       }
-
-
    }
 
    public long getValue(IspnStats param){
       int index = this.getIndex(param);
-      return this.statisticsContainer.getValue(index);
+      long value = this.statisticsContainer.getValue(index);
+      log.tracef("Value of %s is %s", param, value);
+      return value;
    }
 
    public void incrementValue(IspnStats param){
@@ -90,11 +91,10 @@ public abstract class TransactionStatistics implements InfinispanStat {
 
    protected abstract void onPrepareCommand();
 
-
-
    //TODO I have to do this separated for local and remote!!
 
    public void terminateTransaction() {
+      log.tracef("Terminating transaction. Is read only? %s. Is commit? %s", isReadOnly, isCommit);
       long now = System.nanoTime();
       double execTime = now - this.initTime;
       if(this.isReadOnly){
@@ -106,8 +106,7 @@ public abstract class TransactionStatistics implements InfinispanStat {
             this.incrementValue(IspnStats.NUM_ABORTED_RO_TX);
             this.addValue(IspnStats.RO_TX_ABORTED_EXECUTION_TIME,execTime);
          }
-      }
-      else{
+      } else{
          if(isCommit){
             this.incrementValue(IspnStats.NUM_COMMITTED_WR_TX);
             this.addValue(IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME,execTime);
@@ -139,7 +138,6 @@ public abstract class TransactionStatistics implements InfinispanStat {
    public void flush(TransactionStatistics ts){
       this.statisticsContainer.mergeTo(ts.statisticsContainer);
    }
-
 
    protected int getCommonIndex(IspnStats stat){
       switch (stat){

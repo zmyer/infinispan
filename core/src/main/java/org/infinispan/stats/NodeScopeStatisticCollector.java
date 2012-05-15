@@ -77,6 +77,8 @@ public class NodeScopeStatisticCollector {
    }
 
    //TODO double check sul synchronized e inserire il controllo anti-divisione per zero
+   //TODO check the time units
+   //TODO check the percentage stuff
    public synchronized Object getAttribute(IspnStats param) throws NoIspnStatException{
       switch (param){
          case LOCAL_EXEC_NO_CONT:{
@@ -177,14 +179,14 @@ public class NodeScopeStatisticCollector {
             long remoteCommittedTx = remoteTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) + remoteTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
             long remoteAbortedTx = remoteTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX) + remoteTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
             long totalBornTx = localAbortedTx + localCommittedTx + remoteAbortedTx + remoteCommittedTx;
-            return new Long(totalBornTx / (System.nanoTime() - this.lastResetTime));
+            return new Long((long) (totalBornTx / convertNanosToSeconds(System.nanoTime() - this.lastResetTime)));
          }
          case TX_WRITE_PERCENTAGE:{     //computed on the locally born txs
             long readTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) + localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX);
             long writeTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) + localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
             long total = readTx + writeTx;
             if(total!=0)
-               return new Long(writeTx / total);
+               return new Long(writeTx * 100 / total);
             return new Long(0);
          }
          case SUCCESSFUL_WRITE_PERCENTAGE:{ //computed on the locally born txs
@@ -192,7 +194,7 @@ public class NodeScopeStatisticCollector {
             long writeSuxTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
             long total = readSuxTx + writeSuxTx;
             if(total!=0){
-               return new Long(writeSuxTx /  total);
+               return new Long(writeSuxTx * 100/  total);
             }
             return new Long(0);
          }
@@ -213,7 +215,11 @@ public class NodeScopeStatisticCollector {
       }
    }
 
+   private static double convertNanosToMillis(long nanos) {
+      return nanos / 1000000.0;
+   }
 
-
-
+   private static double convertNanosToSeconds(long nanos) {
+      return nanos / 1000000000.0; 
+   }
 }

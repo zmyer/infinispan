@@ -75,7 +75,7 @@ public class TransactionsStatisticsRegistry {
    }
 
    public static Object getAttribute(ExposedStatistics.IspnStats param){
-      log.warn("Going to invoke getAttrbibute with parameter "+param);
+      log.warn("Going to invoke getAttribute with parameter "+param);
       return transactionalClassesStatsMap.get(ExposedStatistics.TransactionalClasses.DEFAULT_CLASS).getAttribute(param);
    }
 

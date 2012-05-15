@@ -1,22 +1,19 @@
 package org.infinispan.stats;
 
-import java.util.HashMap;
-import java.util.logging.Logger;
-
-import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.stats.translations.ExposedStatistics;
+import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.stats.translations.LocalRemoteStatistics;
+
+import java.util.HashMap;
 
 
 /**
- * Created by IntelliJ IDEA.
  * User: Davide
  * Date: 20-apr-2011
  * Time: 16.48.47
  * To change this template use File | Settings | File Templates.
  */
 public abstract class TransactionStatistics implements InfinispanStat {
-
 
    /*
    Here the elements which are common for local and remote transactions
@@ -48,6 +45,10 @@ public abstract class TransactionStatistics implements InfinispanStat {
 
    public boolean isCommit(){
       return this.isCommit;
+   }
+
+   public void setCommit(boolean commit) {
+      isCommit = commit;
    }
 
    public boolean isReadOnly(){
@@ -93,16 +94,11 @@ public abstract class TransactionStatistics implements InfinispanStat {
 
    //TODO I have to do this separated for local and remote!!
 
-   public void terminateTransaction(boolean commit) {
-
-
-
-      this.isCommit = commit;
-
+   public void terminateTransaction() {
       long now = System.nanoTime();
       double execTime = now - this.initTime;
       if(this.isReadOnly){
-         if(commit){
+         if(isCommit){
             this.incrementValue(IspnStats.NUM_COMMITTED_RO_TX);
             this.addValue(IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME,execTime);
          }
@@ -112,7 +108,7 @@ public abstract class TransactionStatistics implements InfinispanStat {
          }
       }
       else{
-         if(commit){
+         if(isCommit){
             this.incrementValue(IspnStats.NUM_COMMITTED_WR_TX);
             this.addValue(IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME,execTime);
             long numPuts = this.getValue(IspnStats.NUM_PUTS);
@@ -131,7 +127,6 @@ public abstract class TransactionStatistics implements InfinispanStat {
       this.addValue(IspnStats.LOCK_HOLD_TIME,cumulativeLockHoldTime);
 
       this.dump();
-
    }
 
    private long computeCumulativeLockHoldTime(int numLocks,long currentTime){
@@ -198,18 +193,10 @@ public abstract class TransactionStatistics implements InfinispanStat {
             return LocalRemoteStatistics.RO_TX_SUCCESSFUL_EXECUTION_TIME;
       }
       return NON_COMMON_STAT;
-
    }
-
-
 
    public void dump(){
       this.statisticsContainer.dump();
    }
-
-
-
-
-
 }
 

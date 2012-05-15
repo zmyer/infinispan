@@ -11,6 +11,7 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
+import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.base.BaseCustomInterceptor;
 import org.infinispan.jmx.annotations.MBean;
@@ -22,6 +23,7 @@ import org.infinispan.remoting.transport.jgroups.CommandAwareRpcDispatcher;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.stats.TransactionsStatisticsRegistry;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
+import org.infinispan.transaction.TransactionTable;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.rhq.helpers.pluginAnnotations.agent.Metric;
 
@@ -31,6 +33,7 @@ import java.lang.reflect.Field;
  * Massive hack for a noble cause!
  *
  * @author Mircea Markus <mircea.markus@jboss.com> (C) 2011 Red Hat Inc.
+ * @author Pedro Ruivo
  * @since 5.2
  */
 @MBean(objectName = "ExtendedStatistics", description = "Component that manages and exposes extended statistics relevant to transactions.")
@@ -38,11 +41,18 @@ import java.lang.reflect.Field;
 public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    private org.apache.log4j.Logger log = Logger.getLogger("org.infinispan.interceptors");
+   
+   private TransactionTable transactionTable;
+   
+   @Inject
+   public void inject(TransactionTable transactionTable) {
+      this.transactionTable = transactionTable;
+   }
 
    @Start
    public void start(){
       replace();
-      log.warn("Initing the TransactionStatisticsRegistry");
+      log.warn("Initializing the TransactionStatisticsRegistry");
       TransactionsStatisticsRegistry.init();
    }
 
@@ -102,7 +112,10 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       Object ret = invokeNextInterceptor(ctx,command);
       TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_COMMIT_COMMAND);
       TransactionsStatisticsRegistry.addValue(IspnStats.COMMIT_EXECUTION_TIME, System.nanoTime() - currTime);
-      TransactionsStatisticsRegistry.terminateTransaction(true, ctx);
+      TransactionsStatisticsRegistry.setTransactionOutcome(true);
+      if (ctx.isOriginLocal()) {
+         TransactionsStatisticsRegistry.terminateTransaction();
+      }
       return ret;
    }
 
@@ -123,7 +136,10 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       long initRollbackTime = System.nanoTime();
       Object ret = invokeNextInterceptor(ctx,command);
       TransactionsStatisticsRegistry.addValue(IspnStats.ROLLBACK_EXECUTION_TIME, System.nanoTime() - initRollbackTime);
-      TransactionsStatisticsRegistry.terminateTransaction(false, ctx);
+      TransactionsStatisticsRegistry.setTransactionOutcome(false);
+      if (ctx.isOriginLocal()) {
+         TransactionsStatisticsRegistry.terminateTransaction();
+      }
       return ret;
    }
 
@@ -147,10 +163,9 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    private void replaceFieldInTransport(ComponentRegistry componentRegistry, InboundInvocationHandlerWrapper invocationHandlerWrapper) {
       JGroupsTransport t = (JGroupsTransport) componentRegistry.getComponent(Transport.class);
-      CommandAwareRpcDispatcher card = t.getCommandAwareRpcDispatcher();
-      Field f = null;
+      CommandAwareRpcDispatcher card = t.getCommandAwareRpcDispatcher();      
       try {
-         f = card.getClass().getDeclaredField("inboundInvocationHandler");
+         Field f = card.getClass().getDeclaredField("inboundInvocationHandler");
          f.setAccessible(true);
          f.set(card, invocationHandlerWrapper);
       } catch (NoSuchFieldException e) {
@@ -162,7 +177,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    private InboundInvocationHandlerWrapper rewireInvocationHandler(GlobalComponentRegistry globalComponentRegistry) {
       InboundInvocationHandler inboundHandler = globalComponentRegistry.getComponent(InboundInvocationHandler.class);
-      InboundInvocationHandlerWrapper invocationHandlerWrapper = new InboundInvocationHandlerWrapper(inboundHandler);
+      InboundInvocationHandlerWrapper invocationHandlerWrapper = new InboundInvocationHandlerWrapper(inboundHandler, 
+                                                                                                     transactionTable);
       globalComponentRegistry.registerComponent(invocationHandlerWrapper, InboundInvocationHandler.class);
       return invocationHandlerWrapper;
    }

@@ -2,10 +2,13 @@ package org.infinispan.stats;
 
 import org.apache.log4j.Logger;
 import org.infinispan.context.impl.TxInvocationContext;
-import java.util.HashMap;
-import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.stats.translations.ExposedStatistics;
-import org.w3c.dom.Node;
+import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
+import org.infinispan.transaction.xa.GlobalTransaction;
+
+import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Author: Diego Didona
@@ -23,8 +26,10 @@ public class TransactionsStatisticsRegistry {
    public static int REMOTE_PARAM = 1;
    public static int GLOBAL_PARAM = 2;
 
-   public static void init(){
+   private static final ConcurrentMap<GlobalTransaction, RemoteTransactionStatistics> remoteTransactionStatistics =
+         new ConcurrentHashMap<GlobalTransaction, RemoteTransactionStatistics>();
 
+   public static void init(){
       transactionalClassesStatsMap.put(ExposedStatistics.TransactionalClasses.DEFAULT_CLASS, new NodeScopeStatisticCollector());
       log.debug("Initializing transactionalClassesMap");
    }
@@ -53,17 +58,20 @@ public class TransactionsStatisticsRegistry {
       txs.onPrepareCommand();
    }
 
-   public static void terminateTransaction(boolean commit, TxInvocationContext tctx) {
+   public static void setTransactionOutcome(boolean commit) {
+      TransactionStatistics txs = thread.get();
+      txs.setCommit(commit);
+   }
 
+   public static void terminateTransaction() {
       log.fatal("TERMINATING_TRANSACTION");
       TransactionStatistics txs = thread.get();
-      txs.terminateTransaction(commit);
+      txs.terminateTransaction();
 
       NodeScopeStatisticCollector dest = transactionalClassesStatsMap.get(txs.getTransactionalClass());
       dest.merge(txs);
 
       thread.remove();
-
    }
 
    public static Object getAttribute(ExposedStatistics.IspnStats param){
@@ -87,27 +95,36 @@ public class TransactionsStatisticsRegistry {
    public static void initTransactionIfNecessary(TxInvocationContext tctx) {
       boolean isLocal = tctx.isOriginLocal();
       if(isLocal)
-         initTransaction(isLocal);
+         initLocalTransaction();
 
    }
 
-   public static void initRemoteTransaction(){
-      initTransaction(false);
-   }
-
-
-   private static void initTransaction(boolean isLocal){
-       //Not overriding the InitialValue method leads me to have "null" at the first invocation of get()
+   private static void initLocalTransaction(){
+      //Not overriding the InitialValue method leads me to have "null" at the first invocation of get()
       if (thread.get() == null) {
          log.fatal("THREAD.GET==NULL!!!!");
-         if (isLocal) {
-            thread.set(new LocalTransactionStatistics());
-         } else {
-            thread.set(new RemoteTransactionStatistics());
-         }
-      }
-      else
+         thread.set(new LocalTransactionStatistics());
+      } else {
          log.fatal("THREAD.GET!=NULL!!!!");
+      }
+   }
+
+   public static void attachRemoteTransactionStatistic(GlobalTransaction globalTransaction) {
+      RemoteTransactionStatistics rts = remoteTransactionStatistics.get(globalTransaction);
+      if (rts == null) {
+         rts = new RemoteTransactionStatistics();
+         remoteTransactionStatistics.put(globalTransaction, rts);
+      }
+      thread.set(rts);
+   }
+
+   public static void detachRemoteTransactionStatistic(GlobalTransaction globalTransaction, boolean finished) {
+      if (finished) {
+         terminateTransaction();
+         remoteTransactionStatistics.remove(globalTransaction);
+      } else {
+         thread.remove();
+      }
    }
 
    public static void reset(){

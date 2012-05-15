@@ -2,7 +2,6 @@ package org.infinispan.stats;
 
 import org.infinispan.stats.percentiles.PercentileStats;
 import org.infinispan.stats.percentiles.PercentileStatsFactory;
-
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 
 
@@ -23,9 +22,7 @@ public class NodeScopeStatisticCollector {
    private PercentileStats remoteTransactionRoExecutionTime;
 
 
-   private long lastResetTime;
-
-   private static org.apache.log4j.Logger log = org.apache.log4j.Logger.getLogger(NodeScopeStatisticCollector.class);
+   private long lastResetTime = System.nanoTime();
 
    synchronized void reset(){
 
@@ -83,6 +80,7 @@ public class NodeScopeStatisticCollector {
    public synchronized Object getAttribute(IspnStats param) throws NoIspnStatException{
       switch (param){
          case LOCAL_EXEC_NO_CONT:{
+            //TODO you have to compute this when you flush the transaction (for Diego)
             long numLocalTxToPrepare = localTransactionStatistics.getValue(IspnStats.NUM_PREPARES);
             if(numLocalTxToPrepare!=0){
                long localExec = localTransactionStatistics.getValue(IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
@@ -183,7 +181,7 @@ public class NodeScopeStatisticCollector {
          }
          case TX_WRITE_PERCENTAGE:{     //computed on the locally born txs
             long readTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) + localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX);
-            long writeTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) + localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
+            long writeTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) + localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
             long total = readTx + writeTx;
             if(total!=0)
                return new Long(writeTx / total);

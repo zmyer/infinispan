@@ -4,6 +4,7 @@ import org.infinispan.config.Configuration;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.stats.topK.StreamLibContainer;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.stats.TransactionStatistics;
 import org.infinispan.stats.TransactionsStatisticsRegistry;
@@ -117,17 +118,17 @@ public class LockManagerWrapper implements LockManager {
 
       long lockingTime = 0;
       boolean locked = false,
-              experiecedContention = false,
+              experiencedContention = false,
               txScope = false;
 
       if(txScope = ctx.isInTxScope()){
-         experiecedContention = this.updateContentionStats(key,(TxInvocationContext)ctx);
+         experiencedContention = this.updateContentionStats(key,(TxInvocationContext)ctx);
          lockingTime = System.nanoTime();
       }
 
       locked = actual.acquireLock(ctx, key);
 
-      if(txScope && experiecedContention){
+      if(txScope && experiencedContention){
          lockingTime = System.nanoTime() - lockingTime;
          TransactionsStatisticsRegistry.addValue(IspnStats.LOCK_WAITING_TIME,lockingTime);
          TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_WAITED_FOR_LOCKS);
@@ -135,6 +136,8 @@ public class LockManagerWrapper implements LockManager {
       if(locked){
          TransactionsStatisticsRegistry.addTakenLock(key); //Idempotent
       }
+
+      StreamLibContainer.getInstance().addLockInformation(key, experiencedContention, !locked);
       return locked;
    }
 

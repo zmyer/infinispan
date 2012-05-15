@@ -39,9 +39,6 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    private org.apache.log4j.Logger log = Logger.getLogger("org.infinispan.interceptors");
 
-
-
-
    @Start
    public void start(){
       replace();
@@ -209,9 +206,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    @ManagedAttribute(description = "Average Rtt duration")
    @Metric(displayName = "Rtt")
    public long getRtt() {
-      long ret = (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT)));
-      log.warn("Sto ritornando con successo il valore "+ret);
-      return ret;
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT)));
    }
 
    @ManagedAttribute(description = "Application Contention Factor")
@@ -232,37 +227,67 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REPLAY_TIME) ;
    }
 
+   @ManagedAttribute(description = "Local execution time of a transaction without the time waiting for lock acquisition")
+   @Metric(displayName = "Local Execution Time Without Locking Time")
+   public long getLocalExecutionTimeWithoutLock(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_EXEC_NO_CONT);
+   }
 
+   @ManagedAttribute(description = "Average lock holding time")
+   @Metric(displayName = "Average Lock Holding Time")
+   public long getAvgLockHoldTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_HOLD_TIME);
+   }
+
+   @ManagedAttribute(description = "Average commit duration time (2nd phase only)")
+   @Metric(displayName = "Average Commit Time")
+   public long getAvgCommitTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.COMMIT_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average rollback duration time (2nd phase only)")
+   @Metric(displayName = "Average Rollback Time")
+   public long getAvgRollbackTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.ROLLBACK_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average Prepare Command size")
+   @Metric(displayName = "Average Prepare Command size")
+   public long getAvgPrepareCommandSize(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.PREPARE_COMMAND_SIZE);
+   }
+
+   @ManagedAttribute(description = "Average time waiting for the lock acquisition")
+   @Metric(displayName = "Average Lock Waiting Time")
+   public long getAvgLockWaitingTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_WAITING_TIME);
+   }
+
+   @ManagedAttribute(description = "Average transaction arrival rate")
+   @Metric(displayName = "Average Transaction Arrival Rate")
+   public long getAvgTxArrivalRate(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.ARRIVAL_RATE);
+   }
+
+   @ManagedAttribute(description = "Percentage of Write transaction executed locally (committed and aborted)")
+   @Metric(displayName = "Percentage of Write Transactions")
+   public long getPercentageWriteTransactions(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.TX_WRITE_PERCENTAGE);
+   }
+
+   @ManagedAttribute(description = "Percentage of successfully Read-Write transaction executed locally")
+   @Metric(displayName = "Percentage of Successfully Write Transactions")
+   public long getPercentageSuccessWriteTransactions(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.SUCCESSFUL_WRITE_PERCENTAGE);
+   }
 
    //=====================  DEBUG!!! =============
 
-
-   @ManagedAttribute(description = "LOCK_WAITING_TIME")
-   @Metric(displayName = "LOCK_WAITING_TIME")
-   public Object getLOCK_WAITING_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_WAITING_TIME);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "LOCK_HOLD_TIME")
-   @Metric(displayName = "LOCK_HOLD_TIME")
-   public Object getLOCK_HOLD_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_HOLD_TIME);
-      } catch(Exception e) {return null;}
-   }
    @ManagedAttribute(description = "NUM_HELD_LOCKS")
    @Metric(displayName = "NUM_HELD_LOCKS")
    public Object getNUM_HELD_LOCKS(){
       try {
          return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_HELD_LOCKS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "ROLLBACK_EXECUTION_TIME")
-   @Metric(displayName = "ROLLBACK_EXECUTION_TIME")
-   public Object getROLLBACK_EXECUTION_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.ROLLBACK_EXECUTION_TIME);
       } catch(Exception e) {return null;}
    }
    @ManagedAttribute(description = "NUM_ROLLBACKS")
@@ -279,32 +304,11 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          return TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
       } catch(Exception e) {return null;}
    }
-   @ManagedAttribute(description = "RTT")
-   @Metric(displayName = "RTT")
-   public Object getRTT(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.RTT);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "REPLAY_TIME")
-   @Metric(displayName = "REPLAY_TIME")
-   public Object getREPLAY_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.REPLAY_TIME);
-      } catch(Exception e) {return null;}
-   }
    @ManagedAttribute(description = "REPLAYED_TXS")
    @Metric(displayName = "REPLAYED_TXS")
    public Object getREPLAYED_TXS(){
       try {
          return TransactionsStatisticsRegistry.getAttribute(IspnStats.REPLAYED_TXS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "PREPARE_COMMAND_SIZE")
-   @Metric(displayName = "PREPARE_COMMAND_SIZE")
-   public Object getPREPARE_COMMAND_SIZE(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.PREPARE_COMMAND_SIZE);
       } catch(Exception e) {return null;}
    }
    @ManagedAttribute(description = "NUM_COMMITTED_RO_TX")
@@ -356,27 +360,6 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_PUTS);
       } catch(Exception e) {return null;}
    }
-   @ManagedAttribute(description = "COMMIT_EXECUTION_TIME")
-   @Metric(displayName = "COMMIT_EXECUTION_TIME")
-   public Object getCOMMIT_EXECUTION_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.COMMIT_EXECUTION_TIME);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "LOCAL_EXEC_NO_CONT")
-   @Metric(displayName = "LOCAL_EXEC_NO_CONT")
-   public Object getLOCAL_EXEC_NO_CONT(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_EXEC_NO_CONT);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "LOCAL_CONTENTION_PROBABILITY")
-   @Metric(displayName = "LOCAL_CONTENTION_PROBABILITY")
-   public Object getLOCAL_CONTENTION_PROBABILITY(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_CONTENTION_PROBABILITY);
-      } catch(Exception e) {return null;}
-   }
    @ManagedAttribute(description = "LOCK_CONTENTION_TO_LOCAL")
    @Metric(displayName = "LOCK_CONTENTION_TO_LOCAL")
    public Object getLOCK_CONTENTION_TO_LOCAL(){
@@ -396,13 +379,6 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    public Object getNUM_SUCCESSFUL_PUTS(){
       try {
          return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_SUCCESSFUL_PUTS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "PUTS_PER_LOCAL_TX")
-   @Metric(displayName = "PUTS_PER_LOCAL_TX")
-   public Object getPUTS_PER_LOCAL_TX(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.PUTS_PER_LOCAL_TX);
       } catch(Exception e) {return null;}
    }
    @ManagedAttribute(description = "NUM_WAITED_FOR_LOCKS")
@@ -447,27 +423,6 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_REMOTE_PUT);
       } catch(Exception e) {return null;}
    }
-   @ManagedAttribute(description = "ARRIVAL_RATE")
-   @Metric(displayName = "ARRIVAL_RATE")
-   public Object getARRIVAL_RATE(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.ARRIVAL_RATE);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "TX_WRITE_PERCENTAGE")
-   @Metric(displayName = "TX_WRITE_PERCENTAGE")
-   public Object getTX_WRITE_PERCENTAGE(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.TX_WRITE_PERCENTAGE);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "SUCCESSFUL_WRITE_PERCENTAGE")
-   @Metric(displayName = "SUCCESSFUL_WRITE_PERCENTAGE")
-   public Object getSUCCESSFUL_WRITE_PERCENTAGE(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.SUCCESSFUL_WRITE_PERCENTAGE);
-      } catch(Exception e) {return null;}
-   }
    @ManagedAttribute(description = "WR_TX_ABORTED_EXECUTION_TIME")
    @Metric(displayName = "WR_TX_ABORTED_EXECUTION_TIME")
    public Object getWR_TX_ABORTED_EXECUTION_TIME(){
@@ -503,14 +458,4 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_COMMIT_COMMAND);
       } catch(Exception e) {return null;}
    }
-   @ManagedAttribute(description = "APPLICATION_CONTENTION_FACTOR")
-   @Metric(displayName = "APPLICATION_CONTENTION_FACTOR")
-   public Object getAPPLICATION_CONTENTION_FACTOR(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.APPLICATION_CONTENTION_FACTOR);
-      } catch(Exception e) {return null;}
-   }
-
-
-
 }

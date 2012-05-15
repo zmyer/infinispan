@@ -10,9 +10,9 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.stats.TransactionsStatisticsRegistry;
+import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.util.concurrent.NotifyingNotifiableFuture;
 
-import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import java.util.Collection;
 import java.util.Map;
 
@@ -97,7 +97,15 @@ public class RpcManagerWrapper implements RpcManager {
    @Override
    public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, boolean totalOrder) throws RpcException {
       System.out.println("RpcManagerWrapper.invokeRemotely _ 4 + Command "+rpc);
-      return actual.invokeRemotely(recipients, rpc, sync, usePriorityQueue, totalOrder);
+      Map<Address,Response> ret;
+      long currentTime = System.nanoTime();
+      ret = actual.invokeRemotely(recipients, rpc, sync, usePriorityQueue, totalOrder);
+      TransactionsStatisticsRegistry.addValue(IspnStats.RTT,System.nanoTime() - currentTime);
+      TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_SUCCESSFUL_RTTS);
+      TransactionsStatisticsRegistry.addValue(IspnStats.NUM_NODES_IN_PREPARE, recipients == null ?
+            actual.getTransport().getMembers().size() :
+            recipients.size());
+      return ret;
    }
 
    @Override

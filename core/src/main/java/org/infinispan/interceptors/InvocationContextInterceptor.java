@@ -96,6 +96,7 @@ public class InvocationContextInterceptor extends CommandInterceptor {
    }
 
    private Object handleAll(InvocationContext ctx, VisitableCommand command) throws Throwable {
+      log.warn("InvocationContextInterceptor DIE: "+command);
       boolean suppressExceptions = false;
       try {
          ComponentStatus status = componentRegistry.getStatus();

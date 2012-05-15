@@ -1172,6 +1172,15 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
       return jmxStatistics.enabled;
    }
 
+   //DIE
+   public boolean isExposeExtendedJmxStatistics(){
+       return jmxStatistics.extendedStatisticsEnabled;
+   }
+
+   public boolean isTopKEnabled(){
+      return jmxStatistics.topKEnabled;
+   }
+
    /**
     * @return true if invocation batching is enabled.
     * @since 4.0
@@ -4209,6 +4218,10 @@ public class Configuration extends AbstractNamedCacheConfigurationBean {
        * The serialVersionUID
        */
       private static final long serialVersionUID = 8716456707015486673L;
+
+      //DIE
+      private boolean extendedStatisticsEnabled = true;
+      private boolean topKEnabled = true;
 
       public JmxStatistics() {
          super("jmxStatistics");

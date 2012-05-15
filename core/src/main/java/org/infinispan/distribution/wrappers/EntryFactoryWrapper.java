@@ -6,6 +6,7 @@ import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.util.concurrent.TimeoutException;
 
 /**
  * @author Mircea Markus <mircea.markus@jboss.com> (C) 2011 Red Hat Inc.
@@ -18,6 +19,8 @@ public class EntryFactoryWrapper implements EntryFactory {
    public EntryFactoryWrapper(EntryFactory actual) {
       this.actual = actual;
    }
+
+
 
    @Override
    public CacheEntry wrapEntryForReading(InvocationContext ctx, Object key) throws InterruptedException {

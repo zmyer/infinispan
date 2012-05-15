@@ -113,6 +113,7 @@ public class OptimisticLockingInterceptor extends AbstractTxLockingInterceptor {
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       abortIfRemoteTransactionInvalid(ctx, command);
+      log.warn("DIE: OPTIMISTICLOCKINGINTERCEPTOR: Visitint "+command);
       if (!command.hasModifications() || command.writesToASingleKey()) {
          //optimisation: don't create another LockReorderingVisitor here as it is not needed.
          log.trace("Not using lock reordering as we have a single key.");

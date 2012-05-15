@@ -1,9 +1,17 @@
 package org.infinispan.distribution.wrappers;
 
+import org.infinispan.config.Configuration;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
+import org.infinispan.stats.TransactionStatistics;
+import org.infinispan.stats.TransactionsStatisticsRegistry;
+import org.infinispan.transaction.xa.GlobalTransaction;
+import org.infinispan.util.SysPropertyActions;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.locks.LockManager;
+import org.infinispan.util.concurrent.locks.containers.LockContainer;
 
 import java.util.Collection;
 
@@ -20,10 +28,33 @@ public class LockManagerWrapper implements LockManager {
       this.actual = actual;
    }
 
+   private boolean updateContentionStats(Object key, TxInvocationContext tctx){
+      GlobalTransaction holder = (GlobalTransaction)getOwner(key);
+      if(holder!=null){
+         GlobalTransaction me = tctx.getGlobalTransaction();
+         if(holder!=me){
+            if(holder.isRemote()){
+               TransactionsStatisticsRegistry.incrementValue(IspnStats.LOCK_CONTENTION_TO_REMOTE);
+            }
+            else
+               TransactionsStatisticsRegistry.incrementValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
+         }
+         return true;
+      }
+      return false;
+
+   }
+
+
+
    @Override
    public boolean lockAndRecord(Object key, InvocationContext ctx, long timeoutMillis) throws InterruptedException {
       System.out.println("LockManagerWrapper.lockAndRecord");
+
+
       return actual.lockAndRecord(key, ctx, timeoutMillis);
+
+
    }
 
    @Override
@@ -83,7 +114,28 @@ public class LockManagerWrapper implements LockManager {
    @Override
    public boolean acquireLock(InvocationContext ctx, Object key) throws InterruptedException, TimeoutException {
       System.out.println("LockManagerWrapper.acquireLock");
-      return actual.acquireLock(ctx, key);
+
+      long lockingTime = 0;
+      boolean locked = false,
+              experiecedContention = false,
+              txScope = false;
+
+      if(txScope = ctx.isInTxScope()){
+         experiecedContention = this.updateContentionStats(key,(TxInvocationContext)ctx);
+         lockingTime = System.nanoTime();
+      }
+
+      locked = actual.acquireLock(ctx, key);
+
+      if(txScope && experiecedContention){
+         lockingTime = System.nanoTime() - lockingTime;
+         TransactionsStatisticsRegistry.addValue(IspnStats.LOCK_WAITING_TIME,lockingTime);
+         TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_WAITED_FOR_LOCKS);
+      }
+      if(locked){
+         TransactionsStatisticsRegistry.addTakenLock(key); //Idempotent
+      }
+      return locked;
    }
 
    @Override

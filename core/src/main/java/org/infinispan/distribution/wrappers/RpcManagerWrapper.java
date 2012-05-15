@@ -1,5 +1,6 @@
 package org.infinispan.distribution.wrappers;
 
+import org.infinispan.CacheException;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.remoting.RpcException;
 import org.infinispan.remoting.responses.Response;
@@ -8,8 +9,10 @@ import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.stats.TransactionsStatisticsRegistry;
 import org.infinispan.util.concurrent.NotifyingNotifiableFuture;
 
+import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import java.util.Collection;
 import java.util.Map;
 
@@ -26,35 +29,52 @@ public class RpcManagerWrapper implements RpcManager {
       this.actual = actual;
    }
 
+
+
    @Override
-   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter) {
+   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder) {
       System.out.println("RpcManagerWrapper.invokeRemotely");
-      return actual.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, responseFilter);
+      Map<Address,Response> ret;
+      long currentTime = System.nanoTime();
+
+      try{
+         ret = actual.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, responseFilter, totalOrder);
+         TransactionsStatisticsRegistry.addValue(IspnStats.RTT,System.nanoTime() - currentTime);
+         TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_SUCCESSFUL_RTTS);
+         TransactionsStatisticsRegistry.addValue(IspnStats.NUM_NODES_IN_PREPARE,recipients.size());
+      }
+      catch(CacheException e){
+         throw e;
+      }
+      catch(IllegalStateException i){
+         throw i;
+      }
+      return ret;
    }
 
    @Override
-   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue) {
-      System.out.println("RpcManagerWrapper.invokeRemotely");
-      return actual.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue);
+   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout, boolean usePriorityQueue, boolean totalOrder) {
+      System.out.println("RpcManagerWrapper.invokeRemotely _ 1");
+      return actual.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue, totalOrder);
    }
 
    @Override
    public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand, ResponseMode mode, long timeout) {
-      System.out.println("RpcManagerWrapper.invokeRemotely");
+      System.out.println("RpcManagerWrapper.invokeRemotely _ 2");
       return actual.invokeRemotely(recipients, rpcCommand, mode, timeout);
+   }   
+
+   @Override
+   public void broadcastRpcCommand(ReplicableCommand rpc, boolean sync, boolean totalOrder) throws RpcException {
+      System.out.println("RpcManagerWrapper.broadcastRpcCommand");
+      actual.broadcastRpcCommand(rpc, sync, totalOrder);
    }
 
    @Override
-   public void broadcastRpcCommand(ReplicableCommand rpc, boolean sync) throws RpcException {
-      System.out.println("RpcManagerWrapper.broadcastRpcCommand");
-      actual.broadcastRpcCommand(rpc, sync);
-   }
-
-   @Override
-   public void broadcastRpcCommand(ReplicableCommand rpc, boolean sync, boolean usePriorityQueue) throws RpcException {
-      System.out.println("RpcManagerWrapper.broadcastRpcCommand");
-      actual.broadcastRpcCommand(rpc, sync, usePriorityQueue);
-   }
+   public void broadcastRpcCommand(ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, boolean totalOrder) throws RpcException {
+      System.out.println("DIE : broadcastRpcCommand");
+      actual.broadcastRpcCommand(rpc, sync, usePriorityQueue, totalOrder);
+   }      
 
    @Override
    public void broadcastRpcCommandInFuture(ReplicableCommand rpc, NotifyingNotifiableFuture<Object> future) {
@@ -70,14 +90,14 @@ public class RpcManagerWrapper implements RpcManager {
 
    @Override
    public void invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync) throws RpcException {
-      System.out.println("RpcManagerWrapper.invokeRemotely");
+      System.out.println("RpcManagerWrapper.invokeRemotely _3");
       actual.invokeRemotely(recipients, rpc, sync);
-   }
+   }      
 
    @Override
-   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue) throws RpcException {
-      System.out.println("RpcManagerWrapper.invokeRemotely");
-      return actual.invokeRemotely(recipients, rpc, sync, usePriorityQueue);
+   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, boolean usePriorityQueue, boolean totalOrder) throws RpcException {
+      System.out.println("RpcManagerWrapper.invokeRemotely _ 4 + Command "+rpc);
+      return actual.invokeRemotely(recipients, rpc, sync, usePriorityQueue, totalOrder);
    }
 
    @Override

@@ -79,6 +79,7 @@ public class ReplicationInterceptor extends BaseRpcInterceptor {
    @Override
    public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
       if (!ctx.isInTxScope()) throw new IllegalStateException("This should not be possible!");
+      System.out.println("DIE: ReplicationInterceptor.VisitCommitCommand");
       if (shouldInvokeRemoteTxCommand(ctx)) {
          stateTransferLock.waitForStateTransferToEnd(ctx, command, -1);
 
@@ -123,9 +124,11 @@ public class ReplicationInterceptor extends BaseRpcInterceptor {
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       Object retVal = invokeNextInterceptor(ctx, command);
       if (shouldInvokeRemoteTxCommand(ctx)) {
+         log.warn("DIE: GOING TO INVOKE REMOTELY Command "+command);
          stateTransferLock.waitForStateTransferToEnd(ctx, command, -1);
 
          broadcastPrepare(ctx, command);
+         //DIE: replicationInterceptor! I want to remember that I am going to touch every other node
          ((LocalTxInvocationContext) ctx).remoteLocksAcquired(rpcManager.getTransport().getMembers());
       }
       return retVal;

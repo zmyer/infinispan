@@ -123,6 +123,7 @@ public class InboundInvocationHandlerImpl implements InboundInvocationHandler {
 
       try {
          if (trace) log.tracef("Calling perform() on %s", cmd);
+         log.warn("Calling perform() on "+cmd);
          ResponseGenerator respGen = cr.getResponseGenerator();
          Object retval = cmd.perform(null);
          return respGen.getResponse(cmd, retval);

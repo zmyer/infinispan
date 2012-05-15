@@ -40,6 +40,8 @@ import org.infinispan.interceptors.totalorder.TotalOrderReplicationInterceptor;
 import org.infinispan.interceptors.totalorder.TotalOrderVersionedReplicationInterceptor;
 import org.infinispan.loaders.CacheLoaderConfig;
 import org.infinispan.loaders.CacheStoreConfig;
+import org.infinispan.stats.topK.DistributedStreamLibInterceptor;
+import org.infinispan.stats.topK.StreamLibInterceptor;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.util.Util;
 import org.infinispan.util.concurrent.IsolationLevel;
@@ -115,16 +117,24 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
          interceptorChain.appendInterceptor(createInterceptor(new InvocationContextInterceptor(), InvocationContextInterceptor.class), false);
       }
 
-      // load the cache management interceptor next
-      if (configuration.isExposeJmxStatistics()) {
-         interceptorChain.appendInterceptor(createInterceptor(new CacheMgmtInterceptor(), CacheMgmtInterceptor.class), false);
-         if (configuration.getCacheMode().isDistributed()) {
-            interceptorChain.appendInterceptor(createInterceptor(new DistStreamLibInterceptor(), 
-                  DistStreamLibInterceptor.class), false);
-         } else {
-            interceptorChain.appendInterceptor(createInterceptor(new StreamLibInterceptor(), 
-                  StreamLibInterceptor.class), false);
+      if (configuration.isExposeJmxStatistics()){
+         //DIE
+         if(configuration.isExposeExtendedJmxStatistics()){
+            if(configuration.getCacheMode().isReplicated())
+               interceptorChain.appendInterceptor(createInterceptor(new org.infinispan.distribution.wrappers.ReplCustomStatsInterceptor(),org.infinispan.distribution.wrappers.ReplCustomStatsInterceptor.class),false);
+            else
+               interceptorChain.appendInterceptor(createInterceptor(new org.infinispan.distribution.wrappers.DistCustomStatsInterceptor(),org.infinispan.distribution.wrappers.DistCustomStatsInterceptor.class),false);
+
          }
+         else
+            interceptorChain.appendInterceptor(createInterceptor(new CacheMgmtInterceptor(), CacheMgmtInterceptor.class), false);
+      }
+      if(configuration.isTopKEnabled()){
+         if (configuration.getCacheMode().isDistributed())
+            interceptorChain.appendInterceptor(createInterceptor(new DistributedStreamLibInterceptor(), DistributedStreamLibInterceptor.class),false);
+         else
+            interceptorChain.appendInterceptor(createInterceptor(new StreamLibInterceptor(), StreamLibInterceptor.class),false);
+         //System.out.println("**********\nInterceptorChainFactory: inserisco StreamLibInterceptor; ricordarsi di inserire i metodi per il suo inserimento/la sua rimozione a runtime\n**********");
       }
 
       // load the state transfer lock interceptor

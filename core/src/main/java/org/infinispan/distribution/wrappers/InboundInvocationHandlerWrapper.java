@@ -32,8 +32,8 @@ public class InboundInvocationHandlerWrapper implements InboundInvocationHandler
       Response ret;
       if(command instanceof PrepareCommand){
          try{
-            ret = actual.handle(command,origin);
             TransactionsStatisticsRegistry.initRemoteTransaction();
+            ret = actual.handle(command,origin);
             TransactionsStatisticsRegistry.addValue(IspnStats.REPLAY_TIME,System.nanoTime() - currTime);
             TransactionsStatisticsRegistry.incrementValue(IspnStats.REPLAYED_TXS);
             return ret;

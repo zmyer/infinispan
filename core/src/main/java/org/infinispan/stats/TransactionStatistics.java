@@ -66,8 +66,16 @@ public abstract class TransactionStatistics implements InfinispanStat {
    protected abstract int getIndex(IspnStats param);
 
    public void addValue(IspnStats param, double value){
-      int index = this.getIndex(param);
-      this.statisticsContainer.addValue(index,value);
+
+      try{
+         int index = this.getIndex(param);
+         this.statisticsContainer.addValue(index,value);
+      }
+      catch(NoIspnStatException nise){
+         nise.printStackTrace();
+      }
+
+
    }
 
    public long getValue(IspnStats param){
@@ -79,7 +87,11 @@ public abstract class TransactionStatistics implements InfinispanStat {
       this.addValue(param,1);
    }
 
+   protected abstract void onPrepareCommand();
 
+
+
+   //TODO I have to do this separated for local and remote!!
 
    public void terminateTransaction(boolean commit) {
 

@@ -33,6 +33,10 @@ public class LocalTransactionStatistics extends TransactionStatistics {
       return this.stillLocalExecution;
    }
 
+   protected void onPrepareCommand(){
+      this.terminateLocalExecution();
+   }
+
    protected int getIndex(IspnStats stat) throws NoIspnStatException{
       int ret = super.getCommonIndex(stat);
       if(ret!=NON_COMMON_STAT)
@@ -45,7 +49,7 @@ public class LocalTransactionStatistics extends TransactionStatistics {
             return LocalStatistics.WR_TX_LOCAL_EXECUTION_TIME;
          case WR_TX_SUCCESSFUL_EXECUTION_TIME:
             return LocalStatistics.WR_TX_SUCCESSFUL_LOCAL_EXECUTION_TIME;
-         case PUTS_PER_LOCAL_TX:
+         case NUM_SUCCESSFUL_PUTS:
             return LocalStatistics.PUTS_PER_LOCAL_TX;
          case PREPARE_COMMAND_SIZE:
             return LocalStatistics.PREPARE_COMMAND_SIZE;

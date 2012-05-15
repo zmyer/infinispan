@@ -113,7 +113,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       log.fatal("Visiting PrepareCommand!! "+command);
       this.initStatsIfNecessary(ctx);
-      TransactionsStatisticsRegistry.terminateLocalExecution();
+      TransactionsStatisticsRegistry.onPrepareCommand();
 
       return invokeNextInterceptor(ctx,command);
    }

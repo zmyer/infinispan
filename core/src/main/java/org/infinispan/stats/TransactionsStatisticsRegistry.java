@@ -46,14 +46,16 @@ public class TransactionsStatisticsRegistry {
       txs.addValue(param, 1D);
    }
 
-   public static void terminateLocalExecution() {
-      LocalTransactionStatistics ltxs = (LocalTransactionStatistics) thread.get();
-      ltxs.terminateLocalExecution();
+   public static void onPrepareCommand() {
+      //NB: If I want to give up using the InboundInvocationHandler, I can create the remote transaction
+      //here, just overriding the handlePrepareCommand
+      TransactionStatistics txs = thread.get();
+      txs.onPrepareCommand();
    }
 
    public static void terminateTransaction(boolean commit, TxInvocationContext tctx) {
 
-      log.fatal("TERMINATING_TRANSACTIOn");
+      log.fatal("TERMINATING_TRANSACTION");
       TransactionStatistics txs = thread.get();
       txs.terminateTransaction(commit);
 

@@ -17,6 +17,10 @@ public class RemoteTransactionStatistics extends TransactionStatistics{
    }
 
 
+   protected void onPrepareCommand(){
+      //nop
+   }
+
 
    protected int getIndex(ExposedStatistics.IspnStats stat) throws NoIspnStatException{
       int ret = super.getCommonIndex(stat);

@@ -96,9 +96,9 @@ public class TransactionsStatisticsRegistry {
 
    }
 
-   public static void attachRemoteTransactionStatistic(GlobalTransaction globalTransaction) {
+   public static void attachRemoteTransactionStatistic(GlobalTransaction globalTransaction, boolean createIfAbsent) {
       RemoteTransactionStatistics rts = remoteTransactionStatistics.get(globalTransaction);
-      if (rts == null) {
+      if (rts == null && createIfAbsent) {
          log.tracef("Create a new remote transaction statistic for transaction %s", globalTransaction);
          rts = new RemoteTransactionStatistics();
          remoteTransactionStatistics.put(globalTransaction, rts);
@@ -109,6 +109,9 @@ public class TransactionsStatisticsRegistry {
    }
 
    public static void detachRemoteTransactionStatistic(GlobalTransaction globalTransaction, boolean finished) {
+      if (thread.get() == null) {
+         return;
+      }
       if (finished) {
          log.tracef("Detach remote transaction statistic and finish transaction %s", globalTransaction);
          terminateTransaction();

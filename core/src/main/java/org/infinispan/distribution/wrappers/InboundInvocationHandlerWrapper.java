@@ -2,6 +2,7 @@ package org.infinispan.distribution.wrappers;
 
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
+import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.TransactionBoundaryCommand;
 import org.infinispan.remoting.InboundInvocationHandler;
@@ -23,13 +24,13 @@ public class InboundInvocationHandlerWrapper implements InboundInvocationHandler
 
    private final InboundInvocationHandler actual;
    private static final Log log = LogFactory.getLog(InboundInvocationHandlerWrapper.class);
-   
+
    private final TransactionTable transactionTable;
 
    public InboundInvocationHandlerWrapper(InboundInvocationHandler actual, TransactionTable transactionTable) {
       this.actual = actual;
       this.transactionTable = transactionTable;
-   }     
+   }
 
    @Override
    public Response handle(CacheRpcCommand command, Address origin) throws Throwable {
@@ -39,7 +40,8 @@ public class InboundInvocationHandlerWrapper implements InboundInvocationHandler
       try{
          if (globalTransaction != null) {
             log.debugf("The command %s is transactional and the global transaction is %s", command, globalTransaction);
-            TransactionsStatisticsRegistry.attachRemoteTransactionStatistic(globalTransaction);
+            TransactionsStatisticsRegistry.attachRemoteTransactionStatistic(globalTransaction, command instanceof PrepareCommand ||
+                  command instanceof CommitCommand);
          } else {
             log.debugf("The command %s is NOT transactional", command);
          }
@@ -52,7 +54,7 @@ public class InboundInvocationHandlerWrapper implements InboundInvocationHandler
          } else {
             return actual.handle(command,origin);
          }
-      } finally {         
+      } finally {
          if (globalTransaction != null) {
             log.debugf("Detach statistics for command %s", command, globalTransaction);
             TransactionsStatisticsRegistry.detachRemoteTransactionStatistic(globalTransaction,

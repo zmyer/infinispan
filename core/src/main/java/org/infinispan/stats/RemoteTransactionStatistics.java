@@ -4,10 +4,10 @@ import org.infinispan.stats.translations.ExposedStatistics;
 import org.infinispan.stats.translations.RemoteStatistics;
 
 /**
- * Author: Diego Didona
- * Email: didona@gsd.inesc-id.pt
  * Websiste: www.cloudtm.eu
  * Date: 20/04/12
+ * @author Diego Didona <didona@gsd.inesc-id.pt>
+ * @since 5.2
  */
 public class RemoteTransactionStatistics extends TransactionStatistics{
 
@@ -16,13 +16,11 @@ public class RemoteTransactionStatistics extends TransactionStatistics{
       this.statisticsContainer = new StatisticsContainerImpl(RemoteStatistics.NUM_STATS);
    }
 
-
-   protected void onPrepareCommand(){
+   protected final void onPrepareCommand(){
       //nop
    }
 
-
-   protected int getIndex(ExposedStatistics.IspnStats stat) throws NoIspnStatException{
+   protected final int getIndex(ExposedStatistics.IspnStats stat) throws NoIspnStatException{
       int ret = super.getCommonIndex(stat);
       if(ret!=NON_COMMON_STAT)
          return ret;
@@ -34,10 +32,10 @@ public class RemoteTransactionStatistics extends TransactionStatistics{
          default:
             throw new NoIspnStatException("Statistic "+stat+" is not available!");
       }
-
    }
 
-
-
-
+   @Override
+   public String toString() {
+      return "RemoteTransactionStatistics{" + super.toString();
+   }
 }

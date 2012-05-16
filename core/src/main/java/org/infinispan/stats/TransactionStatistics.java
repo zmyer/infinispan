@@ -10,9 +10,9 @@ import java.util.HashMap;
 
 
 /**
- * User: Davide
  * Date: 20-apr-2011
  * Time: 16.48.47
+ * @author Davide
  * @author Pedro Ruivo
  * @since 5.2
  */
@@ -38,26 +38,27 @@ public abstract class TransactionStatistics implements InfinispanStat {
       this.isReadOnly = true; //as far as it does not tries to perform a put operation
       this.takenLocks = new HashMap<Object, Long>();
       this.transactionalClass = ExposedStatistics.TransactionalClasses.DEFAULT_CLASS;
-      log.warn("TRANSACTION_STATISTIC CREATED");
+      log.tracef("Created transaction statistics. Class is %s. Start time is %s",
+                 transactionalClass, initTime);
    }
 
-   public ExposedStatistics.TransactionalClasses getTransactionalClass(){
+   public final ExposedStatistics.TransactionalClasses getTransactionalClass(){
       return this.transactionalClass;
    }
 
-   public boolean isCommit(){
+   public final boolean isCommit(){
       return this.isCommit;
    }
 
-   public void setCommit(boolean commit) {
+   public final void setCommit(boolean commit) {
       isCommit = commit;
    }
 
-   public boolean isReadOnly(){
+   public final boolean isReadOnly(){
       return this.isReadOnly;
    }
 
-   public void setUpdateTransaction(){
+   public final void setUpdateTransaction(){
       this.isReadOnly = false;
    }
 
@@ -66,9 +67,7 @@ public abstract class TransactionStatistics implements InfinispanStat {
          this.takenLocks.put(lock, System.nanoTime());
    }
 
-   protected abstract int getIndex(IspnStats param);
-
-   public void addValue(IspnStats param, double value){
+   public final void addValue(IspnStats param, double value){
       try{
          int index = this.getIndex(param);
          this.statisticsContainer.addValue(index,value);
@@ -78,22 +77,19 @@ public abstract class TransactionStatistics implements InfinispanStat {
       }
    }
 
-   public long getValue(IspnStats param){
+   public final long getValue(IspnStats param){
       int index = this.getIndex(param);
       long value = this.statisticsContainer.getValue(index);
       log.tracef("Value of %s is %s", param, value);
       return value;
    }
 
-   public void incrementValue(IspnStats param){
+   public final void incrementValue(IspnStats param){
       this.addValue(param,1);
    }
 
-   protected abstract void onPrepareCommand();
-
    //TODO I have to do this separated for local and remote!!
-
-   public void terminateTransaction() {
+   public final void terminateTransaction() {
       log.tracef("Terminating transaction. Is read only? %s. Is commit? %s", isReadOnly, isCommit);
       long now = System.nanoTime();
       double execTime = now - this.initTime;
@@ -128,18 +124,25 @@ public abstract class TransactionStatistics implements InfinispanStat {
       this.dump();
    }
 
-   private long computeCumulativeLockHoldTime(int numLocks,long currentTime){
-      long ret = numLocks * currentTime;
-      for(Object o:this.takenLocks.keySet())
-         ret-=this.takenLocks.get(o);
-      return ret;
-   }
-
    public void flush(TransactionStatistics ts){
+      log.tracef("Flush this [%s] to %s", this, ts);
       this.statisticsContainer.mergeTo(ts.statisticsContainer);
    }
 
-   protected int getCommonIndex(IspnStats stat){
+   public void dump(){
+      this.statisticsContainer.dump();
+   }
+
+   @Override
+   public String toString() {
+      return "initTime=" + initTime +
+            ", isReadOnly=" + isReadOnly +
+            ", isCommit=" + isCommit +
+            ", transactionalClass=" + transactionalClass +
+            '}';
+   }
+
+   protected final int getCommonIndex(IspnStats stat){
       switch (stat){
          case LOCK_HOLD_TIME:
             return LocalRemoteStatistics.LOCK_HOLD_TIME;
@@ -193,8 +196,15 @@ public abstract class TransactionStatistics implements InfinispanStat {
       return NON_COMMON_STAT;
    }
 
-   public void dump(){
-      this.statisticsContainer.dump();
+   protected abstract int getIndex(IspnStats param);
+
+   protected abstract void onPrepareCommand();
+
+   private long computeCumulativeLockHoldTime(int numLocks,long currentTime){
+      long ret = numLocks * currentTime;
+      for(Object o:this.takenLocks.keySet())
+         ret-=this.takenLocks.get(o);
+      return ret;
    }
 }
 

@@ -3,15 +3,19 @@ package org.infinispan.stats;
 import org.infinispan.stats.percentiles.PercentileStats;
 import org.infinispan.stats.percentiles.PercentileStatsFactory;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 
 /**
- * Author: Diego Didona
- * Email: didona@gsd.inesc-id.pt
  * Websiste: www.cloudtm.eu
  * Date: 01/05/12
+ * @author Diego Didona <didona@gsd.inesc-id.pt>
+ * @author Pedro Ruivo
+ * @since 5.2
  */
 public class NodeScopeStatisticCollector {
+   private final static Log log = LogFactory.getLog(NodeScopeStatisticCollector.class);
 
    private LocalTransactionStatistics localTransactionStatistics;
    private RemoteTransactionStatistics remoteTransactionStatistics;
@@ -21,11 +25,10 @@ public class NodeScopeStatisticCollector {
    private PercentileStats localTransactionRoExecutionTime;
    private PercentileStats remoteTransactionRoExecutionTime;
 
+   private long lastResetTime;
 
-   private long lastResetTime = System.nanoTime();
-
-   synchronized void reset(){
-
+   public final synchronized void reset(){
+      log.tracef("Resetting Node Scope Statistics");
       this.localTransactionStatistics = new LocalTransactionStatistics();
       this.remoteTransactionStatistics = new RemoteTransactionStatistics();
 
@@ -38,19 +41,11 @@ public class NodeScopeStatisticCollector {
    }
 
    public NodeScopeStatisticCollector(){
-      this.localTransactionStatistics = new LocalTransactionStatistics();
-      this.remoteTransactionStatistics = new RemoteTransactionStatistics();
-
-      this.localTransactionRoExecutionTime = PercentileStatsFactory.createNewPercentileStats();
-      this.localTransactionWrExecutionTime = PercentileStatsFactory.createNewPercentileStats();
-      this.remoteTransactionRoExecutionTime = PercentileStatsFactory.createNewPercentileStats();
-      this.remoteTransactionWrExecutionTime = PercentileStatsFactory.createNewPercentileStats();
-
-      this.lastResetTime = System.nanoTime();
-
+      reset();
    }
 
-   public synchronized void merge(TransactionStatistics ts){
+   public final synchronized void merge(TransactionStatistics ts){
+      log.tracef("Merge transaction statistics %s to the node statistics", ts);
       if(ts instanceof LocalTransactionStatistics){
          ts.flush(this.localTransactionStatistics);
          if(ts.isCommit()){
@@ -79,8 +74,10 @@ public class NodeScopeStatisticCollector {
    //TODO double check sul synchronized e inserire il controllo anti-divisione per zero
    //TODO check the time units
    //TODO check the percentage stuff
+   @SuppressWarnings("UnnecessaryBoxing")
    public synchronized Object getAttribute(IspnStats param) throws NoIspnStatException{
-      switch (param){
+      log.tracef("Get attribute %s", param);
+      switch (param) {
          case LOCAL_EXEC_NO_CONT:{
             //TODO you have to compute this when you flush the transaction (for Diego)
             long numLocalTxToPrepare = localTransactionStatistics.getValue(IspnStats.NUM_PREPARES);
@@ -124,9 +121,9 @@ public class NodeScopeStatisticCollector {
             long total = numLocalLocalContention + numLocalRemoteContention;
             if(total!=0){
                long numLocalPuts = localTransactionStatistics.getValue(IspnStats.NUM_PUTS);
-               return new Long(numLocalPuts / (numLocalLocalContention + numLocalRemoteContention));
+               return new Double(numLocalPuts / (numLocalLocalContention + numLocalRemoteContention));
             }
-            return new Long(0);
+            return new Double(0);
          }
          case COMMIT_EXECUTION_TIME:{
             long numCommits = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) + localTransactionStatistics.getIndex(IspnStats.NUM_COMMITTED_RO_TX);
@@ -199,8 +196,9 @@ public class NodeScopeStatisticCollector {
             return new Long(0);
          }
          case APPLICATION_CONTENTION_FACTOR:{
-            long localTakenLocks = localTransactionStatistics.getIndex(IspnStats.NUM_HELD_LOCKS);
-            long remoteTakenLocks = remoteTransactionStatistics.getIndex(IspnStats.NUM_HELD_LOCKS);
+            //TODO this look weird (PEDRO)
+            long localTakenLocks = localTransactionStatistics.getValue(IspnStats.NUM_HELD_LOCKS);
+            long remoteTakenLocks = remoteTransactionStatistics.getValue(IspnStats.NUM_HELD_LOCKS);
             long elapsedTime = System.nanoTime() - this.lastResetTime;
             long totalLocksArrivalRate = (localTakenLocks + remoteTakenLocks) / elapsedTime;
             if(totalLocksArrivalRate!=0){
@@ -220,6 +218,6 @@ public class NodeScopeStatisticCollector {
    }
 
    private static double convertNanosToSeconds(long nanos) {
-      return nanos / 1000000000.0; 
+      return nanos / 1000000000.0;
    }
 }

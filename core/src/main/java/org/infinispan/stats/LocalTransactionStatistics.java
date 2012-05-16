@@ -1,17 +1,16 @@
 package org.infinispan.stats;
+
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
-import org.infinispan.stats.translations.LocalRemoteStatistics;
 import org.infinispan.stats.translations.LocalStatistics;
 
 /**
- * Author: Diego Didona
- * Email: didona@gsd.inesc-id.pt
  * Websiste: www.cloudtm.eu
  * Date: 20/04/12
+ * @author Diego Didona <didona@gsd.inesc-id.pt>
+ * @author Pedro Ruivo
+ * @since 5.2
  */
 public class LocalTransactionStatistics extends TransactionStatistics {
-
-
 
    private boolean stillLocalExecution;
 
@@ -21,23 +20,21 @@ public class LocalTransactionStatistics extends TransactionStatistics {
       this.statisticsContainer = new StatisticsContainerImpl(LocalStatistics.NUM_STATS);
    }
 
-
-
-   public void terminateLocalExecution(){
+   public final void terminateLocalExecution(){
       this.stillLocalExecution = false;
       this.addValue(IspnStats.WR_TX_LOCAL_EXECUTION_TIME,System.nanoTime() - this.initTime);
       this.incrementValue(IspnStats.NUM_PREPARES);
    }
 
-   public boolean isStillLocalExecution(){
+   public final boolean isStillLocalExecution(){
       return this.stillLocalExecution;
    }
 
-   protected void onPrepareCommand(){
+   protected final void onPrepareCommand(){
       this.terminateLocalExecution();
    }
 
-   protected int getIndex(IspnStats stat) throws NoIspnStatException{
+   protected final int getIndex(IspnStats stat) throws NoIspnStatException{
       int ret = super.getCommonIndex(stat);
       if(ret!=NON_COMMON_STAT)
          return ret;
@@ -61,16 +58,15 @@ public class LocalTransactionStatistics extends TransactionStatistics {
             return LocalStatistics.RTT;
          case NUM_SUCCESSFUL_RTTS:
             return LocalStatistics.NUM_RTTS;
-
-
          default:
             throw new NoIspnStatException("IspnStats "+stat+" not found!");
       }
    }
 
-
-
-
-
-
+   @Override
+   public String toString() {
+      return "LocalTransactionStatistics{" +
+            "stillLocalExecution=" + stillLocalExecution +
+            ", " + super.toString();
+   }
 }

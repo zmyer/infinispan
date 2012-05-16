@@ -10,8 +10,6 @@ import org.infinispan.stats.translations.ExposedStatistics;
  */
 public interface InfinispanStat {
 
-
-
    long getValue(ExposedStatistics.IspnStats param);
    void addValue(ExposedStatistics.IspnStats param, double delta);
    void incrementValue(ExposedStatistics.IspnStats param);

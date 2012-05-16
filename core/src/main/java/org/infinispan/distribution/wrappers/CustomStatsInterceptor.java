@@ -227,8 +227,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @ManagedAttribute(description = "Application Contention Factor")
    @Metric(displayName = "ACF")
-   public long getAcf() {
-      return (Long)TransactionsStatisticsRegistry.getAttribute((IspnStats.APPLICATION_CONTENTION_FACTOR));
+   public double getAcf() {
+      return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.APPLICATION_CONTENTION_FACTOR));
    }
 
    @ManagedAttribute(description = "Local Contention Probability")

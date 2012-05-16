@@ -38,7 +38,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
-import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -319,25 +318,50 @@ public final class Util {
    }
 
    public static String printArray(byte[] array, boolean withHash) {
+      return printArray(array, withHash, isArraysDebug);
+   }
+
+   public static String printArray(byte[] array, boolean withHash, boolean isDebug) {
       if (array == null) return "null";
       StringBuilder sb = new StringBuilder();
       sb.append("ByteArray{size=").append(array.length);
       if (withHash)
          sb.append(", hashCode=").append(Integer.toHexString(array.hashCode()));
 
-      sb.append(", array=");
-      if (isArraysDebug) {
-         sb.append(Arrays.toString(array));
+      sb.append(", array=0x");
+      if (isDebug) {
+         // Convert the entire byte array
+         sb.append(toHexString(array));
       } else {
-         sb.append("[");
-         int length = array.length < 10 ? array.length : 10;
-         for (int i = 0; i < length; i++)
-            sb.append(array[i]).append(", ");
-         sb.append("..]");
+         // Pick the first 8 characters and convert that part
+         sb.append(toHexString(array, 8));
+         sb.append("..");
       }
       sb.append("}");
 
       return sb.toString();
+   }
+
+   public static String toHexString(byte input[]) {
+      return toHexString(input, input.length);
+   }
+
+   public static String toHexString(byte input[], int limit) {
+      int i = 0;
+      if (input == null || input.length <= 0)
+         return null;
+
+      char lookup[] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                       '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+
+      char[] result = new char[(input.length < limit ? input.length : limit) * 2];
+
+      while (i < limit && i < input.length) {
+         result[2*i] = lookup[(input[i] >> 4) & 0x0F];
+         result[2*i+1] = lookup[(input[i] & 0x0F)];
+         i++;
+      }
+      return String.valueOf(result);
    }
 
    public static String padString(String s, int minWidth) {
@@ -487,4 +511,5 @@ public final class Util {
 
       return buf.toString();
    }
+
 }

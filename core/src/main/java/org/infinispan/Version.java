@@ -39,8 +39,11 @@ public class Version {
    //   to note that this is '-SNAPSHOT' and not '.SNAPSHOT', as per Maven's versioning conventions. -- Manik Surtani
    // -----------------------------------------------------------------------------------------------------------------
 
-   public static final String major = "4.2";
-   public static final String version = major + ".1-SNAPSHOT";
+   private static final String MAJOR = "4";
+   private static final String MINOR = "2";
+   public static final String MAJOR_MINOR = MAJOR + "." + MINOR;
+
+   public static final String version = String.format("%s.%s.1-SNAPSHOT", MAJOR, MINOR);
    public static final String codename = "Ursus";
    public static final String projectName = "Infinispan";
    static final byte[] version_id = {'0', '4', '2', '1', 'S'};

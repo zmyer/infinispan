@@ -221,8 +221,16 @@ public class AtomicHashMap<K, V> implements AtomicMap<K, V>, DeltaAware, Cloneab
 
       @SuppressWarnings("unchecked")
       public Object readObject(ObjectInput input) throws IOException, ClassNotFoundException {
-         FastCopyHashMap delegate = (FastCopyHashMap) input.readObject();
-         return new AtomicHashMap(delegate);
+         Object obj = input.readObject();
+         if (obj instanceof Delta) { // 4.0
+            Delta d = (Delta) obj;
+            DeltaAware dw = new AtomicHashMap();
+            dw = d.merge(dw);
+            return dw;
+         } else { // 4.1
+            FastCopyHashMap delegate = (FastCopyHashMap) obj;
+            return new AtomicHashMap(delegate);
+         }
       }
    }
 }

@@ -86,7 +86,8 @@ public class ClearCommand implements WriteCommand {
 
    public void setParameters(int commandId, Object[] parameters) {
       if (commandId != COMMAND_ID) throw new IllegalStateException("Invalid command id");
-      if (parameters.length > 0) {
+      // Parameters might be null if the payload comes from 4.0
+      if (parameters != null && parameters.length > 0) {
          this.flags = (Set<Flag>) parameters[0];
       }
    }

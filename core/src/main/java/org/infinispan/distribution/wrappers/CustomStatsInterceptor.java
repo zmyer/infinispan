@@ -41,6 +41,8 @@ import java.lang.reflect.Field;
 @MBean(objectName = "ExtendedStatistics", description = "Component that manages and exposes extended statistics " +
       "relevant to transactions.")
 public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
+   //TODO what about the transaction implicit vs transaction explicit? should we take in account this and ignore
+   //the implicit stuff?
 
    private final Log log = LogFactory.getLog(getClass());
 

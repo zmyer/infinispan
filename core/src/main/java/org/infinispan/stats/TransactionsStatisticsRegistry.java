@@ -1,45 +1,44 @@
 package org.infinispan.stats;
 
-import org.apache.log4j.Logger;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.stats.translations.ExposedStatistics;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
+import org.infinispan.stats.translations.ExposedStatistics.TransactionalClasses;
 import org.infinispan.transaction.xa.GlobalTransaction;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
-import java.util.HashMap;
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * Author: Diego Didona
- * Email: didona@gsd.inesc-id.pt
  * Websiste: www.cloudtm.eu
  * Date: 20/04/12
+ * @author Diego Didona <didona@gsd.inesc-id.pt>
+ * @author Pedro Ruivo
+ * @since 5.2
  */
 public class TransactionsStatisticsRegistry {
 
-   private static Logger log = Logger.getLogger(TransactionsStatisticsRegistry.class);
+   private static final Log log = LogFactory.getLog(TransactionsStatisticsRegistry.class);
 
    //Now it is unbounded, we can define a MAX_NO_CLASSES
-   private static HashMap<ExposedStatistics.TransactionalClasses, NodeScopeStatisticCollector> transactionalClassesStatsMap = new HashMap<ExposedStatistics.TransactionalClasses, NodeScopeStatisticCollector>();
-   public static int LOCAL_PARAM = 0;
-   public static int REMOTE_PARAM = 1;
-   public static int GLOBAL_PARAM = 2;
+   private static final Map<TransactionalClasses, NodeScopeStatisticCollector> transactionalClassesStatsMap
+         = new EnumMap<TransactionalClasses, NodeScopeStatisticCollector>(TransactionalClasses.class);
 
    private static final ConcurrentMap<GlobalTransaction, RemoteTransactionStatistics> remoteTransactionStatistics =
          new ConcurrentHashMap<GlobalTransaction, RemoteTransactionStatistics>();
 
-   public static void init(){
-      transactionalClassesStatsMap.put(ExposedStatistics.TransactionalClasses.DEFAULT_CLASS, new NodeScopeStatisticCollector());
-      log.debug("Initializing transactionalClassesMap");
-   }
-
-   /*
-  Comment for reviewers: do we really need threadLocal? If I have the global id of the transaction, I can
-  retrieve the transactionStatistics
-   */
+   //Comment for reviewers: do we really need threadLocal? If I have the global id of the transaction, I can
+   //retrieve the transactionStatistics
    private static final ThreadLocal<TransactionStatistics> thread = new ThreadLocal<TransactionStatistics>();
 
+   public static void init(){
+      log.tracef("Initializing transactionalClassesMap");
+      transactionalClassesStatsMap.put(TransactionalClasses.DEFAULT_CLASS, new NodeScopeStatisticCollector());
+   }
 
    public static void addValue(IspnStats param, double value) {
       TransactionStatistics txs = thread.get();
@@ -64,7 +63,6 @@ public class TransactionsStatisticsRegistry {
    }
 
    public static void terminateTransaction() {
-      log.fatal("TERMINATING_TRANSACTION");
       TransactionStatistics txs = thread.get();
       txs.terminateTransaction();
 
@@ -75,8 +73,7 @@ public class TransactionsStatisticsRegistry {
    }
 
    public static Object getAttribute(ExposedStatistics.IspnStats param){
-      log.warn("Going to invoke getAttribute with parameter "+param);
-      return transactionalClassesStatsMap.get(ExposedStatistics.TransactionalClasses.DEFAULT_CLASS).getAttribute(param);
+      return transactionalClassesStatsMap.get(TransactionalClasses.DEFAULT_CLASS).getAttribute(param);
    }
 
    public static void addTakenLock(Object lock) {
@@ -99,39 +96,44 @@ public class TransactionsStatisticsRegistry {
 
    }
 
-   private static void initLocalTransaction(){
-      //Not overriding the InitialValue method leads me to have "null" at the first invocation of get()
-      if (thread.get() == null) {
-         log.fatal("THREAD.GET==NULL!!!!");
-         thread.set(new LocalTransactionStatistics());
-      } else {
-         log.fatal("THREAD.GET!=NULL!!!!");
-      }
-   }
-
    public static void attachRemoteTransactionStatistic(GlobalTransaction globalTransaction) {
       RemoteTransactionStatistics rts = remoteTransactionStatistics.get(globalTransaction);
       if (rts == null) {
+         log.tracef("Create a new remote transaction statistic for transaction %s", globalTransaction);
          rts = new RemoteTransactionStatistics();
          remoteTransactionStatistics.put(globalTransaction, rts);
+      } else {
+         log.tracef("Using the remote transaction statistic %s for transaction %s", rts, globalTransaction);
       }
       thread.set(rts);
    }
 
    public static void detachRemoteTransactionStatistic(GlobalTransaction globalTransaction, boolean finished) {
       if (finished) {
+         log.tracef("Detach remote transaction statistic and finish transaction %s", globalTransaction);
          terminateTransaction();
          remoteTransactionStatistics.remove(globalTransaction);
       } else {
+         log.tracef("Detach remote transaction statistic for transaction %s", globalTransaction);
          thread.remove();
       }
    }
 
    public static void reset(){
-      for(ExposedStatistics.TransactionalClasses n: transactionalClassesStatsMap.keySet()){
-         transactionalClassesStatsMap.get(n).reset();
+      log.tracef("Reset statistics");
+      for (NodeScopeStatisticCollector nsc : transactionalClassesStatsMap.values()) {
+         nsc.reset();
       }
    }
 
-
+   private static void initLocalTransaction(){
+      //Not overriding the InitialValue method leads me to have "null" at the first invocation of get()
+      TransactionStatistics lts = thread.get();
+      if (lts == null) {
+         log.tracef("Init a new local transaction statistics");
+         thread.set(new LocalTransactionStatistics());
+      } else {
+         log.tracef("Local transaction statistic is already initialized: %s", lts);
+      }
+   }
 }

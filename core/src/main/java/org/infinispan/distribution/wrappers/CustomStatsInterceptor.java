@@ -1,6 +1,5 @@
 package org.infinispan.distribution.wrappers;
 
-import org.apache.log4j.Logger;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
@@ -25,6 +24,8 @@ import org.infinispan.stats.TransactionsStatisticsRegistry;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.transaction.TransactionTable;
 import org.infinispan.util.concurrent.locks.LockManager;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 import org.rhq.helpers.pluginAnnotations.agent.Metric;
 
 import java.lang.reflect.Field;
@@ -33,17 +34,18 @@ import java.lang.reflect.Field;
  * Massive hack for a noble cause!
  *
  * @author Mircea Markus <mircea.markus@jboss.com> (C) 2011 Red Hat Inc.
+ * @author Diego Didona <didona@gsd.inesc-id.pt>
  * @author Pedro Ruivo
  * @since 5.2
  */
-@MBean(objectName = "ExtendedStatistics", description = "Component that manages and exposes extended statistics relevant to transactions.")
-
+@MBean(objectName = "ExtendedStatistics", description = "Component that manages and exposes extended statistics " +
+      "relevant to transactions.")
 public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
-   private org.apache.log4j.Logger log = Logger.getLogger("org.infinispan.interceptors");
-   
+   private final Log log = LogFactory.getLog(getClass());
+
    private TransactionTable transactionTable;
-   
+
    @Inject
    public void inject(TransactionTable transactionTable) {
       this.transactionTable = transactionTable;
@@ -58,7 +60,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @Override
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
-      log.fatal("PutKeyValueCommand visited " + command);
+      log.tracef("Visit Put Key Value command %s. Is it in transaction scope? %s. Is it local?", command,
+                 ctx.isInTxScope(), ctx.isOriginLocal());
       Object ret;
       if(ctx.isInTxScope()){
          this.initStatsIfNecessary(ctx);
@@ -78,6 +81,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable{
+      log.tracef("Visit Get Key Value command %s. Is it in transaction scope? %s. Is it local?", command,
+                 ctx.isInTxScope(), ctx.isOriginLocal());
       boolean isTx = ctx.isInTxScope();
       Object ret;
       if(isTx){
@@ -106,7 +111,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @Override
    public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
-      log.fatal("VISIT_COMMIT_COMMAND "+command);
+      log.tracef("Visit Commit command %s. Is it local?. Transaction is %s", command,
+                 ctx.isOriginLocal(), command.getGlobalTransaction());
       this.initStatsIfNecessary(ctx);
       long currTime = System.nanoTime();
       Object ret = invokeNextInterceptor(ctx,command);
@@ -121,9 +127,13 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
-      log.fatal("Visiting PrepareCommand!! "+command);
+      log.tracef("Visit Prepare command %s. Is it local?. Transaction is %s", command,
+                 ctx.isOriginLocal(), command.getGlobalTransaction());
       this.initStatsIfNecessary(ctx);
       TransactionsStatisticsRegistry.onPrepareCommand();
+      if (command.hasModifications()) {
+         TransactionsStatisticsRegistry.setUpdateTransaction();
+      }
 
       return invokeNextInterceptor(ctx,command);
    }
@@ -131,6 +141,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @Override
    public Object visitRollbackCommand(TxInvocationContext ctx, RollbackCommand command) throws Throwable{
+      log.tracef("Visit Rollback command %s. Is it local?. Transaction is %s", command,
+                 ctx.isOriginLocal(), command.getGlobalTransaction());
       this.initStatsIfNecessary(ctx);
       TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_ROLLBACKS);
       long initRollbackTime = System.nanoTime();
@@ -144,8 +156,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    }
 
    private void replace(){
-      log.warn("CustomStatsInterceptor Enabled!");
-      //System.out.println("CustomStatsInterceptor Enabled");
+      log.infof("CustomStatsInterceptor Enabled!");
       ComponentRegistry componentRegistry = cache.getAdvancedCache().getComponentRegistry();
 
       GlobalComponentRegistry globalComponentRegistry = componentRegistry.getGlobalComponentRegistry();
@@ -158,12 +169,11 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       replaceLockManager(componentRegistry);
       replaceEntryFactoryWrapper(componentRegistry);
       componentRegistry.rewire();
-
    }
 
    private void replaceFieldInTransport(ComponentRegistry componentRegistry, InboundInvocationHandlerWrapper invocationHandlerWrapper) {
       JGroupsTransport t = (JGroupsTransport) componentRegistry.getComponent(Transport.class);
-      CommandAwareRpcDispatcher card = t.getCommandAwareRpcDispatcher();      
+      CommandAwareRpcDispatcher card = t.getCommandAwareRpcDispatcher();
       try {
          Field f = card.getClass().getDeclaredField("inboundInvocationHandler");
          f.setAccessible(true);
@@ -177,7 +187,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    private InboundInvocationHandlerWrapper rewireInvocationHandler(GlobalComponentRegistry globalComponentRegistry) {
       InboundInvocationHandler inboundHandler = globalComponentRegistry.getComponent(InboundInvocationHandler.class);
-      InboundInvocationHandlerWrapper invocationHandlerWrapper = new InboundInvocationHandlerWrapper(inboundHandler, 
+      InboundInvocationHandlerWrapper invocationHandlerWrapper = new InboundInvocationHandlerWrapper(inboundHandler,
                                                                                                      transactionTable);
       globalComponentRegistry.registerComponent(invocationHandlerWrapper, InboundInvocationHandler.class);
       return invocationHandlerWrapper;
@@ -201,17 +211,12 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       componentRegistry.registerComponent(rpcManagerWrapper, RpcManager.class);
    }
 
-
    private void initStatsIfNecessary(InvocationContext ctx){
       if(ctx.isInTxScope())
          TransactionsStatisticsRegistry.initTransactionIfNecessary((TxInvocationContext) ctx);
    }
 
-
-
-   /*
-   JMX exposed methods
-    */
+   //JMX exposed methods
 
    @ManagedAttribute(description = "Number of puts")
    @Metric(displayName = "Average number of puts performed locally by a successful local transaction")
@@ -287,191 +292,13 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @ManagedAttribute(description = "Percentage of Write transaction executed locally (committed and aborted)")
    @Metric(displayName = "Percentage of Write Transactions")
-   public long getPercentageWriteTransactions(){
-      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.TX_WRITE_PERCENTAGE);
+   public double getPercentageWriteTransactions(){
+      return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.TX_WRITE_PERCENTAGE);
    }
 
    @ManagedAttribute(description = "Percentage of successfully Read-Write transaction executed locally")
    @Metric(displayName = "Percentage of Successfully Write Transactions")
-   public long getPercentageSuccessWriteTransactions(){
-      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.SUCCESSFUL_WRITE_PERCENTAGE);
-   }
-
-   //=====================  DEBUG!!! =============
-
-   @ManagedAttribute(description = "NUM_HELD_LOCKS")
-   @Metric(displayName = "NUM_HELD_LOCKS")
-   public Object getNUM_HELD_LOCKS(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_HELD_LOCKS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_ROLLBACKS")
-   @Metric(displayName = "NUM_ROLLBACKS")
-   public Object getNUM_ROLLBACKS(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_ROLLBACKS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "WR_TX_LOCAL_EXECUTION_TIME")
-   @Metric(displayName = "WR_TX_LOCAL_EXECUTION_TIME")
-   public Object getWR_TX_LOCAL_EXECUTION_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "REPLAYED_TXS")
-   @Metric(displayName = "REPLAYED_TXS")
-   public Object getREPLAYED_TXS(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.REPLAYED_TXS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_COMMITTED_RO_TX")
-   @Metric(displayName = "NUM_COMMITTED_RO_TX")
-   public Object getNUM_COMMITTED_RO_TX(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_COMMITTED_RO_TX);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_COMMITTED_WR_TX")
-   @Metric(displayName = "NUM_COMMITTED_WR_TX")
-   public Object getNUM_COMMITTED_WR_TX(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_COMMITTED_WR_TX);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_ABORTED_WR_TX")
-   @Metric(displayName = "NUM_ABORTED_WR_TX")
-   public Object getNUM_ABORTED_WR_TX(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_ABORTED_WR_TX);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_ABORTED_RO_TX")
-   @Metric(displayName = "NUM_ABORTED_RO_TX")
-   public Object getNUM_ABORTED_RO_TX(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_ABORTED_RO_TX);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_SUCCESSFUL_RTTS")
-   @Metric(displayName = "NUM_SUCCESSFUL_RTTS")
-   public Object getNUM_SUCCESSFUL_RTTS(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_SUCCESSFUL_RTTS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_PREPARES")
-   @Metric(displayName = "NUM_PREPARES")
-   public Object getNUM_PREPARES(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_PREPARES);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_PUTS")
-   @Metric(displayName = "NUM_PUTS")
-   public Object getNUM_PUTS(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_PUTS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "LOCK_CONTENTION_TO_LOCAL")
-   @Metric(displayName = "LOCK_CONTENTION_TO_LOCAL")
-   public Object getLOCK_CONTENTION_TO_LOCAL(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_CONTENTION_TO_LOCAL);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "LOCK_CONTENTION_TO_REMOTE")
-   @Metric(displayName = "LOCK_CONTENTION_TO_REMOTE")
-   public Object getLOCK_CONTENTION_TO_REMOTE(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_CONTENTION_TO_REMOTE);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_SUCCESSFUL_PUTS")
-   @Metric(displayName = "NUM_SUCCESSFUL_PUTS")
-   public Object getNUM_SUCCESSFUL_PUTS(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_SUCCESSFUL_PUTS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_WAITED_FOR_LOCKS")
-   @Metric(displayName = "NUM_WAITED_FOR_LOCKS")
-   public Object getNUM_WAITED_FOR_LOCKS(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_WAITED_FOR_LOCKS);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_NODES_IN_PREPARE")
-   @Metric(displayName = "NUM_NODES_IN_PREPARE")
-   public Object getNUM_NODES_IN_PREPARE(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_NODES_IN_PREPARE);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_REMOTE_GET")
-   @Metric(displayName = "NUM_REMOTE_GET")
-   public Object getNUM_REMOTE_GET(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_REMOTE_GET);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "REMOTE_GET_EXECUTION")
-   @Metric(displayName = "REMOTE_GET_EXECUTION")
-   public Object getREMOTE_GET_EXECUTION(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_GET_EXECUTION);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "REMOTE_PUT_EXECUTION")
-   @Metric(displayName = "REMOTE_PUT_EXECUTION")
-   public Object getREMOTE_PUT_EXECUTION(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_PUT_EXECUTION);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_REMOTE_PUT")
-   @Metric(displayName = "NUM_REMOTE_PUT")
-   public Object getNUM_REMOTE_PUT(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_REMOTE_PUT);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "WR_TX_ABORTED_EXECUTION_TIME")
-   @Metric(displayName = "WR_TX_ABORTED_EXECUTION_TIME")
-   public Object getWR_TX_ABORTED_EXECUTION_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_ABORTED_EXECUTION_TIME);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "WR_TX_SUCCESSFUL_EXECUTION_TIME")
-   @Metric(displayName = "WR_TX_SUCCESSFUL_EXECUTION_TIME")
-   public Object getWR_TX_SUCCESSFUL_EXECUTION_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "RO_TX_SUCCESSFUL_EXECUTION_TIME")
-   @Metric(displayName = "RO_TX_SUCCESSFUL_EXECUTION_TIME")
-   public Object getRO_TX_SUCCESSFUL_EXECUTION_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "RO_TX_ABORTED_EXECUTION_TIME")
-   @Metric(displayName = "RO_TX_ABORTED_EXECUTION_TIME")
-   public Object getRO_TX_ABORTED_EXECUTION_TIME(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.RO_TX_ABORTED_EXECUTION_TIME);
-      } catch(Exception e) {return null;}
-   }
-   @ManagedAttribute(description = "NUM_COMMIT_COMMAND")
-   @Metric(displayName = "NUM_COMMIT_COMMAND")
-   public Object getNUM_COMMIT_COMMAND(){
-      try {
-         return TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_COMMIT_COMMAND);
-      } catch(Exception e) {return null;}
+   public double getPercentageSuccessWriteTransactions(){
+      return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.SUCCESSFUL_WRITE_PERCENTAGE);
    }
 }

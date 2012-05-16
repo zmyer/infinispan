@@ -79,7 +79,6 @@ public class ReplicationInterceptor extends BaseRpcInterceptor {
    @Override
    public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
       if (!ctx.isInTxScope()) throw new IllegalStateException("This should not be possible!");
-      System.out.println("DIE: ReplicationInterceptor.VisitCommitCommand");
       if (shouldInvokeRemoteTxCommand(ctx)) {
          stateTransferLock.waitForStateTransferToEnd(ctx, command, -1);
 

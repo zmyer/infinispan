@@ -68,12 +68,9 @@ public class NodeScopeStatisticCollector {
             }
          }
       }
-
    }
 
    //TODO double check sul synchronized e inserire il controllo anti-divisione per zero
-   //TODO check the time units
-   //TODO check the percentage stuff
    @SuppressWarnings("UnnecessaryBoxing")
    public synchronized Object getAttribute(IspnStats param) throws NoIspnStatException{
       log.tracef("Get attribute %s", param);
@@ -116,17 +113,17 @@ public class NodeScopeStatisticCollector {
 
          }
          case LOCAL_CONTENTION_PROBABILITY:{
-            long numLocalLocalContention = localTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
-            long numLocalRemoteContention = localTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_REMOTE);
-            long total = numLocalLocalContention + numLocalRemoteContention;
-            if(total!=0){
-               long numLocalPuts = localTransactionStatistics.getValue(IspnStats.NUM_PUTS);
-               return new Double(numLocalPuts / (numLocalLocalContention + numLocalRemoteContention));
+            long numLocalPuts = localTransactionStatistics.getValue(IspnStats.NUM_PUTS);
+            if(numLocalPuts != 0){
+               long numLocalLocalContention = localTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
+               long numLocalRemoteContention = localTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_REMOTE);
+               return new Double((numLocalLocalContention + numLocalRemoteContention) * 1.0 / numLocalPuts);
             }
             return new Double(0);
          }
          case COMMIT_EXECUTION_TIME:{
-            long numCommits = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) + localTransactionStatistics.getIndex(IspnStats.NUM_COMMITTED_RO_TX);
+            long numCommits = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) +
+                  localTransactionStatistics.getIndex(IspnStats.NUM_COMMITTED_RO_TX);
             if(numCommits!=0){
                long commitExecTime = localTransactionStatistics.getValue(IspnStats.COMMIT_EXECUTION_TIME);
                return new Long(commitExecTime / numCommits);
@@ -163,7 +160,7 @@ public class NodeScopeStatisticCollector {
             return new Long(0);
          }
          case REPLAY_TIME:{
-            long numReplayed = remoteTransactionStatistics.getValue(IspnStats.REPLAYED_TXS);
+            long numReplayed = remoteTransactionStatistics.getValue(IspnStats.NUM_REPLAYED_TXS);
             if(numReplayed!=0){
                long replayTime = remoteTransactionStatistics.getValue(IspnStats.REPLAY_TIME);
                return new Long(replayTime / numReplayed);
@@ -171,36 +168,41 @@ public class NodeScopeStatisticCollector {
             return new Long(0);
          }
          case ARRIVAL_RATE:{
-            long localCommittedTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) + localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
-            long localAbortedTx = localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX) + localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
-            long remoteCommittedTx = remoteTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) + remoteTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
-            long remoteAbortedTx = remoteTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX) + remoteTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
+            long localCommittedTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
+                  localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
+            long localAbortedTx = localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX) +
+                  localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
+            long remoteCommittedTx = remoteTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
+                  remoteTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
+            long remoteAbortedTx = remoteTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX) +
+                  remoteTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
             long totalBornTx = localAbortedTx + localCommittedTx + remoteAbortedTx + remoteCommittedTx;
             return new Long((long) (totalBornTx / convertNanosToSeconds(System.nanoTime() - this.lastResetTime)));
          }
          case TX_WRITE_PERCENTAGE:{     //computed on the locally born txs
-            long readTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) + localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX);
-            long writeTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) + localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
+            long readTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
+                  localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX);
+            long writeTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) +
+                  localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
             long total = readTx + writeTx;
             if(total!=0)
-               return new Long(writeTx * 100 / total);
-            return new Long(0);
+               return new Double(writeTx * 1.0 / total);
+            return new Double(0);
          }
          case SUCCESSFUL_WRITE_PERCENTAGE:{ //computed on the locally born txs
             long readSuxTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX);
             long writeSuxTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
             long total = readSuxTx + writeSuxTx;
             if(total!=0){
-               return new Long(writeSuxTx * 100/  total);
+               return new Double(writeSuxTx * 1.0 / total);
             }
-            return new Long(0);
+            return new Double(0);
          }
          case APPLICATION_CONTENTION_FACTOR:{
-            //TODO this look weird (PEDRO)
             long localTakenLocks = localTransactionStatistics.getValue(IspnStats.NUM_HELD_LOCKS);
             long remoteTakenLocks = remoteTransactionStatistics.getValue(IspnStats.NUM_HELD_LOCKS);
             long elapsedTime = System.nanoTime() - this.lastResetTime;
-            long totalLocksArrivalRate = (localTakenLocks + remoteTakenLocks) / elapsedTime;
+            double totalLocksArrivalRate = (localTakenLocks + remoteTakenLocks) / convertNanosToMicro(elapsedTime);
             if(totalLocksArrivalRate!=0){
                double localContProb = (Double) this.getAttribute(IspnStats.LOCAL_CONTENTION_PROBABILITY);
                long holdTime = (Long)this.getAttribute(IspnStats.LOCK_HOLD_TIME);
@@ -211,6 +213,10 @@ public class NodeScopeStatisticCollector {
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }
+   }
+
+   private static double convertNanosToMicro(long nanos) {
+      return nanos / 1000.0;
    }
 
    private static double convertNanosToMillis(long nanos) {

@@ -15,9 +15,8 @@ public class LocalTransactionStatistics extends TransactionStatistics {
    private boolean stillLocalExecution;
 
    public LocalTransactionStatistics(){
-      super();
+      super(LocalStatistics.NUM_STATS);
       this.stillLocalExecution = true;
-      this.statisticsContainer = new StatisticsContainerImpl(LocalStatistics.NUM_STATS);
    }
 
    public final void terminateLocalExecution(){
@@ -28,6 +27,14 @@ public class LocalTransactionStatistics extends TransactionStatistics {
 
    public final boolean isStillLocalExecution(){
       return this.stillLocalExecution;
+   }
+
+   @Override
+   protected final void terminate() {
+      if (!isReadOnly() && isCommit()) {
+         long numPuts = this.getValue(IspnStats.NUM_PUTS);
+         this.addValue(IspnStats.NUM_SUCCESSFUL_PUTS,numPuts);
+      }
    }
 
    protected final void onPrepareCommand(){
@@ -64,7 +71,7 @@ public class LocalTransactionStatistics extends TransactionStatistics {
    }
 
    @Override
-   public String toString() {
+   public final String toString() {
       return "LocalTransactionStatistics{" +
             "stillLocalExecution=" + stillLocalExecution +
             ", " + super.toString();

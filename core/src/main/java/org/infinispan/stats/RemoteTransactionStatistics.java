@@ -12,11 +12,15 @@ import org.infinispan.stats.translations.RemoteStatistics;
 public class RemoteTransactionStatistics extends TransactionStatistics{
 
    public RemoteTransactionStatistics(){
-      super();
-      this.statisticsContainer = new StatisticsContainerImpl(RemoteStatistics.NUM_STATS);
+      super(RemoteStatistics.NUM_STATS);
    }
 
    protected final void onPrepareCommand(){
+      //nop
+   }
+
+   @Override
+   protected final void terminate() {
       //nop
    }
 
@@ -27,7 +31,7 @@ public class RemoteTransactionStatistics extends TransactionStatistics{
       switch (stat){
          case REPLAY_TIME:
             return RemoteStatistics.REPLAY_TIME;
-         case REPLAYED_TXS:
+         case NUM_REPLAYED_TXS:
             return RemoteStatistics.REPLAYED_TXS;
          default:
             throw new NoIspnStatException("Statistic "+stat+" is not available!");
@@ -35,7 +39,7 @@ public class RemoteTransactionStatistics extends TransactionStatistics{
    }
 
    @Override
-   public String toString() {
+   public final String toString() {
       return "RemoteTransactionStatistics{" + super.toString();
    }
 }

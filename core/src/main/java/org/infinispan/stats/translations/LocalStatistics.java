@@ -1,10 +1,10 @@
 package org.infinispan.stats.translations;
 
 /**
- * Author: Diego Didona
- * Email: didona@gsd.inesc-id.pt
  * Websiste: www.cloudtm.eu
  * Date: 01/05/12
+ * @author Diego Didona <didona@gsd.inesc-id.pt>
+ * @since 5.2
  */
 public class LocalStatistics extends LocalRemoteStatistics {
    private static final int NUM_ONLY_LOCAL_STATS = 9;

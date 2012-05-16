@@ -1,11 +1,10 @@
 package org.infinispan.stats.translations;
 
 /**
- * Created by IntelliJ IDEA.
- * User: diego
  * Date: 28/12/11
  * Time: 15:38
- * To change this template use File | Settings | File Templates.
+ * @author Diego Didona <didona@gsd.inesc-id.pt>
+ * @since 5.2
  */
 
 public class ExposedStatistics {
@@ -28,7 +27,7 @@ TransactionStatistics since every class implements its own case switch
 
 */
 
-   public enum TransactionalClasses {
+   public static enum TransactionalClasses {
       DEFAULT_CLASS
    }
 
@@ -40,7 +39,7 @@ TransactionStatistics since every class implements its own case switch
    //TODO The classes just contain integers which replace the current "mixed" enum
 
 
-   public enum IspnStats {
+   public static enum IspnStats {
       LOCK_WAITING_TIME,  // C
       LOCK_HOLD_TIME,     // C
       NUM_HELD_LOCKS,     // C
@@ -49,7 +48,7 @@ TransactionStatistics since every class implements its own case switch
       WR_TX_LOCAL_EXECUTION_TIME,   // L
       RTT, // L
       REPLAY_TIME, // R
-      REPLAYED_TXS, // R
+      NUM_REPLAYED_TXS, // R
       PREPARE_COMMAND_SIZE, // L
       NUM_COMMITTED_RO_TX,  // C
       NUM_COMMITTED_WR_TX,  // C

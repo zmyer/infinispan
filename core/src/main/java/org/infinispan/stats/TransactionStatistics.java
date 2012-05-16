@@ -1,7 +1,7 @@
 package org.infinispan.stats;
 
-import org.infinispan.stats.translations.ExposedStatistics;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
+import org.infinispan.stats.translations.ExposedStatistics.TransactionalClasses;
 import org.infinispan.stats.translations.LocalRemoteStatistics;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -10,39 +10,36 @@ import java.util.HashMap;
 
 
 /**
- * Date: 20-apr-2011
- * Time: 16.48.47
- * @author Davide
+ * @author Diego Didona <didona@gsd.inesc-id.pt>
  * @author Pedro Ruivo
  * @since 5.2
  */
 public abstract class TransactionStatistics implements InfinispanStat {
 
-   /*
-   Here the elements which are common for local and remote transactions
-    */
+   //Here the elements which are common for local and remote transactions
    protected long initTime;
    private boolean isReadOnly;
    private boolean isCommit;
-   private ExposedStatistics.TransactionalClasses transactionalClass;
+   private TransactionalClasses transactionalClass;
    private HashMap<Object, Long> takenLocks = new HashMap<Object, Long>();
    protected final static int NON_COMMON_STAT = -1;
 
-   protected StatisticsContainer statisticsContainer;
+   private final StatisticsContainer statisticsContainer;
 
    private final Log log = LogFactory.getLog(getClass());
 
 
-   public TransactionStatistics() {
+   public TransactionStatistics(int size) {
       this.initTime = System.nanoTime();
       this.isReadOnly = true; //as far as it does not tries to perform a put operation
       this.takenLocks = new HashMap<Object, Long>();
-      this.transactionalClass = ExposedStatistics.TransactionalClasses.DEFAULT_CLASS;
+      this.transactionalClass = TransactionalClasses.DEFAULT_CLASS;
+      this.statisticsContainer = new StatisticsContainerImpl(size);
       log.tracef("Created transaction statistics. Class is %s. Start time is %s",
                  transactionalClass, initTime);
    }
 
-   public final ExposedStatistics.TransactionalClasses getTransactionalClass(){
+   public final TransactionalClasses getTransactionalClass(){
       return this.transactionalClass;
    }
 
@@ -72,8 +69,8 @@ public abstract class TransactionStatistics implements InfinispanStat {
          int index = this.getIndex(param);
          this.statisticsContainer.addValue(index,value);
          log.tracef("Add %s to %s", value, param);
-      } catch(NoIspnStatException nise){
-         nise.printStackTrace();
+      } catch(NoIspnStatException e){
+         log.warnf(e, "Exception caught when trying to add the value %s to %s.", value, param);
       }
    }
 
@@ -88,7 +85,6 @@ public abstract class TransactionStatistics implements InfinispanStat {
       this.addValue(param,1);
    }
 
-   //TODO I have to do this separated for local and remote!!
    public final void terminateTransaction() {
       log.tracef("Terminating transaction. Is read only? %s. Is commit? %s", isReadOnly, isCommit);
       long now = System.nanoTime();
@@ -97,8 +93,7 @@ public abstract class TransactionStatistics implements InfinispanStat {
          if(isCommit){
             this.incrementValue(IspnStats.NUM_COMMITTED_RO_TX);
             this.addValue(IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME,execTime);
-         }
-         else{
+         } else{
             this.incrementValue(IspnStats.NUM_ABORTED_RO_TX);
             this.addValue(IspnStats.RO_TX_ABORTED_EXECUTION_TIME,execTime);
          }
@@ -106,30 +101,26 @@ public abstract class TransactionStatistics implements InfinispanStat {
          if(isCommit){
             this.incrementValue(IspnStats.NUM_COMMITTED_WR_TX);
             this.addValue(IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME,execTime);
-            long numPuts = this.getValue(IspnStats.NUM_PUTS);
-            this.addValue(IspnStats.NUM_SUCCESSFUL_PUTS,numPuts);
-         }
-         else{
+         } else{
             this.incrementValue(IspnStats.NUM_ABORTED_WR_TX);
             this.addValue(IspnStats.WR_TX_ABORTED_EXECUTION_TIME,execTime);
          }
       }
-
 
       int heldLocks = this.takenLocks.size();
       double cumulativeLockHoldTime = this.computeCumulativeLockHoldTime(heldLocks,now);
       this.addValue(IspnStats.NUM_HELD_LOCKS,heldLocks);
       this.addValue(IspnStats.LOCK_HOLD_TIME,cumulativeLockHoldTime);
 
-      this.dump();
+      terminate();
    }
 
-   public void flush(TransactionStatistics ts){
+   public final void flush(TransactionStatistics ts){
       log.tracef("Flush this [%s] to %s", this, ts);
       this.statisticsContainer.mergeTo(ts.statisticsContainer);
    }
 
-   public void dump(){
+   public final void dump(){
       this.statisticsContainer.dump();
    }
 
@@ -199,6 +190,8 @@ public abstract class TransactionStatistics implements InfinispanStat {
    protected abstract int getIndex(IspnStats param);
 
    protected abstract void onPrepareCommand();
+
+   protected abstract void terminate();
 
    private long computeCumulativeLockHoldTime(int numLocks,long currentTime){
       long ret = numLocks * currentTime;

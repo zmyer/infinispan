@@ -6,14 +6,32 @@ target
 .project
 .classpath
 .settings
+.scala_dependencies
+.externalToolBuilders
+.factorypath
 # ignore IDEA files
 *.iml
 *.ipr
 *.iws
 .idea
+atlassian-ide-plugin.xml
 maven-ant-tasks.jar
 test-output
-transaction.log
+classes
+# log files
+*.log
 # vim files
 *.swp
+# testsuite generated files/folders
+PutObjectStoreDirHere
+/query/person
+ObjectStore
+# generated rhq plugin xml
+rhq-plugin.xml
+# Compiled python files
+*.pyc
+# Jandex generated indexes
+*.idx
+# Persisted metadata
+*.dat
 

@@ -3,7 +3,7 @@ package org.infinispan.stats.topK;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.interceptors.base.JmxStatsCommandInterceptor;
+import org.infinispan.interceptors.base.BaseCustomInterceptor;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
@@ -12,51 +12,46 @@ import org.rhq.helpers.pluginAnnotations.agent.Operation;
 import java.util.Map;
 
 /**
- * Date: 12/20/11
- * Time: 6:46 PM
- *
- * @author pruivo
+ * @author Pedro Ruivo
+ * @since 5.2
  */
 @MBean(objectName = "StreamLibStatistics", description = "Show analytics for workload monitor")
-public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
+public class StreamLibInterceptor extends BaseCustomInterceptor {
 
-    private static final StreamLibContainer streamLibContainer = StreamLibContainer.getInstance();
+   private static final StreamLibContainer streamLibContainer = StreamLibContainer.getInstance();
+   private boolean statisticEnabled = false;
 
-   /*
-   I comment out the injection to change as less files as possible
-    @Inject
-    public void inject(AnalyticsBean analyticsBean) {
-        this.analyticsBean = analyticsBean;
-    }
-    */
+   @Override
+   protected void start() {
+      super.start();
+      setStatisticsEnabled(true);
+   }
 
-    protected boolean isRemote(Object k){
-        return false;
-    }
+   protected boolean isRemote(Object k){
+      return false;
+   }
 
-    @Override
-    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
+   @Override
+   public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
 
-        if(getStatisticsEnabled() && ctx.isOriginLocal() && ctx.isInTxScope()) {
-           streamLibContainer.addGet(command.getKey(), isRemote(command.getKey()));
-        }
-        return invokeNextInterceptor(ctx, command);
-    }
+      if(statisticEnabled && ctx.isOriginLocal() && ctx.isInTxScope()) {
+         streamLibContainer.addGet(command.getKey(), isRemote(command.getKey()));
+      }
+      return invokeNextInterceptor(ctx, command);
+   }
 
-    @Override
-    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
-        if(getStatisticsEnabled() && ctx.isOriginLocal() && ctx.isInTxScope()) {
-           streamLibContainer.addPut(command.getKey(), isRemote(command.getKey()));
-        }
-        return invokeNextInterceptor(ctx, command);
-    }
+   @Override
+   public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
+      if(statisticEnabled && ctx.isOriginLocal() && ctx.isInTxScope()) {
+         streamLibContainer.addPut(command.getKey(), isRemote(command.getKey()));
+      }
+      return invokeNextInterceptor(ctx, command);
+   }
 
    @ManagedOperation(description = "Resets statistics gathered by this component")
    @Operation(displayName = "Reset Statistics (Statistics)")
-   @Override
    public void resetStatistics() {
       streamLibContainer.resetAll();
-
    }
 
    @ManagedOperation(description = "Set K for the top-K values")
@@ -177,9 +172,10 @@ public class StreamLibInterceptor extends JmxStatsCommandInterceptor {
       return res;
    }
 
-   @Override
+   @ManagedOperation(description = "Show the top n keys whose write skew check was failed")
+   @Operation(displayName = "Top Keys whose Write Skew Check was failed")
    public void setStatisticsEnabled(boolean enabled) {
-      super.setStatisticsEnabled(enabled);
+      statisticEnabled = true;
       streamLibContainer.setActive(enabled);
    }
 }

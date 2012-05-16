@@ -50,7 +50,7 @@ public class StreamLibContainer {
       }
 
       clearAll();
-      setActive(true);
+      setActive(false);
    }
 
    public static StreamLibContainer getInstance() {

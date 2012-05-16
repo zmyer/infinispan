@@ -1,6 +1,9 @@
 package org.infinispan.distribution.wrappers;
 
 import org.infinispan.commands.ReplicableCommand;
+import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.tx.CommitCommand;
+import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.remoting.RpcException;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.rpc.ResponseFilter;
@@ -27,10 +30,12 @@ public class RpcManagerWrapper implements RpcManager {
    private static final Log log = LogFactory.getLog(RpcManagerWrapper.class);
    private final RpcManager actual;
 
+   //TODO split the rtt for commit, prepare and remote get
    public RpcManagerWrapper(RpcManager actual) {
       this.actual = actual;
    }
 
+   //TODO The remote gets are invoked by this guy
    @Override
    public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand,
                                                 ResponseMode mode, long timeout, boolean usePriorityQueue,
@@ -40,9 +45,11 @@ public class RpcManagerWrapper implements RpcManager {
 
       Map<Address,Response> ret = actual.invokeRemotely(recipients, rpcCommand, mode, timeout, usePriorityQueue,
                                                         responseFilter, totalOrder);
-      TransactionsStatisticsRegistry.addValue(IspnStats.RTT,System.nanoTime() - currentTime);
-      TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_SUCCESSFUL_RTTS);
-      TransactionsStatisticsRegistry.addValue(IspnStats.NUM_NODES_IN_PREPARE,recipients.size());
+      if (rpcCommand instanceof ClusteredGetCommand && TransactionsStatisticsRegistry.hasStatisticCollector()) {
+         TransactionsStatisticsRegistry.addValue(IspnStats.RTT,System.nanoTime() - currentTime);
+         TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_SUCCESSFUL_RTTS);
+         TransactionsStatisticsRegistry.addValue(IspnStats.NUM_NODES_IN_PREPARE,recipients.size());
+      }
       return ret;
    }
 
@@ -91,6 +98,7 @@ public class RpcManagerWrapper implements RpcManager {
       actual.invokeRemotely(recipients, rpc, sync);
    }      
 
+   //TODO The commit/rollback are invoked by this guy
    @Override
    public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpc, boolean sync, 
                                                 boolean usePriorityQueue, boolean totalOrder) throws RpcException {
@@ -98,11 +106,13 @@ public class RpcManagerWrapper implements RpcManager {
       Map<Address,Response> ret;
       long currentTime = System.nanoTime();
       ret = actual.invokeRemotely(recipients, rpc, sync, usePriorityQueue, totalOrder);
-      TransactionsStatisticsRegistry.addValue(IspnStats.RTT,System.nanoTime() - currentTime);
-      TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_SUCCESSFUL_RTTS);
-      TransactionsStatisticsRegistry.addValue(IspnStats.NUM_NODES_IN_PREPARE, recipients == null ?
-            actual.getTransport().getMembers().size() :
-            recipients.size());
+      if (shouldCollectStats(rpc)) {
+         TransactionsStatisticsRegistry.addValue(IspnStats.RTT,System.nanoTime() - currentTime);
+         TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_SUCCESSFUL_RTTS);
+         TransactionsStatisticsRegistry.addValue(IspnStats.NUM_NODES_IN_PREPARE, recipients == null ?
+               actual.getTransport().getMembers().size() :
+               recipients.size());
+      }
       return ret;
    }
 
@@ -144,5 +154,9 @@ public class RpcManagerWrapper implements RpcManager {
    public Address getAddress() {
       log.tracef("RpcManagerWrapper.getAddress");
       return actual.getAddress();
+   }
+
+   private boolean shouldCollectStats(ReplicableCommand cacheRpcCommand) {
+      return cacheRpcCommand instanceof PrepareCommand || cacheRpcCommand instanceof CommitCommand;
    }
 }

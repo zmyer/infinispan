@@ -60,7 +60,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @Override
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
-      log.tracef("Visit Put Key Value command %s. Is it in transaction scope? %s. Is it local?", command,
+      log.tracef("Visit Put Key Value command %s. Is it in transaction scope? %s. Is it local? %s", command,
                  ctx.isInTxScope(), ctx.isOriginLocal());
       Object ret;
       if(ctx.isInTxScope()){
@@ -81,7 +81,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable{
-      log.tracef("Visit Get Key Value command %s. Is it in transaction scope? %s. Is it local?", command,
+      log.tracef("Visit Get Key Value command %s. Is it in transaction scope? %s. Is it local? %s", command,
                  ctx.isInTxScope(), ctx.isOriginLocal());
       boolean isTx = ctx.isInTxScope();
       Object ret;

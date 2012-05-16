@@ -126,6 +126,10 @@ public class TransactionsStatisticsRegistry {
       }
    }
 
+   public static boolean hasStatisticCollector() {
+      return thread.get() != null;
+   }
+
    private static void initLocalTransaction(){
       //Not overriding the InitialValue method leads me to have "null" at the first invocation of get()
       TransactionStatistics lts = thread.get();

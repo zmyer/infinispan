@@ -95,10 +95,10 @@ public class NodeScopeStatisticCollector {
             }
             return new Long(0);
          }
-         case RTT:{
-            long numRtts = localTransactionStatistics.getValue(IspnStats.NUM_SUCCESSFUL_RTTS);
+         case RTT_PREPARE:{
+            long numRtts = localTransactionStatistics.getValue(IspnStats.NUM_RTTS_PREPARE);
             if(numRtts!=0){
-               long rtt = localTransactionStatistics.getValue(IspnStats.RTT);
+               long rtt = localTransactionStatistics.getValue(IspnStats.RTT_PREPARE);
                return new Long(rtt / numRtts);
             }
             return new Long(0);

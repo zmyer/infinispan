@@ -2,7 +2,6 @@ package org.infinispan.stats;
 
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.stats.translations.ExposedStatistics.TransactionalClasses;
-import org.infinispan.stats.translations.LocalRemoteStatistics;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -22,7 +21,6 @@ public abstract class TransactionStatistics implements InfinispanStat {
    private boolean isCommit;
    private TransactionalClasses transactionalClass;
    private HashMap<Object, Long> takenLocks = new HashMap<Object, Long>();
-   protected final static int NON_COMMON_STAT = -1;
 
    private final StatisticsContainer statisticsContainer;
 
@@ -131,60 +129,6 @@ public abstract class TransactionStatistics implements InfinispanStat {
             ", isCommit=" + isCommit +
             ", transactionalClass=" + transactionalClass +
             '}';
-   }
-
-   protected final int getCommonIndex(IspnStats stat){
-      switch (stat){
-         case LOCK_HOLD_TIME:
-            return LocalRemoteStatistics.LOCK_HOLD_TIME;
-         case  NUM_HELD_LOCKS:
-            return LocalRemoteStatistics.NUM_HELD_LOCK;
-         case LOCK_WAITING_TIME:
-            return LocalRemoteStatistics.LOCK_WAITING_TIME;
-         case ROLLBACK_EXECUTION_TIME:
-            return LocalRemoteStatistics.ROLLBACK_EXECUTION_TIME;
-         case COMMIT_EXECUTION_TIME:
-            return LocalRemoteStatistics.COMMIT_EXECUTION_TIME;
-         case NUM_COMMIT_COMMAND:
-            return LocalRemoteStatistics.NUM_COMMIT_COMMAND;
-         case NUM_ROLLBACKS:
-            return LocalRemoteStatistics.NUM_ROLLBACKS;
-         case NUM_PUTS:
-            return LocalRemoteStatistics.NUM_PUTS;
-         case NUM_SUCCESSFUL_RTTS:
-            return LocalRemoteStatistics.NUM_SUCCESSFUL_RTTS;
-         case NUM_WAITED_FOR_LOCKS:
-            return LocalRemoteStatistics.NUM_WAITED_FOR_LOCKS;
-         case NUM_COMMITTED_RO_TX:
-            return LocalRemoteStatistics.NUM_COMMITTED_RO_TX;
-         case NUM_ABORTED_RO_TX:
-            return LocalRemoteStatistics.NUM_ABORTED_RO_TX;
-         case NUM_ABORTED_WR_TX:
-            return LocalRemoteStatistics.NUM_ABORTED_WR_TX;
-         case NUM_COMMITTED_WR_TX:
-            return LocalRemoteStatistics.NUM_COMMITTED_WR_TX;
-         case LOCK_CONTENTION_TO_LOCAL:
-            return LocalRemoteStatistics.LOCK_CONTENTION_TO_LOCAL;
-         case LOCK_CONTENTION_TO_REMOTE:
-            return LocalRemoteStatistics.LOCK_CONTENTION_TO_REMOTE;
-         case NUM_REMOTE_GET:
-            return LocalRemoteStatistics.NUM_REMOTE_GET;
-         case NUM_REMOTE_PUT:
-            return LocalRemoteStatistics.NUM_REMOTE_PUT;
-         case REMOTE_GET_EXECUTION:
-            return LocalRemoteStatistics.REMOTE_GET_EXECUTION;
-         case REMOTE_PUT_EXECUTION:
-            return LocalRemoteStatistics.REMOTE_PUT_EXECUTION;
-         case WR_TX_ABORTED_EXECUTION_TIME:
-            return LocalRemoteStatistics.WR_TX_ABORTED_EXECUTION_TIME;
-         case RO_TX_ABORTED_EXECUTION_TIME:
-            return LocalRemoteStatistics.RO_TX_ABORTED_EXECUTION_TIME;
-         case WR_TX_SUCCESSFUL_EXECUTION_TIME:
-            return LocalRemoteStatistics.WR_TX_SUCCESSFUL_EXECUTION_TIME;
-         case RO_TX_SUCCESSFUL_EXECUTION_TIME:
-            return LocalRemoteStatistics.RO_TX_SUCCESSFUL_EXECUTION_TIME;
-      }
-      return NON_COMMON_STAT;
    }
 
    protected abstract int getIndex(IspnStats param);

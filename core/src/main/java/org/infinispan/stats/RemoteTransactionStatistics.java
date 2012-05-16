@@ -12,7 +12,7 @@ import org.infinispan.stats.translations.RemoteStatistics;
 public class RemoteTransactionStatistics extends TransactionStatistics{
 
    public RemoteTransactionStatistics(){
-      super(RemoteStatistics.NUM_STATS);
+      super(RemoteStatistics.getSize());
    }
 
    protected final void onPrepareCommand(){
@@ -25,17 +25,11 @@ public class RemoteTransactionStatistics extends TransactionStatistics{
    }
 
    protected final int getIndex(ExposedStatistics.IspnStats stat) throws NoIspnStatException{
-      int ret = super.getCommonIndex(stat);
-      if(ret!=NON_COMMON_STAT)
-         return ret;
-      switch (stat){
-         case REPLAY_TIME:
-            return RemoteStatistics.REPLAY_TIME;
-         case NUM_REPLAYED_TXS:
-            return RemoteStatistics.REPLAYED_TXS;
-         default:
-            throw new NoIspnStatException("Statistic "+stat+" is not available!");
+      int ret = RemoteStatistics.getIndex(stat);
+      if (ret != RemoteStatistics.NOT_FOUND) {
+         throw new NoIspnStatException("Statistic "+stat+" is not available!");
       }
+      return ret;
    }
 
    @Override

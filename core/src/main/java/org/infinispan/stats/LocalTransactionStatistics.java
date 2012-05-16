@@ -15,7 +15,7 @@ public class LocalTransactionStatistics extends TransactionStatistics {
    private boolean stillLocalExecution;
 
    public LocalTransactionStatistics(){
-      super(LocalStatistics.NUM_STATS);
+      super(LocalStatistics.getSize());
       this.stillLocalExecution = true;
    }
 
@@ -42,32 +42,11 @@ public class LocalTransactionStatistics extends TransactionStatistics {
    }
 
    protected final int getIndex(IspnStats stat) throws NoIspnStatException{
-      int ret = super.getCommonIndex(stat);
-      if(ret!=NON_COMMON_STAT)
-         return ret;
-
-      switch (stat){
-         case LOCAL_CONTENTION_PROBABILITY:
-            return LocalStatistics.LOCAL_CONTENTION_PROBABILITY;
-         case WR_TX_LOCAL_EXECUTION_TIME:
-            return LocalStatistics.WR_TX_LOCAL_EXECUTION_TIME;
-         case WR_TX_SUCCESSFUL_EXECUTION_TIME:
-            return LocalStatistics.WR_TX_SUCCESSFUL_LOCAL_EXECUTION_TIME;
-         case NUM_SUCCESSFUL_PUTS:
-            return LocalStatistics.PUTS_PER_LOCAL_TX;
-         case PREPARE_COMMAND_SIZE:
-            return LocalStatistics.PREPARE_COMMAND_SIZE;
-         case NUM_NODES_IN_PREPARE:
-            return LocalStatistics.NUM_NODES_IN_PREPARE;
-         case NUM_PREPARES:
-            return LocalStatistics.NUM_PREPARE;
-         case RTT:
-            return LocalStatistics.RTT;
-         case NUM_SUCCESSFUL_RTTS:
-            return LocalStatistics.NUM_RTTS;
-         default:
-            throw new NoIspnStatException("IspnStats "+stat+" not found!");
+      int ret = LocalStatistics.getIndex(stat);
+      if (ret != LocalStatistics.NOT_FOUND) {
+         throw new NoIspnStatException("IspnStats "+stat+" not found!");
       }
+      return ret;
    }
 
    @Override

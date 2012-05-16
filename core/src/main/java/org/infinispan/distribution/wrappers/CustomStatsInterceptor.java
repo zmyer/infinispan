@@ -229,7 +229,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    @ManagedAttribute(description = "Average Rtt duration")
    @Metric(displayName = "Rtt")
    public long getRtt() {
-      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT)));
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_PREPARE)));
    }
 
    @ManagedAttribute(description = "Application Contention Factor")

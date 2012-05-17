@@ -37,7 +37,6 @@ TransactionStatistics since every class implements its own case switch
       WR_TX_LOCAL_EXECUTION_TIME(true, false),  // L      
       REPLAY_TIME(false, true),        // R
       NUM_REPLAYED_TXS(false, true),   // R
-      PREPARE_COMMAND_SIZE(true, false),  // L
       NUM_COMMITTED_RO_TX(true, true), // C
       NUM_COMMITTED_WR_TX(true, true), // C
       NUM_ABORTED_WR_TX(true, true),   // C
@@ -66,6 +65,11 @@ TransactionStatistics since every class implements its own case switch
       RO_TX_ABORTED_EXECUTION_TIME(true, true),    //C
       NUM_COMMIT_COMMAND(true, true),              //C
       APPLICATION_CONTENTION_FACTOR(false, false), // ONLY FOR QUERY
+
+      //commands size
+      PREPARE_COMMAND_SIZE(true, false),        // L
+      COMMIT_COMMAND_SIZE(true, false),         // L
+      CLUSTERED_GET_COMMAND_SIZE(true, false),  // L
 
       //Lock failed stuff
       NUM_LOCK_FAILED_TIMEOUT(true, false),  //L

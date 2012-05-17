@@ -15,11 +15,14 @@ import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.stats.TransactionsStatisticsRegistry;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.util.concurrent.NotifyingNotifiableFuture;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+import org.jgroups.blocks.RpcDispatcher;
+import org.jgroups.util.Buffer;
 
 import java.util.Collection;
 import java.util.Map;
@@ -33,9 +36,16 @@ import java.util.Map;
 public class RpcManagerWrapper implements RpcManager {
    private static final Log log = LogFactory.getLog(RpcManagerWrapper.class);
    private final RpcManager actual;
+   private final RpcDispatcher.Marshaller marshaller;
 
    public RpcManagerWrapper(RpcManager actual) {
       this.actual = actual;
+      Transport t = actual.getTransport();
+      if (t instanceof JGroupsTransport) {
+         marshaller = ((JGroupsTransport) t).getCommandAwareRpcDispatcher().getMarshaller();
+      } else {
+         marshaller = null;
+      }
    }
 
    @Override
@@ -176,6 +186,7 @@ public class RpcManagerWrapper implements RpcManager {
       IspnStats durationStat;
       IspnStats counterStat;
       IspnStats recipientSizeStat;
+      IspnStats commandSizeStat = null;
       switch (command.getCommandId()) {
          case PrepareCommand.COMMAND_ID:
          case VersionedPrepareCommand.COMMAND_ID:
@@ -187,6 +198,7 @@ public class RpcManagerWrapper implements RpcManager {
                counterStat = IspnStats.NUM_ASYNC_PREPARE;
             }
             recipientSizeStat = IspnStats.NUM_NODES_PREPARE;
+            commandSizeStat = IspnStats.PREPARE_COMMAND_SIZE;
             break;
          case RollbackCommand.COMMAND_ID:
             if (sync) {
@@ -208,6 +220,7 @@ public class RpcManagerWrapper implements RpcManager {
                counterStat = IspnStats.NUM_ASYNC_COMMIT;
             }
             recipientSizeStat = IspnStats.NUM_NODES_COMMIT;
+            commandSizeStat = IspnStats.COMMIT_COMMAND_SIZE;
             break;
          case TxCompletionNotificationCommand.COMMAND_ID:
             durationStat = IspnStats.ASYNC_COMPLETE_NOTIFY;
@@ -218,6 +231,7 @@ public class RpcManagerWrapper implements RpcManager {
             durationStat = IspnStats.RTT_GET;
             counterStat = IspnStats.NUM_RTTS_GET;
             recipientSizeStat = IspnStats.NUM_NODES_GET;
+            commandSizeStat = IspnStats.CLUSTERED_GET_COMMAND_SIZE;
             break;
          default:
             log.tracef("Does not update stats for command %s. The command is not needed", command);
@@ -228,9 +242,21 @@ public class RpcManagerWrapper implements RpcManager {
       TransactionsStatisticsRegistry.addValue(durationStat, System.nanoTime() - init);
       TransactionsStatisticsRegistry.incrementValue(counterStat);
       TransactionsStatisticsRegistry.addValue(recipientSizeStat, recipientListSize(recipients));
+      if (commandSizeStat != null) {
+         TransactionsStatisticsRegistry.addValue(commandSizeStat, getCommandSize(command));
+      }
    }
 
    private int recipientListSize(Collection<Address> recipients) {
       return recipients == null ? actual.getTransport().getMembers().size() : recipients.size();
+   }
+
+   private int getCommandSize(ReplicableCommand command) {
+      try {
+         Buffer buffer = marshaller.objectToBuffer(command);
+         return buffer != null ? buffer.getLength() : 0;
+      } catch (Exception e) {
+         return 0;
+      }
    }
 }

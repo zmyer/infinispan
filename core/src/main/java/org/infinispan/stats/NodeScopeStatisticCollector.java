@@ -158,14 +158,6 @@ public class NodeScopeStatisticCollector {
             return new Long(0);
 
          }
-         case PREPARE_COMMAND_SIZE:{
-            long numPrepares = localTransactionStatistics.getValue(IspnStats.NUM_PREPARES);
-            if(numPrepares!=0){
-               long prepareCommandSize = localTransactionStatistics.getValue(IspnStats.PREPARE_COMMAND_SIZE);
-               return new Long(prepareCommandSize / numPrepares);
-            }
-            return new Long(0);
-         }
          case LOCK_WAITING_TIME:{
             long localWaitedForLocks = localTransactionStatistics.getValue(IspnStats.NUM_WAITED_FOR_LOCKS);
             long remoteWaitedForLocks = remoteTransactionStatistics.getValue(IspnStats.NUM_WAITED_FOR_LOCKS);
@@ -237,6 +229,12 @@ public class NodeScopeStatisticCollector {
             return avg(IspnStats.NUM_COMMITTED_WR_TX, IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME);
          case RO_TX_SUCCESSFUL_EXECUTION_TIME:
             return avg(IspnStats.NUM_COMMITTED_RO_TX, IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME);
+         case PREPARE_COMMAND_SIZE:
+            return avgMultipleCounters(IspnStats.PREPARE_COMMAND_SIZE, IspnStats.NUM_RTTS_PREPARE, IspnStats.NUM_ASYNC_PREPARE);
+         case COMMIT_COMMAND_SIZE:
+            return avgMultipleCounters(IspnStats.COMMIT_COMMAND_SIZE, IspnStats.NUM_RTTS_COMMIT, IspnStats.NUM_ASYNC_COMMIT);
+         case CLUSTERED_GET_COMMAND_SIZE:
+            return avg(IspnStats.NUM_RTTS_GET, IspnStats.CLUSTERED_GET_COMMAND_SIZE);
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }

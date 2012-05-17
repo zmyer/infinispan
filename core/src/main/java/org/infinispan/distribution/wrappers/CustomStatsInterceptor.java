@@ -335,8 +335,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    }
 
    @ManagedAttribute(description = "Application Contention Factor")
-   @Metric(displayName = "ACF")
-   public double getAcf() {
+   @Metric(displayName = "Application Contention Factor")
+   public double getApplicationContentionFactor() {
       return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.APPLICATION_CONTENTION_FACTOR));
    }
 
@@ -376,10 +376,22 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.ROLLBACK_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average Prepare Command size")
-   @Metric(displayName = "Average Prepare Command size")
+   @ManagedAttribute(description = "Average prepare command size")
+   @Metric(displayName = "Average Prepare Command Size")
    public long getAvgPrepareCommandSize(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.PREPARE_COMMAND_SIZE);
+   }
+
+   @ManagedAttribute(description = "Average commit command size")
+   @Metric(displayName = "Average Commit Command Size")
+   public long getAvgCommitCommandSize(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.COMMIT_COMMAND_SIZE);
+   }
+
+   @ManagedAttribute(description = "Average clustered get command size")
+   @Metric(displayName = "Average Clustered Get Command Size")
+   public long getAvgClusteredGetCommandSize(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.CLUSTERED_GET_COMMAND_SIZE);
    }
 
    @ManagedAttribute(description = "Average time waiting for the lock acquisition")

@@ -228,6 +228,9 @@ public class NodeScopeStatisticCollector {
             }
             return new Double(0);
          }
+         case NUM_LOCK_FAILED_DEADLOCK:
+         case NUM_LOCK_FAILED_TIMEOUT:
+            return new Long(localTransactionStatistics.getValue(param));
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }

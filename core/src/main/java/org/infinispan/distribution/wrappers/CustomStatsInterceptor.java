@@ -23,6 +23,8 @@ import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.stats.TransactionsStatisticsRegistry;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.transaction.TransactionTable;
+import org.infinispan.util.concurrent.TimeoutException;
+import org.infinispan.util.concurrent.locks.DeadlockDetectedException;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -70,7 +72,19 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          TransactionsStatisticsRegistry.setUpdateTransaction();
          long currTime = System.nanoTime();
          TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_PUTS);
-         ret =  invokeNextInterceptor(ctx,command);
+         try {
+            ret =  invokeNextInterceptor(ctx,command);
+         } catch (TimeoutException e) {
+            if (ctx.isOriginLocal() && isLockTimeout(e)) {
+               TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_LOCK_FAILED_TIMEOUT);
+            }
+            throw e;
+         } catch (DeadlockDetectedException e) {
+            if (ctx.isOriginLocal()) {
+               TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_LOCK_FAILED_DEADLOCK);
+            }
+            throw e;
+         }
          if(isRemote(command.getKey())){
             TransactionsStatisticsRegistry.addValue(IspnStats.REMOTE_PUT_EXECUTION,System.nanoTime() - currTime);
             TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_REMOTE_PUT);
@@ -137,7 +151,19 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          TransactionsStatisticsRegistry.setUpdateTransaction();
       }
 
-      return invokeNextInterceptor(ctx,command);
+      try {
+         return invokeNextInterceptor(ctx,command);
+      } catch (TimeoutException e) {
+         if (ctx.isOriginLocal() && isLockTimeout(e)) {
+            TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_LOCK_FAILED_TIMEOUT);
+         }
+         throw e;
+      } catch (DeadlockDetectedException e) {
+         if (ctx.isOriginLocal()) {
+            TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_LOCK_FAILED_DEADLOCK);
+         }
+         throw e;
+      }
    }
 
 
@@ -218,10 +244,14 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          TransactionsStatisticsRegistry.initTransactionIfNecessary((TxInvocationContext) ctx);
    }
 
+   private boolean isLockTimeout(TimeoutException e) {
+      return e.getMessage().startsWith("Unable to acquire lock after");
+   }
+
    //JMX exposed methods
 
-   @ManagedAttribute(description = "Number of puts")
-   @Metric(displayName = "Average number of puts performed locally by a successful local transaction")
+   @ManagedAttribute(description = "Average number of puts performed locally by a successful local transaction")
+   @Metric(displayName = "Number of puts")
    public long getAvgNumPutsBySuccessfulLocalTx(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.PUTS_PER_LOCAL_TX);
    }
@@ -318,7 +348,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @ManagedAttribute(description = "Average time it takes to replicate successful modifications on the cohorts")
    @Metric(displayName = "Replay Time")
-   public long getMaxReplayTime(){
+   public long getAvgReplayTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REPLAY_TIME) ;
    }
 
@@ -370,9 +400,21 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.TX_WRITE_PERCENTAGE);
    }
 
-   @ManagedAttribute(description = "Percentage of successfully Read-Write transaction executed locally")
+   @ManagedAttribute(description = "Percentage of successfully Write transaction executed locally")
    @Metric(displayName = "Percentage of Successfully Write Transactions")
    public double getPercentageSuccessWriteTransactions(){
       return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.SUCCESSFUL_WRITE_PERCENTAGE);
+   }
+
+   @ManagedAttribute(description = "The number of aborted transactions due to timeout in lock acquisition")
+   @Metric(displayName = "Number of Aborted Transaction due to Lock Acquisition Timeout")
+   public long getNumAbortedTxDueTimeout(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_FAILED_TIMEOUT);
+   }
+
+   @ManagedAttribute(description = "The number of aborted transactions due to deadlock")
+   @Metric(displayName = "Number of Aborted Transaction due to Deadlock")
+   public long getNumAbortedTxDueDeadlock(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_FAILED_DEADLOCK);
    }
 }

@@ -67,6 +67,10 @@ TransactionStatistics since every class implements its own case switch
       NUM_COMMIT_COMMAND(true, true),              //C
       APPLICATION_CONTENTION_FACTOR(false, false), // ONLY FOR QUERY
 
+      //Lock failed stuff
+      NUM_LOCK_FAILED_TIMEOUT(true, false),  //L
+      NUM_LOCK_FAILED_DEADLOCK(true, false), //L
+
       //RTT STUFF: everything is local && synchronous communication
       NUM_RTTS_PREPARE(true, false),   // L
       RTT_PREPARE(true, false),        // L      

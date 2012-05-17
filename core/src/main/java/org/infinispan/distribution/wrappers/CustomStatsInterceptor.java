@@ -447,4 +447,22 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    public long getAvgWriteTxLocalExecution(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
    }
+
+   @ManagedAttribute(description = "Average number of locks per write local transaction")
+   @Metric(displayName = "Average Number of Lock per Local Transaction")
+   public long getAvgNumOfLockLocalTx(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_PER_LOCAL_TX);
+   }
+
+   @ManagedAttribute(description = "Average number of locks per write remote transaction")
+   @Metric(displayName = "Average Number of Lock per Remote Transaction")
+   public long getAvgNumOfLockRemoteTx(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_PER_REMOTE_TX);
+   }
+
+   @ManagedAttribute(description = "Average number of locks per successfully write local transaction")
+   @Metric(displayName = "Average Number of Lock per Successfully Local Transaction")
+   public long getAvgNumOfLockSuccessLocalTx(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_PER_SUCCESS_LOCAL_TX);
+   }
 }

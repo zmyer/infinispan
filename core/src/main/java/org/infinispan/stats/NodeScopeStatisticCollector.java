@@ -70,7 +70,6 @@ public class NodeScopeStatisticCollector {
       }
    }
 
-   //TODO double check sul synchronized e inserire il controllo anti-divisione per zero
    @SuppressWarnings("UnnecessaryBoxing")
    public synchronized Object getAttribute(IspnStats param) throws NoIspnStatException{
       log.tracef("Get attribute %s", param);
@@ -112,15 +111,15 @@ public class NodeScopeStatisticCollector {
          case ASYNC_ROLLBACK:
             return avg(IspnStats.NUM_ASYNC_ROLLBACK, IspnStats.ASYNC_ROLLBACK);
          case NUM_NODES_COMMIT:
-            return avgMultipleCounters(IspnStats.NUM_NODES_COMMIT, IspnStats.NUM_RTTS_COMMIT, IspnStats.NUM_ASYNC_COMMIT);
+            return avgMultipleLocalCounters(IspnStats.NUM_NODES_COMMIT, IspnStats.NUM_RTTS_COMMIT, IspnStats.NUM_ASYNC_COMMIT);
          case NUM_NODES_GET:
-            return avgMultipleCounters(IspnStats.NUM_NODES_GET, IspnStats.NUM_RTTS_GET);
+            return avgMultipleLocalCounters(IspnStats.NUM_NODES_GET, IspnStats.NUM_RTTS_GET);
          case NUM_NODES_PREPARE:
-            return avgMultipleCounters(IspnStats.NUM_NODES_PREPARE, IspnStats.NUM_RTTS_PREPARE, IspnStats.NUM_ASYNC_PREPARE);
+            return avgMultipleLocalCounters(IspnStats.NUM_NODES_PREPARE, IspnStats.NUM_RTTS_PREPARE, IspnStats.NUM_ASYNC_PREPARE);
          case NUM_NODES_ROLLBACK:
-            return avgMultipleCounters(IspnStats.NUM_NODES_ROLLBACK, IspnStats.NUM_RTTS_ROLLBACK, IspnStats.NUM_ASYNC_ROLLBACK);
+            return avgMultipleLocalCounters(IspnStats.NUM_NODES_ROLLBACK, IspnStats.NUM_RTTS_ROLLBACK, IspnStats.NUM_ASYNC_ROLLBACK);
          case NUM_NODES_COMPLETE_NOTIFY:
-            return avgMultipleCounters(IspnStats.NUM_NODES_COMPLETE_NOTIFY, IspnStats.NUM_ASYNC_COMPLETE_NOTIFY);
+            return avgMultipleLocalCounters(IspnStats.NUM_NODES_COMPLETE_NOTIFY, IspnStats.NUM_ASYNC_COMPLETE_NOTIFY);
          case PUTS_PER_LOCAL_TX:{
             long numLocalTxToPrepare = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
             if(numLocalTxToPrepare!=0){
@@ -230,11 +229,17 @@ public class NodeScopeStatisticCollector {
          case RO_TX_SUCCESSFUL_EXECUTION_TIME:
             return avg(IspnStats.NUM_COMMITTED_RO_TX, IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME);
          case PREPARE_COMMAND_SIZE:
-            return avgMultipleCounters(IspnStats.PREPARE_COMMAND_SIZE, IspnStats.NUM_RTTS_PREPARE, IspnStats.NUM_ASYNC_PREPARE);
+            return avgMultipleLocalCounters(IspnStats.PREPARE_COMMAND_SIZE, IspnStats.NUM_RTTS_PREPARE, IspnStats.NUM_ASYNC_PREPARE);
          case COMMIT_COMMAND_SIZE:
-            return avgMultipleCounters(IspnStats.COMMIT_COMMAND_SIZE, IspnStats.NUM_RTTS_COMMIT, IspnStats.NUM_ASYNC_COMMIT);
+            return avgMultipleLocalCounters(IspnStats.COMMIT_COMMAND_SIZE, IspnStats.NUM_RTTS_COMMIT, IspnStats.NUM_ASYNC_COMMIT);
          case CLUSTERED_GET_COMMAND_SIZE:
             return avg(IspnStats.NUM_RTTS_GET, IspnStats.CLUSTERED_GET_COMMAND_SIZE);
+         case NUM_LOCK_PER_LOCAL_TX:
+            return avgMultipleLocalCounters(IspnStats.NUM_HELD_LOCKS, IspnStats.NUM_COMMITTED_WR_TX, IspnStats.NUM_ABORTED_WR_TX);
+         case NUM_LOCK_PER_REMOTE_TX:
+            return avgMultipleRemoteCounters(IspnStats.NUM_HELD_LOCKS, IspnStats.NUM_COMMITTED_WR_TX, IspnStats.NUM_ABORTED_WR_TX);
+         case NUM_LOCK_PER_SUCCESS_LOCAL_TX:
+            return avg(IspnStats.NUM_COMMITTED_WR_TX, IspnStats.NUM_HELD_LOCKS_SUCCESS_TX);
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }
@@ -251,13 +256,26 @@ public class NodeScopeStatisticCollector {
    }
 
    @SuppressWarnings("UnnecessaryBoxing")
-   private Long avgMultipleCounters(IspnStats duration, IspnStats... counters) {
+   private Long avgMultipleLocalCounters(IspnStats duration, IspnStats... counters) {
       long num = 0;
       for (IspnStats counter : counters) {
          num += localTransactionStatistics.getValue(counter);
       }
       if (num != 0) {
          long dur = localTransactionStatistics.getValue(duration);
+         return new Long(dur / num);
+      }
+      return new Long(0);
+   }
+
+   @SuppressWarnings("UnnecessaryBoxing")
+   private Long avgMultipleRemoteCounters(IspnStats duration, IspnStats... counters) {
+      long num = 0;
+      for (IspnStats counter : counters) {
+         num += remoteTransactionStatistics.getValue(counter);
+      }
+      if (num != 0) {
+         long dur = remoteTransactionStatistics.getValue(duration);
          return new Long(dur / num);
       }
       return new Long(0);

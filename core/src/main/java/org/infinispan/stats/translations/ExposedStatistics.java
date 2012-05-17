@@ -12,18 +12,6 @@ public class ExposedStatistics {
    public static final int NUM_STATS = IspnStats.values().length;
    public static final int NUM_TX_CLASSES = TransactionalClasses.values().length;
 
-
-/*
-The idea is having IspnStats which are used outside the stats module to refer to a statistic (update or retrieval)
-Then local and remote transactions implement a translation to point to their own statistic relevant to the input one
-Of course we can bypass this if we use a structure which is NOT accessed by index (i.e., an array), but another one
-i.e. HashMap. In the second case I could share the statistics naming between upper and lower layer. I just don't know
-if accessing an HashMap with a Object value and doing a get-modify-put is as cheap as accessing directly to the entry of an array,
-even if this implies the penalty of a big switch. Please not that the usefulness of the switch is that it can detect
-if a module is dealing with a non-encompassed statistic (and gives much more modularity if we want to exend the hierarchy of
-TransactionStatistics since every class implements its own case switch
-*/
-
    public static enum TransactionalClasses {
       DEFAULT_CLASS
    }
@@ -32,6 +20,7 @@ TransactionStatistics since every class implements its own case switch
       LOCK_WAITING_TIME(true, true),         // C
       LOCK_HOLD_TIME(true, true),            // C
       NUM_HELD_LOCKS(true, true),            // C
+      NUM_HELD_LOCKS_SUCCESS_TX(true, false),   // L
       ROLLBACK_EXECUTION_TIME(true, true),   // C
       NUM_ROLLBACKS(true, true),             // C
       WR_TX_LOCAL_EXECUTION_TIME(true, false),  // L      
@@ -42,9 +31,8 @@ TransactionStatistics since every class implements its own case switch
       NUM_ABORTED_WR_TX(true, true),   // C
       NUM_ABORTED_RO_TX(true, true),   // C      
       NUM_PREPARES(true, false), // L
-      NUM_PUTS(true, true),  // C
-      //TODO check with Diego: in the comment is marked as Local but it was in the LocalRemoteTransaction!!
-      COMMIT_EXECUTION_TIME(true, true), // L
+      NUM_PUTS(true, true),               // C
+      COMMIT_EXECUTION_TIME(true, true), // C
       LOCAL_EXEC_NO_CONT(false, false),            // ONLY FOR QUERY, derived on the fly
       LOCAL_CONTENTION_PROBABILITY(false, false),  // ONLY FOR QUERY, derived on the fly
       LOCK_CONTENTION_TO_LOCAL(true, true),  // C
@@ -65,6 +53,11 @@ TransactionStatistics since every class implements its own case switch
       RO_TX_ABORTED_EXECUTION_TIME(true, true),    //C
       NUM_COMMIT_COMMAND(true, true),              //C
       APPLICATION_CONTENTION_FACTOR(false, false), // ONLY FOR QUERY
+
+      //Lock querying
+      NUM_LOCK_PER_LOCAL_TX(false, false),         // ONLY FOR QUERY, derived on the fly
+      NUM_LOCK_PER_REMOTE_TX(false, false),        // ONLY FOR QUERY, derived on the fly
+      NUM_LOCK_PER_SUCCESS_LOCAL_TX(false, false), // ONLY FOR QUERY, derived on the fly
 
       //commands size
       PREPARE_COMMAND_SIZE(true, false),        // L

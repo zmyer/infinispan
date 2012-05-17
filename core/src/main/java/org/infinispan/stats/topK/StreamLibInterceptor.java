@@ -1,8 +1,11 @@
 package org.infinispan.stats.topK;
 
+import org.infinispan.CacheException;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.interceptors.base.BaseCustomInterceptor;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
@@ -46,6 +49,27 @@ public class StreamLibInterceptor extends BaseCustomInterceptor {
          streamLibContainer.addPut(command.getKey(), isRemote(command.getKey()));
       }
       return invokeNextInterceptor(ctx, command);
+   }
+
+   @Override
+   public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
+      try {
+         return invokeNextInterceptor(ctx, command);
+      } catch (CacheException ce) {
+         String message = ce.getMessage();
+         if (ctx.isOriginLocal() && message.startsWith("Write skew")) {
+            addWriteSkewKey(message);
+         }
+         throw ce;
+      }
+   }
+   
+   private void addWriteSkewKey(String message) {
+      int lowerIdx = message.indexOf("key");
+      int higherIdx = message.lastIndexOf("for transaction");
+      
+      String key = message.substring(lowerIdx + 4, higherIdx - 1);
+      streamLibContainer.addWriteSkewFailed(key);
    }
 
    @ManagedOperation(description = "Resets statistics gathered by this component")

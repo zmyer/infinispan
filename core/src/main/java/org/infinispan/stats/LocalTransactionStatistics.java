@@ -43,7 +43,7 @@ public class LocalTransactionStatistics extends TransactionStatistics {
 
    protected final int getIndex(IspnStats stat) throws NoIspnStatException{
       int ret = LocalStatistics.getIndex(stat);
-      if (ret != LocalStatistics.NOT_FOUND) {
+      if (ret == LocalStatistics.NOT_FOUND) {
          throw new NoIspnStatException("IspnStats "+stat+" not found!");
       }
       return ret;

@@ -95,14 +95,32 @@ public class NodeScopeStatisticCollector {
             }
             return new Long(0);
          }
-         case RTT_PREPARE:{
-            long numRtts = localTransactionStatistics.getValue(IspnStats.NUM_RTTS_PREPARE);
-            if(numRtts!=0){
-               long rtt = localTransactionStatistics.getValue(IspnStats.RTT_PREPARE);
-               return new Long(rtt / numRtts);
-            }
-            return new Long(0);
-         }
+         case RTT_PREPARE:
+            return avg(IspnStats.NUM_RTTS_PREPARE, IspnStats.RTT_PREPARE);
+         case RTT_COMMIT:
+            return avg(IspnStats.NUM_RTTS_COMMIT, IspnStats.RTT_COMMIT);
+         case RTT_ROLLBACK:
+            return avg(IspnStats.NUM_RTTS_ROLLBACK, IspnStats.RTT_ROLLBACK);
+         case RTT_GET:
+            return avg(IspnStats.NUM_RTTS_PREPARE, IspnStats.RTT_GET);
+         case ASYNC_COMMIT:
+            return avg(IspnStats.NUM_ASYNC_COMMIT, IspnStats.ASYNC_COMMIT);
+         case ASYNC_COMPLETE_NOTIFY:
+            return avg(IspnStats.NUM_ASYNC_COMPLETE_NOTIFY, IspnStats.ASYNC_COMPLETE_NOTIFY);
+         case ASYNC_PREPARE:
+            return avg(IspnStats.NUM_ASYNC_PREPARE, IspnStats.ASYNC_PREPARE);
+         case ASYNC_ROLLBACK:
+            return avg(IspnStats.NUM_ASYNC_ROLLBACK, IspnStats.ASYNC_ROLLBACK);
+         case NUM_NODES_COMMIT:
+            return avgMultipleCounters(IspnStats.NUM_NODES_COMMIT, IspnStats.NUM_RTTS_COMMIT, IspnStats.NUM_ASYNC_COMMIT);
+         case NUM_NODES_GET:
+            return avgMultipleCounters(IspnStats.NUM_NODES_GET, IspnStats.NUM_RTTS_GET);
+         case NUM_NODES_PREPARE:
+            return avgMultipleCounters(IspnStats.NUM_NODES_PREPARE, IspnStats.NUM_RTTS_PREPARE, IspnStats.NUM_ASYNC_PREPARE);
+         case NUM_NODES_ROLLBACK:
+            return avgMultipleCounters(IspnStats.NUM_NODES_ROLLBACK, IspnStats.NUM_RTTS_ROLLBACK, IspnStats.NUM_ASYNC_ROLLBACK);
+         case NUM_NODES_COMPLETE_NOTIFY:
+            return avgMultipleCounters(IspnStats.NUM_NODES_COMPLETE_NOTIFY, IspnStats.NUM_ASYNC_COMPLETE_NOTIFY);
          case PUTS_PER_LOCAL_TX:{
             long numLocalTxToPrepare = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
             if(numLocalTxToPrepare!=0){
@@ -213,6 +231,29 @@ public class NodeScopeStatisticCollector {
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }
+   }
+
+   @SuppressWarnings("UnnecessaryBoxing")
+   private Long avg(IspnStats counter, IspnStats duration) {
+      long num = localTransactionStatistics.getValue(counter);
+      if (num != 0) {
+         long dur = localTransactionStatistics.getValue(duration);
+         return new Long(dur / num);
+      }
+      return new Long(0);
+   }
+
+   @SuppressWarnings("UnnecessaryBoxing")
+   private Long avgMultipleCounters(IspnStats duration, IspnStats... counters) {
+      long num = 0;
+      for (IspnStats counter : counters) {
+         num += localTransactionStatistics.getValue(counter);
+      }
+      if (num != 0) {
+         long dur = localTransactionStatistics.getValue(duration);
+         return new Long(dur / num);
+      }
+      return new Long(0);
    }
 
    private static double convertNanosToMicro(long nanos) {

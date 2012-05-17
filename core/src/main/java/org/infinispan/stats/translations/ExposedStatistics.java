@@ -4,12 +4,11 @@ package org.infinispan.stats.translations;
  * Date: 28/12/11
  * Time: 15:38
  * @author Diego Didona <didona@gsd.inesc-id.pt>
+ * @author Pedro Ruivo
  * @since 5.2
  */
 
 public class ExposedStatistics {
-
-
    public static final int NUM_STATS = IspnStats.values().length;
    public static final int NUM_TX_CLASSES = TransactionalClasses.values().length;
 
@@ -23,21 +22,11 @@ if accessing an HashMap with a Object value and doing a get-modify-put is as che
 even if this implies the penalty of a big switch. Please not that the usefulness of the switch is that it can detect
 if a module is dealing with a non-encompassed statistic (and gives much more modularity if we want to exend the hierarchy of
 TransactionStatistics since every class implements its own case switch
-
-
 */
 
    public static enum TransactionalClasses {
       DEFAULT_CLASS
    }
-
-
-   //TODO change: every statistic that is collected must be available to be queried
-   //TODO it is not true the inverse: so I have to define a class LowLevelStats and then a class
-   //TODO like HighLevelStats which extends LowLevelStats.
-   //TODO Both the classes implements QuerableStats
-   //TODO The classes just contain integers which replace the current "mixed" enum
-
 
    public static enum IspnStats {
       LOCK_WAITING_TIME(true, true),         // C
@@ -55,13 +44,13 @@ TransactionStatistics since every class implements its own case switch
       NUM_ABORTED_RO_TX(true, true),   // C      
       NUM_PREPARES(true, false), // L
       NUM_PUTS(true, true),  // C
-      COMMIT_EXECUTION_TIME(true, false), // L
+      //TODO check with Diego: in the comment is marked as Local but it was in the LocalRemoteTransaction!!
+      COMMIT_EXECUTION_TIME(true, true), // L
       LOCAL_EXEC_NO_CONT(false, false),            // ONLY FOR QUERY, derived on the fly
       LOCAL_CONTENTION_PROBABILITY(false, false),  // ONLY FOR QUERY, derived on the fly
       LOCK_CONTENTION_TO_LOCAL(true, true),  // C
       LOCK_CONTENTION_TO_REMOTE(true, true), // C
-      //TODO this should be local, right? (by pedro)
-      NUM_SUCCESSFUL_PUTS(true, true), // C, this includes also repeated puts over the same item
+      NUM_SUCCESSFUL_PUTS(true, false),   // L, this includes also repeated puts over the same item
       PUTS_PER_LOCAL_TX(false, false), // ONLY FOR QUERY, derived on the fly
       NUM_WAITED_FOR_LOCKS(true, true),   // C      
       NUM_REMOTE_GET(true, true),         // C
@@ -99,10 +88,11 @@ TransactionStatistics since every class implements its own case switch
       NUM_ASYNC_COMPLETE_NOTIFY(true, false),   // L            
 
       //Number of nodes involved stuff
-      NUM_NODES_PREPARE(true, false),  //L
-      NUM_NODES_COMMIT(true, false),   //L
-      NUM_NODES_ROLLBACK(true, false), //L
-      NUM_NODES_GET(true, false);      //L
+      NUM_NODES_PREPARE(true, false),           //L
+      NUM_NODES_COMMIT(true, false),            //L
+      NUM_NODES_ROLLBACK(true, false),          //L
+      NUM_NODES_COMPLETE_NOTIFY(true, false),   //L
+      NUM_NODES_GET(true, false);               //L
 
       private boolean local;
       private boolean remote;
@@ -120,8 +110,4 @@ TransactionStatistics since every class implements its own case switch
          return remote;
       }
    }
-
-
-
-
 }

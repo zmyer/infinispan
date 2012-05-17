@@ -226,10 +226,82 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.PUTS_PER_LOCAL_TX);
    }
 
-   @ManagedAttribute(description = "Average Rtt duration")
-   @Metric(displayName = "Rtt")
-   public long getRtt() {
+   @ManagedAttribute(description = "Average Prepare RTT duration")
+   @Metric(displayName = "Average Prepare RTT")
+   public long getAvgPrepareRtt() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_PREPARE)));
+   }
+
+   @ManagedAttribute(description = "Average Commit RTT duration")
+   @Metric(displayName = "Average Commit RTT")
+   public long getAvgCommitRtt() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_COMMIT)));
+   }
+
+   @ManagedAttribute(description = "Average Remote Get RTT duration")
+   @Metric(displayName = "Average Remote Get RTT")
+   public long getAvgRemoteGetRtt() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_GET)));
+   }
+
+   @ManagedAttribute(description = "Average Rollback RTT duration")
+   @Metric(displayName = "Average Rollback RTT")
+   public long getAvgRollbackRtt() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_ROLLBACK)));
+   }
+
+   @ManagedAttribute(description = "Average Prepare asynchronous duration")
+   @Metric(displayName = "Average Prepare Async")
+   public long getAvgPrepareAsync() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.ASYNC_PREPARE)));
+   }
+
+   @ManagedAttribute(description = "Average Commit asynchronous duration")
+   @Metric(displayName = "Average Commit Async")
+   public long getAvgCommitAsync() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.ASYNC_COMMIT)));
+   }
+
+   @ManagedAttribute(description = "Average Complete Notification asynchronous duration")
+   @Metric(displayName = "Average Complete Notification Async")
+   public long getAvgCompleteNotificationAsync() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.ASYNC_COMPLETE_NOTIFY)));
+   }
+
+   @ManagedAttribute(description = "Average Rollback asynchronous duration")
+   @Metric(displayName = "Average Rollback Async")
+   public long getAvgRollbackAsync() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.ASYNC_ROLLBACK)));
+   }
+
+   @ManagedAttribute(description = "Average number of nodes in Commit destination set")
+   @Metric(displayName = "Average Number of Nodes in Commit Destination Set")
+   public long getAvgNumNodesCommit() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.NUM_NODES_COMMIT)));
+   }
+
+   @ManagedAttribute(description = "Average number of nodes in Complete Notification destination set")
+   @Metric(displayName = "Average Number of Nodes in Complete Notification Destination Set")
+   public long getAvgNumNodesCompleteNotification() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.NUM_NODES_COMPLETE_NOTIFY)));
+   }
+
+   @ManagedAttribute(description = "Average number of nodes in Remote Get destination set")
+   @Metric(displayName = "Average Number of Nodes in Remote Get Destination Set")
+   public long getAvgNumNodesRemoteGet() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.NUM_NODES_GET)));
+   }
+
+   @ManagedAttribute(description = "Average number of nodes in Prepare destination set")
+   @Metric(displayName = "Average Number of Nodes in Prepare Destination Set")
+   public long getAvgNumNodesPrepare() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.NUM_NODES_PREPARE)));
+   }
+
+   @ManagedAttribute(description = "Average number of nodes in Rollback destination set")
+   @Metric(displayName = "Average Number of Nodes in Rollback Destination Set")
+   public long getAvgNumNodesRollback() {
+      return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.NUM_NODES_ROLLBACK)));
    }
 
    @ManagedAttribute(description = "Application Contention Factor")

@@ -18,8 +18,8 @@ public class RemoteStatistics {
    static {
       int i = 0;
       for (IspnStats stat : IspnStats.values()) {
-         if (stat.isLocal()) {
-            translationMap.put(stat, i);
+         if (stat.isRemote()) {
+            translationMap.put(stat, i++);
          }
       }
    }

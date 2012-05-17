@@ -123,7 +123,6 @@ public class ReplicationInterceptor extends BaseRpcInterceptor {
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       Object retVal = invokeNextInterceptor(ctx, command);
       if (shouldInvokeRemoteTxCommand(ctx)) {
-         log.warn("DIE: GOING TO INVOKE REMOTELY Command "+command);
          stateTransferLock.waitForStateTransferToEnd(ctx, command, -1);
 
          broadcastPrepare(ctx, command);

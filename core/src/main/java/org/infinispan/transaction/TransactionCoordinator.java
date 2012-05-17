@@ -171,7 +171,6 @@ public class TransactionCoordinator {
       if (configuration.isOnePhaseCommit() || isOnePhase || is1PcForAutoCommitTransaction(localTransaction) ||
             isOnePhaseTotalOrder() || isOnePhasePassiveReplication()) {
          validateNotMarkedForRollback(localTransaction);
-         log.warn("DIE: PrepareCommand is going to be created!!");
          if (trace) log.trace("Doing an 1PC prepare call on the interceptor chain");
          PrepareCommand command = commandCreator.createPrepareCommand(localTransaction.getGlobalTransaction(), localTransaction.getModifications());
          command.setOnePhaseCommit(true);
@@ -184,7 +183,6 @@ public class TransactionCoordinator {
             }
          }
       } else {
-         log.warn("DIE: CommitCommand is going to be created!!");
          CommitCommand commitCommand = commandCreator.createCommitCommand(localTransaction.getGlobalTransaction());
          try {
             invoker.invoke(ctx, commitCommand);

@@ -122,7 +122,6 @@ public class PrepareCommand extends AbstractTransactionBoundaryCommand {
       if (trace)
          log.tracef("Invoking remotely originated prepare: %s with invocation context: %s", this, ctx);
       notifier.notifyTransactionRegistered(ctx.getGlobalTransaction(), ctx);
-      log.warn("DIE: going to pass through the InterceptorChain "+ctx);
       return invoker.invoke(ctx, this);
    }
 

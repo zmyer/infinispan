@@ -117,11 +117,9 @@ public class TransactionXaAdapter extends AbstractEnlistmentAdapter implements X
          //isOnePhase being true means that we're the only participant in the distributed transaction and TM does the
          //1PC optimization. We run a 2PC though, as running only 1PC has a high chance of leaving the cluster in
          //inconsistent state.
-         log.warn("DIE: ISONEPHASE");
          txCoordinator.prepare(localTransaction);
          txCoordinator.commit(localTransaction, false);
       } else {
-         log.warn("DIE: IT IS NOT ONEPHASE");
          txCoordinator.commit(localTransaction, false);
       }
       forgetSuccessfullyCompletedTransaction(recoveryManager, xid, localTransaction);

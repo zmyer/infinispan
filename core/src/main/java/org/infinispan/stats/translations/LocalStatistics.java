@@ -20,7 +20,7 @@ public class LocalStatistics {
       int i = 0;
       for (IspnStats stat : IspnStats.values()) {
          if (stat.isLocal()) {
-            translationMap.put(stat, i);
+            translationMap.put(stat, i++);
          }
       }
    }

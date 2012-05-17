@@ -26,7 +26,7 @@ public class RemoteTransactionStatistics extends TransactionStatistics{
 
    protected final int getIndex(ExposedStatistics.IspnStats stat) throws NoIspnStatException{
       int ret = RemoteStatistics.getIndex(stat);
-      if (ret != RemoteStatistics.NOT_FOUND) {
+      if (ret == RemoteStatistics.NOT_FOUND) {
          throw new NoIspnStatException("Statistic "+stat+" is not available!");
       }
       return ret;

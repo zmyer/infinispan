@@ -231,6 +231,12 @@ public class NodeScopeStatisticCollector {
          case NUM_LOCK_FAILED_DEADLOCK:
          case NUM_LOCK_FAILED_TIMEOUT:
             return new Long(localTransactionStatistics.getValue(param));
+         case WR_TX_LOCAL_EXECUTION_TIME:
+            return avg(IspnStats.NUM_PREPARES, IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
+         case WR_TX_SUCCESSFUL_EXECUTION_TIME:
+            return avg(IspnStats.NUM_COMMITTED_WR_TX, IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME);
+         case RO_TX_SUCCESSFUL_EXECUTION_TIME:
+            return avg(IspnStats.NUM_COMMITTED_RO_TX, IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME);
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }

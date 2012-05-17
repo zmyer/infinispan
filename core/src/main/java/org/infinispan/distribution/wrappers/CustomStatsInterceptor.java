@@ -417,4 +417,22 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    public long getNumAbortedTxDueDeadlock(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_FAILED_DEADLOCK);
    }
+
+   @ManagedAttribute(description = "Average successful read-only transaction duration")
+   @Metric(displayName = "Average Read-Only Transaction Duration")
+   public long getAvgReadOnlyTxDuration(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average successful write transaction duration")
+   @Metric(displayName = "Average Write Transaction Duration")
+   public long getAvgWriteTxDuration(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average write transaction local execution time")
+   @Metric(displayName = "Average Write Transaction Local Execution Time")
+   public long getAvgWriteTxLocalExecution(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
+   }
 }

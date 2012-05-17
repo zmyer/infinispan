@@ -179,7 +179,8 @@ public class RpcManagerWrapper implements RpcManager {
    }
 
    private void updateStats(ReplicableCommand command, boolean sync, long init, Collection<Address> recipients) {
-      if (!TransactionsStatisticsRegistry.hasStatisticCollector()) {
+      if (!TransactionsStatisticsRegistry.hasStatisticCollector() &&
+            !(command instanceof TxCompletionNotificationCommand)) {
          log.tracef("Does not update stats for command %s. No statistic collector found", command);
          return;
       }
@@ -226,7 +227,15 @@ public class RpcManagerWrapper implements RpcManager {
             durationStat = IspnStats.ASYNC_COMPLETE_NOTIFY;
             counterStat = IspnStats.NUM_ASYNC_COMPLETE_NOTIFY;
             recipientSizeStat = IspnStats.NUM_NODES_COMPLETE_NOTIFY;
-            break;
+
+            log.tracef("Update stats for command %s. Is sync? %s. Duration stat is %s, counter stats is %s, " +
+                             "recipient size stat is %s", command, durationStat, counterStat, recipientSizeStat);
+
+            TransactionsStatisticsRegistry.addValueAndFlushIfNeeded(durationStat, System.nanoTime() - init, true);
+            TransactionsStatisticsRegistry.incrementValueAndFlushIfNeeded(counterStat, true);
+            TransactionsStatisticsRegistry.addValueAndFlushIfNeeded(recipientSizeStat, recipientListSize(recipients), true);
+
+            return;
          case ClusteredGetCommand.COMMAND_ID:
             durationStat = IspnStats.RTT_GET;
             counterStat = IspnStats.NUM_RTTS_GET;

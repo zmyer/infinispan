@@ -21,18 +21,13 @@ public class ExposedStatistics {
       LOCK_HOLD_TIME(true, true),            // C
       NUM_HELD_LOCKS(true, true),            // C
       NUM_HELD_LOCKS_SUCCESS_TX(true, false),   // L
-      ROLLBACK_EXECUTION_TIME(true, true),   // C
-      NUM_ROLLBACKS(true, true),             // C
-      WR_TX_LOCAL_EXECUTION_TIME(true, false),  // L      
-      REPLAY_TIME(false, true),        // R
-      NUM_REPLAYED_TXS(false, true),   // R
+      WR_TX_LOCAL_EXECUTION_TIME(true, false),  // L
       NUM_COMMITTED_RO_TX(true, true), // C
       NUM_COMMITTED_WR_TX(true, true), // C
       NUM_ABORTED_WR_TX(true, true),   // C
       NUM_ABORTED_RO_TX(true, true),   // C      
       NUM_PREPARES(true, false), // L
       NUM_PUTS(true, true),               // C
-      COMMIT_EXECUTION_TIME(true, true), // C
       LOCAL_EXEC_NO_CONT(false, false),            // ONLY FOR QUERY, derived on the fly
       LOCAL_CONTENTION_PROBABILITY(false, false),  // ONLY FOR QUERY, derived on the fly
       LOCK_CONTENTION_TO_LOCAL(true, true),  // C
@@ -44,15 +39,43 @@ public class ExposedStatistics {
       REMOTE_GET_EXECUTION(true, true),   // C
       REMOTE_PUT_EXECUTION(true, true),   // C
       NUM_REMOTE_PUT(true, true),         // C
-      ARRIVAL_RATE(false, false),                  // ONLY FOR QUERY, derived on the fly
       TX_WRITE_PERCENTAGE(false, false),           // ONLY FOR QUERY, derived on the fly
       SUCCESSFUL_WRITE_PERCENTAGE(false, false),   // ONLY FOR QUERY, derived on the fly
       WR_TX_ABORTED_EXECUTION_TIME(true, true),    //C
       WR_TX_SUCCESSFUL_EXECUTION_TIME(true, true), //C
       RO_TX_SUCCESSFUL_EXECUTION_TIME(true, true), //C
       RO_TX_ABORTED_EXECUTION_TIME(true, true),    //C
-      NUM_COMMIT_COMMAND(true, true),              //C
       APPLICATION_CONTENTION_FACTOR(false, false), // ONLY FOR QUERY
+
+      //Abort rate, arrival rate and throughput
+      ABORT_RATE(false, false),     // ONLY FOR QUERY, derived on the fly
+      ARRIVAL_RATE(false, false),   // ONLY FOR QUERY, derived on the fly
+      THROUGHPUT(false, false),     // ONLY FOR QUERY, derived on the fly
+
+      //Percentile stuff
+      RO_LOCAL_PERCENTILE(false, false),  // ONLY FOR QUERY, derived on the fly
+      WR_LOCAL_PERCENTILE(false, false),  // ONLY FOR QUERY, derived on the fly
+      RO_REMOTE_PERCENTILE(false, false), // ONLY FOR QUERY, derived on the fly
+      WR_REMOTE_PERCENTILE(false, false), // ONLY FOR QUERY, derived on the fly
+
+      //Prepare, rollback and commit execution times
+      ROLLBACK_EXECUTION_TIME(true, true),   // C
+      NUM_ROLLBACKS(true, true),             // C
+      LOCAL_ROLLBACK_EXECUTION_TIME(false, false),    // ONLY FOR QUERY, derived on the fly
+      REMOTE_ROLLBACK_EXECUTION_TIME(false, false),   // ONLY FOR QUERY, derived on the fly
+
+      COMMIT_EXECUTION_TIME(true, true),     // C
+      NUM_COMMIT_COMMAND(true, true),        // C
+      LOCAL_COMMIT_EXECUTION_TIME(false, false),      // ONLY FOR QUERY, derived on the fly
+      REMOTE_COMMIT_EXECUTION_TIME(false, false),     // ONLY FOR QUERY, derived on the fly
+
+      PREPARE_EXECUTION_TIME(true, true),    // C
+      NUM_PREPARE_COMMAND(true, true),       // C
+      LOCAL_PREPARE_EXECUTION_TIME(false, false),     // ONLY FOR QUERY, derived on the fly
+      REMOTE_PREPARE_EXECUTION_TIME(false, false),    // ONLY FOR QUERY, derived on the fly
+
+      TX_COMPLETE_NOTIFY_EXECUTION_TIME(false, true),    // R
+      NUM_TX_COMPLETE_NOTIFY_COMMAND(false, true),       // R
 
       //Lock querying
       NUM_LOCK_PER_LOCAL_TX(false, false),         // ONLY FOR QUERY, derived on the fly

@@ -13,28 +13,28 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ReservoirSampling implements PercentileStats {
 
    private static final int DEFAULT_NUM_SPOTS = 100;
-   private long SEED = System.nanoTime();
+   private final long SEED = System.nanoTime();
    private double[] reservoir;
-   private AtomicInteger index;
+   private final AtomicInteger index;
    private int NUM_SPOT;
-   Random rand;
+   private final Random rand;
 
    public ReservoirSampling(){
       NUM_SPOT = DEFAULT_NUM_SPOTS;
-      this.reservoir = new double[NUM_SPOT];
+      this.reservoir = createArray();
       this.index = new AtomicInteger(0);
       rand = new Random(SEED);
    }
 
    public ReservoirSampling(int numSpots){
       this.NUM_SPOT = numSpots;
-      this.reservoir = new double[NUM_SPOT];
+      this.reservoir = createArray();
       this.index = new AtomicInteger(0);
       rand = new Random(SEED);
 
    }
 
-   public  void insertSample(double sample){
+   public final void insertSample(double sample){
       int i = index.getAndIncrement();
       if(i < NUM_SPOT)
          reservoir[i]=sample;
@@ -46,31 +46,23 @@ public class ReservoirSampling implements PercentileStats {
       }
    }
 
-   public long get95Percentile(){
-      int[] copy = new int[NUM_SPOT];
-      System.arraycopy(this.reservoir,0,copy,0,NUM_SPOT);
-      Arrays.sort(copy);
-      return copy[this.getIndex(95)];
+   public final double get95Percentile(){
+      return getKPercentile(95);
    }
 
-   public long get90Percentile(){
-      int[] copy = new int[NUM_SPOT];
-      System.arraycopy(this.reservoir,0,copy,0,NUM_SPOT);
-      Arrays.sort(copy);
-      return copy[this.getIndex(90)];
+   public final double get90Percentile(){
+      return getKPercentile(90);
    }
 
-   public long get99Percentile(){
-      int[] copy = new int[NUM_SPOT];
-      System.arraycopy(this.reservoir,0,copy,0,NUM_SPOT);
-      Arrays.sort(copy);
-      return copy[this.getIndex(99)];
+   public final double get99Percentile(){
+      return getKPercentile(99);
    }
 
-   public double getKPercentile(int k){
-      if(k<0 || k>100)
+   public final double getKPercentile(int k){
+      if (k < 0 || k > 100) {
          throw new RuntimeException("Wrong index in getKpercentile");
-      int[] copy = new int[NUM_SPOT];
+      }
+      double[] copy = createArray();
       System.arraycopy(this.reservoir,0,copy,0,NUM_SPOT);
       Arrays.sort(copy);
       return copy[this.getIndex(k)];
@@ -83,9 +75,13 @@ public class ReservoirSampling implements PercentileStats {
       return (int) (NUM_SPOT * (k-1) / 100);
    }
 
-   public void reset(){
+   public final void reset(){
       this.index.set(0);
-      this.reservoir = new double[NUM_SPOT];
+      this.reservoir = createArray();
+   }
+
+   private double[] createArray() {
+      return new double[NUM_SPOT];
    }
 }
 

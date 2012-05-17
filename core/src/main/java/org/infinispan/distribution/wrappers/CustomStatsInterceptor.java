@@ -15,6 +15,7 @@ import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.base.BaseCustomInterceptor;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
+import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.remoting.InboundInvocationHandler;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Transport;
@@ -29,6 +30,7 @@ import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.rhq.helpers.pluginAnnotations.agent.Metric;
+import org.rhq.helpers.pluginAnnotations.agent.Operation;
 
 import java.lang.reflect.Field;
 
@@ -105,12 +107,12 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          this.initStatsIfNecessary(ctx);
          long currTime = 0;
          boolean isRemoteKey = isRemote(command.getKey());
-         if(isRemoteKey && isTx){
+         if(isRemoteKey){
             currTime = System.nanoTime();
          }
 
          ret = invokeNextInterceptor(ctx,command);
-         if(isRemoteKey && isTx){
+         if(isRemoteKey){
             TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_REMOTE_GET);
             TransactionsStatisticsRegistry.addValue(IspnStats.REMOTE_GET_EXECUTION, System.nanoTime() - currTime);
          }
@@ -132,8 +134,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       this.initStatsIfNecessary(ctx);
       long currTime = System.nanoTime();
       Object ret = invokeNextInterceptor(ctx,command);
-      TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_COMMIT_COMMAND);
-      TransactionsStatisticsRegistry.addValue(IspnStats.COMMIT_EXECUTION_TIME, System.nanoTime() - currTime);
+      updateTime(IspnStats.COMMIT_EXECUTION_TIME, IspnStats.NUM_COMMIT_COMMAND, currTime);
       TransactionsStatisticsRegistry.setTransactionOutcome(true);
       if (ctx.isOriginLocal()) {
          TransactionsStatisticsRegistry.terminateTransaction();
@@ -152,7 +153,10 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       }
 
       try {
-         return invokeNextInterceptor(ctx,command);
+         long currTime = System.nanoTime();
+         Object ret = invokeNextInterceptor(ctx,command);
+         updateTime(IspnStats.PREPARE_EXECUTION_TIME, IspnStats.NUM_PREPARE_COMMAND, currTime);
+         return ret;
       } catch (TimeoutException e) {
          if (ctx.isOriginLocal() && isLockTimeout(e)) {
             TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_LOCK_FAILED_TIMEOUT);
@@ -172,10 +176,9 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       log.tracef("Visit Rollback command %s. Is it local?. Transaction is %s", command,
                  ctx.isOriginLocal(), command.getGlobalTransaction());
       this.initStatsIfNecessary(ctx);
-      TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_ROLLBACKS);
       long initRollbackTime = System.nanoTime();
       Object ret = invokeNextInterceptor(ctx,command);
-      TransactionsStatisticsRegistry.addValue(IspnStats.ROLLBACK_EXECUTION_TIME, System.nanoTime() - initRollbackTime);
+      updateTime(IspnStats.ROLLBACK_EXECUTION_TIME, IspnStats.NUM_ROLLBACKS, initRollbackTime);
       TransactionsStatisticsRegistry.setTransactionOutcome(false);
       if (ctx.isOriginLocal()) {
          TransactionsStatisticsRegistry.terminateTransaction();
@@ -246,6 +249,11 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    private boolean isLockTimeout(TimeoutException e) {
       return e.getMessage().startsWith("Unable to acquire lock after");
+   }
+
+   private void updateTime(IspnStats duration, IspnStats counter, long initTime) {
+      TransactionsStatisticsRegistry.addValue(duration, System.nanoTime() - initTime);
+      TransactionsStatisticsRegistry.incrementValue(counter);
    }
 
    //JMX exposed methods
@@ -344,12 +352,6 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    @Metric(displayName = "Local Conflict Probability")
    public double getLocalContentionProbability(){
       return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.LOCAL_CONTENTION_PROBABILITY));
-   }
-
-   @ManagedAttribute(description = "Average time it takes to replicate successful modifications on the cohorts")
-   @Metric(displayName = "Replay Time")
-   public long getAvgReplayTime(){
-      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REPLAY_TIME) ;
    }
 
    @ManagedAttribute(description = "Local execution time of a transaction without the time waiting for lock acquisition")
@@ -464,5 +466,89 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    @Metric(displayName = "Average Number of Lock per Successfully Local Transaction")
    public long getAvgNumOfLockSuccessLocalTx(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_PER_SUCCESS_LOCAL_TX);
+   }
+
+   @ManagedAttribute(description = "Average time it takes to execute the prepare command locally")
+   @Metric(displayName = "Average Local Prepare Execution Time")
+   public long getAvgLocalPrepareTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_PREPARE_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average time it takes to execute the prepare command remotely")
+   @Metric(displayName = "Average Remote Prepare Execution Time")
+   public long getAvgRemotePrepareTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_PREPARE_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average time it takes to execute the commit command locally")
+   @Metric(displayName = "Average Local Commit Execution Time")
+   public long getAvgLocalCommitTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_COMMIT_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average time it takes to execute the commit command remotely")
+   @Metric(displayName = "Average Remote Commit Execution Time")
+   public long getAvgRemoteCommitTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_COMMIT_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average time it takes to execute the rollback command locally")
+   @Metric(displayName = "Average Local Rollback Execution Time")
+   public long getAvgLocalRollbackTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_COMMIT_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average time it takes to execute the rollback command remotely")
+   @Metric(displayName = "Average Remote Rollback Execution Time")
+   public long getAvgRemoteRollbackTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_COMMIT_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Average time it takes to execute the rollback command remotely")
+   @Metric(displayName = "Average Remote Transaction Completion Notify Execution Time")
+   public long getAvgRemoteTxCompleteNotifyTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.TX_COMPLETE_NOTIFY_EXECUTION_TIME);
+   }
+
+   @ManagedAttribute(description = "Abort Rate")
+   @Metric(displayName = "Abort Rate")
+   public double getAbortRate(){
+      return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.ABORT_RATE);
+   }
+
+   @ManagedAttribute(description = "Throughput")
+   @Metric(displayName = "Throughput")
+   public long getThroughput(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.THROUGHPUT);
+   }
+
+   @ManagedOperation(description = "K-th percentile of local read-only transactions execution time")
+   @Operation(displayName = "K-th Percentile Local Read-Only Transactions")
+   public double getPercentileLocalReadOnlyTransaction(int percentile){
+      return (Double)TransactionsStatisticsRegistry.getPercentile(IspnStats.RO_LOCAL_PERCENTILE, percentile);
+   }
+
+   @ManagedOperation(description = "K-th percentile of remote read-only transactions execution time")
+   @Operation(displayName = "K-th Percentile Remote Read-Only Transactions")
+   public double getPercentileRemoteReadOnlyTransaction(int percentile){
+      return (Double)TransactionsStatisticsRegistry.getPercentile(IspnStats.RO_REMOTE_PERCENTILE, percentile);
+   }
+
+   @ManagedOperation(description = "K-th percentile of local write transactions execution time")
+   @Operation(displayName = "K-th Percentile Local Write Transactions")
+   public double getPercentileLocalRWriteTransaction(int percentile){
+      return (Double)TransactionsStatisticsRegistry.getPercentile(IspnStats.WR_LOCAL_PERCENTILE, percentile);
+   }
+
+   @ManagedOperation(description = "K-th percentile of remote write transactions execution time")
+   @Operation(displayName = "K-th Percentile Remote Write Transactions")
+   public double getPercentileRemoteWriteTransaction(int percentile){
+      return (Double)TransactionsStatisticsRegistry.getPercentile(IspnStats.WR_REMOTE_PERCENTILE, percentile);
+   }
+
+   @ManagedOperation(description = "Reset all the statistics collected")
+   @Operation(displayName = "Reset All Statistics")
+   public void resetStatistics(){
+      TransactionsStatisticsRegistry.reset();
    }
 }

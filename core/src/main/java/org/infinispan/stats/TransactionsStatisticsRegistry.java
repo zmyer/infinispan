@@ -50,6 +50,24 @@ public class TransactionsStatisticsRegistry {
       txs.addValue(param, 1D);
    }
 
+   public static void addValueAndFlushIfNeeded(IspnStats param, double value, boolean local) {
+      NodeScopeStatisticCollector nssc = transactionalClassesStatsMap.get(TransactionalClasses.DEFAULT_CLASS);
+      if (local) {
+         nssc.addLocalValue(param, value);
+      } else {
+         nssc.addRemoteValue(param, value);
+      }
+   }
+
+   public static void incrementValueAndFlushIfNeeded(IspnStats param, boolean local) {
+      NodeScopeStatisticCollector nssc = transactionalClassesStatsMap.get(TransactionalClasses.DEFAULT_CLASS);
+      if (local) {
+         nssc.addLocalValue(param, 1D);
+      } else {
+         nssc.addRemoteValue(param, 1D);
+      }
+   }
+
    public static void onPrepareCommand() {
       //NB: If I want to give up using the InboundInvocationHandler, I can create the remote transaction
       //here, just overriding the handlePrepareCommand
@@ -72,8 +90,12 @@ public class TransactionsStatisticsRegistry {
       thread.remove();
    }
 
-   public static Object getAttribute(ExposedStatistics.IspnStats param){
+   public static Object getAttribute(IspnStats param){
       return transactionalClassesStatsMap.get(TransactionalClasses.DEFAULT_CLASS).getAttribute(param);
+   }
+
+   public static Object getPercentile(IspnStats param, int percentile){
+      return transactionalClassesStatsMap.get(TransactionalClasses.DEFAULT_CLASS).getPercentile(param, percentile);
    }
 
    public static void addTakenLock(Object lock) {

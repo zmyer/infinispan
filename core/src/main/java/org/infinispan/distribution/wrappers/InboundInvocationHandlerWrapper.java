@@ -9,11 +9,12 @@ import org.infinispan.remoting.InboundInvocationHandler;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.stats.TransactionsStatisticsRegistry;
-import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.transaction.TransactionTable;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+
+import static org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 
 /**
  * @author Mircea Markus <mircea.markus@jboss.com> (C) 2011 Red Hat Inc.
@@ -35,7 +36,6 @@ public class InboundInvocationHandlerWrapper implements InboundInvocationHandler
    @Override
    public Response handle(CacheRpcCommand command, Address origin) throws Throwable {
       log.tracef("Handle remote command [%s] by the invocation handle wrapper from %s", command, origin);
-      long currTime = System.nanoTime();
       GlobalTransaction globalTransaction = getGlobalTransaction(command);
       try{
          if (globalTransaction != null) {
@@ -46,14 +46,21 @@ public class InboundInvocationHandlerWrapper implements InboundInvocationHandler
             log.debugf("The command %s is NOT transactional", command);
          }
 
-         if(command instanceof PrepareCommand){
-            Response ret = actual.handle(command,origin);
-            TransactionsStatisticsRegistry.addValue(IspnStats.REPLAY_TIME,System.nanoTime() - currTime);
-            TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_REPLAYED_TXS);
-            return ret;
-         } else {
-            return actual.handle(command,origin);
+         boolean txCompleteNotify = command instanceof TxCompletionNotificationCommand;
+         long currTime = 0;
+         if (txCompleteNotify) {
+            currTime = System.nanoTime();
          }
+
+         Response ret = actual.handle(command,origin);
+
+         if (txCompleteNotify) {
+            TransactionsStatisticsRegistry.addValueAndFlushIfNeeded(IspnStats.TX_COMPLETE_NOTIFY_EXECUTION_TIME,
+                                                                    System.nanoTime() - currTime, false);
+            TransactionsStatisticsRegistry.incrementValueAndFlushIfNeeded(IspnStats.NUM_TX_COMPLETE_NOTIFY_COMMAND, false);
+         }
+
+         return ret;
       } finally {
          if (globalTransaction != null) {
             log.debugf("Detach statistics for command %s", command, globalTransaction);

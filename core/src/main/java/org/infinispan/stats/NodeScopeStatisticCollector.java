@@ -78,6 +78,9 @@ public class NodeScopeStatisticCollector {
       remoteTransactionStatistics.addValue(stat, value);
    }
 
+
+
+
    public final synchronized double getPercentile(IspnStats param, int percentile) throws NoIspnStatException{
       log.tracef("Get percentile %s from %s", percentile, param);
       switch (param) {
@@ -93,6 +96,10 @@ public class NodeScopeStatisticCollector {
             throw new NoIspnStatException("Invalid percentile "+param);
       }
    }
+
+   /*
+   Can I invoke this synchronized method from inside itself??
+    */
 
    @SuppressWarnings("UnnecessaryBoxing")
    public final synchronized Object getAttribute(IspnStats param) throws NoIspnStatException{
@@ -160,6 +167,19 @@ public class NodeScopeStatisticCollector {
             }
             return new Double(0);
          }
+         case LOCK_CONTENTION_PROBABILITY:{
+            long numLocalPuts = localTransactionStatistics.getValue(IspnStats.NUM_PUTS);
+            long numRemotePuts = remoteTransactionStatistics.getValue(IspnStats.NUM_PUTS);
+            long totalPuts = numLocalPuts + numRemotePuts;
+            if(totalPuts!=0){
+               long localLocal = localTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
+               long localRemote = localTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_REMOTE);
+               long remoteLocal = remoteTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
+               long remoteRemote = remoteTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_REMOTE);
+               long totalCont = localLocal + localRemote + remoteLocal + remoteRemote;
+               return totalCont / totalPuts;
+            }
+         }
          case COMMIT_EXECUTION_TIME:{
             long numCommits = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) +
                   localTransactionStatistics.getIndex(IspnStats.NUM_COMMITTED_RO_TX);
@@ -215,9 +235,9 @@ public class NodeScopeStatisticCollector {
             long elapsedTime = System.nanoTime() - this.lastResetTime;
             double totalLocksArrivalRate = (localTakenLocks + remoteTakenLocks) / convertNanosToMicro(elapsedTime);
             if(totalLocksArrivalRate!=0){
-               double localContProb = (Double) this.getAttribute(IspnStats.LOCAL_CONTENTION_PROBABILITY);
+               double lockContProb = (Double) this.getAttribute(IspnStats.LOCK_CONTENTION_PROBABILITY);
                long holdTime = (Long)this.getAttribute(IspnStats.LOCK_HOLD_TIME);
-               return new Double(localContProb * holdTime / totalLocksArrivalRate);
+               return new Double(lockContProb  / (totalLocksArrivalRate * holdTime));
             }
             return new Double(0);
          }

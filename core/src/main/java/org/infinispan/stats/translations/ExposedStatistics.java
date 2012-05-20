@@ -29,7 +29,12 @@ public class ExposedStatistics {
       NUM_PREPARES(true, false), // L
       NUM_PUTS(true, true),               // C
       LOCAL_EXEC_NO_CONT(true, false),            // L
+
+      @Deprecated
       LOCAL_CONTENTION_PROBABILITY(false, false),  // ONLY FOR QUERY, derived on the fly
+
+      LOCK_CONTENTION_PROBABILITY(false,false), //ONLY FOR QUERY, derived on the fly
+
       LOCK_CONTENTION_TO_LOCAL(true, true),  // C
       LOCK_CONTENTION_TO_REMOTE(true, true), // C
       NUM_SUCCESSFUL_PUTS(true, false),   // L, this includes also repeated puts over the same item

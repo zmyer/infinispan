@@ -99,12 +99,10 @@ public class NodeScopeStatisticCollector {
       log.tracef("Get attribute %s", param);
       switch (param) {
          case LOCAL_EXEC_NO_CONT:{
-            //TODO you have to compute this when you flush the transaction (for Diego)
             long numLocalTxToPrepare = localTransactionStatistics.getValue(IspnStats.NUM_PREPARES);
             if(numLocalTxToPrepare!=0){
-               long localExec = localTransactionStatistics.getValue(IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
-               long waitTime = localTransactionStatistics.getValue(IspnStats.LOCK_WAITING_TIME);
-               return new Long((localExec - waitTime) / numLocalTxToPrepare);
+               long localExecNoCont = localTransactionStatistics.getValue(IspnStats.LOCAL_EXEC_NO_CONT);
+               return new Long((localExecNoCont) / numLocalTxToPrepare);
             }
             return new Long(0);
          }

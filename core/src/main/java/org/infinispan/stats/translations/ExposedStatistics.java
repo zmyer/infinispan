@@ -28,7 +28,7 @@ public class ExposedStatistics {
       NUM_ABORTED_RO_TX(true, true),   // C      
       NUM_PREPARES(true, false), // L
       NUM_PUTS(true, true),               // C
-      LOCAL_EXEC_NO_CONT(false, false),            // ONLY FOR QUERY, derived on the fly
+      LOCAL_EXEC_NO_CONT(true, false),            // L
       LOCAL_CONTENTION_PROBABILITY(false, false),  // ONLY FOR QUERY, derived on the fly
       LOCK_CONTENTION_TO_LOCAL(true, true),  // C
       LOCK_CONTENTION_TO_REMOTE(true, true), // C

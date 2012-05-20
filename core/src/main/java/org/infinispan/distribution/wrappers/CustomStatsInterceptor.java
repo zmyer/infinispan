@@ -348,11 +348,19 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.APPLICATION_CONTENTION_FACTOR));
    }
 
+   @Deprecated
    @ManagedAttribute(description = "Local Contention Probability")
    @Metric(displayName = "Local Conflict Probability")
    public double getLocalContentionProbability(){
       return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.LOCAL_CONTENTION_PROBABILITY));
    }
+
+   @ManagedAttribute(description = "Lock Contention Probability")
+   @Metric(displayName = "Lock Contention Probability")
+   public double getLockContentionProbability(){
+      return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.LOCK_CONTENTION_PROBABILITY));
+   }
+
 
    @ManagedAttribute(description = "Local execution time of a transaction without the time waiting for lock acquisition")
    @Metric(displayName = "Local Execution Time Without Locking Time")

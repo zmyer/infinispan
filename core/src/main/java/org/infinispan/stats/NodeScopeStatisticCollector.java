@@ -109,7 +109,7 @@ public class NodeScopeStatisticCollector {
             long numLocalTxToPrepare = localTransactionStatistics.getValue(IspnStats.NUM_PREPARES);
             if(numLocalTxToPrepare!=0){
                long localExecNoCont = localTransactionStatistics.getValue(IspnStats.LOCAL_EXEC_NO_CONT);
-               return new Long((localExecNoCont) / numLocalTxToPrepare);
+               return new Long(convertNanosToMicro(localExecNoCont) / numLocalTxToPrepare);
             }
             return new Long(0);
          }
@@ -119,7 +119,7 @@ public class NodeScopeStatisticCollector {
             if((localLocks + remoteLocks) !=0){
                long localHoldTime = localTransactionStatistics.getValue(IspnStats.LOCK_HOLD_TIME);
                long remoteHoldTime = remoteTransactionStatistics.getValue(IspnStats.LOCK_HOLD_TIME);
-               return new Long((localHoldTime + remoteHoldTime) / (localLocks + remoteLocks));
+               return new Long(convertNanosToMicro(localHoldTime + remoteHoldTime) / (localLocks + remoteLocks));
             }
             return new Long(0);
          }
@@ -168,6 +168,7 @@ public class NodeScopeStatisticCollector {
             return new Double(0);
          }
          case LOCK_CONTENTION_PROBABILITY:{
+            System.out.println("CALLED LOCK_CONT_PROB");
             long numLocalPuts = localTransactionStatistics.getValue(IspnStats.NUM_PUTS);
             long numRemotePuts = remoteTransactionStatistics.getValue(IspnStats.NUM_PUTS);
             long totalPuts = numLocalPuts + numRemotePuts;
@@ -177,15 +178,16 @@ public class NodeScopeStatisticCollector {
                long remoteLocal = remoteTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
                long remoteRemote = remoteTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_REMOTE);
                long totalCont = localLocal + localRemote + remoteLocal + remoteRemote;
-               return totalCont / totalPuts;
+               return new Double(totalCont / totalPuts);
             }
+            return new Double(0);
          }
          case COMMIT_EXECUTION_TIME:{
             long numCommits = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) +
                   localTransactionStatistics.getIndex(IspnStats.NUM_COMMITTED_RO_TX);
             if(numCommits!=0){
                long commitExecTime = localTransactionStatistics.getValue(IspnStats.COMMIT_EXECUTION_TIME);
-               return new Long(commitExecTime / numCommits);
+               return new Long(convertNanosToMicro(commitExecTime / numCommits));
             }
             return new Long(0);
 
@@ -194,7 +196,7 @@ public class NodeScopeStatisticCollector {
             long numRollbacks = localTransactionStatistics.getValue(IspnStats.NUM_ROLLBACKS);
             if(numRollbacks != 0){
                long rollbackExecTime = localTransactionStatistics.getValue(IspnStats.ROLLBACK_EXECUTION_TIME);
-               return new Long(rollbackExecTime / numRollbacks);
+               return new Long(convertNanosToMicro(rollbackExecTime / numRollbacks));
             }
             return new Long(0);
 
@@ -206,7 +208,7 @@ public class NodeScopeStatisticCollector {
             if(totalWaitedForLocks!=0){
                long localWaitedTime = localTransactionStatistics.getValue(IspnStats.LOCK_WAITING_TIME);
                long remoteWaitedTime = remoteTransactionStatistics.getIndex(IspnStats.LOCK_WAITING_TIME);
-               return new Long((localWaitedTime + remoteWaitedTime) / totalWaitedForLocks);
+               return new Long(convertNanosToMicro(localWaitedTime + remoteWaitedTime) / totalWaitedForLocks);
             }
             return new Long(0);
          }
@@ -234,9 +236,10 @@ public class NodeScopeStatisticCollector {
             long remoteTakenLocks = remoteTransactionStatistics.getValue(IspnStats.NUM_HELD_LOCKS);
             long elapsedTime = System.nanoTime() - this.lastResetTime;
             double totalLocksArrivalRate = (localTakenLocks + remoteTakenLocks) / convertNanosToMicro(elapsedTime);
-            if(totalLocksArrivalRate!=0){
+            long holdTime = (Long)this.getAttribute(IspnStats.LOCK_HOLD_TIME);
+
+            if((totalLocksArrivalRate*holdTime)!=0){
                double lockContProb = (Double) this.getAttribute(IspnStats.LOCK_CONTENTION_PROBABILITY);
-               long holdTime = (Long)this.getAttribute(IspnStats.LOCK_HOLD_TIME);
                return new Double(lockContProb  / (totalLocksArrivalRate * holdTime));
             }
             return new Double(0);
@@ -245,11 +248,11 @@ public class NodeScopeStatisticCollector {
          case NUM_LOCK_FAILED_TIMEOUT:
             return new Long(localTransactionStatistics.getValue(param));
          case WR_TX_LOCAL_EXECUTION_TIME:
-            return avgLocal(IspnStats.NUM_PREPARES, IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
+            return microAvgLocal(IspnStats.NUM_PREPARES, IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
          case WR_TX_SUCCESSFUL_EXECUTION_TIME:
-            return avgLocal(IspnStats.NUM_COMMITTED_WR_TX, IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME);
+            return microAvgLocal(IspnStats.NUM_COMMITTED_WR_TX, IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME);
          case RO_TX_SUCCESSFUL_EXECUTION_TIME:
-            return avgLocal(IspnStats.NUM_COMMITTED_RO_TX, IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME);
+            return microAvgLocal(IspnStats.NUM_COMMITTED_RO_TX, IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME);
          case PREPARE_COMMAND_SIZE:
             return avgMultipleLocalCounters(IspnStats.PREPARE_COMMAND_SIZE, IspnStats.NUM_RTTS_PREPARE, IspnStats.NUM_ASYNC_PREPARE);
          case COMMIT_COMMAND_SIZE:
@@ -263,19 +266,19 @@ public class NodeScopeStatisticCollector {
          case NUM_LOCK_PER_SUCCESS_LOCAL_TX:
             return avgLocal(IspnStats.NUM_COMMITTED_WR_TX, IspnStats.NUM_HELD_LOCKS_SUCCESS_TX);
          case LOCAL_ROLLBACK_EXECUTION_TIME:
-            return avgLocal(IspnStats.NUM_ROLLBACKS, IspnStats.ROLLBACK_EXECUTION_TIME);
+            return microAvgLocal(IspnStats.NUM_ROLLBACKS, IspnStats.ROLLBACK_EXECUTION_TIME);
          case REMOTE_ROLLBACK_EXECUTION_TIME:
-            return avgRemote(IspnStats.NUM_ROLLBACKS, IspnStats.ROLLBACK_EXECUTION_TIME);
+            return microAvgRemote(IspnStats.NUM_ROLLBACKS, IspnStats.ROLLBACK_EXECUTION_TIME);
          case LOCAL_COMMIT_EXECUTION_TIME:
-            return avgLocal(IspnStats.NUM_COMMIT_COMMAND, IspnStats.COMMIT_EXECUTION_TIME);
+            return microAvgLocal(IspnStats.NUM_COMMIT_COMMAND, IspnStats.COMMIT_EXECUTION_TIME);
          case REMOTE_COMMIT_EXECUTION_TIME:
-            return avgRemote(IspnStats.NUM_COMMIT_COMMAND, IspnStats.COMMIT_EXECUTION_TIME);
+            return microAvgRemote(IspnStats.NUM_COMMIT_COMMAND, IspnStats.COMMIT_EXECUTION_TIME);
          case LOCAL_PREPARE_EXECUTION_TIME:
-            return avgLocal(IspnStats.NUM_PREPARE_COMMAND, IspnStats.PREPARE_EXECUTION_TIME);
+            return microAvgLocal(IspnStats.NUM_PREPARE_COMMAND, IspnStats.PREPARE_EXECUTION_TIME);
          case REMOTE_PREPARE_EXECUTION_TIME:
-            return avgRemote(IspnStats.NUM_PREPARE_COMMAND, IspnStats.PREPARE_EXECUTION_TIME);
+            return microAvgRemote(IspnStats.NUM_PREPARE_COMMAND, IspnStats.PREPARE_EXECUTION_TIME);
          case TX_COMPLETE_NOTIFY_EXECUTION_TIME:
-            return avgRemote(IspnStats.NUM_TX_COMPLETE_NOTIFY_COMMAND, IspnStats.TX_COMPLETE_NOTIFY_EXECUTION_TIME);
+            return microAvgRemote(IspnStats.NUM_TX_COMPLETE_NOTIFY_COMMAND, IspnStats.TX_COMPLETE_NOTIFY_EXECUTION_TIME);
          case ABORT_RATE:
             long totalAbort = localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX) +
                   localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
@@ -351,15 +354,26 @@ public class NodeScopeStatisticCollector {
       return new Long(0);
    }
 
-   private static double convertNanosToMicro(long nanos) {
-      return nanos / 1000.0;
+   private static long convertNanosToMicro(long nanos) {
+      return nanos / 1000;
    }
 
-   private static double convertNanosToMillis(long nanos) {
-      return nanos / 1000000.0;
+   private static long convertNanosToMillis(long nanos) {
+      return nanos / 1000000;
    }
 
-   private static double convertNanosToSeconds(long nanos) {
-      return nanos / 1000000000.0;
+   private static long convertNanosToSeconds(long nanos) {
+      return nanos / 1000000000;
    }
+
+   private Long microAvgLocal(IspnStats duration, IspnStats counters){
+      return convertNanosToMicro(avgLocal(duration,counters));
+   }
+
+   private Long microAvgRemote(IspnStats duration, IspnStats counters){
+      return convertNanosToMicro(avgRemote(duration,counters));
+   }
+
+
+
 }

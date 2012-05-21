@@ -355,7 +355,6 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.LOCAL_CONTENTION_PROBABILITY));
    }
 
-   @Deprecated
    @ManagedAttribute(description = "Remote Contention Probability")
    @Metric(displayName = "Remote Conflict Probability")
    public double getRemoteContentionProbability(){

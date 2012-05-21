@@ -124,21 +124,21 @@ public class NodeScopeStatisticCollector {
             return new Long(0);
          }
          case RTT_PREPARE:
-            return avgLocal(IspnStats.NUM_RTTS_PREPARE, IspnStats.RTT_PREPARE);
+            return microAvgLocal(IspnStats.NUM_RTTS_PREPARE, IspnStats.RTT_PREPARE);
          case RTT_COMMIT:
-            return avgLocal(IspnStats.NUM_RTTS_COMMIT, IspnStats.RTT_COMMIT);
+            return microAvgLocal(IspnStats.NUM_RTTS_COMMIT, IspnStats.RTT_COMMIT);
          case RTT_ROLLBACK:
-            return avgLocal(IspnStats.NUM_RTTS_ROLLBACK, IspnStats.RTT_ROLLBACK);
+            return microAvgLocal(IspnStats.NUM_RTTS_ROLLBACK, IspnStats.RTT_ROLLBACK);
          case RTT_GET:
-            return avgLocal(IspnStats.NUM_RTTS_PREPARE, IspnStats.RTT_GET);
+            return microAvgLocal(IspnStats.NUM_RTTS_PREPARE, IspnStats.RTT_GET);
          case ASYNC_COMMIT:
-            return avgLocal(IspnStats.NUM_ASYNC_COMMIT, IspnStats.ASYNC_COMMIT);
+            return microAvgLocal(IspnStats.NUM_ASYNC_COMMIT, IspnStats.ASYNC_COMMIT);
          case ASYNC_COMPLETE_NOTIFY:
-            return avgLocal(IspnStats.NUM_ASYNC_COMPLETE_NOTIFY, IspnStats.ASYNC_COMPLETE_NOTIFY);
+            return microAvgLocal(IspnStats.NUM_ASYNC_COMPLETE_NOTIFY, IspnStats.ASYNC_COMPLETE_NOTIFY);
          case ASYNC_PREPARE:
-            return avgLocal(IspnStats.NUM_ASYNC_PREPARE, IspnStats.ASYNC_PREPARE);
+            return microAvgLocal(IspnStats.NUM_ASYNC_PREPARE, IspnStats.ASYNC_PREPARE);
          case ASYNC_ROLLBACK:
-            return avgLocal(IspnStats.NUM_ASYNC_ROLLBACK, IspnStats.ASYNC_ROLLBACK);
+            return microAvgLocal(IspnStats.NUM_ASYNC_ROLLBACK, IspnStats.ASYNC_ROLLBACK);
          case NUM_NODES_COMMIT:
             return avgMultipleLocalCounters(IspnStats.NUM_NODES_COMMIT, IspnStats.NUM_RTTS_COMMIT, IspnStats.NUM_ASYNC_COMMIT);
          case NUM_NODES_GET:
@@ -164,6 +164,15 @@ public class NodeScopeStatisticCollector {
                long numLocalLocalContention = localTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
                long numLocalRemoteContention = localTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_REMOTE);
                return new Double((numLocalLocalContention + numLocalRemoteContention) * 1.0 / numLocalPuts);
+            }
+            return new Double(0);
+         }
+         case REMOTE_CONTENTION_PROBABILITY:{
+            long numRemotePuts = remoteTransactionStatistics.getValue(IspnStats.NUM_PUTS);
+            if(numRemotePuts != 0){
+               long numRemoteLocalContention = remoteTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
+               long numRemoteRemoteContention = remoteTransactionStatistics.getValue(IspnStats.LOCK_CONTENTION_TO_REMOTE);
+               return new Double((numRemoteLocalContention + numRemoteRemoteContention) * 1.0 / numRemotePuts);
             }
             return new Double(0);
          }
@@ -303,6 +312,10 @@ public class NodeScopeStatisticCollector {
             totalBornTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
                   localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
             return new Long((long) (totalBornTx / convertNanosToSeconds(System.nanoTime() - this.lastResetTime)));
+         case LOCK_HOLD_TIME_LOCAL:
+            return microAvgLocal(IspnStats.LOCK_HOLD_TIME, IspnStats.NUM_HELD_LOCKS);
+         case LOCK_HOLD_TIME_REMOTE:
+            return microAvgRemote(IspnStats.LOCK_HOLD_TIME, IspnStats.NUM_HELD_LOCKS);
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }
@@ -371,7 +384,7 @@ public class NodeScopeStatisticCollector {
    }
 
    private Long microAvgRemote(IspnStats duration, IspnStats counters){
-      return convertNanosToMicro(avgRemote(duration,counters));
+      return convertNanosToMicro(avgRemote(duration, counters));
    }
 
 

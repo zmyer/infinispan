@@ -355,6 +355,13 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.LOCAL_CONTENTION_PROBABILITY));
    }
 
+   @Deprecated
+   @ManagedAttribute(description = "Remote Contention Probability")
+   @Metric(displayName = "Remote Conflict Probability")
+   public double getRemoteContentionProbability(){
+      return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.REMOTE_CONTENTION_PROBABILITY));
+   }
+
    @ManagedAttribute(description = "Lock Contention Probability")
    @Metric(displayName = "Lock Contention Probability")
    public double getLockContentionProbability(){
@@ -372,6 +379,18 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    @Metric(displayName = "Average Lock Holding Time")
    public long getAvgLockHoldTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_HOLD_TIME);
+   }
+
+   @ManagedAttribute(description = "Average lock local holding time")
+   @Metric(displayName = "Average Lock Local Holding Time")
+   public long getAvgLocalLockHoldTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_HOLD_TIME_LOCAL);
+   }
+
+   @ManagedAttribute(description = "Average lock remote holding time")
+   @Metric(displayName = "Average Lock Remote Holding Time")
+   public long getAvgRemoteLockHoldTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_HOLD_TIME_REMOTE);
    }
 
    @ManagedAttribute(description = "Average commit duration time (2nd phase only)")
@@ -559,4 +578,6 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    public void resetStatistics(){
       TransactionsStatisticsRegistry.reset();
    }
+
+
 }

@@ -30,10 +30,12 @@ public class ExposedStatistics {
       NUM_PUTS(true, true),               // C
       LOCAL_EXEC_NO_CONT(true, false),            // L
 
-      @Deprecated
-      LOCAL_CONTENTION_PROBABILITY(false, false),  // ONLY FOR QUERY, derived on the fly
 
+      LOCAL_CONTENTION_PROBABILITY(false, false),  // ONLY FOR QUERY, derived on the fly
+      REMOTE_CONTENTION_PROBABILITY(false, false), //ONLY FOR QUERY, derived on the fly
       LOCK_CONTENTION_PROBABILITY(false,false), //ONLY FOR QUERY, derived on the fly
+      LOCK_HOLD_TIME_LOCAL(false,false), //ONLY FOR QUERY
+      LOCK_HOLD_TIME_REMOTE(false,false), //ONLY FOR QUERY
 
       LOCK_CONTENTION_TO_LOCAL(true, true),  // C
       LOCK_CONTENTION_TO_REMOTE(true, true), // C

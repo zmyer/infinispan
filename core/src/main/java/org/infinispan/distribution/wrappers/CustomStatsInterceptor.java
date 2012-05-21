@@ -55,9 +55,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    private Configuration configuration;
 
    @Inject
-   public void inject(TransactionTable transactionTable, Configuration config) {
+   public void inject(TransactionTable transactionTable) {
       this.transactionTable = transactionTable;
-      this.configuration = config;
    }
 
    @Start

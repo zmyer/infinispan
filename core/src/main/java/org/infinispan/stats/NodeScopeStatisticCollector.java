@@ -1,5 +1,6 @@
 package org.infinispan.stats;
 
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.stats.percentiles.PercentileStats;
 import org.infinispan.stats.percentiles.PercentileStatsFactory;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
@@ -25,14 +26,15 @@ public class NodeScopeStatisticCollector {
    private PercentileStats localTransactionRoExecutionTime;
    private PercentileStats remoteTransactionRoExecutionTime;
 
+   private Configuration configuration;
 
 
    private long lastResetTime;
 
    public final synchronized void reset(){
       log.tracef("Resetting Node Scope Statistics");
-      this.localTransactionStatistics = new LocalTransactionStatistics();
-      this.remoteTransactionStatistics = new RemoteTransactionStatistics();
+      this.localTransactionStatistics = new LocalTransactionStatistics(this.configuration);
+      this.remoteTransactionStatistics = new RemoteTransactionStatistics(this.configuration);
 
       this.localTransactionRoExecutionTime = PercentileStatsFactory.createNewPercentileStats();
       this.localTransactionWrExecutionTime = PercentileStatsFactory.createNewPercentileStats();
@@ -42,7 +44,8 @@ public class NodeScopeStatisticCollector {
       this.lastResetTime = System.nanoTime();
    }
 
-   public NodeScopeStatisticCollector(){
+   public NodeScopeStatisticCollector(Configuration configuration){
+      this.configuration = configuration;
       reset();
    }
 

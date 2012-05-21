@@ -1,5 +1,6 @@
 package org.infinispan.stats;
 
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.stats.translations.ExposedStatistics;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
@@ -20,7 +21,7 @@ import java.util.concurrent.ConcurrentMap;
  * @author Pedro Ruivo
  * @since 5.2
  */
-public class TransactionsStatisticsRegistry {
+public final class TransactionsStatisticsRegistry {
 
    private static final Log log = LogFactory.getLog(TransactionsStatisticsRegistry.class);
 
@@ -31,13 +32,16 @@ public class TransactionsStatisticsRegistry {
    private static final ConcurrentMap<GlobalTransaction, RemoteTransactionStatistics> remoteTransactionStatistics =
          new ConcurrentHashMap<GlobalTransaction, RemoteTransactionStatistics>();
 
+   private static Configuration configuration;
+
    //Comment for reviewers: do we really need threadLocal? If I have the global id of the transaction, I can
    //retrieve the transactionStatistics
    private static final ThreadLocal<TransactionStatistics> thread = new ThreadLocal<TransactionStatistics>();
 
-   public static void init(){
+   public static void init(Configuration configuration){
       log.tracef("Initializing transactionalClassesMap");
-      transactionalClassesStatsMap.put(TransactionalClasses.DEFAULT_CLASS, new NodeScopeStatisticCollector());
+      TransactionsStatisticsRegistry.configuration = configuration;
+      transactionalClassesStatsMap.put(TransactionalClasses.DEFAULT_CLASS, new NodeScopeStatisticCollector(configuration));
    }
 
    public static void addValue(IspnStats param, double value) {
@@ -122,7 +126,7 @@ public class TransactionsStatisticsRegistry {
       RemoteTransactionStatistics rts = remoteTransactionStatistics.get(globalTransaction);
       if (rts == null && createIfAbsent) {
          log.tracef("Create a new remote transaction statistic for transaction %s", globalTransaction);
-         rts = new RemoteTransactionStatistics();
+         rts = new RemoteTransactionStatistics(configuration);
          remoteTransactionStatistics.put(globalTransaction, rts);
       } else {
          log.tracef("Using the remote transaction statistic %s for transaction %s", rts, globalTransaction);
@@ -160,7 +164,7 @@ public class TransactionsStatisticsRegistry {
       TransactionStatistics lts = thread.get();
       if (lts == null) {
          log.tracef("Init a new local transaction statistics");
-         thread.set(new LocalTransactionStatistics());
+         thread.set(new LocalTransactionStatistics(configuration));
       } else {
          log.tracef("Local transaction statistic is already initialized: %s", lts);
       }

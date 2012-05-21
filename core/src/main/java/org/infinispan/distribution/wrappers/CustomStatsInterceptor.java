@@ -5,6 +5,7 @@ import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.EntryFactory;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
@@ -51,17 +52,19 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    private final Log log = LogFactory.getLog(getClass());
 
    private TransactionTable transactionTable;
+   private Configuration configuration;
 
    @Inject
-   public void inject(TransactionTable transactionTable) {
+   public void inject(TransactionTable transactionTable, Configuration config) {
       this.transactionTable = transactionTable;
+      this.configuration = config;
    }
 
    @Start
    public void start(){
       replace();
       log.warn("Initializing the TransactionStatisticsRegistry");
-      TransactionsStatisticsRegistry.init();
+      TransactionsStatisticsRegistry.init(this.configuration);
    }
 
    @Override

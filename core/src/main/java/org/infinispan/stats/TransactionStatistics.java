@@ -1,5 +1,6 @@
 package org.infinispan.stats;
 
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.stats.translations.ExposedStatistics.TransactionalClasses;
 import org.infinispan.util.logging.Log;
@@ -25,14 +26,16 @@ public abstract class TransactionStatistics implements InfinispanStat {
    private final StatisticsContainer statisticsContainer;
 
    private final Log log = LogFactory.getLog(getClass());
+   protected Configuration configuration;
 
 
-   public TransactionStatistics(int size) {
+   public TransactionStatistics(int size, Configuration configuration) {
       this.initTime = System.nanoTime();
       this.isReadOnly = true; //as far as it does not tries to perform a put operation
       this.takenLocks = new HashMap<Object, Long>();
       this.transactionalClass = TransactionalClasses.DEFAULT_CLASS;
       this.statisticsContainer = new StatisticsContainerImpl(size);
+      this.configuration = configuration;
       log.tracef("Created transaction statistics. Class is %s. Start time is %s",
                  transactionalClass, initTime);
    }

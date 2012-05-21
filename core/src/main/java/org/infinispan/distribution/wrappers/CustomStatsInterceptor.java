@@ -203,6 +203,12 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       replaceLockManager(componentRegistry);
       replaceEntryFactoryWrapper(componentRegistry);
       componentRegistry.rewire();
+
+      this.wireConfiguration();
+   }
+
+   private void wireConfiguration(){
+      this.configuration = cache.getAdvancedCache().getCacheConfiguration();
    }
 
    private void replaceFieldInTransport(ComponentRegistry componentRegistry, InboundInvocationHandlerWrapper invocationHandlerWrapper) {

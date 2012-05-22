@@ -529,13 +529,13 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    @ManagedAttribute(description = "Average time it takes to execute the rollback command locally")
    @Metric(displayName = "Average Local Rollback Execution Time")
    public long getAvgLocalRollbackTime(){
-      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_COMMIT_EXECUTION_TIME);
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_ROLLBACK_EXECUTION_TIME);
    }
 
    @ManagedAttribute(description = "Average time it takes to execute the rollback command remotely")
    @Metric(displayName = "Average Remote Rollback Execution Time")
    public long getAvgRemoteRollbackTime(){
-      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_COMMIT_EXECUTION_TIME);
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_ROLLBACK_EXECUTION_TIME);
    }
 
    @ManagedAttribute(description = "Average time it takes to execute the rollback command remotely")

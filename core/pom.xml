@@ -41,6 +41,39 @@
    <properties>
       <module.skipComponentMetaDataProcessing>false</module.skipComponentMetaDataProcessing>
    </properties>
+
+   <!-- Added my maven repository. needed for stream lib -->
+   <repositories>
+      <repository>
+         <id>pruivo</id>
+         <name>Pedro Ruivo's Maven Repository</name>
+         <url>http://homepages.gsd.inesc-id.pt/~pruivo/maven-repo/</url>
+         <releases>
+            <enabled>true</enabled>
+         </releases>
+         <snapshots>
+            <enabled>true</enabled>
+            <updatePolicy>daily</updatePolicy>
+         </snapshots>
+      </repository>
+   </repositories>
+
+   <pluginRepositories>
+      <pluginRepository>
+         <id>pruivo-plugin</id>
+         <name>Pedro Ruivo's Plugins Maven Repository</name>
+         <url>http://homepages.gsd.inesc-id.pt/~pruivo/maven-repo/</url>
+         <releases>
+            <enabled>true</enabled>
+         </releases>
+         <snapshots>
+            <enabled>true</enabled>
+            <updatePolicy>daily</updatePolicy>
+         </snapshots>
+      </pluginRepository>
+   </pluginRepositories>
+
+   
    <dependencies>
 
       <dependency>

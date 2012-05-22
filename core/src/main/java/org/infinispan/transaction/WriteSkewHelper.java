@@ -33,7 +33,6 @@ import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.SuccessfulResponse;
-import org.infinispan.stats.StreamLibContainer;
 import org.infinispan.transaction.xa.CacheTransaction;
 
 import java.util.HashSet;
@@ -47,7 +46,6 @@ import java.util.Set;
  * @since 5.1
  */
 public class WriteSkewHelper {
-   private static StreamLibContainer streamLibContainer = StreamLibContainer.getInstance();
 
    public static void setVersionsSeenOnPrepareCommand(VersionedPrepareCommand command, TxInvocationContext context) {
       // Build a map of keys to versions as they were seen by the transaction originator's transaction context
@@ -93,7 +91,6 @@ public class WriteSkewHelper {
                   IncrementableEntryVersion newVersion = entry.isCreated() ? versionGenerator.generateNew() : versionGenerator.increment((IncrementableEntryVersion) entry.getVersion());
                   uv.put(k, newVersion);
                } else {
-                  streamLibContainer.addWriteSkewFailed(k);
                   // Write skew check detected!
                   throw new CacheException("Write skew detected on key " + k + " for transaction " + context.getTransaction());
                }

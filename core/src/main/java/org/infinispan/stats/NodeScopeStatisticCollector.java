@@ -318,9 +318,9 @@ public class NodeScopeStatisticCollector {
                   localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
             return new Long((long) (totalBornTx / convertNanosToSeconds(System.nanoTime() - this.lastResetTime)));
          case LOCK_HOLD_TIME_LOCAL:
-            return microAvgLocal(IspnStats.LOCK_HOLD_TIME, IspnStats.NUM_HELD_LOCKS);
+            return microAvgLocal(IspnStats.NUM_HELD_LOCKS,IspnStats.LOCK_HOLD_TIME);
          case LOCK_HOLD_TIME_REMOTE:
-            return microAvgRemote(IspnStats.LOCK_HOLD_TIME, IspnStats.NUM_HELD_LOCKS);
+            return microAvgRemote(IspnStats.NUM_HELD_LOCKS,IspnStats.LOCK_HOLD_TIME);
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }

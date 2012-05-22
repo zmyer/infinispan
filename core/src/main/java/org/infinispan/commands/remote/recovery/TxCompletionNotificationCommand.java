@@ -92,7 +92,6 @@ public class TxCompletionNotificationCommand extends RecoveryCommand {
          remoteTx = txTable.removeRemoteTransaction(gtx);
       }
       if (remoteTx == null) return null;
-      System.out.println("Performing a TxCompletionNotification which is unlocking stuff!!!");
       lockManager.unlock(remoteTx.getLockedKeys(), remoteTx.getGlobalTransaction());
       return null;
    }

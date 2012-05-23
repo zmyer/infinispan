@@ -182,7 +182,6 @@ public class NodeScopeStatisticCollector {
             return new Double(0);
          }
          case LOCK_CONTENTION_PROBABILITY:{
-            System.out.println("CALLED LOCK_CONT_PROB");
             long numLocalPuts = localTransactionStatistics.getValue(IspnStats.NUM_PUTS);
             long numRemotePuts = remoteTransactionStatistics.getValue(IspnStats.NUM_PUTS);
             long totalPuts = numLocalPuts + numRemotePuts;

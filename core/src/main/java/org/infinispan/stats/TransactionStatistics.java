@@ -94,6 +94,8 @@ public abstract class TransactionStatistics implements InfinispanStat {
          if(isCommit){
             this.incrementValue(IspnStats.NUM_COMMITTED_RO_TX);
             this.addValue(IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME,execTime);
+            this.addValue(IspnStats.NUM_SUCCESSFUL_GETS_RO_TX, this.getValue(IspnStats.NUM_GET));
+            this.addValue(IspnStats.NUM_SUCCESSFUL_REMOTE_GETS_RO_TX, this.getValue(IspnStats.NUM_REMOTE_GET));
          } else{
             this.incrementValue(IspnStats.NUM_ABORTED_RO_TX);
             this.addValue(IspnStats.RO_TX_ABORTED_EXECUTION_TIME,execTime);
@@ -102,6 +104,8 @@ public abstract class TransactionStatistics implements InfinispanStat {
          if(isCommit){
             this.incrementValue(IspnStats.NUM_COMMITTED_WR_TX);
             this.addValue(IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME,execTime);
+            this.addValue(IspnStats.NUM_SUCCESSFUL_GETS_WR_TX, this.getValue(IspnStats.NUM_GET));
+            this.addValue(IspnStats.NUM_SUCCESSFUL_REMOTE_GETS_WR_TX, this.getValue(IspnStats.NUM_REMOTE_GET));
          } else{
             this.incrementValue(IspnStats.NUM_ABORTED_WR_TX);
             this.addValue(IspnStats.WR_TX_ABORTED_EXECUTION_TIME,execTime);

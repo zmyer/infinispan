@@ -257,6 +257,16 @@ public class NodeScopeStatisticCollector {
             }
             return new Double(0);
          }
+         case NUM_SUCCESSFUL_GETS_RO_TX:
+            return avgLocal(IspnStats.NUM_COMMITTED_RO_TX,IspnStats.NUM_SUCCESSFUL_GETS_RO_TX);
+         case NUM_SUCCESSFUL_GETS_WR_TX:
+            return avgLocal(IspnStats.NUM_COMMITTED_WR_TX,IspnStats.NUM_SUCCESSFUL_GETS_WR_TX);
+         case NUM_SUCCESSFUL_REMOTE_GETS_RO_TX:
+            return avgLocal(IspnStats.NUM_COMMITTED_RO_TX,IspnStats.NUM_SUCCESSFUL_REMOTE_GETS_RO_TX);
+         case NUM_SUCCESSFUL_REMOTE_GETS_WR_TX:
+            return avgLocal(IspnStats.NUM_COMMITTED_WR_TX,IspnStats.NUM_SUCCESSFUL_REMOTE_GETS_WR_TX);
+         case REMOTE_GET_EXECUTION:
+             return microAvgLocal(IspnStats.NUM_REMOTE_GET, IspnStats.REMOTE_GET_EXECUTION);
          case NUM_LOCK_FAILED_DEADLOCK:
          case NUM_LOCK_FAILED_TIMEOUT:
             return new Long(localTransactionStatistics.getValue(param));
@@ -383,14 +393,12 @@ public class NodeScopeStatisticCollector {
       return nanos / 1000000000;
    }
 
-   private Long microAvgLocal(IspnStats duration, IspnStats counters){
-      return convertNanosToMicro(avgLocal(duration,counters));
+   private Long microAvgLocal(IspnStats counter, IspnStats duration){
+      return convertNanosToMicro(avgLocal(counter,duration));
    }
 
-   private Long microAvgRemote(IspnStats duration, IspnStats counters){
-      return convertNanosToMicro(avgRemote(duration, counters));
+   private Long microAvgRemote(IspnStats counter, IspnStats duration){
+      return convertNanosToMicro(avgRemote(counter, duration));
    }
-
-
 
 }

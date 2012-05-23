@@ -118,6 +118,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
             TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_REMOTE_GET);
             TransactionsStatisticsRegistry.addValue(IspnStats.REMOTE_GET_EXECUTION, System.nanoTime() - currTime);
          }
+
+         TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_GET);
       }
       else{
          ret = invokeNextInterceptor(ctx,command);
@@ -556,6 +558,36 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.THROUGHPUT);
    }
 
+   @ManagedAttribute(description = "Average number of get operations per (local) read-only transaction")
+   @Operation(displayName = "Average number of get operations per (local) read-only transaction")
+   public long getAvgGetsPerROTransaction(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_SUCCESSFUL_GETS_RO_TX);
+   }
+
+   @ManagedAttribute(description = "Average number of get operations per (local) read-write transaction")
+   @Operation(displayName = "Average number of get operations per (local) read-write transaction")
+   public long getAvgGetsPerWrTransaction(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_SUCCESSFUL_GETS_WR_TX);
+   }
+
+   @ManagedAttribute(description = "Average number of remote get operations per (local) read-write transaction")
+   @Operation(displayName = "Average number of remote get operations per (local) read-write transaction")
+   public long getAvgRemoteGetsPerWrTransaction(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_SUCCESSFUL_REMOTE_GETS_WR_TX);
+   }
+
+   @ManagedAttribute(description = "Average number of remote get operations per (local) read-only transaction")
+   @Operation(displayName = "Average number of remote get operations per (local) read-only transaction")
+   public long getAvgRemoteGetsPerROTransaction(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_SUCCESSFUL_REMOTE_GETS_RO_TX);
+   }
+
+   @ManagedAttribute(description = "Average cost of a remote get")
+   @Operation(displayName = "Remote get cost")
+   public long getRemoteGetExecutionTime(){
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_GET_EXECUTION);
+   }
+
    @ManagedOperation(description = "K-th percentile of local read-only transactions execution time")
    @Operation(displayName = "K-th Percentile Local Read-Only Transactions")
    public double getPercentileLocalReadOnlyTransaction(int percentile){
@@ -585,6 +617,5 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    public void resetStatistics(){
       TransactionsStatisticsRegistry.reset();
    }
-
 
 }

@@ -39,8 +39,8 @@ public class LockManagerWrapper implements LockManager {
             } else {
                TransactionsStatisticsRegistry.incrementValue(IspnStats.LOCK_CONTENTION_TO_LOCAL);
             }
+            return true;
          }
-         return true;
       }
       return false;
    }

@@ -197,7 +197,7 @@ public class NodeScopeStatisticCollector {
          }
          case COMMIT_EXECUTION_TIME:{
             long numCommits = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) +
-                  localTransactionStatistics.getIndex(IspnStats.NUM_COMMITTED_RO_TX);
+                  localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX);
             if(numCommits!=0){
                long commitExecTime = localTransactionStatistics.getValue(IspnStats.COMMIT_EXECUTION_TIME);
                return new Long(convertNanosToMicro(commitExecTime / numCommits));
@@ -220,7 +220,7 @@ public class NodeScopeStatisticCollector {
             long totalWaitedForLocks = localWaitedForLocks + remoteWaitedForLocks;
             if(totalWaitedForLocks!=0){
                long localWaitedTime = localTransactionStatistics.getValue(IspnStats.LOCK_WAITING_TIME);
-               long remoteWaitedTime = remoteTransactionStatistics.getIndex(IspnStats.LOCK_WAITING_TIME);
+               long remoteWaitedTime = remoteTransactionStatistics.getValue(IspnStats.LOCK_WAITING_TIME);
                return new Long(convertNanosToMicro(localWaitedTime + remoteWaitedTime) / totalWaitedForLocks);
             }
             return new Long(0);

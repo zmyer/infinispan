@@ -92,7 +92,7 @@ public class WriteSkewHelper {
                   uv.put(k, newVersion);
                } else {
                   // Write skew check detected!
-                  throw new CacheException("Write skew detected on key " + k + " for transaction " + context.getTransaction()
+                  throw new WriteSkewException("Write skew detected on key " + k + " for transaction " + context.getTransaction()
                                                  + "Actual value is " + dataContainer.get(entry.getKey()) + " and transaction value is " +
                                                  entry);
                }

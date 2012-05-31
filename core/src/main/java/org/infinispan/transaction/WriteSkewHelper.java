@@ -94,7 +94,7 @@ public class WriteSkewHelper {
                   // Write skew check detected!
                   throw new WriteSkewException("Write skew detected on key " + k + " for transaction " + context.getTransaction()
                                                  + "Actual value is " + dataContainer.get(entry.getKey()) + " and transaction value is " +
-                                                 entry);
+                                                 entry, k);
                }
             }
          }

@@ -340,7 +340,8 @@ public class CommandsFactoryImpl implements CommandsFactory {
                   initializeReplicableCommand(nested, false);
                }
             pc.markTransactionAsRemote(isRemote);
-            if (configuration.isEnableDeadlockDetection() && isRemote) {
+            if (configuration.isEnableDeadlockDetection() && isRemote && 
+                  pc.getGlobalTransaction() instanceof DldGlobalTransaction) {
                DldGlobalTransaction transaction = (DldGlobalTransaction) pc.getGlobalTransaction();
                transaction.setLocksHeldAtOrigin(pc.getAffectedKeys());
             }
@@ -368,7 +369,8 @@ public class CommandsFactoryImpl implements CommandsFactory {
             LockControlCommand lcc = (LockControlCommand) c;
             lcc.init(interceptorChain, icc, txTable, configuration);
             lcc.markTransactionAsRemote(isRemote);
-            if (configuration.isEnableDeadlockDetection() && isRemote) {
+            if (configuration.isEnableDeadlockDetection() && isRemote &&
+                  lcc.getGlobalTransaction() instanceof DldGlobalTransaction) {
                DldGlobalTransaction gtx = (DldGlobalTransaction) lcc.getGlobalTransaction();
                RemoteTransaction transaction = txTable.getRemoteTransaction(gtx);
                if (transaction != null) {

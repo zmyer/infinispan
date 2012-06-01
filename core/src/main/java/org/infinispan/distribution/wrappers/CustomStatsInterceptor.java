@@ -59,8 +59,10 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       this.transactionTable = transactionTable;
    }
 
-   @Start
+   @Start(priority = 99)
    public void start(){
+      // we want that this method is the last to be invoked, otherwise the start method is not invoked
+      // in the real components
       replace();
       log.warn("Initializing the TransactionStatisticsRegistry");
       TransactionsStatisticsRegistry.init(this.configuration);

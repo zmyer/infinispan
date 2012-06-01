@@ -30,7 +30,6 @@ import java.util.Set;
  * @author Pedro Ruivo
  * @since 5.2
  */
-@MBean(objectName = "TotalOrderManager", description = "Concurrent total order management for distributed mode")
 public class DistParallelTotalOrderManager extends ParallelTotalOrderManager {
 
    private static final Log log = LogFactory.getLog(DistParallelTotalOrderManager.class);

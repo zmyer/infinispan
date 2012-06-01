@@ -12,7 +12,8 @@ import org.infinispan.util.logging.LogFactory;
  * @author Pedro Ruivo
  * @since 5.2.0
  */
-@MBean(objectName = "TotalOrderManager", description = "Simple total order management")
+@MBean(objectName = "SequentialTotalOrderManager", description = "Total order Manager used when the transaction are " +
+      "committed in one phase")
 public class SequentialTotalOrderManager extends BaseTotalOrderManager {
 
    private static final Log log = LogFactory.getLog(SequentialTotalOrderManager.class);

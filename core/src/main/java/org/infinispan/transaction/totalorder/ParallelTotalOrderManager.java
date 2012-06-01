@@ -33,7 +33,8 @@ import static org.infinispan.factories.KnownComponentNames.TOTAL_ORDER_EXECUTOR;
  * @author Mircea.markus@jboss.org
  * @since 5.2
  */
-@MBean(objectName = "TotalOrderManager", description = "Concurrent total order management")
+@MBean(objectName = "ParallelTotalOrderManager", description = "Total order Manager used when the transactions are " +
+      "committed in two phases")
 public class ParallelTotalOrderManager extends BaseTotalOrderManager {
 
    private static final Log log = LogFactory.getLog(ParallelTotalOrderManager.class);

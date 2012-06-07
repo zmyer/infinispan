@@ -14,6 +14,7 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.VersionedEntryWrappingInterceptor;
+import org.infinispan.transaction.WriteSkewException;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -128,8 +129,9 @@ public class TotalOrderVersionedEntryWrappingInterceptor extends VersionedEntryW
          }
 
          if(!clusterMvccEntry.performWriteSkewCheck(dataContainer)) {
-            throw new CacheException("Write skew detected on key " + clusterMvccEntry.getKey() +
-                                           " for transaction " + prepareCommand.getGlobalTransaction().prettyPrint());
+            throw new WriteSkewException("Write skew detected on key " + clusterMvccEntry.getKey() +
+                                           " for transaction " + prepareCommand.getGlobalTransaction().prettyPrint(), 
+                                         clusterMvccEntry.getKey());
          }
          return clusterMvccEntry;
       }

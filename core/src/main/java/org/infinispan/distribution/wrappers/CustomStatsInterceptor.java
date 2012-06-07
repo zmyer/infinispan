@@ -158,10 +158,12 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          TransactionsStatisticsRegistry.setUpdateTransaction();
       }
 
+      boolean success = false;
       try {
          long currTime = System.nanoTime();
          Object ret = invokeNextInterceptor(ctx,command);
          updateTime(IspnStats.PREPARE_EXECUTION_TIME, IspnStats.NUM_PREPARE_COMMAND, currTime);
+         success = true;
          return ret;
       } catch (TimeoutException e) {
          if (ctx.isOriginLocal() && isLockTimeout(e)) {
@@ -173,6 +175,13 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
             TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_LOCK_FAILED_DEADLOCK);
          }
          throw e;
+      } finally {
+         if (command.isOnePhaseCommit()) {
+            TransactionsStatisticsRegistry.setTransactionOutcome(success);
+            if (ctx.isOriginLocal()) {
+               TransactionsStatisticsRegistry.terminateTransaction();
+            }
+         }
       }
    }
 

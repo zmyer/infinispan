@@ -1,5 +1,6 @@
 package org.infinispan.transaction.totalorder;
 
+import org.infinispan.CacheException;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.configuration.cache.Configuration;
@@ -11,7 +12,6 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
-import org.infinispan.remoting.RpcException;
 import org.infinispan.statetransfer.StateTransferInProgressException;
 import org.infinispan.transaction.LocalTransaction;
 import org.infinispan.transaction.TransactionTable;
@@ -104,10 +104,13 @@ public abstract class BaseTotalOrderManager implements TotalOrderManager {
             shouldBeRetransmitted = localTransaction.isMarkedToRetransmit();
             if (trace)
                log.tracef("Prepare succeeded on time for transaction %s, waking up..", ctx.getGlobalTransaction().prettyPrint());
-         } catch (Throwable th) {
+         } catch (Throwable e) {
             if (trace)
-               log.tracef(th, "Transaction %s hasn't prepare correctly", ctx.getGlobalTransaction().prettyPrint());
-            throw new RpcException(th);
+               log.tracef(e, "Transaction %s hasn't prepare correctly", ctx.getGlobalTransaction().prettyPrint());
+            if (e instanceof CacheException) {
+               throw (CacheException) e;
+            }
+            throw new CacheException(e);
          } finally {
             //the transaction is no longer needed
             if (!shouldBeRetransmitted) {

@@ -270,55 +270,55 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    //JMX exposed methods
 
-   @ManagedAttribute(description = "Average number of puts performed locally by a successful local transaction")
+   @ManagedAttribute(description = "Average number of puts performed by a successful local transaction")
    @Metric(displayName = "Number of puts")
    public long getAvgNumPutsBySuccessfulLocalTx(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.PUTS_PER_LOCAL_TX);
    }
 
-   @ManagedAttribute(description = "Average Prepare RTT duration")
+   @ManagedAttribute(description = "Average Prepare Round-Trip Time duration (in microseconds)")
    @Metric(displayName = "Average Prepare RTT")
    public long getAvgPrepareRtt() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_PREPARE)));
    }
 
-   @ManagedAttribute(description = "Average Commit RTT duration")
+   @ManagedAttribute(description = "Average Commit Round-Trip Time duration (in microseconds)")
    @Metric(displayName = "Average Commit RTT")
    public long getAvgCommitRtt() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_COMMIT)));
    }
 
-   @ManagedAttribute(description = "Average Remote Get RTT duration")
+   @ManagedAttribute(description = "Average Remote Get Round-Trip Time duration (in microseconds)")
    @Metric(displayName = "Average Remote Get RTT")
    public long getAvgRemoteGetRtt() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_GET)));
    }
 
-   @ManagedAttribute(description = "Average Rollback RTT duration")
+   @ManagedAttribute(description = "Average Rollback Round-Trip Time duration (in microseconds)")
    @Metric(displayName = "Average Rollback RTT")
    public long getAvgRollbackRtt() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.RTT_ROLLBACK)));
    }
 
-   @ManagedAttribute(description = "Average Prepare asynchronous duration")
+   @ManagedAttribute(description = "Average asynchronous Prepare duration (in microseconds)")
    @Metric(displayName = "Average Prepare Async")
    public long getAvgPrepareAsync() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.ASYNC_PREPARE)));
    }
 
-   @ManagedAttribute(description = "Average Commit asynchronous duration")
+   @ManagedAttribute(description = "Average asynchronous Commit duration (in microseconds)")
    @Metric(displayName = "Average Commit Async")
    public long getAvgCommitAsync() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.ASYNC_COMMIT)));
    }
 
-   @ManagedAttribute(description = "Average Complete Notification asynchronous duration")
+   @ManagedAttribute(description = "Average asynchronous Complete Notification duration (in microseconds)")
    @Metric(displayName = "Average Complete Notification Async")
    public long getAvgCompleteNotificationAsync() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.ASYNC_COMPLETE_NOTIFY)));
    }
 
-   @ManagedAttribute(description = "Average Rollback asynchronous duration")
+   @ManagedAttribute(description = "Average asynchronous Rollback duration (in microseconds)")
    @Metric(displayName = "Average Rollback Async")
    public long getAvgRollbackAsync() {
       return (Long)(TransactionsStatisticsRegistry.getAttribute((IspnStats.ASYNC_ROLLBACK)));
@@ -379,68 +379,68 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Double)TransactionsStatisticsRegistry.getAttribute((IspnStats.LOCK_CONTENTION_PROBABILITY));
    }
 
-
    @ManagedAttribute(description = "Local execution time of a transaction without the time waiting for lock acquisition")
    @Metric(displayName = "Local Execution Time Without Locking Time")
    public long getLocalExecutionTimeWithoutLock(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_EXEC_NO_CONT);
    }
 
-   @ManagedAttribute(description = "Average lock holding time")
+   @ManagedAttribute(description = "Average lock holding time (in microseconds)")
    @Metric(displayName = "Average Lock Holding Time")
    public long getAvgLockHoldTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_HOLD_TIME);
    }
 
-   @ManagedAttribute(description = "Average lock local holding time")
+   @ManagedAttribute(description = "Average lock local holding time (in microseconds)")
    @Metric(displayName = "Average Lock Local Holding Time")
    public long getAvgLocalLockHoldTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_HOLD_TIME_LOCAL);
    }
 
-   @ManagedAttribute(description = "Average lock remote holding time")
+   @ManagedAttribute(description = "Average lock remote holding time (in microseconds)")
    @Metric(displayName = "Average Lock Remote Holding Time")
    public long getAvgRemoteLockHoldTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_HOLD_TIME_REMOTE);
    }
 
-   @ManagedAttribute(description = "Average commit duration time (2nd phase only)")
+   @ManagedAttribute(description = "Average local commit duration time (2nd phase only) (in microseconds)")
    @Metric(displayName = "Average Commit Time")
    public long getAvgCommitTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.COMMIT_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average rollback duration time (2nd phase only)")
+   @ManagedAttribute(description = "Average local rollback duration time (2nd phase only) (in microseconds)")
    @Metric(displayName = "Average Rollback Time")
    public long getAvgRollbackTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.ROLLBACK_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average prepare command size")
+   @ManagedAttribute(description = "Average prepare command size (in bytes)")
    @Metric(displayName = "Average Prepare Command Size")
    public long getAvgPrepareCommandSize(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.PREPARE_COMMAND_SIZE);
    }
 
-   @ManagedAttribute(description = "Average commit command size")
+   @ManagedAttribute(description = "Average commit command size (in bytes)")
    @Metric(displayName = "Average Commit Command Size")
    public long getAvgCommitCommandSize(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.COMMIT_COMMAND_SIZE);
    }
 
-   @ManagedAttribute(description = "Average clustered get command size")
+   @ManagedAttribute(description = "Average clustered get command size (in bytes)")
    @Metric(displayName = "Average Clustered Get Command Size")
    public long getAvgClusteredGetCommandSize(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.CLUSTERED_GET_COMMAND_SIZE);
    }
 
-   @ManagedAttribute(description = "Average time waiting for the lock acquisition")
+   @ManagedAttribute(description = "Average time waiting for the lock acquisition (in microseconds)")
    @Metric(displayName = "Average Lock Waiting Time")
    public long getAvgLockWaitingTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCK_WAITING_TIME);
    }
 
-   @ManagedAttribute(description = "Average transaction arrival rate")
+   @ManagedAttribute(description = "Average transaction arrival rate, originated locally and remotely (in transaction " +
+         "per second)")
    @Metric(displayName = "Average Transaction Arrival Rate")
    public long getAvgTxArrivalRate(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.ARRIVAL_RATE);
@@ -452,7 +452,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.TX_WRITE_PERCENTAGE);
    }
 
-   @ManagedAttribute(description = "Percentage of successfully Write transaction executed locally")
+   @ManagedAttribute(description = "Percentage of Write transaction executed in all successfully executed " +
+         "transactions (local transaction only)")
    @Metric(displayName = "Percentage of Successfully Write Transactions")
    public double getPercentageSuccessWriteTransactions(){
       return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.SUCCESSFUL_WRITE_PERCENTAGE);
@@ -470,19 +471,19 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_FAILED_DEADLOCK);
    }
 
-   @ManagedAttribute(description = "Average successful read-only transaction duration")
+   @ManagedAttribute(description = "Average successful read-only transaction duration (in microseconds)")
    @Metric(displayName = "Average Read-Only Transaction Duration")
    public long getAvgReadOnlyTxDuration(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.RO_TX_SUCCESSFUL_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average successful write transaction duration")
+   @ManagedAttribute(description = "Average successful write transaction duration (in microseconds)")
    @Metric(displayName = "Average Write Transaction Duration")
    public long getAvgWriteTxDuration(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_SUCCESSFUL_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average write transaction local execution time")
+   @ManagedAttribute(description = "Average write transaction local execution time (in microseconds)")
    @Metric(displayName = "Average Write Transaction Local Execution Time")
    public long getAvgWriteTxLocalExecution(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.WR_TX_LOCAL_EXECUTION_TIME);
@@ -506,43 +507,43 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCK_PER_SUCCESS_LOCAL_TX);
    }
 
-   @ManagedAttribute(description = "Average time it takes to execute the prepare command locally")
+   @ManagedAttribute(description = "Average time it takes to execute the prepare command locally (in microseconds)")
    @Metric(displayName = "Average Local Prepare Execution Time")
    public long getAvgLocalPrepareTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_PREPARE_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average time it takes to execute the prepare command remotely")
+   @ManagedAttribute(description = "Average time it takes to execute the prepare command remotely (in microseconds)")
    @Metric(displayName = "Average Remote Prepare Execution Time")
    public long getAvgRemotePrepareTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_PREPARE_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average time it takes to execute the commit command locally")
+   @ManagedAttribute(description = "Average time it takes to execute the commit command locally (in microseconds)")
    @Metric(displayName = "Average Local Commit Execution Time")
    public long getAvgLocalCommitTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_COMMIT_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average time it takes to execute the commit command remotely")
+   @ManagedAttribute(description = "Average time it takes to execute the commit command remotely (in microseconds)")
    @Metric(displayName = "Average Remote Commit Execution Time")
    public long getAvgRemoteCommitTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_COMMIT_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average time it takes to execute the rollback command locally")
+   @ManagedAttribute(description = "Average time it takes to execute the rollback command locally (in microseconds)")
    @Metric(displayName = "Average Local Rollback Execution Time")
    public long getAvgLocalRollbackTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.LOCAL_ROLLBACK_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average time it takes to execute the rollback command remotely")
+   @ManagedAttribute(description = "Average time it takes to execute the rollback command remotely (in microseconds)")
    @Metric(displayName = "Average Remote Rollback Execution Time")
    public long getAvgRemoteRollbackTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_ROLLBACK_EXECUTION_TIME);
    }
 
-   @ManagedAttribute(description = "Average time it takes to execute the rollback command remotely")
+   @ManagedAttribute(description = "Average time it takes to execute the rollback command remotely (in microseconds)")
    @Metric(displayName = "Average Remote Transaction Completion Notify Execution Time")
    public long getAvgRemoteTxCompleteNotifyTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.TX_COMPLETE_NOTIFY_EXECUTION_TIME);
@@ -554,7 +555,7 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.ABORT_RATE);
    }
 
-   @ManagedAttribute(description = "Throughput")
+   @ManagedAttribute(description = "Throughput (in transactions per second)")
    @Metric(displayName = "Throughput")
    public long getThroughput(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.THROUGHPUT);

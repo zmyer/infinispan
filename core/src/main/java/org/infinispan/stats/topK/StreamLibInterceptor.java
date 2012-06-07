@@ -52,7 +52,7 @@ public class StreamLibInterceptor extends BaseCustomInterceptor {
       return invokeNextInterceptor(ctx, command);
       } catch (WriteSkewException wse) {
          Object key = wse.getKey();
-         if (key != null) {
+         if (key != null && ctx.isOriginLocal()) {
             streamLibContainer.addWriteSkewFailed(key);
          }
          throw wse;
@@ -65,7 +65,7 @@ public class StreamLibInterceptor extends BaseCustomInterceptor {
          return invokeNextInterceptor(ctx, command);
       } catch (WriteSkewException wse) {
          Object key = wse.getKey();
-         if (key != null) {
+         if (key != null && ctx.isOriginLocal()) {
             streamLibContainer.addWriteSkewFailed(key);
          }
          throw wse;

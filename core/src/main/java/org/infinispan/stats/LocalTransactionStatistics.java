@@ -24,7 +24,10 @@ public class LocalTransactionStatistics extends TransactionStatistics {
 
    public final void terminateLocalExecution() {
       this.stillLocalExecution = false;
-      this.addValue(IspnStats.WR_TX_LOCAL_EXECUTION_TIME, System.nanoTime() - this.initTime);
+
+      if (!isReadOnly()) {
+         this.addValue(IspnStats.WR_TX_LOCAL_EXECUTION_TIME, System.nanoTime() - this.initTime);
+      }
       this.incrementValue(IspnStats.NUM_PREPARES);
    }
 
@@ -66,7 +69,7 @@ public class LocalTransactionStatistics extends TransactionStatistics {
    @Override
    public final String toString() {
       return "LocalTransactionStatistics{" +
-              "stillLocalExecution=" + stillLocalExecution +
-              ", " + super.toString();
+            "stillLocalExecution=" + stillLocalExecution +
+            ", " + super.toString();
    }
 }

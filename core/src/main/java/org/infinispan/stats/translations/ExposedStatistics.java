@@ -20,21 +20,22 @@ public class ExposedStatistics {
       NUM_HELD_LOCKS(true, true),            // C
       NUM_HELD_LOCKS_SUCCESS_TX(true, false),   // L
       WR_TX_LOCAL_EXECUTION_TIME(true, false),  // L
+
       NUM_COMMITTED_RO_TX(true, true), // C
       NUM_COMMITTED_WR_TX(true, true), // C
       NUM_ABORTED_WR_TX(true, true),   // C
-      NUM_ABORTED_RO_TX(true, true),   // C      
+      NUM_ABORTED_RO_TX(true, true),   // C
+      NUM_COMMITS(false, false),  //ONLY FOR QUERY
+      NUM_LOCAL_COMMITS(false, false),  //ONLY FOR QUERY
+
       NUM_PREPARES(true, false), // L
       NUM_PUTS(true, true),               // C
       LOCAL_EXEC_NO_CONT(true, false),            // L
-
-
       LOCAL_CONTENTION_PROBABILITY(false, false),  // ONLY FOR QUERY, derived on the fly
       REMOTE_CONTENTION_PROBABILITY(false, false), //ONLY FOR QUERY, derived on the fly
       LOCK_CONTENTION_PROBABILITY(false,false), //ONLY FOR QUERY, derived on the fly
       LOCK_HOLD_TIME_LOCAL(false,false), //ONLY FOR QUERY
       LOCK_HOLD_TIME_REMOTE(false,false), //ONLY FOR QUERY
-
       LOCK_CONTENTION_TO_LOCAL(true, true),  // C
       LOCK_CONTENTION_TO_REMOTE(true, true), // C
       NUM_SUCCESSFUL_PUTS(true, false),   // L, this includes also repeated puts over the same item
@@ -56,6 +57,9 @@ public class ExposedStatistics {
       RO_TX_SUCCESSFUL_EXECUTION_TIME(true, true), //C
       RO_TX_ABORTED_EXECUTION_TIME(true, true),    //C
       APPLICATION_CONTENTION_FACTOR(false, false), // ONLY FOR QUERY
+
+      NUM_WRITE_SKEW(true, false), // L
+      WRITE_SKEW_PROBABILITY(false, false), // ONLY FOR QUERY
 
       //Abort rate, arrival rate and throughput
       ABORT_RATE(false, false),     // ONLY FOR QUERY, derived on the fly

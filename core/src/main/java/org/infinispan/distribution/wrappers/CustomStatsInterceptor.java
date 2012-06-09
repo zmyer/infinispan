@@ -25,6 +25,7 @@ import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.stats.TransactionsStatisticsRegistry;
 import org.infinispan.stats.translations.ExposedStatistics.IspnStats;
 import org.infinispan.transaction.TransactionTable;
+import org.infinispan.transaction.WriteSkewException;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.locks.DeadlockDetectedException;
 import org.infinispan.util.concurrent.locks.LockManager;
@@ -88,6 +89,11 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
          } catch (DeadlockDetectedException e) {
             if (ctx.isOriginLocal()) {
                TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_LOCK_FAILED_DEADLOCK);
+            }
+            throw e;
+         } catch (WriteSkewException e) {
+            if (ctx.isOriginLocal()) {
+               TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_WRITE_SKEW);
             }
             throw e;
          }
@@ -173,6 +179,11 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
       } catch (DeadlockDetectedException e) {
          if (ctx.isOriginLocal()) {
             TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_LOCK_FAILED_DEADLOCK);
+         }
+         throw e;
+      } catch (WriteSkewException e) {
+         if (ctx.isOriginLocal()) {
+            TransactionsStatisticsRegistry.incrementValue(IspnStats.NUM_WRITE_SKEW);
          }
          throw e;
       } finally {
@@ -598,6 +609,24 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    @Operation(displayName = "Remote get cost")
    public long getRemoteGetExecutionTime(){
       return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.REMOTE_GET_EXECUTION);
+   }
+
+   @ManagedAttribute(description = "Number of committed transactions since last reset")
+   @Operation(displayName = "Number Of Commits")
+   public long getNumberOfCommits() {
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_COMMITS);
+   }
+
+   @ManagedAttribute(description = "Number of local committed transactions since last reset")
+   @Operation(displayName = "Number Of Local Commits")
+   public long getNumberOfLocalCommits() {
+      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.NUM_LOCAL_COMMITS);
+   }
+
+   @ManagedAttribute(description = "Write skew probability")
+   @Operation(displayName = "Write Skew Probability")
+   public double getWriteSkewProbability() {
+      return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.WRITE_SKEW_PROBABILITY);
    }
 
    @ManagedOperation(description = "K-th percentile of local read-only transactions execution time")

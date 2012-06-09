@@ -266,7 +266,7 @@ public class NodeScopeStatisticCollector {
          case NUM_SUCCESSFUL_REMOTE_GETS_WR_TX:
             return avgLocal(IspnStats.NUM_COMMITTED_WR_TX,IspnStats.NUM_SUCCESSFUL_REMOTE_GETS_WR_TX);
          case REMOTE_GET_EXECUTION:
-             return microAvgLocal(IspnStats.NUM_REMOTE_GET, IspnStats.REMOTE_GET_EXECUTION);
+            return microAvgLocal(IspnStats.NUM_REMOTE_GET, IspnStats.REMOTE_GET_EXECUTION);
          case NUM_LOCK_FAILED_DEADLOCK:
          case NUM_LOCK_FAILED_TIMEOUT:
             return new Long(localTransactionStatistics.getValue(param));
@@ -330,6 +330,24 @@ public class NodeScopeStatisticCollector {
             return microAvgLocal(IspnStats.NUM_HELD_LOCKS,IspnStats.LOCK_HOLD_TIME);
          case LOCK_HOLD_TIME_REMOTE:
             return microAvgRemote(IspnStats.NUM_HELD_LOCKS,IspnStats.LOCK_HOLD_TIME);
+         case NUM_COMMITS:
+            return new Long(localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
+                                  localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) +
+                                  remoteTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
+                                  remoteTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX));
+         case NUM_LOCAL_COMMITS:
+            return new Long(localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
+                                  localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX));
+         case WRITE_SKEW_PROBABILITY:
+            long totalTxs = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
+                  localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX) +
+                  localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX) +
+                  localTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
+            if (totalTxs != 0) {
+               long writeSkew = localTransactionStatistics.getValue(IspnStats.NUM_WRITE_SKEW);
+               return new Double(writeSkew * 1.0 / totalTxs);
+            }
+            return new Double(0);
          default:
             throw new NoIspnStatException("Invalid statistic "+param);
       }

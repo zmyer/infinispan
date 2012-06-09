@@ -50,7 +50,6 @@ public class LocalTransactionStatistics extends TransactionStatistics {
                this.addValue(IspnStats.LOCAL_EXEC_NO_CONT, (totalLocalDuration - localLockAcquisitionTime));
             }
          }
-
       }
    }
 

@@ -153,8 +153,10 @@ public class TransactionCoordinator {
       } catch (Throwable e) {
          if (shuttingDown)
             log.trace("Exception while preparing back, probably because we're shutting down.");
-         else
-            log.error("Error while processing prepare", e);
+         else {
+            log.error("Error while processing prepare: " + e.getMessage());
+            log.debug("Error while processing prepare", e);
+         }
 
          //rollback transaction before throwing the exception as there's no guarantee the TM calls XAResource.rollback
          //after prepare failed.
@@ -199,8 +201,10 @@ public class TransactionCoordinator {
       } catch (Throwable e) {
          if (shuttingDown)
             log.trace("Exception while rolling back, probably because we're shutting down.");
-         else
-            log.errorRollingBack(e);
+         else {
+            log.errorRollingBack(e.getMessage());
+            log.debug("Exception while rollback", e);
+         }
 
          final Transaction transaction = localTransaction.getTransaction();
          //this might be possible if the cache has stopped and TM still holds a reference to the XAResource
@@ -212,12 +216,14 @@ public class TransactionCoordinator {
    }
 
    private void handleCommitFailure(Throwable e, LocalTransaction localTransaction) throws XAException {
-      log.errorProcessing1pcPrepareCommand(e);
+      log.errorProcessing1pcPrepareCommand(e.getMessage());
+      log.debug("Error processing 1PC prepare command", e);
       if (trace) log.tracef("Couldn't commit 1PC transaction %s, trying to rollback.", localTransaction);
       try {
          rollbackInternal(localTransaction);
       } catch (Throwable e1) {
-         log.couldNotRollbackPrepared1PcTransaction(localTransaction, e1);
+         log.couldNotRollbackPrepared1PcTransaction(localTransaction, e1.getMessage());
+         log.debug("Could not rollback prepare 1PC transaction %s", localTransaction, e1);
          // inform the TM that a resource manager error has occurred in the transaction branch (XAER_RMERR).
          throw new XAException(XAException.XAER_RMERR);
       } finally {

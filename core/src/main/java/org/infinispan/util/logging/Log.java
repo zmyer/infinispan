@@ -494,12 +494,12 @@ public interface Log extends BasicLogger {
    void errorRequestingOrApplyingState(@Cause Exception e);
 
    @LogMessage(level = ERROR)
-   @Message(value = "Error while processing 1PC PrepareCommand", id = 97)
-   void errorProcessing1pcPrepareCommand(@Cause Throwable e);
+   @Message(value = "Error while processing 1PC PrepareCommand: %s", id = 97)
+   void errorProcessing1pcPrepareCommand(String message);
 
    @LogMessage(level = ERROR)
-   @Message(value = "Exception while rollback", id = 98)
-   void errorRollingBack(@Cause Throwable e);
+   @Message(value = "Exception while rollback: %s", id = 98)
+   void errorRollingBack(String message);
 
    @LogMessage(level = ERROR)
    @Message(value = "Unprocessed Transaction Log Entries! = %d", id = 99)
@@ -658,8 +658,8 @@ public interface Log extends BasicLogger {
    void unableToLockToInvalidate(Object key, Address address);
 
    @LogMessage(level = ERROR)
-   @Message(value = "Execution error", id = 136)
-   void executionError(@Cause Throwable t);
+   @Message(value = "Execution error: %s", id = 136)
+   void executionError(String message);
 
    @LogMessage(level = INFO)
    @Message(value = "Failed invalidating remote cache", id = 137)
@@ -678,8 +678,8 @@ public interface Log extends BasicLogger {
    void lazyDeserializationDeprecated();
 
    @LogMessage(level = WARN)
-   @Message(value = "Could not rollback prepared 1PC transaction. This transaction will be rolled back by the recovery process, if enabled. Transaction: %s", id = 141)
-   void couldNotRollbackPrepared1PcTransaction(LocalTransaction localTransaction, @Cause Throwable e1);
+   @Message(value = "Could not rollback prepared 1PC transaction. This transaction will be rolled back by the recovery process, if enabled. Transaction: %s. Cause is %s", id = 141)
+   void couldNotRollbackPrepared1PcTransaction(LocalTransaction localTransaction, String message);
 
    @LogMessage(level = WARN)
    @Message(value = "The async store shutdown timeout (%d ms) is too high compared " +
@@ -866,7 +866,7 @@ public interface Log extends BasicLogger {
    @Message(value = "The cache mode %s is not supported with Total Order protocol. Changing to 2PC protocol", id = 188)
    void cacheModeNotSupportedByTOProtocol(String cacheMode);
 
-   @LogMessage(level = INFO)
+   @LogMessage(level = DEBUG)
    @Message(value = "Remote transaction is null for %s. This can originate blocking problems!", id = 189)
    void remoteTransactionIsNull(String globalTx);
 

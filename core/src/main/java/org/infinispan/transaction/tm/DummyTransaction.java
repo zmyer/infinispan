@@ -110,7 +110,8 @@ public class DummyTransaction implements Transaction {
          status = Status.STATUS_ROLLEDBACK;
          notifyAfterCompletion(Status.STATUS_ROLLEDBACK);
       } catch (Throwable t) {
-         log.errorRollingBack(t);
+         log.errorRollingBack(t.getMessage());
+         log.debug("Error rolling back", t);
          throw new IllegalStateException(t);
       }
       // Disassociate tx from thread.
@@ -295,7 +296,8 @@ public class DummyTransaction implements Transaction {
          try {
             res.rollback(xid);
          } catch (XAException e) {
-            log.errorRollingBack(e);
+            log.errorRollingBack(e.getMessage());
+            log.debug("Error rolling back", e);
          }
       }
    }

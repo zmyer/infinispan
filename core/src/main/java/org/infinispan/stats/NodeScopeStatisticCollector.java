@@ -321,11 +321,11 @@ public class NodeScopeStatisticCollector {
             long remoteAbortedTx = remoteTransactionStatistics.getValue(IspnStats.NUM_ABORTED_RO_TX) +
                   remoteTransactionStatistics.getValue(IspnStats.NUM_ABORTED_WR_TX);
             long totalBornTx = localAbortedTx + localCommittedTx + remoteAbortedTx + remoteCommittedTx;
-            return new Long((long) (totalBornTx / convertNanosToSeconds(System.nanoTime() - this.lastResetTime)));
+            return new Double(totalBornTx * 1.0 / convertNanosToSeconds(System.nanoTime() - this.lastResetTime));
          case THROUGHPUT:
-            totalBornTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
+            long totalLocalBornTx = localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_RO_TX) +
                   localTransactionStatistics.getValue(IspnStats.NUM_COMMITTED_WR_TX);
-            return new Long((long) (totalBornTx / convertNanosToSeconds(System.nanoTime() - this.lastResetTime)));
+            return new Double(totalLocalBornTx * 1.0 / convertNanosToSeconds(System.nanoTime() - this.lastResetTime));
          case LOCK_HOLD_TIME_LOCAL:
             return microAvgLocal(IspnStats.NUM_HELD_LOCKS,IspnStats.LOCK_HOLD_TIME);
          case LOCK_HOLD_TIME_REMOTE:

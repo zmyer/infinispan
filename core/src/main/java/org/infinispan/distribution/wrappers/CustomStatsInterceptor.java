@@ -451,8 +451,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
    @ManagedAttribute(description = "Average transaction arrival rate, originated locally and remotely (in transaction " +
          "per second)")
    @Metric(displayName = "Average Transaction Arrival Rate")
-   public long getAvgTxArrivalRate(){
-      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.ARRIVAL_RATE);
+   public double getAvgTxArrivalRate(){
+      return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.ARRIVAL_RATE);
    }
 
    @ManagedAttribute(description = "Percentage of Write transaction executed locally (committed and aborted)")
@@ -566,8 +566,8 @@ public abstract class CustomStatsInterceptor extends BaseCustomInterceptor {
 
    @ManagedAttribute(description = "Throughput (in transactions per second)")
    @Metric(displayName = "Throughput")
-   public long getThroughput(){
-      return (Long)TransactionsStatisticsRegistry.getAttribute(IspnStats.THROUGHPUT);
+   public double getThroughput(){
+      return (Double)TransactionsStatisticsRegistry.getAttribute(IspnStats.THROUGHPUT);
    }
 
    @ManagedAttribute(description = "Average number of get operations per (local) read-only transaction")

@@ -1,6 +1,5 @@
 package org.infinispan.interceptors.totalorder;
 
-import org.infinispan.CacheException;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.commands.write.WriteCommand;
@@ -41,7 +40,7 @@ public class TotalOrderVersionedEntryWrappingInterceptor extends VersionedEntryW
       if (ctx.isOriginLocal()) {
          Object retVal = invokeNextInterceptor(ctx, command);
          if (shouldCommitEntries(command, ctx)) {
-            commitContextEntries(ctx);            
+            commitContextEntries(ctx);
          }
          return retVal;
       }
@@ -129,9 +128,8 @@ public class TotalOrderVersionedEntryWrappingInterceptor extends VersionedEntryW
          }
 
          if(!clusterMvccEntry.performWriteSkewCheck(dataContainer)) {
-            throw new WriteSkewException("Write skew detected on key " + clusterMvccEntry.getKey() +
-                                           " for transaction " + prepareCommand.getGlobalTransaction().prettyPrint(), 
-                                         clusterMvccEntry.getKey());
+            throw WriteSkewException.createException(mvccEntry.getKey(), dataContainer.get(mvccEntry.getKey()),
+                                                     mvccEntry, prepareCommand.getGlobalTransaction());
          }
          return clusterMvccEntry;
       }

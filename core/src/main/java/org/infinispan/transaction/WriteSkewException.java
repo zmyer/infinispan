@@ -20,6 +20,8 @@
 package org.infinispan.transaction;
 
 import org.infinispan.CacheException;
+import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.transaction.xa.GlobalTransaction;
 
 /**
  * Thrown when a write skew is detected
@@ -52,5 +54,11 @@ public class WriteSkewException extends CacheException {
 
    public final Object getKey() {
       return key;
+   }
+
+   public static WriteSkewException createException(Object key, CacheEntry actualEntry, CacheEntry txEntry, GlobalTransaction gtx) {
+      return new WriteSkewException("Write skew detected on key " + key +" for transaction " + gtx.prettyPrint() +
+                                          ". Actual{value=" + actualEntry.getValue() + ", version=" + actualEntry.getVersion() + "}." +
+                                          " Transaction{value=" + txEntry.getValue() + ", version=" + txEntry.getVersion() + "}",key);
    }
 }

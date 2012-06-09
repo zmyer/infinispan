@@ -19,12 +19,12 @@
 
 package org.infinispan.transaction;
 
-import org.infinispan.CacheException;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.ClusteredRepeatableReadEntry;
+import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.container.versioning.EntryVersionsMap;
 import org.infinispan.container.versioning.IncrementableEntryVersion;
@@ -91,10 +91,9 @@ public class WriteSkewHelper {
                   IncrementableEntryVersion newVersion = entry.isCreated() ? versionGenerator.generateNew() : versionGenerator.increment((IncrementableEntryVersion) entry.getVersion());
                   uv.put(k, newVersion);
                } else {
+                  InternalCacheEntry actual = dataContainer.get(entry.getKey());
                   // Write skew check detected!
-                  throw new WriteSkewException("Write skew detected on key " + k + " for transaction " + context.getTransaction()
-                                                 + "Actual value is " + dataContainer.get(entry.getKey()) + " and transaction value is " +
-                                                 entry, k);
+                  throw WriteSkewException.createException(k, dataContainer.get(k), entry, prepareCommand.getGlobalTransaction());
                }
             }
          }
@@ -107,7 +106,7 @@ public class WriteSkewHelper {
    }
 
    public static void updateLocalModeCacheEntries(VersionGenerator versionGenerator, VersionedPrepareCommand command,
-                                                   TxInvocationContext context) {
+                                                  TxInvocationContext context) {
       Set<Object> keysChecked = new HashSet<Object>();
       for (WriteCommand writeCommand : command.getModifications()) {
          keysChecked.addAll(writeCommand.getAffectedKeys());

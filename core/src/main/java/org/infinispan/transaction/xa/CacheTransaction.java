@@ -88,4 +88,8 @@ public interface CacheTransaction {
    boolean keyRead(Object key);
 
    void addReadKey(Object key);
+   
+   void markPrepareSent();
+   
+   boolean wasPrepareSent();
 }

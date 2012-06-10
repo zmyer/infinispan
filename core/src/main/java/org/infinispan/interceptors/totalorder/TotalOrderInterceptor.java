@@ -105,7 +105,10 @@ public class TotalOrderInterceptor extends CommandInterceptor {
          throw t;
       } finally {
          if (processCommand) {
-            totalOrderManager.finishTransaction(gtx, !ctx.isOriginLocal(), remoteTransaction);
+            log.warnf("Transaction rollback %s, was prepare sent? %s, was local %s",
+                     gtx.prettyPrint(), ctx.getCacheTransaction().wasPrepareSent(), ctx.isOriginLocal());
+            totalOrderManager.finishTransaction(gtx, !ctx.isOriginLocal() || !ctx.getCacheTransaction().wasPrepareSent(),
+                                                remoteTransaction);
          }
       }
    }
@@ -141,7 +144,7 @@ public class TotalOrderInterceptor extends CommandInterceptor {
          throw t;
       } finally {
          if (processCommand) {
-            totalOrderManager.finishTransaction(gtx, false, remoteTransaction);
+            totalOrderManager.finishTransaction(gtx, !ctx.hasModifications(), remoteTransaction);
          }
       }
    }

@@ -408,6 +408,7 @@ public class DistributionInterceptor extends BaseRpcInterceptor {
          int newCacheViewId = -1;
          stateTransferLock.waitForStateTransferToEnd(ctx, command, newCacheViewId);
 
+         ctx.getCacheTransaction().markPrepareSent();
          if (command.isOnePhaseCommit()) flushL1Caches(ctx); // if we are one-phase, don't block on this future.
 
          Collection<Address> recipients = dm.getAffectedNodes(ctx.getAffectedKeys());
@@ -429,7 +430,7 @@ public class DistributionInterceptor extends BaseRpcInterceptor {
 
    @Override
    public Object visitRollbackCommand(TxInvocationContext ctx, RollbackCommand command) throws Throwable {
-      if (shouldInvokeRemoteTxCommand(ctx)) {
+      if (shouldInvokeRemoteTxCommand(ctx) && shouldInvokeRemoteRollbackCommand(ctx, command)) {
          rpcManager.invokeRemotely(dm.getAffectedNodes(ctx.getAffectedKeys()), command, configuration.isSyncRollbackPhase(), true, false);
       }
 

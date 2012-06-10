@@ -197,7 +197,7 @@ public class TxInterceptor extends CommandInterceptor {
          RemoteTransaction remoteTransaction = (RemoteTransaction) ctx.getCacheTransaction();
          //its return true if the prepare was received before
          boolean shouldRemove = remoteTransaction.waitPrepared(false);
-         if (shouldRemove) {
+         if (shouldRemove || !command.wasPrepareSent()) {
             txTable.remoteTransactionRollback(command.getGlobalTransaction());
          }
       }

@@ -64,6 +64,7 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
    private final Transaction transaction;
 
    private final boolean implicitTransaction;
+   private boolean prepareSent = false;   
 
    //total order result -- has the result and behaves like a synchronization point between the remote and local
    // prepare commands
@@ -345,5 +346,15 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
 
    public final boolean isMarkedToRetransmit() {
       return prepareResult.isMarkedToRetransmitAndReset();
+   }
+
+   @Override
+   public final void markPrepareSent() {
+      prepareSent = true;
+   }
+
+   @Override
+   public final boolean wasPrepareSent() {
+      return prepareSent;
    }
 }

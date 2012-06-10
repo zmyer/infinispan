@@ -42,7 +42,7 @@ public class RollbackCommand extends AbstractTransactionBoundaryCommand {
    public static final byte COMMAND_ID = 13;
 
    private static final Log log = LogFactory.getLog(RollbackCommand.class);
-   private boolean trace = log.isTraceEnabled();
+   private boolean prepareSent;
 
    private RollbackCommand() {
       super(null); // For command id uniqueness test
@@ -87,5 +87,13 @@ public class RollbackCommand extends AbstractTransactionBoundaryCommand {
    @Override
    public Object perform(InvocationContext ctx) throws Throwable {
          return super.performIgnoringUnexistingTransaction(ctx);
+   }
+
+   public final boolean wasPrepareSent() {
+      return prepareSent;
+   }
+
+   public final void setPrepareSent(boolean prepareSent) {
+      this.prepareSent = prepareSent;
    }
 }

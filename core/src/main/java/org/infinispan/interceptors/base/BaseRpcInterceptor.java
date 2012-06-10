@@ -23,6 +23,7 @@
 package org.infinispan.interceptors.base;
 
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.LocalTxInvocationContext;
@@ -30,6 +31,8 @@ import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.remoting.rpc.RpcManager;
+import org.infinispan.transaction.LockingMode;
+import org.infinispan.transaction.xa.CacheTransaction;
 
 /**
  * Acts as a base for all RPC calls
@@ -89,5 +92,25 @@ public abstract class BaseRpcInterceptor extends CommandInterceptor {
       // register a Modification.  See ISPN-711.
       return ctx.isOriginLocal() && (ctx.hasModifications()  ||
                                            !((LocalTxInvocationContext) ctx).getRemoteLocksAcquired().isEmpty());
+   }
+
+   /**
+    * check if the rollback command should be sent remotely or not.
+    * 
+    * Rules:
+    *  1) if prepare was sent, then the rollback should be sent
+    *  2) if prepare was not sent then we have two cases:
+    *    a) in total order, no locks are acquired during execution, so we can avoid the invoke remotely
+    *    b) in pessimist locking, lock *can* be acquired and then the command should be sent
+    *      
+    * @param ctx     the invocation context
+    * @param command the rollback command
+    * @return        true if it should be invoked, false otherwise
+    */
+   protected final boolean shouldInvokeRemoteRollbackCommand(TxInvocationContext ctx, RollbackCommand command) {
+      CacheTransaction cacheTransaction = ctx.getCacheTransaction();
+      command.setPrepareSent(cacheTransaction.wasPrepareSent());
+      return cacheTransaction.wasPrepareSent() || 
+            (!configuration.isTotalOrder() && configuration.getTransactionLockingMode() == LockingMode.PESSIMISTIC);
    }
 }

@@ -125,6 +125,7 @@ public class ReplicationInterceptor extends BaseRpcInterceptor {
       if (shouldInvokeRemoteTxCommand(ctx)) {
          stateTransferLock.waitForStateTransferToEnd(ctx, command, -1);
 
+         ctx.getCacheTransaction().markPrepareSent();
          broadcastPrepare(ctx, command);
          //DIE: replicationInterceptor! I want to remember that I am going to touch every other node
          ((LocalTxInvocationContext) ctx).remoteLocksAcquired(rpcManager.getTransport().getMembers());
@@ -140,7 +141,8 @@ public class ReplicationInterceptor extends BaseRpcInterceptor {
 
    @Override
    public Object visitRollbackCommand(TxInvocationContext ctx, RollbackCommand command) throws Throwable {
-      if (shouldInvokeRemoteTxCommand(ctx) && !configuration.isOnePhaseCommit()) {
+      if (shouldInvokeRemoteTxCommand(ctx) && shouldInvokeRemoteRollbackCommand(ctx, command) && 
+            !configuration.isOnePhaseCommit()) {
          rpcManager.broadcastRpcCommand(command, configuration.isSyncRollbackPhase(), true, false);
       }
       return invokeNextInterceptor(ctx, command);

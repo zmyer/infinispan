@@ -104,9 +104,7 @@ public class TotalOrderInterceptor extends CommandInterceptor {
          }
          throw t;
       } finally {
-         if (processCommand) {
-            log.warnf("Transaction rollback %s, was prepare sent? %s, was local %s",
-                     gtx.prettyPrint(), ctx.getCacheTransaction().wasPrepareSent(), ctx.isOriginLocal());
+         if (processCommand) {            
             totalOrderManager.finishTransaction(gtx, !ctx.isOriginLocal() || !ctx.getCacheTransaction().wasPrepareSent(),
                                                 remoteTransaction);
          }

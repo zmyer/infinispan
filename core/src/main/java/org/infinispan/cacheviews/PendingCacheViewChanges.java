@@ -53,7 +53,9 @@ public class PendingCacheViewChanges {
    private final Set<Address> leavers;
    // True if there was a merge since the last committed view
    private Set<Address> recoveredMembers;
-
+   //The flag to move keys
+   private boolean shouldMoveKey;
+   
    private boolean viewInstallationInProgress;
 
    public PendingCacheViewChanges(String cacheName) {
@@ -70,14 +72,19 @@ public class PendingCacheViewChanges {
    public CacheView createPendingView(CacheView committedView) {
       synchronized (lock) {
          // TODO Enforce view installation policy here?
-         if (viewInstallationInProgress) {
-            log.tracef("Cannot create a new view, there is another view installation in progress");
-            return null;
-         }
-         if (leavers.size() == 0 && joiners.size() == 0 && recoveredMembers == null) {
-            log.tracef("Cannot create a new view, we have no joiners or leavers");
-            return null;
-         }
+    	  if(shouldMoveKey == false){
+ 	         if (viewInstallationInProgress) {
+ 	            log.tracef("Cannot create a new view, there is another view installation in progress");
+ 	            return null;
+ 	         }
+ 	         if (leavers.size() == 0 && joiners.size() == 0 && recoveredMembers == null) {
+ 	            log.tracef("Cannot create a new view, we have no joiners or leavers");
+ 	            return null;
+ 	         }
+     	 }
+     	 else{
+     		 log.error("shouldMoveKey is TRUE");
+     	 }
 
          Collection<Address> baseMembers = recoveredMembers != null ? recoveredMembers : committedView.getMembers();
          log.tracef("Previous members are %s, joiners are %s, leavers are %s, recovered after merge = %s",
@@ -128,6 +135,9 @@ public class PendingCacheViewChanges {
          leavers.retainAll(committedView.getMembers());
          joiners.removeAll(committedView.getMembers());
          recoveredMembers = null;
+         
+         shouldMoveKey = false;
+         log.error("Should move key set to false");
 
          viewInstallationInProgress = false;
          if (committedView.getViewId() > lastViewId) {
@@ -146,6 +156,14 @@ public class PendingCacheViewChanges {
          // since it has already left, it won't have the latest data and so it's not a valid member
          joiners.add(joiner);
       }
+   }
+   
+   /**
+    * Signal to move keys
+    */
+   public void requestMoveKeys(){
+	   shouldMoveKey = true;
+	   log.tracef("Should move key set to TRUE");
    }
 
    /**

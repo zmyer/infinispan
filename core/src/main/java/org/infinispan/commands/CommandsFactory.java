@@ -56,6 +56,8 @@ import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.LockInfo;
 import org.infinispan.transaction.xa.GlobalTransaction;
+import org.infinispan.commands.dataplacement.DataPlacementReplyCommand;
+import org.infinispan.commands.dataplacement.DataPlacementRequestCommand;
 
 import javax.transaction.xa.Xid;
 import java.util.Collection;
@@ -381,4 +383,18 @@ public interface CommandsFactory {
     * @return instance
     */
    PrepareResponseCommand buildPrepareResponseCommand(GlobalTransaction globalTransaction);
+   
+   /**
+    * Builds a DataPlacementRequestCommand By Li
+    * @param no
+    * @see DataPlacementRequestCommand
+    */
+   DataPlacementRequestCommand  buildDataPlacementRequestCommand();
+   
+   /**
+    * Builds a DataPlacementReplyCommand By Li
+    * @param no
+    * @see DataPlacementRequestCommand
+    */
+   DataPlacementReplyCommand  buildDataPlacementReplyCommand();
 }

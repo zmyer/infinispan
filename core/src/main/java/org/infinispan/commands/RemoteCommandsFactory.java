@@ -62,6 +62,8 @@ import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.manager.EmbeddedCacheManager;
 
+import org.infinispan.commands.dataplacement.DataPlacementReplyCommand;
+import org.infinispan.commands.dataplacement.DataPlacementRequestCommand;
 import java.util.Map;
 
 /**
@@ -221,7 +223,14 @@ public class RemoteCommandsFactory {
                break;                      
             case PrepareResponseCommand.COMMAND_ID:
                command = new PrepareResponseCommand(cacheName);
-               break;                      
+               break;   
+               //Data Placement command received! Li
+            case DataPlacementRequestCommand.COMMAND_ID:
+               command = new DataPlacementRequestCommand(cacheName);
+               break;
+            case DataPlacementReplyCommand.COMMAND_ID:
+                command = new DataPlacementReplyCommand(cacheName);
+                break;
             default:
                throw new CacheException("Unknown command id " + id + "!");
          }

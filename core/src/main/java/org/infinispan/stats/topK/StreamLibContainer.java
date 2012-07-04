@@ -72,6 +72,10 @@ public class StreamLibContainer {
          this.capacity = capacity;
       }
    }
+   
+   public int getCapacity(){
+	   return capacity;
+   }
 
    public void addGet(Object key, boolean remote) {
       if(!isActive()) {

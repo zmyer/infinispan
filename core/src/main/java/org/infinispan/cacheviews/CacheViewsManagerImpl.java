@@ -423,6 +423,17 @@ public class CacheViewsManagerImpl implements CacheViewsManager {
       cacheViewInfo.getPendingChanges().requestJoin(sender);
       viewTriggerThread.wakeUp();
    }
+   
+   /**
+    *  Handle the request to move keys   by Li
+    */
+   public void handleRequestMoveKeys(String cacheName){
+	  log.error("signaling moving keys");
+	   
+	  CacheViewInfo cacheViewInfo = getCacheViewInfo(cacheName);
+	  cacheViewInfo.getPendingChanges().requestMoveKeys();
+	  viewTriggerThread.wakeUp();
+   }
 
    /**
     * Get the {@code CacheViewInfo} for a cache, or create it with an empty view if it doesn't exist yet.

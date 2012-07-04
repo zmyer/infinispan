@@ -42,6 +42,8 @@ import org.infinispan.io.UnsignedNumeric;
 import org.infinispan.marshall.AbstractExternalizer;
 import org.infinispan.marshall.Ids;
 import org.infinispan.util.Util;
+import org.infinispan.commands.dataplacement.DataPlacementReplyCommand;
+import org.infinispan.commands.dataplacement.DataPlacementRequestCommand;
 
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -137,7 +139,8 @@ public class ReplicableCommandExternalizer extends AbstractExternalizer<Replicab
             ClearCommand.class, EvictCommand.class, ApplyDeltaCommand.class,
             InvalidateCommand.class, InvalidateL1Command.class,
             PutKeyValueCommand.class, PutMapCommand.class,
-            RemoveCommand.class, ReplaceCommand.class);
+            RemoveCommand.class, ReplaceCommand.class, DataPlacementRequestCommand.class,
+            DataPlacementReplyCommand.class);
       // Search only those commands that replicable and not cache specific replicable commands
       Collection<Class<? extends ReplicableCommand>> moduleCommands = globalComponentRegistry.getModuleProperties().moduleOnlyReplicableCommands();
       if (moduleCommands != null && !moduleCommands.isEmpty()) coreCommands.addAll(moduleCommands);

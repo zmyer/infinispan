@@ -86,6 +86,9 @@ import org.infinispan.transaction.xa.recovery.RecoveryManager;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+import org.infinispan.commands.dataplacement.DataPlacementReplyCommand;
+import org.infinispan.commands.dataplacement.DataPlacementRequestCommand;
+import org.infinispan.dataplacement.DataPlacementManager;
 
 import javax.transaction.xa.Xid;
 import java.util.Collection;
@@ -126,6 +129,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
    private LockManager lockManager;
    private InternalEntryFactory entryFactory;
    private TotalOrderManager totalOrderManager;
+   private DataPlacementManager dataPlacementManager;
 
    private Map<Byte, ModuleCommandInitializer> moduleCommandInitializers;
 
@@ -135,7 +139,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
                                  InvocationContextContainer icc, TransactionTable txTable, Configuration configuration,
                                  @ComponentName(KnownComponentNames.MODULE_COMMAND_INITIALIZERS) Map<Byte, ModuleCommandInitializer> moduleCommandInitializers,
                                  RecoveryManager recoveryManager, StateTransferManager stateTransferManager, LockManager lockManager,
-                                 InternalEntryFactory entryFactory, TotalOrderManager totalOrderManager) {
+                                 InternalEntryFactory entryFactory, TotalOrderManager totalOrderManager, DataPlacementManager dataPlacementManager) {
       this.dataContainer = container;
       this.notifier = notifier;
       this.cache = cache;
@@ -150,6 +154,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
       this.lockManager = lockManager;
       this.entryFactory = entryFactory;
       this.totalOrderManager = totalOrderManager;
+      this.dataPlacementManager = dataPlacementManager;
    }
 
    @Start(priority = 1)
@@ -420,6 +425,15 @@ public class CommandsFactoryImpl implements CommandsFactory {
             PrepareResponseCommand prc = (PrepareResponseCommand) c;
             prc.initialize(totalOrderManager);
             break;
+            //Add data placement
+         case DataPlacementRequestCommand.COMMAND_ID:
+        	 DataPlacementRequestCommand dataPlacementRequestCommand = (DataPlacementRequestCommand)c;
+        	 dataPlacementRequestCommand.init(dataPlacementManager, distributionManager);
+        	 break;
+         case DataPlacementReplyCommand.COMMAND_ID:
+        	 DataPlacementReplyCommand dataPlacementReplyCommand = (DataPlacementReplyCommand)c;
+        	 dataPlacementReplyCommand.init(dataPlacementManager);
+        	 break;
          default:
             ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());
             if (mci != null) {
@@ -505,5 +519,15 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Override
    public PrepareResponseCommand buildPrepareResponseCommand(GlobalTransaction globalTransaction) {
       return new PrepareResponseCommand(cacheName, globalTransaction);
+   }
+   
+   @Override
+   public DataPlacementRequestCommand buildDataPlacementRequestCommand(){
+	   return new DataPlacementRequestCommand(cacheName);
+   }
+
+   @Override
+   public DataPlacementReplyCommand buildDataPlacementReplyCommand() {
+	   return new DataPlacementReplyCommand(cacheName);
    }
 }

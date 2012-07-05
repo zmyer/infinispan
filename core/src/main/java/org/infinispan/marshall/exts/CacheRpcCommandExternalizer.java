@@ -50,6 +50,8 @@ import org.infinispan.marshall.Ids;
 import org.infinispan.marshall.StreamingMarshaller;
 import org.infinispan.marshall.jboss.ExtendedRiverUnmarshaller;
 import org.infinispan.util.Util;
+import org.infinispan.commands.dataplacement.DataPlacementReplyCommand;
+import org.infinispan.commands.dataplacement.DataPlacementRequestCommand;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -87,7 +89,8 @@ public final class CacheRpcCommandExternalizer extends AbstractExternalizer<Cach
             TxCompletionNotificationCommand.class, GetInDoubtTransactionsCommand.class,
             GetInDoubtTxInfoCommand.class, CompleteTransactionCommand.class,
             CacheViewControlCommand.class, VersionedPrepareCommand.class, VersionedCommitCommand.class,
-            PrepareResponseCommand.class);
+            PrepareResponseCommand.class, DataPlacementRequestCommand.class,
+            DataPlacementReplyCommand.class);
       // Only interested in cache specific replicable commands
       coreCommands.addAll(gcr.getModuleProperties().moduleCacheRpcCommands());
       return coreCommands;

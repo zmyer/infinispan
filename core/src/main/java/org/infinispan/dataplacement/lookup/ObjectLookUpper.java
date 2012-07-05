@@ -25,12 +25,23 @@ public class ObjectLookUpper {
 	SimpleBloomFilter bf;
 	NameSplitter splitter = new NameSplitter();
 	String rules;
+	TreeParser treeParser = new TreeParser();
 	
 	
+	public ObjectLookUpper(SimpleBloomFilter bf,
+			List<List<TreeElement>> treeList) {
+		this.bf = bf;
+		treeParser.setTreeList(treeList);
+	}
+
+	public ObjectLookUpper() {
+		// TODO Auto-generated constructor stub
+	}
+
 	public void test(List<String> keyList, int value){
 		for(int i =0; i<10000;++i){
-			if(Query(keyList.get(i)) != value){
-				System.out.print(keyList.get(i)+ "  "+ Query(keyList.get(i)));
+			if(query(keyList.get(i)) != value){
+				System.out.print(keyList.get(i)+ "  "+ query(keyList.get(i)));
 				System.out.println("  False!");
 			}
 		}
@@ -133,7 +144,7 @@ public class ObjectLookUpper {
 		FileReader fr = new FileReader("../ml/rules");
 		BufferedReader br = new BufferedReader(fr);
 		rules = br.toString();
-		TreeParser.createTree(br);
+		treeParser.createTree(br);
 	}
     
 	public String getRules(){
@@ -147,11 +158,11 @@ public class ObjectLookUpper {
 		}
 	}
 
-	public Integer Query(String key) {
+	public Integer query(String key) {
 		if(bf.contains(key) == false)
 		  return null;
 		else{
-		  return TreeParser.parseTree(splitter.splitSingleKey(key));
+		  return treeParser.parseTree(splitter.splitSingleKey(key));
 		}
 	}
 
@@ -164,11 +175,11 @@ public class ObjectLookUpper {
 	}
 	
 	public void setTreeElement(List<List<TreeElement>> treeList) {
-		TreeParser.setTreeList(treeList);
+		treeParser.setTreeList(treeList);
 	}
 	
 	public List<List<TreeElement>> getTreeList(){
-		return TreeParser.getTreeList();
+		return treeParser.getTreeList();
 	}
 
 }

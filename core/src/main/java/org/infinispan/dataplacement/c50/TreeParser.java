@@ -14,12 +14,12 @@ import com.clearspring.analytics.util.Pair;
 
 public class TreeParser {
 	
-	static List<List<TreeElement>> treeList;
-	static List<Pair<Integer[], Integer>> values;
-	static String rules;
+	 List<List<TreeElement>> treeList;
+	 List<Pair<Integer[], Integer>> values;
+	 String rules;
 	
 	
-	public static void main(String args[]) {
+	public  void main(String args[]) {
 		NumberFormat formatter = new DecimalFormat("#0.0000");
 		try {
 			BufferedReader br = null;
@@ -32,10 +32,10 @@ public class TreeParser {
 				System.exit(-1);
 			}
 
-			TreeParser.createTree(br);
-			TreeParser.readValues(br2);
+			createTree(br);
+			readValues(br2);
 
-			System.out.println(TreeParser.printArray(values.get(0).left) + " " + values.get(0).right);
+			System.out.println(printArray(values.get(0).left) + " " + values.get(0).right);
 			Integer A = null;
 			Integer B = null;
 			Integer C = null;
@@ -44,30 +44,30 @@ public class TreeParser {
 			Integer F = 10;
 			Integer G = null;
 			Integer H = null;
-			Integer[] example = TreeParser.getExample(A, B, C, D, E, F, G, H);
+			Integer[] example = getExample(A, B, C, D, E, F, G, H);
 
-			Integer exampleClass = TreeParser.parseTree(treeList.get(0), example);
+			Integer exampleClass = parseTree(treeList.get(0), example);
 			int[][] results = new int[10][10];
 			for (Pair<Integer[], Integer> it : values) {
-				Integer result = TreeParser.parseTree(treeList.get(0), it.left);
+				Integer result = parseTree(treeList.get(0), it.left);
 				results[it.right][result]++;
 			}
-			TreeParser.printMatrix(results);
+			printMatrix(results);
 			System.out.println(exampleClass);
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}
 	}
 	
-	public static void setTreeList(List<List<TreeElement>> tList){
+	public  void setTreeList(List<List<TreeElement>> tList){
 		treeList = tList;
 	}
 	
-	public static List<List<TreeElement>> getTreeList(){
+	public  List<List<TreeElement>> getTreeList(){
 		return treeList;
 	}
 
-	private static void printMatrix(int[][] matrix) {
+	private  void printMatrix(int[][] matrix) {
 		for(int[] it : matrix){
 			for(int it2: it){
 				System.out.print(it2 + " ");
@@ -76,23 +76,23 @@ public class TreeParser {
 		}
 	}
 
-	private static void readValues(BufferedReader br) {
+	private  void readValues(BufferedReader br) {
 		try {
 			String line = null;
 			br.ready();
 			values = new ArrayList<Pair<Integer[], Integer>>();
 			while ((line = br.readLine()) != null) {
 				StringTokenizer st = new StringTokenizer(line, ",");
-				Integer A = TreeParser.p(st);
-				Integer B = TreeParser.p(st);
-				Integer C = TreeParser.p(st);
-				Integer D = TreeParser.p(st);
-				Integer E = TreeParser.p(st);
-				Integer F = TreeParser.p(st);
-				Integer G = TreeParser.p(st);
-				Integer H = TreeParser.p(st);
-				Integer[] example = TreeParser.getExample(A, B, C, D, E, F, G, H);
-				Integer val = TreeParser.p(st);
+				Integer A = p(st);
+				Integer B = p(st);
+				Integer C = p(st);
+				Integer D = p(st);
+				Integer E = p(st);
+				Integer F = p(st);
+				Integer G = p(st);
+				Integer H = p(st);
+				Integer[] example = getExample(A, B, C, D, E, F, G, H);
+				Integer val = p(st);
 				values.add(new Pair<Integer[], Integer>(example, val));
 			}
 		//	return values;
@@ -101,13 +101,13 @@ public class TreeParser {
 		}
 	}
 
-	private static Integer p(StringTokenizer st) {
+	private Integer p(StringTokenizer st) {
 		String current = st.nextToken();
 		if (current.equals("N/A")) return null;
 		return Integer.parseInt(current);
 	}
 
-	private static Integer[] getExample(Integer A, Integer B, Integer C, Integer D, Integer E,
+	private Integer[] getExample(Integer A, Integer B, Integer C, Integer D, Integer E,
 			Integer F, Integer G, Integer H) {
 		Integer[] ret = new Integer[8];
 		ret[0] = A;
@@ -121,40 +121,40 @@ public class TreeParser {
 		return ret;
 	}
 
-	public static Integer parseTree(List<TreeElement> tree, Integer[] example) {
+	public Integer parseTree(List<TreeElement> tree, Integer[] example) {
 		Integer returnValue = null;
 		for (TreeElement it : tree) {
-			if (TreeParser.isMatch(example, it)) {
+			if (isMatch(example, it)) {
 				assert (returnValue == null);
 				if (it.isLeaf) {
 					returnValue = it.result;
 				} else {
-					returnValue = TreeParser.parseTree(it.children, example);
-					assert (returnValue != null) : it + " " + TreeParser.printArray(example);
+					returnValue = parseTree(it.children, example);
+					assert (returnValue != null) : it + " " + printArray(example);
 				}
 			}
 		}
 		return returnValue;
 	}
 	
-	public static Integer parseTree(Integer[] example) {
+	public Integer parseTree(Integer[] example) {
 		Integer returnValue = null;
 		List<TreeElement> tree = treeList.get(0);
 		for (TreeElement it : tree) {
-			if (TreeParser.isMatch(example, it)) {
+			if (isMatch(example, it)) {
 				assert (returnValue == null);
 				if (it.isLeaf) {
 					returnValue = it.result;
 				} else {
-					returnValue = TreeParser.parseTree(it.children, example);
-					assert (returnValue != null) : it + " " + TreeParser.printArray(example);
+					returnValue = parseTree(it.children, example);
+					assert (returnValue != null) : it + " " + printArray(example);
 				}
 			}
 		}
 		return returnValue;
 	}
 
-	private static String printArray(Integer[] example) {
+	private  String printArray(Integer[] example) {
 		String ret = "[";
 		String del = "";
 		for (Integer it : example) {
@@ -165,24 +165,24 @@ public class TreeParser {
 		return ret;
 	}
 
-	private static boolean isMatch(Integer[] example, TreeElement elem) {
-		int index = TreeParser.getIndex(elem.attribute);
-		return TreeParser.checkMatch(elem, example[index]);
+	private  boolean isMatch(Integer[] example, TreeElement elem) {
+		int index = getIndex(elem.attribute);
+		return checkMatch(elem, example[index]);
 	}
 
-	public static void createTree(BufferedReader br) {
+	public  void createTree(BufferedReader br) {
 		treeList = new ArrayList<List<TreeElement>>();
 		try {
 			String line = null;
 
 			br.ready();
 			while ((line = br.readLine()) != null) {
-				int level = TreeParser.parseLevel(line, treeList);
+				int level = parseLevel(line, treeList);
 				StringTokenizer tk = new StringTokenizer(line, " :.");
 				Character attribute = tk.nextToken().charAt(0);
-				Condition condition = TreeParser.parseCondition(tk.nextToken());
-				Integer cut = TreeParser.parseCut(tk.nextToken(), condition);
-				Integer value = TreeParser.parseValue(tk);
+				Condition condition = parseCondition(tk.nextToken());
+				Integer cut = parseCut(tk.nextToken(), condition);
+				Integer value = parseValue(tk);
 				boolean isLeaf = value != null;
 
 				TreeElement parent = null;
@@ -207,15 +207,15 @@ public class TreeParser {
 		//return tree;
 	}
 
-	private static void printList(ArrayList<TreeElement> list, int level) {
+	private  void printList(ArrayList<TreeElement> list, int level) {
 		for (TreeElement it : list) {
 			System.out.print(level + ":" + it + "  ");
-			TreeParser.printList(it.children, level + 1);
+			printList(it.children, level + 1);
 		}
 		System.out.println();
 	}
 
-	private static int getIndex(char attribute) {
+	private  int getIndex(char attribute) {
 		switch (attribute) {
 		case 'A':
 			return 0;
@@ -238,7 +238,7 @@ public class TreeParser {
 		}
 	}
 
-	private static boolean checkMatch(TreeElement elem, Integer value) {
+	private  boolean checkMatch(TreeElement elem, Integer value) {
 		switch (elem.condition) {
 		case EQ:
 			assert (elem.cut == null) : elem + " " + value;
@@ -255,12 +255,12 @@ public class TreeParser {
 		throw new RuntimeException(); // unreachable, annoying compiler
 	}
 
-	private static Integer parseValue(StringTokenizer tk) {
+	private  Integer parseValue(StringTokenizer tk) {
 		if (tk.hasMoreTokens()) return Integer.parseInt(tk.nextToken());
 		return null;
 	}
 
-	private static Integer parseCut(String cutS, Condition condition) {
+	private  Integer parseCut(String cutS, Condition condition) {
 		if (condition == Condition.EQ) {
 			assert (cutS.equals("N/A"));
 			return null;
@@ -268,7 +268,7 @@ public class TreeParser {
 			return Integer.valueOf(cutS);
 	}
 
-	private static Condition parseCondition(String conditionS) {
+	private  Condition parseCondition(String conditionS) {
 		if (conditionS.equals("="))
 			return Condition.EQ;
 		else if (conditionS.equals("<="))
@@ -279,7 +279,7 @@ public class TreeParser {
 			throw new RuntimeException(conditionS);
 	}
 
-	private static TreeState parseTreeState(int level, int lastLevel) {
+	private  TreeState parseTreeState(int level, int lastLevel) {
 		TreeState treeState;
 		if (lastLevel < level) {
 			treeState = TreeState.NEW;
@@ -291,7 +291,7 @@ public class TreeParser {
 		return treeState;
 	}
 
-	private static int parseLevel(String line, List<List<TreeElement>> tree) {
+	private  int parseLevel(String line, List<List<TreeElement>> tree) {
 		int counter = 0;
 		for (int it = 0; it < line.length(); it++) {
 			char c = line.charAt(it);

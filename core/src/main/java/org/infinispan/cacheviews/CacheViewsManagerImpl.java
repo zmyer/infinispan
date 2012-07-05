@@ -24,6 +24,7 @@ import org.infinispan.commands.control.CacheViewControlCommand;
 import org.infinispan.config.ConfigurationException;
 import org.infinispan.config.GlobalConfiguration;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.dataplacement.DataPlacementManager;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
@@ -123,7 +124,7 @@ public class CacheViewsManagerImpl implements CacheViewsManager {
    @Inject
    public void init(CacheManagerNotifier cacheManagerNotifier, Transport transport,
                     @ComponentName(ASYNC_TRANSPORT_EXECUTOR) ExecutorService e,
-                    GlobalConfiguration globalConfiguration, EmbeddedCacheManager cacheManager) {
+                    GlobalConfiguration globalConfiguration, EmbeddedCacheManager cacheManager, DataPlacementManager dataPlacementManager) {
       this.cacheManagerNotifier = cacheManagerNotifier;
       this.transport = transport;
       this.asyncTransportExecutor = e;

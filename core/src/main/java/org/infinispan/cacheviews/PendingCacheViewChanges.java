@@ -54,7 +54,7 @@ public class PendingCacheViewChanges {
    // True if there was a merge since the last committed view
    private Set<Address> recoveredMembers;
    //The flag to move keys
-   private boolean shouldMoveKey;
+   private boolean shouldMoveKey=false;
    
    private boolean viewInstallationInProgress;
 
@@ -136,14 +136,16 @@ public class PendingCacheViewChanges {
          joiners.removeAll(committedView.getMembers());
          recoveredMembers = null;
          
-         shouldMoveKey = false;
-         log.error("Should move key set to false");
+
 
          viewInstallationInProgress = false;
          if (committedView.getViewId() > lastViewId) {
             lastViewId = committedView.getViewId();
          }
       }
+      
+      shouldMoveKey = false;
+      log.tracef("Should move key set to false");
    }
 
    /**

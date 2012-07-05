@@ -18,23 +18,25 @@
  */
 package org.infinispan.statetransfer;
 
+import static org.infinispan.context.Flag.CACHE_MODE_LOCAL;
+import static org.infinispan.context.Flag.SKIP_LOCKING;
+
+import java.util.List;
+
 import org.infinispan.CacheException;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.dataplacement.lookup.ObjectLookUpper;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.ConsistentHashHelper;
+import org.infinispan.distribution.ch.MachineLearningConsistentHashing;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.loaders.CacheStore;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.List;
-
-import static org.infinispan.context.Flag.CACHE_MODE_LOCAL;
-import static org.infinispan.context.Flag.SKIP_LOCKING;
 
 /**
  * The distributed mode implementation of {@link StateTransferManager}
@@ -49,9 +51,10 @@ import static org.infinispan.context.Flag.SKIP_LOCKING;
 @MBean(objectName = "DistributedStateTransferManager", description = "Component that handles state transfer in distributed mode")
 public class DistributedStateTransferManagerImpl extends BaseStateTransferManagerImpl {
    private static final Log log = LogFactory.getLog(DistributedStateTransferManagerImpl.class);
-
+  
    protected DistributionManager dm;
 
+   private MachineLearningConsistentHashing nextHash = null;
    /**
     * Default constructor
     */
@@ -76,9 +79,33 @@ public class DistributedStateTransferManagerImpl extends BaseStateTransferManage
       return configuration.getRehashWaitTime();
    }
 
+//   ConsistentHash defaultHash = ConsistentHashHelper.createConsistentHash(configuration, members);
+//   if（this.nextHash != null){
+//	   nextHash.setDefault(defaultHash)；
+//	   defaultHash = nextHash;
+//   }
+//  return defaultHash;
+   
    @Override
    protected ConsistentHash createConsistentHash(List<Address> members) {
-      return ConsistentHashHelper.createConsistentHash(configuration, members);
+	   ConsistentHash defaultHash = ConsistentHashHelper.createConsistentHash(configuration, members);
+	   if(nextHash == null)
+	     return defaultHash;
+	   else{
+		 nextHash.setDefault(defaultHash);
+		 return  nextHash;
+	   }
+   }
+   
+   public void setLookUpper(Address address, ObjectLookUpper lookupper){
+	   if(nextHash == null)
+		   nextHash = new MachineLearningConsistentHashing();
+	   nextHash.setLookUpper(address, lookupper);
+	   log.warn("Set look upper once :" +address);
+   }
+   
+   public void setCachesList(List<Address> cacheList){
+	   nextHash.setCacheList(cacheList);
    }
 
    public void invalidateKeys(List<Object> keysToRemove) {

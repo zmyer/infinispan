@@ -39,7 +39,7 @@ public class DataPlacementRequestCommand extends BaseRpcCommand {
 	public void putRemoteList(Map<Object,Long> objectList, int roundID){
 		remoteTopObjects = objectList;
 		this.rountID = roundID;
-		log.error("Message Put Inside! :" + remoteTopObjects.size());
+		//log.error("Message Put Inside! :" + remoteTopObjects.size());
 	}
 
     @Override
@@ -50,7 +50,7 @@ public class DataPlacementRequestCommand extends BaseRpcCommand {
 	
 	@Override
 	public Object perform(InvocationContext ctx) throws Throwable {
-        log.error("Message Received " + remoteTopObjects.size() + " of round "+rountID);
+        //log.error("Message Received " + remoteTopObjects.size() + " of round "+rountID);
         dataPlacementManager.aggregateRequests(getOrigin(), remoteTopObjects, rountID);
         return null;
 	}

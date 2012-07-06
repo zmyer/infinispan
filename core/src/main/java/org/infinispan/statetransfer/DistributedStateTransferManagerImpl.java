@@ -54,7 +54,9 @@ public class DistributedStateTransferManagerImpl extends BaseStateTransferManage
   
    protected DistributionManager dm;
 
-   private MachineLearningConsistentHashing nextHash = null;
+   private MachineLearningConsistentHashing nextHash = new MachineLearningConsistentHashing();
+   
+   private boolean mlHashPrepared = false;
    /**
     * Default constructor
     */
@@ -79,17 +81,11 @@ public class DistributedStateTransferManagerImpl extends BaseStateTransferManage
       return configuration.getRehashWaitTime();
    }
 
-//   ConsistentHash defaultHash = ConsistentHashHelper.createConsistentHash(configuration, members);
-//   if（this.nextHash != null){
-//	   nextHash.setDefault(defaultHash)；
-//	   defaultHash = nextHash;
-//   }
-//  return defaultHash;
    
    @Override
    protected ConsistentHash createConsistentHash(List<Address> members) {
 	   ConsistentHash defaultHash = ConsistentHashHelper.createConsistentHash(configuration, members);
-	   if(nextHash == null)
+	   if(mlHashPrepared == false)
 	     return defaultHash;
 	   else{
 		 nextHash.setDefault(defaultHash);
@@ -98,14 +94,15 @@ public class DistributedStateTransferManagerImpl extends BaseStateTransferManage
    }
    
    public void setLookUpper(Address address, ObjectLookUpper lookupper){
-	   if(nextHash == null)
-		   nextHash = new MachineLearningConsistentHashing();
+	   if(mlHashPrepared == false){
+		   mlHashPrepared = true;
+	   }
 	   nextHash.setLookUpper(address, lookupper);
 	   log.warn("Set look upper once :" +address);
    }
    
    public void setCachesList(List<Address> cacheList){
-	   nextHash.setCacheList(cacheList);
+	    nextHash.setCacheList(cacheList);
    }
 
    public void invalidateKeys(List<Object> keysToRemove) {

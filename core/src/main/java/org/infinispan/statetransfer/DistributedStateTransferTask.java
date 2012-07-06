@@ -99,8 +99,8 @@ public class DistributedStateTransferTask extends BaseStateTransferTask {
       if (log.isDebugEnabled())
          log.debugf("Commencing rehash %d on node: %s. Before start, data container had %d entries",
                newViewId, self, dataContainer.size());
-      newCacheSet = Collections.emptySet();
-      oldCacheSet = Collections.emptySet();
+      //newCacheSet = Collections.emptySet();
+      //oldCacheSet = Collections.emptySet();
       keysToRemove = new ArrayList<Object>();
 
       // Don't need to log anything, all transactions will be blocked

@@ -124,7 +124,7 @@ public class CacheViewsManagerImpl implements CacheViewsManager {
    @Inject
    public void init(CacheManagerNotifier cacheManagerNotifier, Transport transport,
                     @ComponentName(ASYNC_TRANSPORT_EXECUTOR) ExecutorService e,
-                    GlobalConfiguration globalConfiguration, EmbeddedCacheManager cacheManager, DataPlacementManager dataPlacementManager) {
+                    GlobalConfiguration globalConfiguration, EmbeddedCacheManager cacheManager) {
       this.cacheManagerNotifier = cacheManagerNotifier;
       this.transport = transport;
       this.asyncTransportExecutor = e;

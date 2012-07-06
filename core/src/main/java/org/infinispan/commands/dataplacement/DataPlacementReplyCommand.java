@@ -51,10 +51,11 @@ public class DataPlacementReplyCommand extends BaseRpcCommand{
 	public Object perform(InvocationContext ctx) throws Throwable {
 		if(phase == DATAPLACEPHASE.SETTING_PHASE){
 			dataplacementMgr.setLookUpper(getOrigin(), bloomFilter, treeList);
-			log.error("Has received reply!!!!");
+			log.info("Get Look Upper from :"+getOrigin());
 			//log.error("Size of bf:"+ bloomFilter.size());
 		}
 		else if ( phase == DATAPLACEPHASE.ACK_PHASE ){
+			log.error("Get Ack from :" + getOrigin());
 			dataplacementMgr.aggregateAck();
 		}
 		else

@@ -136,7 +136,8 @@ public class PendingCacheViewChanges {
          joiners.removeAll(committedView.getMembers());
          recoveredMembers = null;
          
-
+         shouldMoveKey = false;
+         log.tracef("Should move key set to false");
 
          viewInstallationInProgress = false;
          if (committedView.getViewId() > lastViewId) {
@@ -144,8 +145,6 @@ public class PendingCacheViewChanges {
          }
       }
       
-      shouldMoveKey = false;
-      log.tracef("Should move key set to false");
    }
 
    /**

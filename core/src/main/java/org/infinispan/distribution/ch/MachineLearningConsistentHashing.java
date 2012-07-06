@@ -1,7 +1,7 @@
 package org.infinispan.distribution.ch;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,9 +20,9 @@ public class MachineLearningConsistentHashing extends AbstractConsistentHash{
     
 	private static final Log LOG = LogFactory.getLog(MachineLearningConsistentHashing.class);
 	ConsistentHash baseHash;
-	Map<Address, ObjectLookUpper> lookUpperList;
+	Map<Address, ObjectLookUpper> lookUpperList = new HashMap<Address, ObjectLookUpper>();
 	List<Address> addressList = new ArrayList<Address>();
-	Set<Address> addressSet;
+	//Set<Address> addressSet;
 	
 	
 	public void setLookUpper(Address address, ObjectLookUpper lookupper){
@@ -31,7 +31,7 @@ public class MachineLearningConsistentHashing extends AbstractConsistentHash{
 	
 	@Override
 	public void setCaches(Set<Address> caches) {
-		addressSet = caches;
+		baseHash.setCaches(caches);
 	}
 	
 	public void setCacheList(List<Address> cacheList){
@@ -40,7 +40,7 @@ public class MachineLearningConsistentHashing extends AbstractConsistentHash{
 
 	@Override
 	public Set<Address> getCaches() {
-		return addressSet;
+		return baseHash.getCaches();
 	}
 
 	@Override

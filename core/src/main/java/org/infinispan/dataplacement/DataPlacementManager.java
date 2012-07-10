@@ -99,7 +99,7 @@ public class DataPlacementManager {
 	@Start
 	public void startTimer() {
 		timer = new Timer();
-		timer.schedule(new DataPlaceRequestTask(), 1200000, 10000000);
+		timer.schedule(new DataPlaceRequestTask(), 700000, 1000000);
 	}
 
 	public void sendRequestToAll() {
@@ -201,9 +201,11 @@ public class DataPlacementManager {
 
 				Map<Object, Pair<Long, Integer>> fullRequestList = compactRequestList();
 				List<Pair<String, Integer>> finalResultList = generateFinalList(fullRequestList);
+				log.info("Writing result");
 				writer.writeResult(finalResultList);
 
 				sentObjectList = finalResultList;
+				log.info("Populate All");
 				lookUpper.populateAll(finalResultList);
 
 				log.info("Rules:");
@@ -367,6 +369,7 @@ public class DataPlacementManager {
 		if (event.getMembersAtEnd().size() == event.getMembersAtStart().size()) {
 			log.info("Doing Keymovement test!");
 			if (event.isPre()) {
+				log.info("View ID:"+event.getNewViewId());
 				log.info("Size of DataContainer: " + dataContainer.size());
 				log.info("Doing prephase testing! sentObjectList size:"
 						+ sentObjectList.size());

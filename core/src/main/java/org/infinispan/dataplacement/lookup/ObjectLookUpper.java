@@ -15,10 +15,13 @@ import javax.swing.text.SimpleAttributeSet;
 import com.clearspring.analytics.util.Pair;
 import com.sun.corba.se.spi.orb.StringPair;
 
+import org.infinispan.cacheviews.CacheViewsManagerImpl;
 import org.infinispan.dataplacement.c50.FileCropper;
 import org.infinispan.dataplacement.c50.NameSplitter;
 import org.infinispan.dataplacement.c50.TreeElement;
 import org.infinispan.dataplacement.c50.TreeParser;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 public class ObjectLookUpper {
 
@@ -26,6 +29,7 @@ public class ObjectLookUpper {
 	NameSplitter splitter = new NameSplitter();
 	String rules;
 	TreeParser treeParser = new TreeParser();
+	private static final Log log = LogFactory.getLog(ObjectLookUpper.class);
 	
 	
 	public ObjectLookUpper(SimpleBloomFilter bf,
@@ -85,6 +89,7 @@ public class ObjectLookUpper {
 	}
 
 	public void populateAll(List<Pair<String, Integer>> toMoveObj) {
+		log.info("Writing to objects to file");
 		writeObjToFiles(toMoveObj);
 		try {
 			try {
@@ -121,6 +126,7 @@ public class ObjectLookUpper {
 		Process p = Runtime.getRuntime()
 				.exec("../ml/c5.0 -f ../ml/input");// >
 
+		log.info("Reading objects from file");
 		// Read result and store in a list
 		BufferedReader input = new BufferedReader(new InputStreamReader(
 				p.getInputStream()));
@@ -144,6 +150,7 @@ public class ObjectLookUpper {
 		FileReader fr = new FileReader("../ml/rules");
 		BufferedReader br = new BufferedReader(fr);
 		rules = br.toString();
+		log.info("Creating tree");
 		treeParser.createTree(br);
 	}
     

@@ -41,7 +41,7 @@ public class ObjectLookUpper {
 	public ObjectLookUpper(BloomFilter bf,
 			List<List<TreeElement>> treeList) {
 		this.bf = bf;
-		this.treeParser = new TreeParser(treeList);
+		this.treeParser = new TreeParser(treeList,true);
 	}
 
 	/**
@@ -82,7 +82,7 @@ public class ObjectLookUpper {
 		String curDir = System.getProperty("user.dir");
 		Process p = Runtime
 				.getRuntime()
-				.exec(ObjectLookUpper.ML_FOLDER + "/c5.0 -f" + ObjectLookUpper.ML_FOLDER + "/input");// >
+				.exec(ObjectLookUpper.ML_FOLDER + "/c5.0 -f " + ObjectLookUpper.ML_FOLDER + "/input");// >
 
 		log.info("Reading objects from file");
 		// Read result and store in a list
@@ -98,7 +98,7 @@ public class ObjectLookUpper {
 		this.rules = FileCropper.crop(inputs);
 
 		// Create Tree
-		this.treeParser.createTree(this.rules);
+		this.treeParser = new TreeParser(this.rules);
 	}
 
 	public void populateBloomFilter(List<Pair<String, Integer>> toMoveObj) {

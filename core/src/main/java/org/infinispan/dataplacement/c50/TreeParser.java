@@ -10,8 +10,39 @@ public class TreeParser {
 	List<List<TreeElement>> treeList;
 	List<Pair<Integer[], Integer>> values;
 	String rules;
+	
+	public TreeParser(List<String> rulesFile) {
+		this.treeList = new ArrayList<List<TreeElement>>();
 
-	public TreeParser(List<List<TreeElement>> treeList) {
+		for (String line : rulesFile) {
+			int level = this.parseLevel(line, this.treeList);
+			StringTokenizer tk = new StringTokenizer(line, " :.");
+			Character attribute = tk.nextToken().charAt(0);
+			Condition condition = this.parseCondition(tk.nextToken());
+			Integer cut = this.parseCut(tk.nextToken(), condition);
+			Integer value = this.parseValue(tk);
+			boolean isLeaf = value != null;
+
+			TreeElement parent = null;
+			if (level != 0) {
+				parent = this.treeList.get(level - 1).get(
+						this.treeList.get(level - 1).size() - 1);
+			}
+			TreeElement newElement = new TreeElement(parent, level);
+			this.treeList.get(level).add(newElement);
+			if (parent != null) {
+				parent.addChild(newElement);
+			}
+			newElement.attribute = attribute;
+			newElement.cut = cut;
+			newElement.condition = condition;
+			newElement.isLeaf = isLeaf;
+			newElement.result = value;
+		}
+		// return tree;
+	}
+	
+	public TreeParser(List<List<TreeElement>> treeList,boolean ignoreMe) {
 		this.treeList = treeList;
 	}
 
@@ -72,37 +103,6 @@ public class TreeParser {
 			}
 		}
 		return returnValue;
-	}
-
-	public void createTree(List<String> rulesFile) {
-		this.treeList = new ArrayList<List<TreeElement>>();
-
-		for (String line : rulesFile) {
-			int level = this.parseLevel(line, this.treeList);
-			StringTokenizer tk = new StringTokenizer(line, " :.");
-			Character attribute = tk.nextToken().charAt(0);
-			Condition condition = this.parseCondition(tk.nextToken());
-			Integer cut = this.parseCut(tk.nextToken(), condition);
-			Integer value = this.parseValue(tk);
-			boolean isLeaf = value != null;
-
-			TreeElement parent = null;
-			if (level != 0) {
-				parent = this.treeList.get(level - 1).get(
-						this.treeList.get(level - 1).size() - 1);
-			}
-			TreeElement newElement = new TreeElement(parent, level);
-			this.treeList.get(level).add(newElement);
-			if (parent != null) {
-				parent.addChild(newElement);
-			}
-			newElement.attribute = attribute;
-			newElement.cut = cut;
-			newElement.condition = condition;
-			newElement.isLeaf = isLeaf;
-			newElement.result = value;
-		}
-		// return tree;
 	}
 
 	private int getIndex(char attribute) {

@@ -140,7 +140,7 @@ public class DataPlacementManager {
 				DataPlacementManager.log.info("Message sent to " + owner);
 				this.writer.write(true, null, remoteTopList);
 			} catch (Throwable throwable) {
-				DataPlacementManager.log.error(throwable);
+				DataPlacementManager.log.error(throwable.toString());
 			}
 		} else {
 			DataPlacementManager.log.warn("Message will not be sent to myself!");
@@ -321,7 +321,7 @@ public class DataPlacementManager {
 		try {
 			this.rpcManager.invokeRemotely(null, command, false);
 		} catch (Throwable throwable) {
-			DataPlacementManager.log.error(throwable);
+			DataPlacementManager.log.error(throwable.toString());
 		}
 	}
 
@@ -335,7 +335,7 @@ public class DataPlacementManager {
 			this.rpcManager.invokeRemotely(Collections.singleton(coordinator),
 					command, false);
 		} catch (Throwable throwable) {
-			DataPlacementManager.log.error(throwable);
+			DataPlacementManager.log.error(throwable.toString());
 		}
 	}
 

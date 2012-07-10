@@ -2,21 +2,27 @@ package org.infinispan.dataplacement.lookup;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.infinispan.dataplacement.DataPlacementManager;
 import org.infinispan.dataplacement.c50.FileCropper;
 import org.infinispan.dataplacement.c50.NameSplitter;
 import org.infinispan.dataplacement.c50.TreeElement;
 import org.infinispan.dataplacement.c50.TreeParser;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 import com.clearspring.analytics.util.Pair;
 
 public class ObjectLookUpper {
 
+	private static final Log log = LogFactory
+			.getLog(ObjectLookUpper.class);
 	BloomFilter bf;
 	NameSplitter splitter = new NameSplitter();
 	TreeParser treeParser;
@@ -78,6 +84,7 @@ public class ObjectLookUpper {
 				.getRuntime()
 				.exec(ObjectLookUpper.ML_FOLDER + "/c5.0 -f" + ObjectLookUpper.ML_FOLDER + "/input");// >
 
+		log.info("Reading objects from file");
 		// Read result and store in a list
 		BufferedReader input = new BufferedReader(new InputStreamReader(
 				p.getInputStream()));

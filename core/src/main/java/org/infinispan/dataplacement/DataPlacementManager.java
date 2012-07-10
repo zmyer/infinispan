@@ -97,8 +97,8 @@ public class DataPlacementManager {
 
 	@Start
 	public void startTimer() {
-		this.timer = new Timer();
-		this.timer.schedule(new DataPlaceRequestTask(), 1200000, 10000000);
+		timer = new Timer();
+		timer.schedule(new DataPlaceRequestTask(), 900000, 1000000);
 	}
 
 	public void sendRequestToAll() {
@@ -201,12 +201,13 @@ public class DataPlacementManager {
 						+ " in total!");
 				this.writer.write(false, sender, objectRequest);
 
-				Map<Object, Pair<Long, Integer>> fullRequestList = this.compactRequestList();
-				List<Pair<String, Integer>> finalResultList = this
-						.generateFinalList(fullRequestList);
-				this.writer.writeResult(finalResultList);
+				Map<Object, Pair<Long, Integer>> fullRequestList = compactRequestList();
+				List<Pair<String, Integer>> finalResultList = generateFinalList(fullRequestList);
+				log.info("Writing result");
+				writer.writeResult(finalResultList);
 
-				this.sentObjectList = finalResultList;
+				sentObjectList = finalResultList;
+				log.info("Populate All");
 
 				ObjectLookUpper lookUpper = new ObjectLookUpper(finalResultList);
 
@@ -374,14 +375,13 @@ public class DataPlacementManager {
 		if (event.getMembersAtEnd().size() == event.getMembersAtStart().size()) {
 			DataPlacementManager.log.info("Doing Keymovement test!");
 			if (event.isPre()) {
-				DataPlacementManager.log
-						.info("Size of DataContainer: " + this.dataContainer.size());
-				DataPlacementManager.log.info("Doing prephase testing! sentObjectList size:"
-						+ this.sentObjectList.size());
-				DataPlacementManager.log.info("sentObjectsList: " + this.sentObjectList);
-				// log.info("dataContainer: " + dataContainer.keySet());
-				DataPlacementManager.log.info("topremoteget: " + this.analyticsBean
-						.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
+				log.info("View ID:"+event.getNewViewId());
+				log.info("Size of DataContainer: " + dataContainer.size());
+				log.info("Doing prephase testing! sentObjectList size:"
+						+ sentObjectList.size());
+				log.info("sentObjectsList: " + sentObjectList);
+				//log.info("dataContainer: " + dataContainer.keySet());
+				log.info("topremoteget: " + analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 								this.analyticsBean.getCapacity()));
 				for (Pair<String, Integer> pair : this.sentObjectList) {
 					if (!this.dataContainer.containsKey(pair.left)) {

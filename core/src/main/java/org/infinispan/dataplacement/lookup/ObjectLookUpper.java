@@ -2,124 +2,81 @@ package org.infinispan.dataplacement.lookup;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 
-import javax.swing.text.SimpleAttributeSet;
-
-import com.clearspring.analytics.util.Pair;
-import com.sun.corba.se.spi.orb.StringPair;
-
 import org.infinispan.dataplacement.c50.FileCropper;
 import org.infinispan.dataplacement.c50.NameSplitter;
 import org.infinispan.dataplacement.c50.TreeElement;
 import org.infinispan.dataplacement.c50.TreeParser;
 
+import com.clearspring.analytics.util.Pair;
+
 public class ObjectLookUpper {
 
-	SimpleBloomFilter bf;
+	BloomFilter bf;
 	NameSplitter splitter = new NameSplitter();
-	String rules;
-	TreeParser treeParser = new TreeParser();
-	
-	
-	public ObjectLookUpper(SimpleBloomFilter bf,
+	TreeParser treeParser;
+	private List<String> rules;
+	public static final String ML_FOLDER = "../ml";
+
+	// TODO: confirm that this is an adequate value
+	private static final double BF_FALSE_POSITIVE_PROB = 0.001;
+
+	/**
+	 * Constructor to build this object from data received through the network
+	 * 
+	 * @param bf
+	 * @param treeList
+	 */
+	public ObjectLookUpper(BloomFilter bf,
 			List<List<TreeElement>> treeList) {
 		this.bf = bf;
-		treeParser.setTreeList(treeList);
+		this.treeParser = new TreeParser(treeList);
 	}
 
-	public ObjectLookUpper() {
-		// TODO Auto-generated constructor stub
-	}
-
-	public void test(List<String> keyList, int value){
-		for(int i =0; i<10000;++i){
-			if(query(keyList.get(i)) != value){
-				System.out.print(keyList.get(i)+ "  "+ query(keyList.get(i)));
-				System.out.println("  False!");
-			}
-		}
-	}
-
-	private List<String> readKeyList(String file)
-			throws NumberFormatException, IOException {
-		List<String> keys = new ArrayList<String>();
-
-		String outputFolder = file + "splits/";
-		File f = new File(outputFolder);
-		if (!f.exists()) {
-			f.mkdir();
-		}
-		int flag = 0, counter = 0;
-
-		Reader.getInstance().StartReading(file);
-		FileWriter fw = new FileWriter(outputFolder + "_splitted");
-		BufferedWriter bw = new BufferedWriter(fw);
-		keys = new ArrayList<String>();
-		flag = Reader.getInstance().GetElements(keys);
-		Reader.getInstance().StopReading();
-
-		return keys;
-	}
-	
-	public List<Pair<String, Integer>>  addValuetoKeyList( List<String> keyList, Integer value){
-		List<Pair<String, Integer>> keyPairList = new ArrayList<Pair<String, Integer>>();
-		for(String key : keyList){
-			keyPairList.add(new Pair<String, Integer>(key, value));
-		}
-		return keyPairList;
-	}
-	
-	public List<Pair<String, Integer>> mergePairList(List<List<Pair<String, Integer>>> pairLists){
-		List<Pair<String, Integer>> finalTestList = new ArrayList<Pair<String, Integer>>();
-		for(List<Pair<String, Integer>> pairList : pairLists){
-			finalTestList.addAll(pairList);
-		}
-		return finalTestList;
-	}
-
-	public void populateAll(List<Pair<String, Integer>> toMoveObj) {
-		writeObjToFiles(toMoveObj);
+	/**
+	 * Constructor to build this object from scratch, using a list of objects to
+	 * populate its fields
+	 * 
+	 * @param toMoveObj
+	 */
+	public ObjectLookUpper(List<Pair<String, Integer>> toMoveObj) {
+		this.writeObjToFiles(toMoveObj);
 		try {
-			try {
-				populateRules();
-				populateBloomFilter(toMoveObj);
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
+			this.populateRules();
+			this.populateBloomFilter(toMoveObj);
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
+			System.exit(-1);
 		}
 	}
 
 	private void writeObjToFiles(List<Pair<String, Integer>> toMoveObj) {
-		List<Pair<String, Integer>> splittedKeys = splitter
+		List<Pair<String, Integer>> splittedKeys = NameSplitter
 				.splitPairKeys(toMoveObj);
 		FileWriter fw;
 		try {
-			fw = new FileWriter("../ml/input.data");
+			fw = new FileWriter(ObjectLookUpper.ML_FOLDER + "/input.data");
 			BufferedWriter bw = new BufferedWriter(fw);
-			splitter.writePairKeys(bw, splittedKeys);
+			NameSplitter.writePairKeys(bw, splittedKeys);
 			bw.close();
 			fw.close();
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
+			System.exit(-1);
 		}
 	}
 
-	public void populateRules() throws IOException, InterruptedException {
+	public void populateRules() throws IOException {
 		String curDir = System.getProperty("user.dir");
-		Process p = Runtime.getRuntime()
-				.exec("../ml/c5.0 -f ../ml/input");// >
+		Process p = Runtime
+				.getRuntime()
+				.exec(ObjectLookUpper.ML_FOLDER + "/c5.0 -f" + ObjectLookUpper.ML_FOLDER + "/input");// >
 
 		// Read result and store in a list
 		BufferedReader input = new BufferedReader(new InputStreamReader(
@@ -128,58 +85,42 @@ public class ObjectLookUpper {
 		List<String> inputs = new ArrayList<String>();
 		while ((line = input.readLine()) != null) {
 			inputs.add(line);
-			//System.out.println(line);
 		}
 		input.close();
 
-		//Cope not useful information
-		FileWriter fw = new FileWriter("../ml/rules");
-		BufferedWriter bw = new BufferedWriter(fw);
-		FileCropper fp = new FileCropper();
-		fp.cropFileAndWrite(inputs, bw);
-		bw.close();
-		fw.close();
+		this.rules = FileCropper.crop(inputs);
 
-		//Create Tree
-		FileReader fr = new FileReader("../ml/rules");
-		BufferedReader br = new BufferedReader(fr);
-		rules = br.toString();
-		treeParser.createTree(br);
+		// Create Tree
+		this.treeParser.createTree(this.rules);
 	}
-    
-	public String getRules(){
-		return rules;
-	}
-	
+
 	public void populateBloomFilter(List<Pair<String, Integer>> toMoveObj) {
-		bf = new SimpleBloomFilter<String>(toMoveObj.size()*8, toMoveObj.size());
-		for(Pair<String, Integer> pair : toMoveObj){
-			bf.add(pair.left);
+		this.bf = new BloomFilter(toMoveObj.size(), ObjectLookUpper.BF_FALSE_POSITIVE_PROB);
+		for (Pair<String, Integer> pair : toMoveObj) {
+			this.bf.add(pair.left);
 		}
 	}
 
 	public Integer query(String key) {
-		if(bf.contains(key) == false)
-		  return null;
-		else{
-		  return treeParser.parseTree(splitter.splitSingleKey(key));
+		if (!this.bf.contains(key))
+			return null;
+		else
+			return this.treeParser.parseTree(NameSplitter.splitSingleKey(key));
+	}
+
+	public BloomFilter getBloomFilter() {
+		return this.bf;
+	}
+
+	public List<List<TreeElement>> getTreeList() {
+		return this.treeParser.getTreeList();
+	}
+
+	public String printRules() {
+		String toReturn = "";
+		for (String line : this.rules) {
+			toReturn += line + "\n";
 		}
+		return toReturn;
 	}
-
-	public SimpleBloomFilter getBloomFilter() {
-		return bf;
-	}
-
-	public void setBloomFilter(SimpleBloomFilter bf2) {
-		bf = bf2;
-	}
-	
-	public void setTreeElement(List<List<TreeElement>> treeList) {
-		treeParser.setTreeList(treeList);
-	}
-	
-	public List<List<TreeElement>> getTreeList(){
-		return treeParser.getTreeList();
-	}
-
 }

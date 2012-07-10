@@ -13,48 +13,48 @@ import org.infinispan.util.logging.LogFactory;
 
 /**
  * The hash function that contains machine learning rules and bloom filter
+ * 
  * @author Zhongmiao Li
- *
+ * 
  */
-public class MachineLearningConsistentHashing extends AbstractConsistentHash{
-    
+public class MachineLearningConsistentHashing extends AbstractConsistentHash {
+
 	private static final Log LOG = LogFactory.getLog(MachineLearningConsistentHashing.class);
 	ConsistentHash baseHash;
 	Map<Address, ObjectLookUpper> lookUpperList = new HashMap<Address, ObjectLookUpper>();
 	List<Address> addressList = new ArrayList<Address>();
-	//Set<Address> addressSet;
-	
-	
-	public void setLookUpper(Address address, ObjectLookUpper lookupper){
-		lookUpperList.put(address, lookupper);
+
+	// Set<Address> addressSet;
+
+	public void setLookUpper(Address address, ObjectLookUpper lookupper) {
+		this.lookUpperList.put(address, lookupper);
 	}
-	
+
 	@Override
 	public void setCaches(Set<Address> caches) {
-		baseHash.setCaches(caches);
+		this.baseHash.setCaches(caches);
 	}
-	
-	public void setCacheList(List<Address> cacheList){
-		addressList = cacheList;
+
+	public void setCacheList(List<Address> cacheList) {
+		this.addressList = cacheList;
 	}
 
 	@Override
 	public Set<Address> getCaches() {
-		return baseHash.getCaches();
+		return this.baseHash.getCaches();
 	}
 
 	@Override
 	public List<Address> locate(Object key, int replCount) {
-		 List<Address> defaultAddList = baseHash.locate(key, replCount);
-		 Integer index = lookUpperList.get(defaultAddList.get(0)).query(key.toString());
-		 if(index == null){
-			 return defaultAddList;
-		 }
-		 else{
-			 List<Address> addList = new ArrayList<Address>();
-			 addList.add(addressList.get(index));
-			 return addList;
-		 }
+		List<Address> defaultAddList = this.baseHash.locate(key, replCount);
+		Integer index = this.lookUpperList.get(defaultAddList.get(0)).query(key.toString());
+		if (index == null)
+			return defaultAddList;
+		else {
+			List<Address> addList = new ArrayList<Address>();
+			addList.add(this.addressList.get(index));
+			return addList;
+		}
 	}
 
 	@Override
@@ -63,7 +63,10 @@ public class MachineLearningConsistentHashing extends AbstractConsistentHash{
 	}
 
 	public void setDefault(ConsistentHash defaultHash) {
-		baseHash =  defaultHash;
+		this.baseHash = defaultHash;
 	}
 
+	public ConsistentHash getBaseHash() {
+		return this.baseHash;
+	}
 }

@@ -84,6 +84,7 @@ public class PendingCacheViewChanges {
      	 }
      	 else{
      		 log.error("shouldMoveKey is TRUE");
+     		 shouldMoveKey = false;
      	 }
 
          Collection<Address> baseMembers = recoveredMembers != null ? recoveredMembers : committedView.getMembers();

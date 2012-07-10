@@ -99,7 +99,7 @@ public class DataPlacementManager {
 	@Start
 	public void startTimer() {
 		timer = new Timer();
-		timer.schedule(new DataPlaceRequestTask(), 120000, 600000);
+		timer.schedule(new DataPlaceRequestTask(), 1200000, 10000000);
 	}
 
 	public void sendRequestToAll() {
@@ -110,7 +110,7 @@ public class DataPlacementManager {
 		// analyticsBean.getTopKFrom(AnalyticsBean.Stat.REMOTE_PUT,analyticsBean.getCapacity());
 
 		// Only send statistics if there are enough objects
-		if (remoteGet.size() >= 800) {
+		if (remoteGet.size() >= analyticsBean.getCapacity() * 0.8) {
 			Map<Address, Map<Object, Long>> remoteTopLists = sortObjectsByOwner(remoteGet);
 
 			for (Entry<Address, Map<Object, Long>> entry : remoteTopLists
@@ -371,7 +371,7 @@ public class DataPlacementManager {
 				log.info("Doing prephase testing! sentObjectList size:"
 						+ sentObjectList.size());
 				log.info("sentObjectsList: " + sentObjectList);
-				log.info("dataContainer: " + dataContainer.keySet());
+				//log.info("dataContainer: " + dataContainer.keySet());
 				log.info("topremoteget: " + analyticsBean
 						.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 								analyticsBean.getCapacity()) );

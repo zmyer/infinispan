@@ -66,7 +66,7 @@ public class MachineLearningConsistentHashing extends AbstractConsistentHash {
 		this.baseHash = defaultHash;
 	}
 
-	public ConsistentHash getBaseHash() {
+	public ConsistentHash getDefaultHash() {
 		return this.baseHash;
 	}
 }

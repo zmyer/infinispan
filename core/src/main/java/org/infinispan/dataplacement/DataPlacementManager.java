@@ -68,6 +68,7 @@ public class DataPlacementManager {
 	private List<Address> addressList;
 	//Key of pair is destination node, value of pair is moved number 
 	private Map<String, Pair<Integer, Integer>> sentObjectList = new HashMap<String, Pair<Integer, Integer>>();
+	private List<Pair<String, Integer>> currentRoundList;
 	private List<Pair<Integer, Map<Object, Long>>> requestReceivedList = new ArrayList<Pair<Integer, Map<Object, Long>>>();
 	private Set<Object> requestSentList = new HashSet<Object>();
 	private List<Object> movedInList = new ArrayList<Object>();
@@ -116,18 +117,19 @@ public class DataPlacementManager {
 			log.info("Moved In Object Size:"+localGet.size());
 			remoteGet.putAll(localGet);
 			log.info("Merged List Size:"+remoteGet.size());
-			Map<Address, Map<Object, Long>> remoteTopLists = this.sortObjectsByOwner(remoteGet);
+			Map<Address, Map<Object, Long>> topGetPerOwnerList = this.sortObjectsByOwner(remoteGet);
+			
 			requestSentList = remoteGet.keySet();
 			
 			log.info("Size of list is ");
 
-			for (Entry<Address, Map<Object, Long>> entry : remoteTopLists
+			for (Entry<Address, Map<Object, Long>> entry : topGetPerOwnerList
 					.entrySet()) {
 				this.sendRequest(entry.getKey(), entry.getValue());
 			}
 			List<Address> addresses = this.rpcManager.getTransport().getMembers();
 			for (Address add : addresses) {
-				if (remoteTopLists.containsKey(add) == false
+				if (topGetPerOwnerList.containsKey(add) == false
 						&& add.equals(this.cacheName)) {
 					this.sendRequest(add, new HashMap<Object, Long>());
 				}
@@ -155,6 +157,8 @@ public class DataPlacementManager {
 				tempList.add(key);
 		}
 		
+		log.info("Min Access Num is:"+minAccess);
+		log.info("Number of objects moved in but not in local top list:"+tempList.size());
 		for(Object key : tempList){
 			localGetEstStatics.put(key, minAccess);
 		}
@@ -226,8 +230,9 @@ public class DataPlacementManager {
 						senderID, objectRequest));
 			}
 
+			this.writer.write(false, sender, objectRequest);
+			
 			if (this.addressList.size() - this.requestReceivedList.size() == 1) {
-				this.writer.write(false, sender, objectRequest);
 				sendReplyToAll();
 				
 			} else {
@@ -245,17 +250,17 @@ public class DataPlacementManager {
 				+ this.addressList.size()
 				+ " in total!");
 		Map<Object, Pair<Long, Integer>> fullRequestList = compactRequestList();
-		List<Pair<String, Integer>> finalResultList = generateFinalList(fullRequestList);
+		currentRoundList = generateFinalList(fullRequestList);
 		log.info("Writing result");
-		writer.writeResult(finalResultList);
+		writer.writeResult(currentRoundList);
 
-		for(Pair<String, Integer> pair : finalResultList){
+		for(Pair<String, Integer> pair : currentRoundList){
 		  sentObjectList.put(pair.left, new Pair<Integer, Integer>(pair.right,0));		  	
 		}
 		
 		log.info("Populate All");
 
-		ObjectLookUpper lookUpper = new ObjectLookUpper(finalResultList);
+		ObjectLookUpper lookUpper = new ObjectLookUpper(currentRoundList);
 
 		DataPlacementManager.log.info("Rules:");
 		DataPlacementManager.log.info(lookUpper.printRules());
@@ -420,13 +425,15 @@ public class DataPlacementManager {
 				log.info("Size of DataContainer: " + dataContainer.size());
 				log.info("Doing prephase testing! sentObjectList size:"
 						+ sentObjectList.size());
+				log.info("Doing prephase testing! Current Round Sent Object size:"
+						+ currentRoundList.size());
 				//log.info("sentObjectsList: " + sentObjectList);
 				log.info("topremoteget: " + analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 								this.analyticsBean.getCapacity()));
-				for (String key : this.sentObjectList.keySet()) {
-					if (!this.dataContainer.containsKey(key)) {
+				for (Pair<String,Integer> pair : currentRoundList) {
+					if (!this.dataContainer.containsKey(pair.left)) {
 						DataPlacementManager.log.error("prephase checking: Does't contains key:"
-								+ key);
+								+ pair.left);
 					}
 				}
 			} else if( !event.isPre() && !expectPre ){
@@ -450,12 +457,13 @@ public class DataPlacementManager {
 						sentObjectList.put(entry.getKey(),entry.getValue());
 					}
 				}
-				log.info("Sent List Size: "+sentObjectList.size());
+				log.info("Request List Size: "+requestSentList.size());
+				log.info("Movedin List Size: "+ movedInList.size());
 				
 				log.info("Adding moved-in list");
 				
 				//Add moved-in keys into the list
-				for (Object key : requestSentList){
+				for (Object key : requestSentList){	
 					if(dataContainer.containsKey(key)){
 						movedInList.add(key);
 					}
@@ -496,7 +504,7 @@ public class DataPlacementManager {
 	public ConsistentHash getConsistentHashingFunction() {
 		ConsistentHash hash = this.distributionManager.getConsistentHash();
 		if (hash instanceof MachineLearningConsistentHashing)
-			return ((MachineLearningConsistentHashing) hash).getBaseHash();
+			return ((MachineLearningConsistentHashing) hash).getDefaultHash();
 		else
 			return hash;
 	}

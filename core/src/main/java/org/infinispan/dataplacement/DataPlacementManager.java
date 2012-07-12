@@ -22,6 +22,8 @@ import org.infinispan.dataplacement.c50.TreeElement;
 import org.infinispan.dataplacement.lookup.BloomFilter;
 import org.infinispan.dataplacement.lookup.ObjectLookUpper;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.ch.MachineLearningConsistentHashing;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.notifications.Listener;
@@ -489,5 +491,13 @@ public class DataPlacementManager {
 			DataPlacementManager.this.sendRequestToAll();
 			DataPlacementManager.log.info("Timer Runned Once!");
 		}
+	}
+
+	public ConsistentHash getConsistentHashingFunction() {
+		ConsistentHash hash = this.distributionManager.getConsistentHash();
+		if (hash instanceof MachineLearningConsistentHashing)
+			return ((MachineLearningConsistentHashing) hash).getBaseHash();
+		else
+			return hash;
 	}
 }

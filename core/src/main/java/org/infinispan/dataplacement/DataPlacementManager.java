@@ -187,7 +187,7 @@ public class DataPlacementManager {
 	private Map<Address, Map<Object, Long>> sortObjectsByOwner(
 			Map<Object, Long> remoteGet) {
 		Map<Address, Map<Object, Long>> objectLists = new HashMap<Address, Map<Object, Long>>();
-		Map<Object, List<Address>> mappedObjects = this.distributionManager
+		Map<Object, List<Address>> mappedObjects = getConsistentHashingFunction()
 				.locateAll(remoteGet.keySet(), 1);
 
 		Address addr = null;

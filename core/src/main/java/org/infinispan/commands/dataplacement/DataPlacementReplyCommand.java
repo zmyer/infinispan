@@ -49,7 +49,7 @@ public class DataPlacementReplyCommand extends BaseRpcCommand {
 	@Override
 	public Object perform(InvocationContext ctx) throws Throwable {
 		if (this.phase == DATAPLACEPHASE.SETTING_PHASE) {
-			this.dataplacementMgr.setLookUpper(this.getOrigin(), this.bloomFilter, this.treeList);
+			this.dataplacementMgr.buildMLHashAndAck(this.getOrigin(), this.bloomFilter, this.treeList);
 			DataPlacementReplyCommand.log.info("Get Look Upper from :" + this.getOrigin());
 			// log.error("Size of bf:"+ bloomFilter.size());
 		}

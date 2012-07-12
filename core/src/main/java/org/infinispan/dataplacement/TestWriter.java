@@ -10,7 +10,6 @@ import java.util.Map;
 
 import org.infinispan.remoting.transport.Address;
 
-import com.clearspring.analytics.util.Pair;
 
 public class TestWriter {
     private int sendCount = 0;

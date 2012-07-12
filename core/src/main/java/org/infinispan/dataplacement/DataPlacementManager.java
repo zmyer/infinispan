@@ -3,9 +3,11 @@ package org.infinispan.dataplacement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
 
@@ -34,7 +36,6 @@ import org.infinispan.stats.topK.StreamLibContainer;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
-import com.clearspring.analytics.util.Pair;
 
 @Listener
 public class DataPlacementManager {
@@ -44,26 +45,30 @@ public class DataPlacementManager {
 	private RpcManager rpcManager;
 	private DistributionManager distributionManager;
 	private CommandsFactory commandsFactory;
-
-	private Timer timer;
-	private StreamLibContainer analyticsBean;
-
-	private TestWriter writer = new TestWriter();
 	private CacheViewsManager cacheViewsManager;
 	private DistributedStateTransferManagerImpl stateTransfer;
-
-	private Object lookUpperLock = new Object(), ackLock = new Object();
-	private Address myAddress;
 	private DataContainer dataContainer;
 
+	private String cacheName;
+	private Timer popuTimer, dataPlaceTimer;
+	private int preDataContainerSize;
+	
+	private StreamLibContainer analyticsBean;
+	private TestWriter writer = new TestWriter();
+
+	private Object lookUpperLock = new Object(), ackLock = new Object();
+
+    //Round  counter
 	private Integer requestRound = 0, replyRound = 0, lookUpperNumber = 0,
 			hasAckedNumber = 0;
+	private Boolean expectPre = true;
 
 	private List<Address> addressList;
-	private List<Pair<Integer, Map<Object, Long>>> objectRequestList = new ArrayList<Pair<Integer, Map<Object, Long>>>();
-	private List<Pair<String, Integer>> sentObjectList;
-	private CacheNotifier cacheNotifier;
-	private String cacheName;
+	//Key of pair is destination node, value of pair is moved number 
+	private Map<String, Pair<Integer, Integer>> sentObjectList = new HashMap<String, Pair<Integer, Integer>>();
+	private List<Pair<Integer, Map<Object, Long>>> requestReceivedList = new ArrayList<Pair<Integer, Map<Object, Long>>>();
+	private Set<Object> requestSentList = new HashSet<Object>();
+	private List<Object> movedInList = new ArrayList<Object>();
 
 	public DataPlacementManager() {
 	}
@@ -80,35 +85,39 @@ public class DataPlacementManager {
 		this.cacheViewsManager = cacheViewsManager;
 		this.cacheName = cache.getName();
 		this.dataContainer = dataContainer;
-		if (stateTransfer instanceof DistributedStateTransferManagerImpl) {
-			DataPlacementManager.log.info("Is Dist");
-		} else {
-			DataPlacementManager.log.info("Is not Dist");
-		}
-		this.stateTransfer = (DistributedStateTransferManagerImpl) stateTransfer;
-		this.myAddress = rpcManager.getAddress();
+		if (stateTransfer instanceof DistributedStateTransferManagerImpl) 
+		  this.stateTransfer = (DistributedStateTransferManagerImpl) stateTransfer;
 		this.analyticsBean = StreamLibContainer.getInstance();
 		this.addressList = new ArrayList<Address>();
 		cacheNotifier.addListener(this);
-		this.cacheNotifier = cacheNotifier;
 	}
 
 	@Start
 	public void startTimer() {
-		timer = new Timer();
-		timer.schedule(new DataPlaceRequestTask(), 900000, 1000000);
+		popuTimer = new Timer();
+		popuTimer.schedule(new WaitingPopulationTask(), 30000, 10000);
 	}
 
 	public void sendRequestToAll() {
+		log.info("Start sending requests");
 		Map<Object, Long> remoteGet = this.analyticsBean
 				.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 						this.analyticsBean.getCapacity());
+		
 		// remotePut =
-		// analyticsBean.getTopKFrom(AnalyticsBean.Stat.REMOTE_PUT,analyticsBean.getCapacity());
+		// analyticsBean.getTopKFrom(Anal	yticsBean.Stat.REMOTE_PUT,analyticsBean.getCapacity());
 
 		// Only send statistics if there are enough objects
 		if (remoteGet.size() >= this.analyticsBean.getCapacity() * 0.8) {
+			
+			Map<Object, Long> localGet = getStasticsForMovedInObj();
+			log.info("Moved In Object Size:"+localGet.size());
+			remoteGet.putAll(localGet);
+			log.info("Merged List Size:"+remoteGet.size());
 			Map<Address, Map<Object, Long>> remoteTopLists = this.sortObjectsByOwner(remoteGet);
+			requestSentList = remoteGet.keySet();
+			
+			log.info("Size of list is ");
 
 			for (Entry<Address, Map<Object, Long>> entry : remoteTopLists
 					.entrySet()) {
@@ -121,17 +130,43 @@ public class DataPlacementManager {
 					this.sendRequest(add, new HashMap<Object, Long>());
 				}
 			}
-
 			++this.requestRound;
 		}
 	}
+	
+	public Map<Object, Long> getStasticsForMovedInObj(){
+		Map<Object, Long> localGetRealStatics = this.analyticsBean
+				.getTopKFrom(StreamLibContainer.Stat.LOCAL_GET,
+						this.analyticsBean.getCapacity());
+		
+		Map<Object, Long> localGetEstStatics = new HashMap<Object,Long>();
+		List<Object> tempList = new ArrayList<Object>();
+		Long minAccess = Long.MAX_VALUE;
+		for(Object key: movedInList){
+			Long accessNum = localGetRealStatics.get(key);
+			if( accessNum != null){
+				localGetEstStatics.put(key, accessNum);
+				if(accessNum < minAccess)
+					minAccess = accessNum;
+			}
+			else
+				tempList.add(key);
+		}
+		
+		for(Object key : tempList){
+			localGetEstStatics.put(key, minAccess);
+		}
+		
+		return localGetEstStatics;
+	}
+
 
 	private void sendRequest(Address owner, Map<Object, Long> remoteTopList) {
 
 		DataPlacementRequestCommand command = this.commandsFactory
 				.buildDataPlacementRequestCommand();
 		command.init(this, this.distributionManager);
-		DataPlacementManager.log.info("Putting Message with size " + remoteTopList.size());
+		log.info("Putting Message with size " + remoteTopList.size());
 		command.putRemoteList(remoteTopList, this.requestRound);
 		if (!this.rpcManager.getAddress().toString().equals(owner)) {
 			try {
@@ -174,54 +209,58 @@ public class DataPlacementManager {
 			Map<Object, Long> objectRequest, Integer roundID) {
 		DataPlacementManager.log.info("Aggregating request!");
 		try {
-			// log.info(rpcManager.getTransport().getMembers());
-			// log.info(addressList);
 			if (this.rpcManager.getTransport().getMembers().size() != this.addressList
 					.size()) {
-				// log.info("Before Add");
 				this.addressList = this.rpcManager.getTransport().getMembers();
-				// log.info("Before StateTransfer :" +stateTransfer);
 				this.stateTransfer.setCachesList(this.addressList);
 			}
-			// log.info("before get index of add");
+
 			Integer senderID = this.addressList.indexOf(sender);
 			DataPlacementManager.log.info("Getting message of round " + roundID + " from node"
 					+ sender);
 
 			if (roundID == this.replyRound) {
-				this.objectRequestList.add(new Pair<Integer, Map<Object, Long>>(
+				this.requestReceivedList.add(new Pair<Integer, Map<Object, Long>>(
 						senderID, objectRequest));
 			}
 
-			if (this.addressList.size() - this.objectRequestList.size() == 1) {
-				DataPlacementManager.log.info("Everyone has sent request!!! "
-						+ this.addressList.size()
-						+ " in total!");
+			if (this.addressList.size() - this.requestReceivedList.size() == 1) {
 				this.writer.write(false, sender, objectRequest);
-
-				Map<Object, Pair<Long, Integer>> fullRequestList = compactRequestList();
-				List<Pair<String, Integer>> finalResultList = generateFinalList(fullRequestList);
-				log.info("Writing result");
-				writer.writeResult(finalResultList);
-
-				sentObjectList = finalResultList;
-				log.info("Populate All");
-
-				ObjectLookUpper lookUpper = new ObjectLookUpper(finalResultList);
-
-				DataPlacementManager.log.info("Rules:");
-				DataPlacementManager.log.info(lookUpper.printRules());
-				this.sendLookUpper(lookUpper.getBloomFilter(),
-						lookUpper.getTreeList());
-				this.objectRequestList.clear();
-				++this.replyRound;
+				sendReplyToAll();
+				
 			} else {
 				DataPlacementManager.log.info("Gathering request... has received from"
-						+ this.objectRequestList.size() + " nodes");
+						+ this.requestReceivedList.size() + " nodes");
 			}
 		} catch (Exception e) {
 			DataPlacementManager.log.error(e.toString());
 		}
+	}
+	
+	public void sendReplyToAll(){
+		
+		log.info("Everyone has sent request!!! "
+				+ this.addressList.size()
+				+ " in total!");
+		Map<Object, Pair<Long, Integer>> fullRequestList = compactRequestList();
+		List<Pair<String, Integer>> finalResultList = generateFinalList(fullRequestList);
+		log.info("Writing result");
+		writer.writeResult(finalResultList);
+
+		for(Pair<String, Integer> pair : finalResultList){
+		  sentObjectList.put(pair.left, new Pair<Integer, Integer>(pair.right,0));		  	
+		}
+		
+		log.info("Populate All");
+
+		ObjectLookUpper lookUpper = new ObjectLookUpper(finalResultList);
+
+		DataPlacementManager.log.info("Rules:");
+		DataPlacementManager.log.info(lookUpper.printRules());
+		this.sendLookUpper(lookUpper.getBloomFilter(),
+				lookUpper.getTreeList());
+		this.requestReceivedList.clear();
+		++this.replyRound;
 	}
 
 	/*
@@ -230,8 +269,8 @@ public class DataPlacementManager {
 	public Map<Object, Pair<Long, Integer>> compactRequestList() {
 		Map<Object, Pair<Long, Integer>> fullRequestList = new HashMap<Object, Pair<Long, Integer>>();
 
-		Map<Object, Long> requestList = this.objectRequestList.get(0).right;
-		Integer addressIndex = this.objectRequestList.get(0).left;
+		Map<Object, Long> requestList = this.requestReceivedList.get(0).right;
+		Integer addressIndex = this.requestReceivedList.get(0).left;
 
 		// Put objects of the first lisk into the fullList
 		for (Entry<Object, Long> entry : requestList.entrySet()) {
@@ -240,12 +279,11 @@ public class DataPlacementManager {
 		}
 
 		// For the following lists, when merging into the full list, has to
-		// compare if its request has the
-		// highest remote access
+		// compare if its request has the highest remote access
 		int conflictFailCnt = 0, conflictSuccCnt = 0, mergeCnt = 0;
-		for (int i = 1; i < this.objectRequestList.size(); ++i) {
-			requestList = this.objectRequestList.get(i).right;
-			addressIndex = this.objectRequestList.get(i).left;
+		for (int i = 1; i < this.requestReceivedList.size(); ++i) {
+			requestList = this.requestReceivedList.get(i).right;
+			addressIndex = this.requestReceivedList.get(i).left;
 			for (Entry<Object, Long> entry : requestList.entrySet()) {
 				Pair<Long, Integer> pair = fullRequestList.get(entry.getKey());
 				if (pair == null) {
@@ -316,7 +354,7 @@ public class DataPlacementManager {
 		command.putBloomFilter(simpleBloomFilter);
 		command.putTreeElement(treeList);
 
-		this.setLookUpper(this.rpcManager.getAddress(), simpleBloomFilter, treeList);
+		this.buildMLHashAndAck(this.rpcManager.getAddress(), simpleBloomFilter, treeList);
 
 		try {
 			this.rpcManager.invokeRemotely(null, command, false);
@@ -325,21 +363,9 @@ public class DataPlacementManager {
 		}
 	}
 
-	public void sendAck(Address coordinator) {
-		DataPlacementReplyCommand command = this.commandsFactory
-				.buildDataPlacementReplyCommand();
-		command.init(this);
-		command.setPhase(DATAPLACEPHASE.ACK_PHASE);
-		DataPlacementManager.log.info("Sending Ack to Coordinator: " + coordinator);
-		try {
-			this.rpcManager.invokeRemotely(Collections.singleton(coordinator),
-					command, false);
-		} catch (Throwable throwable) {
-			DataPlacementManager.log.error(throwable.toString());
-		}
-	}
 
-	public void setLookUpper(Address address, BloomFilter bf,
+
+	public void buildMLHashAndAck(Address address, BloomFilter bf,
 			List<List<TreeElement>> treeList) {
 		synchronized (this.lookUpperLock) {
 			this.stateTransfer.setLookUpper(address, new ObjectLookUpper(bf,
@@ -352,6 +378,20 @@ public class DataPlacementManager {
 				this.lookUpperNumber = 0;
 				this.sendAck(this.rpcManager.getTransport().getCoordinator());
 			}
+		}
+	}
+	
+	public void sendAck(Address coordinator) {
+		DataPlacementReplyCommand command = this.commandsFactory
+				.buildDataPlacementReplyCommand();
+		command.init(this);
+		command.setPhase(DATAPLACEPHASE.ACK_PHASE);
+		DataPlacementManager.log.info("Sending Ack to Coordinator: " + coordinator);
+		try {
+			this.rpcManager.invokeRemotely(Collections.singleton(coordinator),
+					command, false);
+		} catch (Throwable throwable) {
+			DataPlacementManager.log.error(throwable.toString());
 		}
 	}
 
@@ -372,42 +412,77 @@ public class DataPlacementManager {
 	public void keyMovementTest(DataRehashedEvent event) {
 		if (event.getMembersAtEnd().size() == event.getMembersAtStart().size()) {
 			DataPlacementManager.log.info("Doing Keymovement test!");
-			if (event.isPre()) {
+			if (event.isPre() && expectPre) {
+				expectPre = false;
 				log.info("View ID:"+event.getNewViewId());
 				log.info("Size of DataContainer: " + dataContainer.size());
 				log.info("Doing prephase testing! sentObjectList size:"
 						+ sentObjectList.size());
-				log.info("sentObjectsList: " + sentObjectList);
-				//log.info("dataContainer: " + dataContainer.keySet());
+				//log.info("sentObjectsList: " + sentObjectList);
 				log.info("topremoteget: " + analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 								this.analyticsBean.getCapacity()));
-				for (Pair<String, Integer> pair : this.sentObjectList) {
-					if (!this.dataContainer.containsKey(pair.left)) {
-						DataPlacementManager.log.error("PRE PHASE VALIDATING: Does't contains key:"
-								+ pair.left);
+				for (String key : this.sentObjectList.keySet()) {
+					if (!this.dataContainer.containsKey(key)) {
+						DataPlacementManager.log.error("prephase checking: Does't contains key:"
+								+ key);
 					}
 				}
-			} else {
-				DataPlacementManager.log
+			} else if( !event.isPre() && !expectPre ){
+				expectPre = true;
+				log
 						.info("Size of DataContainer: " + this.dataContainer.size());
-				DataPlacementManager.log.info("Doing postphase testing! sentObjectList size:"
+				log.info("Doing postphase testing! sentObjectList size:"
 						+ this.sentObjectList.size());
-				DataPlacementManager.log.info("sentObjectsList: " + this.sentObjectList);
-				DataPlacementManager.log.info("topremoteget: " + this.analyticsBean
+				log.info("sentObjectsList: " + this.sentObjectList);
+				log.info("topremoteget: " + this.analyticsBean
 						.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 								this.analyticsBean.getCapacity()));
-				for (Pair<String, Integer> pair : this.sentObjectList) {
-					if (this.dataContainer.containsKey(pair.left)) {
-						DataPlacementManager.log.error("POST PHASE VALIDATING: Still contains key:"
-								+ pair.left);
+				//Check if there are some keys not moved out (that should be moved).
+				for (Entry<String, Pair<Integer,Integer>> entry : this.sentObjectList.entrySet()) {
+					if (this.dataContainer.containsKey(entry.getKey())) {
+						DataPlacementManager.log.error("postphase checking: Still contains key:"
+								+ entry.getKey());
+					}
+					else{
+						++entry.getValue().right;
+						sentObjectList.put(entry.getKey(),entry.getValue());
 					}
 				}
+				log.info("Sent List Size: "+sentObjectList.size());
+				
+				log.info("Adding moved-in list");
+				
+				//Add moved-in keys into the list
+				for (Object key : requestSentList){
+					if(dataContainer.containsKey(key)){
+						movedInList.add(key);
+					}
+					analyticsBean.resetAll();
+				}
+				
+				log.info(requestSentList.toString());
 			}
 		} else {
-			DataPlacementManager.log.info("keyMovementTest not triggered!");
+			DataPlacementManager.log.info("KeyMovementTest not triggered!");
 		}
 	}
 
+	class WaitingPopulationTask extends TimerTask {
+		@Override
+		public void run() {
+			if(dataContainer.size() == preDataContainerSize){
+				log.info("Start data placment request!");
+				dataPlaceTimer = new Timer();
+				dataPlaceTimer.schedule(new DataPlaceRequestTask(), 120000, 120000);
+				popuTimer.cancel();
+			}
+			else{
+				preDataContainerSize = dataContainer.size();
+				log.info("Still running popultion!");
+			}
+		}
+	}
+	
 	class DataPlaceRequestTask extends TimerTask {
 		@Override
 		public void run() {

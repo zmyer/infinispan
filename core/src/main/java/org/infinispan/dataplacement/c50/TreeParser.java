@@ -4,6 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.StringTokenizer;
 
+import org.infinispan.dataplacement.lookup.ObjectLookUpper;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
+
 import com.clearspring.analytics.util.Pair;
 
 public class TreeParser {
@@ -11,9 +15,14 @@ public class TreeParser {
 	List<Pair<Integer[], Integer>> values;
 	String rules;
 	
+	private static final Log log = LogFactory
+			.getLog(TreeParser.class);
+	
 	public TreeParser(List<String> rulesFile) {
 		this.treeList = new ArrayList<List<TreeElement>>();
 
+		log.info("Creating tree by rule list");
+		
 		for (String line : rulesFile) {
 			int level = this.parseLevel(line, this.treeList);
 			StringTokenizer tk = new StringTokenizer(line, " :.");
@@ -39,6 +48,8 @@ public class TreeParser {
 			newElement.isLeaf = isLeaf;
 			newElement.result = value;
 		}
+		
+		log.info("Tree creation finished.");
 		// return tree;
 	}
 	

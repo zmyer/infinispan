@@ -7,7 +7,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.clearspring.analytics.util.Pair;
+import org.infinispan.dataplacement.Pair;
+
 
 public class NameSplitter {
 

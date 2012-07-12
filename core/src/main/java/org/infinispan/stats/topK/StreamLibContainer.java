@@ -23,7 +23,7 @@ public class StreamLibContainer {
    private static final StreamLibContainer instance = new StreamLibContainer();
    public static final int MAX_CAPACITY = 30000;
 
-   private int capacity = 10000;
+   private int capacity = 4000;
    private boolean active = false;
 
    private final Map<Stat, StreamSummary<Object>> streamSummaryEnumMap;

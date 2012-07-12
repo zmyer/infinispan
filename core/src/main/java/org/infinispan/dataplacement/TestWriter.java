@@ -16,7 +16,17 @@ public class TestWriter {
     private int receiveCount = 0;
     private int finalResultCounter = 0;
     private String outputFolder ="dpoutput/";
+    private static TestWriter instance = null;
     
+    private TestWriter(){
+    	
+    }
+    
+    public static TestWriter getInstance(){
+    	if( instance == null)
+    		instance = new TestWriter();
+    	return instance;
+    }
     
     public void write(boolean type, Address origin, Map<Object,Long> list){
     	String name;

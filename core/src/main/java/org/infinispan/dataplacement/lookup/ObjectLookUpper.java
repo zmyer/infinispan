@@ -2,14 +2,12 @@ package org.infinispan.dataplacement.lookup;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.infinispan.dataplacement.DataPlacementManager;
 import org.infinispan.dataplacement.Pair;
 import org.infinispan.dataplacement.c50.FileCropper;
 import org.infinispan.dataplacement.c50.NameSplitter;
@@ -17,7 +15,6 @@ import org.infinispan.dataplacement.c50.TreeElement;
 import org.infinispan.dataplacement.c50.TreeParser;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
 
 public class ObjectLookUpper {
 
@@ -41,7 +38,7 @@ public class ObjectLookUpper {
 	public ObjectLookUpper(BloomFilter bf,
 			List<List<TreeElement>> treeList) {
 		this.bf = bf;
-		this.treeParser = new TreeParser(treeList,true);
+		this.treeParser = new TreeParser(treeList, true);
 	}
 
 	/**
@@ -56,7 +53,7 @@ public class ObjectLookUpper {
 			this.populateRules();
 			this.populateBloomFilter(toMoveObj);
 		} catch (IOException e) {
-			log.error(e.toString());
+			ObjectLookUpper.log.error(e.toString());
 		}
 	}
 
@@ -81,9 +78,10 @@ public class ObjectLookUpper {
 		String curDir = System.getProperty("user.dir");
 		Process p = Runtime
 				.getRuntime()
-				.exec(ObjectLookUpper.ML_FOLDER + "/c5.0 -f " + ObjectLookUpper.ML_FOLDER + "/input");// >
+				.exec(ObjectLookUpper.ML_FOLDER + "/c5.0 -f " + ObjectLookUpper.ML_FOLDER
+						+ "/input");// >
 
-		log.info("Reading objects from file");
+		ObjectLookUpper.log.info("Reading objects from file");
 		// Read result and store in a list
 		BufferedReader input = new BufferedReader(new InputStreamReader(
 				p.getInputStream()));
@@ -91,25 +89,25 @@ public class ObjectLookUpper {
 		List<String> inputs = new ArrayList<String>();
 		while ((line = input.readLine()) != null) {
 			inputs.add(line);
-			//log.info(line);
+			// log.info(line);
 		}
 		input.close();
 
-		log.info("Croppering file");
+		ObjectLookUpper.log.info("Croppering file");
 		this.rules = FileCropper.crop(inputs);
 
-		log.info("Creating Tree");
+		ObjectLookUpper.log.info("Creating Tree");
 		// Create Tree
-		try{
-		this.treeParser = new TreeParser(this.rules);
-		} catch(Exception e){
-			log.error("Error in creating tree!", e);
+		try {
+			this.treeParser = new TreeParser(this.rules);
+		} catch (Exception e) {
+			ObjectLookUpper.log.error("Error in creating tree!", e);
 		}
 	}
 
 	public void populateBloomFilter(List<Pair<String, Integer>> toMoveObj) {
-		log.info("Populating Bloom Filter");
-		this.bf = new BloomFilter(toMoveObj.size(), ObjectLookUpper.BF_FALSE_POSITIVE_PROB);
+		ObjectLookUpper.log.info("Populating Bloom Filter");
+		this.bf = new BloomFilter(ObjectLookUpper.BF_FALSE_POSITIVE_PROB, toMoveObj.size());
 		for (Pair<String, Integer> pair : toMoveObj) {
 			this.bf.add(pair.left);
 		}

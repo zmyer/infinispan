@@ -1,113 +1,537 @@
 package org.infinispan.dataplacement.lookup;
 
+/**
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 import java.io.Serializable;
+import java.math.BigInteger;
+import java.nio.charset.Charset;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.BitSet;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Random;
+import java.util.Set;
 
+/**
+ * Implementation of a Bloom-filter, as described here:
+ * http://en.wikipedia.org/wiki/Bloom_filter
+ * 
+ * For updates and bugfixes, see http://github.com/magnuss/java-bloomfilter
+ * 
+ * Inspired by the SimpleBloomFilter-class written by Ian Clarke. This
+ * implementation provides a more evenly distributed Hash-function by using a
+ * proper digest instead of the Java RNG. Many of the changes were proposed in
+ * comments in his blog:
+ * http://blog.locut.us/2008/01/12/a-decent-stand-alone-java
+ * -bloom-filter-implementation/
+ * 
+ * @param <E>
+ *            Object type that is to be inserted into the Bloom filter, e.g.
+ *            String or Integer.
+ * @author Magnus Skjegstad <magnus@skjegstad.com> hacked by jgpaiva to remove
+ *         the Generics
+ */
 public class BloomFilter implements Serializable {
-	private static final long serialVersionUID = 8896890490944539799L;
-	private int numHash, filterSize;
+	private static final long serialVersionUID = 1L;
+
+	public static void main(String[] args) {
+		int nElements = 100000;
+		double fp = 0.001;
+		BloomFilter test = new BloomFilter(fp, nElements);
+		Set<String> insert = new HashSet<String>();
+		Set<String> noInsert = new HashSet<String>();
+		Random random = new Random();
+
+		for (int i = 0; i < nElements; i++) {
+			insert.add(new BigInteger(130, random).toString(32));
+			noInsert.add(new BigInteger(130, random).toString(32));
+		}
+		for (String s : insert) {
+			test.add(s);
+		}
+		for (String s : insert) {
+			if (!test.contains(s)) throw new RuntimeException();
+		}
+		int falsePos = 0;
+		for (String s : noInsert) {
+			if (test.contains(s)) {
+				falsePos++;
+			}
+		}
+
+		int bah = 0;
+		for (String s : noInsert) {
+			if (insert.contains(s)) {
+				bah++;
+			}
+		}
+
+		System.err.println(falsePos);
+		System.err.println(bah);
+	}
+
+	private BitSet bitset;
+	private int bitSetSize;
 	private double bitsPerElement;
-	private BitSet filter;
-	private double falsePositiveRate;
+	private int expectedNumberOfFilterElements; // expected (maximum) number of
+												// elements to be added
+	private int numberOfAddedElements; // number of elements actually added to
+										// the Bloom filter
+	private int k; // number of hash functions
 
-	public BloomFilter(int numElements, double falsePositiveRate) {
-		this.falsePositiveRate = falsePositiveRate;
-		this.bitsPerElement = Math.ceil(Math.log(1 / falsePositiveRate) / Math.pow(Math.log(2), 2));
-		this.numHash = (int) Math.ceil(Math.log(2) * this.bitsPerElement);
+	static final Charset charset = Charset.forName("UTF-8"); // encoding used
+																// for storing
+																// hash values
+																// as strings
 
-		this.filter = new BitSet((int) Math.ceil(this.bitsPerElement * falsePositiveRate));
-		this.filterSize = this.filter.size();
+	static final String hashName = "MD5"; // MD5 gives good enough accuracy in
+											// most circumstances. Change to
+											// SHA1 if it's needed
+	static final MessageDigest digestFunction;
+	static { // The digest method is reused between instances
+		MessageDigest tmp;
+		try {
+			tmp = java.security.MessageDigest.getInstance(BloomFilter.hashName);
+		} catch (NoSuchAlgorithmException e) {
+			tmp = null;
+		}
+		digestFunction = tmp;
 	}
 
-	public int getnumHash() {
-		return this.numHash;
+	/**
+	 * Constructs an empty Bloom filter. The total length of the Bloom filter
+	 * will be c*n.
+	 * 
+	 * @param c
+	 *            is the number of bits used per element.
+	 * @param n
+	 *            is the expected number of elements the filter will contain.
+	 * @param k
+	 *            is the number of hash functions used.
+	 */
+	public BloomFilter(double c, int n, int k) {
+		this.expectedNumberOfFilterElements = n;
+		this.k = k;
+		this.bitsPerElement = c;
+		this.bitSetSize = (int) Math.ceil(c * n);
+		this.numberOfAddedElements = 0;
+		this.bitset = new BitSet(this.bitSetSize);
 	}
 
-	public double falsePositiveRate() {
-		return this.falsePositiveRate;
+	/**
+	 * Constructs an empty Bloom filter. The optimal number of hash functions
+	 * (k) is estimated from the total size of the Bloom and the number of
+	 * expected elements.
+	 * 
+	 * @param bitSetSize
+	 *            defines how many bits should be used in total for the filter.
+	 * @param expectedNumberOElements
+	 *            defines the maximum number of elements the filter is expected
+	 *            to contain.
+	 */
+	public BloomFilter(int bitSetSize, int expectedNumberOElements) {
+		this(bitSetSize / (double) expectedNumberOElements,
+				expectedNumberOElements,
+				(int) Math.round((bitSetSize / (double) expectedNumberOElements) * Math.log(2.0)));
 	}
 
-	public double getBitsPerElement() {
+	/**
+	 * Constructs an empty Bloom filter with a given false positive probability.
+	 * The number of bits per element and the number of hash functions is
+	 * estimated to match the false positive probability.
+	 * 
+	 * @param falsePositiveProbability
+	 *            is the desired false positive probability.
+	 * @param expectedNumberOfElements
+	 *            is the expected number of elements in the Bloom filter.
+	 */
+	public BloomFilter(double falsePositiveProbability, int expectedNumberOfElements) {
+		this(Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2))) / Math.log(2), // c
+																							// =
+																							// k
+																							// /
+																							// ln(2)
+				expectedNumberOfElements,
+				(int) Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2)))); // k
+																						// =
+																						// ceil(-log_2(false
+																						// prob.))
+	}
+
+	/**
+	 * Construct a new Bloom filter based on existing Bloom filter data.
+	 * 
+	 * @param bitSetSize
+	 *            defines how many bits should be used for the filter.
+	 * @param expectedNumberOfFilterElements
+	 *            defines the maximum number of elements the filter is expected
+	 *            to contain.
+	 * @param actualNumberOfFilterElements
+	 *            specifies how many elements have been inserted into the
+	 *            <code>filterData</code> BitSet.
+	 * @param filterData
+	 *            a BitSet representing an existing Bloom filter.
+	 */
+	public BloomFilter(int bitSetSize, int expectedNumberOfFilterElements,
+			int actualNumberOfFilterElements, BitSet filterData) {
+		this(bitSetSize, expectedNumberOfFilterElements);
+		this.bitset = filterData;
+		this.numberOfAddedElements = actualNumberOfFilterElements;
+	}
+
+	/**
+	 * Generates a digest based on the contents of a String.
+	 * 
+	 * @param val
+	 *            specifies the input data.
+	 * @param charset
+	 *            specifies the encoding of the input data.
+	 * @return digest as long.
+	 */
+	public static int createHash(String val, Charset charset) {
+		return BloomFilter.createHash(val.getBytes(charset));
+	}
+
+	/**
+	 * Generates a digest based on the contents of a String.
+	 * 
+	 * @param val
+	 *            specifies the input data. The encoding is expected to be
+	 *            UTF-8.
+	 * @return digest as long.
+	 */
+	public static int createHash(String val) {
+		return BloomFilter.createHash(val, BloomFilter.charset);
+	}
+
+	/**
+	 * Generates a digest based on the contents of an array of bytes.
+	 * 
+	 * @param data
+	 *            specifies input data.
+	 * @return digest as long.
+	 */
+	public static int createHash(byte[] data) {
+		return BloomFilter.createHashes(data, 1)[0];
+	}
+
+	/**
+	 * Generates digests based on the contents of an array of bytes and splits
+	 * the result into 4-byte int's and store them in an array. The digest
+	 * function is called until the required number of int's are produced. For
+	 * each call to digest a salt is prepended to the data. The salt is
+	 * increased by 1 for each call.
+	 * 
+	 * @param data
+	 *            specifies input data.
+	 * @param hashes
+	 *            number of hashes/int's to produce.
+	 * @return array of int-sized hashes
+	 */
+	public static int[] createHashes(byte[] data, int hashes) {
+		int[] result = new int[hashes];
+
+		int k = 0;
+		byte salt = 0;
+		while (k < hashes) {
+			byte[] digest;
+			synchronized (BloomFilter.digestFunction) {
+				BloomFilter.digestFunction.update(salt);
+				salt++;
+				digest = BloomFilter.digestFunction.digest(data);
+			}
+
+			for (int i = 0; i < digest.length / 4 && k < hashes; i++) {
+				int h = 0;
+				for (int j = (i * 4); j < (i * 4) + 4; j++) {
+					h <<= 8;
+					h |= (digest[j]) & 0xFF;
+				}
+				result[k] = h;
+				k++;
+			}
+		}
+		return result;
+	}
+
+	/**
+	 * Compares the contents of two instances to see if they are equal.
+	 * 
+	 * @param obj
+	 *            is the object to compare to.
+	 * @return True if the contents of the objects are equal.
+	 */
+	@Override
+	public boolean equals(Object obj) {
+		if (obj == null) return false;
+		if (this.getClass() != obj.getClass()) return false;
+		final BloomFilter other = (BloomFilter) obj;
+		if (this.expectedNumberOfFilterElements != other.expectedNumberOfFilterElements)
+			return false;
+		if (this.k != other.k) return false;
+		if (this.bitSetSize != other.bitSetSize) return false;
+		if (this.bitset != other.bitset
+				&& (this.bitset == null || !this.bitset.equals(other.bitset))) return false;
+		return true;
+	}
+
+	/**
+	 * Calculates a hash code for this class.
+	 * 
+	 * @return hash code representing the contents of an instance of this class.
+	 */
+	@Override
+	public int hashCode() {
+		int hash = 7;
+		hash = 61 * hash + (this.bitset != null ? this.bitset.hashCode() : 0);
+		hash = 61 * hash + this.expectedNumberOfFilterElements;
+		hash = 61 * hash + this.bitSetSize;
+		hash = 61 * hash + this.k;
+		return hash;
+	}
+
+	/**
+	 * Calculates the expected probability of false positives based on the
+	 * number of expected filter elements and the size of the Bloom filter. <br />
+	 * <br />
+	 * The value returned by this method is the <i>expected</i> rate of false
+	 * positives, assuming the number of inserted elements equals the number of
+	 * expected elements. If the number of elements in the Bloom filter is less
+	 * than the expected value, the true probability of false positives will be
+	 * lower.
+	 * 
+	 * @return expected probability of false positives.
+	 */
+	public double expectedFalsePositiveProbability() {
+		return this.getFalsePositiveProbability(this.expectedNumberOfFilterElements);
+	}
+
+	/**
+	 * Calculate the probability of a false positive given the specified number
+	 * of inserted elements.
+	 * 
+	 * @param numberOfElements
+	 *            number of inserted elements.
+	 * @return probability of a false positive.
+	 */
+	public double getFalsePositiveProbability(double numberOfElements) {
+		// (1 - e^(-k * n / m)) ^ k
+		return Math.pow((1 - Math.exp(-this.k * numberOfElements
+				/ this.bitSetSize)), this.k);
+
+	}
+
+	/**
+	 * Get the current probability of a false positive. The probability is
+	 * calculated from the size of the Bloom filter and the current number of
+	 * elements added to it.
+	 * 
+	 * @return probability of false positives.
+	 */
+	public double getFalsePositiveProbability() {
+		return this.getFalsePositiveProbability(this.numberOfAddedElements);
+	}
+
+	/**
+	 * Returns the value chosen for K.<br />
+	 * <br />
+	 * K is the optimal number of hash functions based on the size of the Bloom
+	 * filter and the expected number of inserted elements.
+	 * 
+	 * @return optimal k.
+	 */
+	public int getK() {
+		return this.k;
+	}
+
+	/**
+	 * Sets all bits to false in the Bloom filter.
+	 */
+	public void clear() {
+		this.bitset.clear();
+		this.numberOfAddedElements = 0;
+	}
+
+	/**
+	 * Adds an object to the Bloom filter. The output from the object's
+	 * toString() method is used as input to the hash functions.
+	 * 
+	 * @param element
+	 *            is an element to register in the Bloom filter.
+	 */
+	public void add(String element) {
+		this.add(element.toString().getBytes(BloomFilter.charset));
+	}
+
+	/**
+	 * Adds an array of bytes to the Bloom filter.
+	 * 
+	 * @param bytes
+	 *            array of bytes to add to the Bloom filter.
+	 */
+	public void add(byte[] bytes) {
+		int[] hashes = BloomFilter.createHashes(bytes, this.k);
+		for (int hash : hashes) {
+			this.bitset.set(Math.abs(hash % this.bitSetSize), true);
+		}
+		this.numberOfAddedElements++;
+	}
+
+	/**
+	 * Adds all elements from a Collection to the Bloom filter.
+	 * 
+	 * @param c
+	 *            Collection of elements.
+	 */
+	public void addAll(Collection<String> c) {
+		for (String element : c) {
+			this.add(element);
+		}
+	}
+
+	/**
+	 * Returns true if the element could have been inserted into the Bloom
+	 * filter. Use getFalsePositiveProbability() to calculate the probability of
+	 * this being correct.
+	 * 
+	 * @param element
+	 *            element to check.
+	 * @return true if the element could have been inserted into the Bloom
+	 *         filter.
+	 */
+	public boolean contains(String element) {
+		return this.contains(element.getBytes(BloomFilter.charset));
+	}
+
+	/**
+	 * Returns true if the array of bytes could have been inserted into the
+	 * Bloom filter. Use getFalsePositiveProbability() to calculate the
+	 * probability of this being correct.
+	 * 
+	 * @param bytes
+	 *            array of bytes to check.
+	 * @return true if the array could have been inserted into the Bloom filter.
+	 */
+	public boolean contains(byte[] bytes) {
+		int[] hashes = BloomFilter.createHashes(bytes, this.k);
+		for (int hash : hashes) {
+			if (!this.bitset.get(Math.abs(hash % this.bitSetSize))) return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Returns true if all the elements of a Collection could have been inserted
+	 * into the Bloom filter. Use getFalsePositiveProbability() to calculate the
+	 * probability of this being correct.
+	 * 
+	 * @param c
+	 *            elements to check.
+	 * @return true if all the elements in c could have been inserted into the
+	 *         Bloom filter.
+	 */
+	public boolean containsAll(Collection<String> c) {
+		for (String element : c)
+			if (!this.contains(element))
+				return false;
+		return true;
+	}
+
+	/**
+	 * Read a single bit from the Bloom filter.
+	 * 
+	 * @param bit
+	 *            the bit to read.
+	 * @return true if the bit is set, false if it is not.
+	 */
+	public boolean getBit(int bit) {
+		return this.bitset.get(bit);
+	}
+
+	/**
+	 * Set a single bit in the Bloom filter.
+	 * 
+	 * @param bit
+	 *            is the bit to set.
+	 * @param value
+	 *            If true, the bit is set. If false, the bit is cleared.
+	 */
+	public void setBit(int bit, boolean value) {
+		this.bitset.set(bit, value);
+	}
+
+	/**
+	 * Return the bit set used to store the Bloom filter.
+	 * 
+	 * @return bit set representing the Bloom filter.
+	 */
+	public BitSet getBitSet() {
+		return this.bitset;
+	}
+
+	/**
+	 * Returns the number of bits in the Bloom filter. Use count() to retrieve
+	 * the number of inserted elements.
+	 * 
+	 * @return the size of the bitset used by the Bloom filter.
+	 */
+	public int size() {
+		return this.bitSetSize;
+	}
+
+	/**
+	 * Returns the number of elements added to the Bloom filter after it was
+	 * constructed or after clear() was called.
+	 * 
+	 * @return number of elements added to the Bloom filter.
+	 */
+	public int count() {
+		return this.numberOfAddedElements;
+	}
+
+	/**
+	 * Returns the expected number of elements to be inserted into the filter.
+	 * This value is the same value as the one passed to the constructor.
+	 * 
+	 * @return expected number of elements.
+	 */
+	public int getExpectedNumberOfElements() {
+		return this.expectedNumberOfFilterElements;
+	}
+
+	/**
+	 * Get expected number of bits per element when the Bloom filter is full.
+	 * This value is set by the constructor when the Bloom filter is created.
+	 * See also getBitsPerElement().
+	 * 
+	 * @return expected number of bits per element.
+	 */
+	public double getExpectedBitsPerElement() {
 		return this.bitsPerElement;
 	}
 
-	public double getFilterSize() {
-		return this.filterSize;
-	}
-
-	public boolean contains(byte[] elementId) {
-		int hash1 = this.murmurHash(elementId, elementId.length, 0);
-		int hash2 = this.murmurHash(elementId, elementId.length, hash1);
-		for (int i = 0; i < this.numHash; i++) {
-			if (!this.filter.get(Math.abs((hash1 + i * hash2) % this.filterSize)))
-				return false;
-		}
-		return true;
-	}
-
-	public boolean contains(String str) {
-		return this.contains(str.getBytes());
-	}
-
-	public boolean add(byte[] elementId) {
-		int hash1 = this.murmurHash(elementId, elementId.length, 0);
-		int hash2 = this.murmurHash(elementId, elementId.length, hash1);
-		for (int i = 0; i < this.numHash; i++) {
-			this.filter.set(Math.abs((hash1 + i * hash2) % this.filterSize), true);
-		}
-		return true;
-	}
-
-	public void add(String str) {
-		this.add(str.getBytes());
-	}
-
-	private int murmurHash(byte[] data, int length, int seed) {
-		int m = 0x5bd1e995;
-		int r = 24;
-
-		int h = seed ^ length;
-
-		int len_4 = length >> 2;
-
-		for (int i = 0; i < len_4; i++) {
-			int i_4 = i << 2;
-			int k = data[i_4 + 3];
-			k = k << 8;
-			k = k | (data[i_4 + 2] & 0xff);
-			k = k << 8;
-			k = k | (data[i_4 + 1] & 0xff);
-			k = k << 8;
-			k = k | (data[i_4 + 0] & 0xff);
-			k *= m;
-			k ^= k >>> r;
-			k *= m;
-			h *= m;
-			h ^= k;
-		}
-
-		// avoid calculating modulo
-		int len_m = len_4 << 2;
-		int left = length - len_m;
-
-		if (left != 0) {
-			if (left >= 3) {
-				h ^= data[length - 3] << 16;
-			}
-			if (left >= 2) {
-				h ^= data[length - 2] << 8;
-			}
-			if (left >= 1) {
-				h ^= data[length - 1];
-			}
-
-			h *= m;
-		}
-
-		h ^= h >>> 13;
-		h *= m;
-		h ^= h >>> 15;
-
-		return h;
+	/**
+	 * Get actual number of bits per element based on the number of elements
+	 * that have currently been inserted and the length of the Bloom filter. See
+	 * also getExpectedBitsPerElement().
+	 * 
+	 * @return number of bits per element.
+	 */
+	public double getBitsPerElement() {
+		return this.bitSetSize / (double) this.numberOfAddedElements;
 	}
 }

@@ -23,7 +23,7 @@ public class StreamLibContainer {
    private static final StreamLibContainer instance = new StreamLibContainer();
    public static final int MAX_CAPACITY = 30000;
 
-   private int capacity = 4000;
+   private int CAPACITY = 4000;
    private boolean active = false;
 
    private final Map<Stat, StreamSummary<Object>> streamSummaryEnumMap;
@@ -67,14 +67,14 @@ public class StreamLibContainer {
 
    public void setCapacity(int capacity) {
       if(capacity <= 0) {
-         this.capacity = 1;
+         this.CAPACITY = 1;
       } else {
-         this.capacity = capacity;
+         this.CAPACITY = capacity;
       }
    }
    
    public int getCapacity(){
-	   return capacity;
+	   return CAPACITY;
    }
 
    public void addGet(Object key, boolean remote) {
@@ -112,7 +112,7 @@ public class StreamLibContainer {
    }
 
    public Map<Object, Long> getTopKFrom(Stat stat) {
-      return getTopKFrom(stat, capacity);
+      return getTopKFrom(stat, CAPACITY);
    }
 
    public Map<Object, Long> getTopKFrom(Stat stat, int topK) {
@@ -150,7 +150,7 @@ public class StreamLibContainer {
    }
 
    private StreamSummary<Object> createNewStreamSummary() {
-      return new StreamSummary<Object>(Math.max(MAX_CAPACITY, capacity));
+      return new StreamSummary<Object>(Math.max(MAX_CAPACITY, CAPACITY));
    }
 
    private void clearAll() {

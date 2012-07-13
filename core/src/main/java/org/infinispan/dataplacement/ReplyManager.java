@@ -46,9 +46,10 @@ public class ReplyManager {
 	private TestWriter writer = TestWriter.getInstance();
 	private DataPlacementManager dataPlacementManager;
 	
-	public ReplyManager(CacheViewsManager cacheViewsManager,DistributedStateTransferManagerImpl  stateTransfer,
+	public ReplyManager(CommandsFactory commandsFactory,CacheViewsManager cacheViewsManager,DistributedStateTransferManagerImpl  stateTransfer,
 			RpcManager rpcManager, DataContainer dataContainer, String cacheName, DataPlacementManager dataPlacementManager){
 		analyticsBean = StreamLibContainer.getInstance();
+		this.commandsFactory = commandsFactory; 
 		this.stateTransfer = stateTransfer;
 		this.cacheViewsManager = cacheViewsManager;
 		this.rpcManager = rpcManager;
@@ -104,15 +105,17 @@ public class ReplyManager {
 		log.info("Writing result");
 		//writer.writeResult(currentRoundList);
 
-		for(Pair<String, Integer> pair : currentRoundSentObjects){
-			Pair<Integer,Integer> temp = sentObjects.get(pair.left);
-		    if(temp == null)
-			 sentObjects.put(pair.left, new Pair<Integer, Integer>(pair.right,1));		  	
-		    else
-		      ++temp.right;
-		    // log.warn("Try to move object twice!");
-		}
+//		for(Pair<String, Integer> pair : currentRoundSentObjects){
+//			Pair<Integer,Integer> temp = sentObjects.get(pair.left);
+//		    if(temp == null)
+//			 sentObjects.put(pair.left, new Pair<Integer, Integer>(pair.right,1));		  	
+//		    else
+//		      ++temp.right;
+//		    // log.warn("Try to move object twice!");
+//		}
 		
+		
+		log.info("Sent Objects:"+sentObjects.size());
 		log.info("Populate All");
 
 		ObjectLookUpper lookUpper = new ObjectLookUpper(currentRoundSentObjects);
@@ -179,6 +182,7 @@ public class ReplyManager {
 	 */
 	public List<Pair<String, Integer>> generateFinalList(
 			Map<Object, Pair<Long, Integer>> fullRequestList) {
+		log.info("Generating final list");
 		List<Pair<String, Integer>> resultList = new ArrayList<Pair<String, Integer>>();
 		Map<Object, Long> localGetList = this.analyticsBean.getTopKFrom(
 				StreamLibContainer.Stat.LOCAL_GET, this.analyticsBean.getCapacity());
@@ -209,6 +213,7 @@ public class ReplyManager {
 	
 	public void sendLookUpper(BloomFilter simpleBloomFilter,
 			List<List<TreeElement>> treeList) {
+		log.info("Sending LookUpper");
 		DataPlacementReplyCommand command = this.commandsFactory
 				.buildDataPlacementReplyCommand();
 		command.init(dataPlacementManager);
@@ -216,6 +221,7 @@ public class ReplyManager {
 		command.putBloomFilter(simpleBloomFilter);
 		command.putTreeElement(treeList);
 
+		log.info("Building ML Hash");
 		this.buildMLHashAndAck(this.rpcManager.getAddress(), simpleBloomFilter, treeList);
 
 		try {
@@ -231,9 +237,9 @@ public class ReplyManager {
 			this.stateTransfer.setLookUpper(address, new ObjectLookUpper(bf,
 					treeList));
 			++this.lookUpperNumber;
-		}
+		//}
 		log.info("Look Upper Set: " + this.lookUpperNumber);
-		synchronized (this.lookUpperLock) {
+		//synchronized (this.lookUpperLock) {
 			if (this.lookUpperNumber == this.addressList.size()) {
 				this.lookUpperNumber = 0;
 				this.sendAck(this.rpcManager.getTransport().getCoordinator());
@@ -269,7 +275,7 @@ public class ReplyManager {
 	}
 	
 	public void prePhaseTest(){
-		log.info("Size of DataContainer: " + dataContainer.size());
+		//log.info("DataContainer: " + dataContainer.entrySet());
 		log.info("Doing prephase testing! sentObjectList size:"
 				+ sentObjects.size());
 		log.info("Doing prephase testing! Current Round Sent Object size:"
@@ -278,8 +284,8 @@ public class ReplyManager {
 		log.info("topremoteget: " + analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 						this.analyticsBean.getCapacity()));
 		for (Pair<String,Integer> pair : currentRoundSentObjects) {
-			if (!this.dataContainer.containsKey(pair.left)) {
-				log.error("prephase checking: Does't contains key:"
+			if (sentObjects.containsKey(pair.left) == false &&!this.dataContainer.containsKey(pair.left)) {
+				log.error("prephase checking: Doesn't contains key:"
 						+ pair.left);
 			}
 		}
@@ -293,17 +299,31 @@ public class ReplyManager {
 		log.info("topremoteget: " + this.analyticsBean
 				.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 						this.analyticsBean.getCapacity()));
+	
+		
+		for(Pair<String, Integer> pair : currentRoundSentObjects){
+			Pair<Integer,Integer> temp = sentObjects.get(pair.left);
+		    if(temp == null)
+			 sentObjects.put(pair.left, new Pair<Integer, Integer>(pair.right,1));		  	
+		    else{
+		      ++temp.right;
+		      log.warn("Try to move object twice!");
+		    }
+		}
+		
 		//Check if there are some keys not moved out (that should be moved).
 		for (Entry<String, Pair<Integer,Integer>> entry : this.sentObjects.entrySet()) {
 			if (this.dataContainer.containsKey(entry.getKey())) {
 				log.error("postphase checking: Still contains key:"
 						+ entry.getKey());
 			}
-			//else{
-			//	++entry.getValue().right;
-			//	sentObjectList.put(entry.getKey(),entry.getValue());
-			//}
+		
+			else{
+				++entry.getValue().right;
+				sentObjects.put(entry.getKey(),entry.getValue());
+			}
 		}
+		
 //		log.info("Request List Size: "+requestSentList.size());
 //		log.info("Movedin List Size: "+ movedInList.size());
 //		

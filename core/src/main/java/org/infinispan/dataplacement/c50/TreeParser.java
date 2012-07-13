@@ -49,7 +49,7 @@ public class TreeParser {
 			newElement.result = value;
 		}
 		
-		log.info("Tree creation finished.");
+		log.info("Tree creation finished." + treeList.size());
 		// return tree;
 	}
 	

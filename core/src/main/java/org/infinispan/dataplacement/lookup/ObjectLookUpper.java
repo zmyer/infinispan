@@ -91,6 +91,7 @@ public class ObjectLookUpper {
 		List<String> inputs = new ArrayList<String>();
 		while ((line = input.readLine()) != null) {
 			inputs.add(line);
+			//log.info(line);
 		}
 		input.close();
 

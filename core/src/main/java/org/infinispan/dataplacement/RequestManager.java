@@ -28,17 +28,20 @@ public class RequestManager {
 		private static final Log log = LogFactory
 			.getLog(RequestManager.class);
 		
+	private List<Address> addressList;
+	private Set<Object> movedInList = new HashSet<Object>();
 	private Set<Object> requestSentList = new HashSet<Object>();
+	private Integer requestRound = 0, replyRound = 0;
+	
 	private CommandsFactory commandsFactory;
 	private RpcManager rpcManager;
-	private Integer requestRound = 0, replyRound = 0;
 	private DistributionManager distributionManager;
 	private DistributedStateTransferManagerImpl stateTransfer;
 	private String cacheName;
-	private List<Address> addressList;
 	private DataContainer dataContainer;
 	private DataPlacementManager dataPlacementManager;
-	private Set<Object> movedInList = new HashSet<Object>();
+	
+
 	//private List<Pair<Integer, Map<Object, Long>>> requestReceivedList = new ArrayList<Pair<Integer, Map<Object, Long>>>();
 	
 	
@@ -69,13 +72,38 @@ public class RequestManager {
 			
 			Map<Object, Long> localGet = getStasticsForMovedInObj();
 			log.info("Moved In Object Size:"+localGet.size());
+			
+			Map<Address, Map<Object, Long>> testList  = sortObjectsByOwner(localGet,true);
+			log.info("DEFAULT: Local List Sorting: Number of owner"+ testList.size());
+			for(Entry<Address,Map<Object, Long>> map : testList.entrySet()){
+				log.info(map.getKey() +": Size of list"+ map.getValue().size());
+			}
+			
+			testList  = sortObjectsByOwner(remoteGet,true );
+			log.info("DEFAULT: Remote List Sorting: Number of owner"+ testList.size());
+			for(Entry<Address,Map<Object, Long>> map : testList.entrySet()){
+				log.info(map.getKey() +": Size of list"+ map.getValue().size());
+			}
+			
+			
+			testList  = sortObjectsByOwner(localGet, false);
+			log.info("MLHASH: Local List Sorting: Number of owner"+ testList.size());
+			for(Entry<Address,Map<Object, Long>> map : testList.entrySet()){
+				log.info(map.getKey() +": Size of list"+ map.getValue().size());
+			}
+			
+			testList  = sortObjectsByOwner(remoteGet, false);
+			log.info("MLHASH: Remote List Sorting: Number of owner"+ testList.size());
+			for(Entry<Address,Map<Object, Long>> map : testList.entrySet()){
+				log.info(map.getKey() +": Size of list"+ map.getValue().size());
+			}
+			
+			
+			
 			remoteGet.putAll(localGet);
-			log.info("Merged List Size:"+remoteGet.size());
-			Map<Address, Map<Object, Long>> topGetPerOwnerList = sortObjectsByOwner(remoteGet);
-			
 			requestSentList = remoteGet.keySet();
-			
-			log.info("Size of list is ");
+			log.info("Merged List Size:"+remoteGet.size());
+			Map<Address, Map<Object, Long>> topGetPerOwnerList = sortObjectsByOwner(remoteGet,true);
 
 			for (Entry<Address, Map<Object, Long>> entry : topGetPerOwnerList
 					.entrySet()) {
@@ -97,13 +125,12 @@ public class RequestManager {
 		DataPlacementRequestCommand command = commandsFactory
 				.buildDataPlacementRequestCommand();
 		command.init(dataPlacementManager, this.distributionManager);
-		log.info("Putting Message with size " + remoteTopList.size());
 		command.putRemoteList(remoteTopList, this.requestRound);
 		if (!this.rpcManager.getAddress().toString().equals(owner)) {
 			try {
 				this.rpcManager.invokeRemotely(Collections.singleton(owner),
 						command, false);
-				log.info("Message sent to " + owner);
+				log.info("Putting Message with size " + remoteTopList.size()+" to "+ owner);
 				writer.write(true, null, remoteTopList);
 			} catch (Throwable throwable) {
 				log.error(throwable.toString());
@@ -133,7 +160,7 @@ public class RequestManager {
 				tempList.add(key);
 		}
 		
-		log.info("Movedin Object list size :"+movedInList);
+		log.info("Movedin Object list size :"+movedInList.size());
 		log.info("Min Access Num is:"+minAccess);
 		log.info("Number of objects moved in but not in local top list:"+tempList.size());
 		for(Object key : tempList){
@@ -145,9 +172,9 @@ public class RequestManager {
 	
 	
 	private Map<Address, Map<Object, Long>> sortObjectsByOwner(
-			Map<Object, Long> remoteGet) {
+			Map<Object, Long> remoteGet, boolean useDefaultHash) {
 		Map<Address, Map<Object, Long>> objectLists = new HashMap<Address, Map<Object, Long>>();
-		Map<Object, List<Address>> mappedObjects = getConsistentHashingFunction().locateAll(remoteGet.keySet(), 1);
+		Map<Object, List<Address>> mappedObjects = getConsistentHashingFunction(useDefaultHash).locateAll(remoteGet.keySet(), 1);
 
 		Address addr = null;
 		Object key = null;
@@ -161,29 +188,14 @@ public class RequestManager {
 			}
 			objectLists.get(addr).put(entry.getKey(), entry.getValue());
 		}
+		
+		log.info("Own number of movedin object after sorting:"+objectLists.size());
 
 		return objectLists;
 	}
 	
 	public void postPhaseTest(){
-//		log.info("Size of DataContainer: " + this.dataContainer.size());
-//		log.info("Doing postphase testing! sentObjectList size:"
-//				+ this.sentObjectList.size());
-//		log.info("sentObjectsList: " + this.sentObjectList);
-//		log.info("topremoteget: " + this.analyticsBean
-//				.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
-//						this.analyticsBean.getCapacity()));
-//		//Check if there are some keys not moved out (that should be moved).
-//		for (Entry<String, Pair<Integer,Integer>> entry : this.sentObjectList.entrySet()) {
-//			if (this.dataContainer.containsKey(entry.getKey())) {
-//				DataPlacementManager.log.error("postphase checking: Still contains key:"
-//						+ entry.getKey());
-//			}
-//			else{
-//				++entry.getValue().right;
-//				sentObjectList.put(entry.getKey(),entry.getValue());
-//			}
-//		}
+		
 		log.info("Request List Size: "+requestSentList.size());
 		log.info("Movedin List Size: "+ movedInList.size());
 		
@@ -210,51 +222,39 @@ public class RequestManager {
 		}
 		log.info("Moved In List size after merge is:"+movedInList.size());
 		analyticsBean.resetAll();
+		log.info(analyticsBean
+				.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
+						analyticsBean.getCapacity()).size());
 		
-		log.info(requestSentList.toString());
+		log.info(analyticsBean
+				.getTopKFrom(StreamLibContainer.Stat.LOCAL_GET,
+						analyticsBean.getCapacity()).size());
+		
+		log.info("Request Sent List:"+requestSentList.toString());
 	}
+
 	
-//	public boolean aggregateResult(Address sender,
-//			Map<Object, Long> objectRequest, Integer roundID){
-//		
-//		try {
-//			if (this.rpcManager.getTransport().getMembers().size() != this.addressList
-//					.size()) {
-//				this.addressList = this.rpcManager.getTransport().getMembers();
-//				this.stateTransfer.setCachesList(this.addressList);
-//			}
-//
-//			Integer senderID = this.addressList.indexOf(sender);
-//			log.info("Getting message of round " + roundID + " from node"
-//					+ sender);
-//
-//			if (roundID == this.replyRound) {
-//				this.requestReceivedList.add(new Pair<Integer, Map<Object, Long>>(
-//						senderID, objectRequest));
-//			}
-//
-//			this.writer.write(false, sender, objectRequest);
-//			
-//			if (this.addressList.size() - this.requestReceivedList.size() == 1) {
-//				return true;
-//			}
-//			else 
-//			{
-//				log.info("Gathering request... has received from"
-//						+ this.requestReceivedList.size() + " nodes");
-//				return false;
-//			}
-//		} catch (Exception e) {
-//			log.error(e.toString());
-//			return false;
-//		}	
-//	}
-	
-	public ConsistentHash getConsistentHashingFunction() {
+	public ConsistentHash getConsistentHashingFunction(boolean useDefaultHash) {
 	ConsistentHash hash = this.distributionManager.getConsistentHash();
-	if (hash instanceof MachineLearningConsistentHashing)
-		return ((MachineLearningConsistentHashing) hash).getDefaultHash();
-	else
+	if (hash instanceof MachineLearningConsistentHashing){
+		if(useDefaultHash){
+			log.info("Returning default hash of MLHash");
+		   return ((MachineLearningConsistentHashing) hash).getDefaultHash();
+		}
+	     else{
+	    	 log.info("Returning MLHash");
+		   return hash;
+	     }
+	}
+	else{
+		if(useDefaultHash){
+			log.info("Returning default hash");
+		}
+	     else{
+	    	 log.info("No MLHashing!");
+	     }
+		log.info("Returning normal hash");
 		return hash;
+	}
     }
 }

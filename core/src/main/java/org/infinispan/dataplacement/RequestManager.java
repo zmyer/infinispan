@@ -41,10 +41,6 @@ public class RequestManager {
 	private DataContainer dataContainer;
 	private DataPlacementManager dataPlacementManager;
 	
-
-	//private List<Pair<Integer, Map<Object, Long>>> requestReceivedList = new ArrayList<Pair<Integer, Map<Object, Long>>>();
-	
-	
 	private TestWriter writer = TestWriter.getInstance();
 	
 	public RequestManager(CommandsFactory commandsFactory, RpcManager rpcManager, DistributionManager distributionManager, 
@@ -59,6 +55,8 @@ public class RequestManager {
 		analyticsBean = StreamLibContainer.getInstance();
 	}
 
+	//!TODO I'm still just sending the remote top get! If remote top put is really need, could just add
+	//a new variable inside DataPlacementRequestCommand
 	public Map<Object,Long> sendRequestToAll(){
 		Map<Object, Long> remoteGet = analyticsBean
 				.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
@@ -97,6 +95,8 @@ public class RequestManager {
 				}
 			}
 			
+			//Have to return a request to myself. Because the node itself may later need
+			// that object, and command will not be sent to the node itself
 			if(topGetPerOwnerList.containsKey(rpcManager.getAddress())){
 				log.info("Returning request of my own");
 				return topGetPerOwnerList.get(rpcManager.getAddress());
@@ -112,6 +112,7 @@ public class RequestManager {
 	public void increaseRoundID(){
 		++this.requestRound;
 	}
+	
 	
 	private void sendRequest(Address owner, Map<Object, Long> remoteTopList) {
 
@@ -133,7 +134,12 @@ public class RequestManager {
 		}
 	}
 	
-	
+	/*
+	 *  Get the access number for all moved in keys.
+	 *  If they are in the top local list, their access numer is just what is in the top local list;
+	 *  Otherwise, estimate their access numbers as the minimum value of the access number of any movedin key 
+	 *  in the top local list.
+	 */
 	public Map<Object, Long> getStasticsForMovedInObj(){
 		Map<Object, Long> localGetRealStatics = this.analyticsBean
 				.getTopKFrom(StreamLibContainer.Stat.LOCAL_GET,
@@ -142,8 +148,12 @@ public class RequestManager {
 		Map<Object, Long> localGetEstStatics = new HashMap<Object,Long>();
 		List<Object> tempList = new ArrayList<Object>();
 		Long minAccess = Long.MAX_VALUE;
+		
 		for(Object key: movedInList){
 			Long accessNum = localGetRealStatics.get(key);
+			
+			//If the movedin key is in the local top get list, then put it in
+			// the list and also update the access number.
 			if( accessNum != null){
 				localGetEstStatics.put(key, accessNum);
 				if(accessNum < minAccess)
@@ -152,6 +162,10 @@ public class RequestManager {
 			else
 				tempList.add(key);
 		}
+		
+		//If not found any in the local top list, set minaccess to 1.
+		if(minAccess == Long.MAX_VALUE)
+			minAccess = new Long(1);
 		
 		log.info("Movedin Object list size :"+movedInList.size());
 		log.info("Min Access Num is:"+minAccess);
@@ -193,6 +207,10 @@ public class RequestManager {
 		return objectLists;
 	}
 	
+	
+	/*
+	 *  Try to add keys that was requested and have been moved in in the last round
+	 */
 	public void postPhaseTest(){
 		
 		log.info("Request List Size: "+requestSentList.size());
@@ -203,7 +221,7 @@ public class RequestManager {
 		log.info("Moved In List size before deleting is:"+movedInList.size());
 		
 		Set<Object> tempSet = new HashSet<Object>();
-		//Add moved-in keys into the list
+		//Delete keys that are moved out in this round. Use temp list to avoid concurrent update..
 		for (Object key : movedInList){	
 			if(dataContainer.containsKey(key)){
 				tempSet.add(key);
@@ -220,6 +238,8 @@ public class RequestManager {
 			}
 		}
 		log.info("Moved In List size after merge is:"+movedInList.size());
+		
+		//Clean up- the local and remote top get list 
 		analyticsBean.resetAll();
 		log.info(analyticsBean
 				.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,

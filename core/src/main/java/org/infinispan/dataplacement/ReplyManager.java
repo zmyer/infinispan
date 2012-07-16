@@ -27,6 +27,8 @@ public class ReplyManager {
 	
 
 	private static final Log log = LogFactory.getLog(ReplyManager.class);
+	
+	//Lock to avoid concurrent update to ack and lookup
 	private Object lookUpperLock = new Object(), ackLock = new Object();
 	private StreamLibContainer analyticsBean;
 	private DistributedStateTransferManagerImpl stateTransfer;
@@ -35,7 +37,9 @@ public class ReplyManager {
 	private CommandsFactory commandsFactory;
 	private RpcManager rpcManager;
 	private List<Pair<String, Integer>> currentRoundFinalObjects;
+	//The object that were sent out. The left of pair is the destination, the right is the number that it is moved
 	private Map<String, Pair<Integer, Integer>> allSentObjects = new HashMap<String, Pair<Integer, Integer>>();
+	//All request to objects received in this round
 	private List<Pair<Integer, Map<Object, Long>>> requestReceivedList = new ArrayList<Pair<Integer, Map<Object, Long>>>();
 
 	private Integer requestRound = 0,replyRound = 0;
@@ -65,6 +69,7 @@ public class ReplyManager {
 			Map<Object, Long> objectRequest, Integer roundID){
 		
 		try {
+			//If the membership has changed. Upate it
 			if (this.rpcManager.getTransport().getMembers().size() != this.addressList
 					.size()) {
 				this.addressList = this.rpcManager.getTransport().getMembers();
@@ -79,6 +84,8 @@ public class ReplyManager {
 				this.requestReceivedList.add(new Pair<Integer, Map<Object, Long>>(
 						senderID, objectRequest));
 			}
+			else
+				log.warn("Receiving message of different round.");
 
 			writer.getInstance().write(false, sender, objectRequest);
 			
@@ -97,6 +104,8 @@ public class ReplyManager {
 		}	
 	}
 		
+	
+	
     public void sendReplyToAll(){
 		this.addressList = this.rpcManager.getTransport().getMembers();
 		
@@ -133,7 +142,7 @@ public class ReplyManager {
 				++bfErrorCount;
 			}
 		}
-		log.warn("Error of BF before sending :"+bfErrorCount);
+		log.warn("Error of look upper before sending :"+bfErrorCount);
 		
 		this.sendLookUpper(lookUpper.getBloomFilter(),
 				lookUpper.getTreeList());
@@ -203,7 +212,7 @@ public class ReplyManager {
 		// analyticsBean.getTopKFrom(AnalyticsBean.Stat.LOCAL_PUT,
 		// analyticsBean.getCapacity());
 
-		// !TODO Has to modify back for better efficiency
+		// !TODO Has to modify for better efficiency after debugging
 		int failedConflict = 0, succeededConflict = 0;
 		for (Entry<Object, Pair<Long, Integer>> entry : fullRequestList
 				.entrySet()) {
@@ -253,6 +262,7 @@ public class ReplyManager {
 		//}
 		log.info("Look Upper Set: " + this.lookUpperNumber);
 		//synchronized (this.lookUpperLock) {
+		//If has received all the lookuppers from all nodes, it will send ack to the coordinator
 			if (this.lookUpperNumber == this.addressList.size()) {
 				this.lookUpperNumber = 0;
 				this.sendAck(this.rpcManager.getTransport().getCoordinator());
@@ -281,7 +291,6 @@ public class ReplyManager {
 			if (this.hasAckedNumber == this.rpcManager.getTransport().getMembers().size() - 1) {
 				log.info("Start moving keys.");
 				this.hasAckedNumber = 0;
-				String s = "";
 				this.cacheViewsManager.handleRequestMoveKeys(this.cacheName);
 			}
 		}
@@ -304,6 +313,9 @@ public class ReplyManager {
 		}
 	}
 	
+	/*
+	 * Test if keys are moved out as expected
+	 */
 	public void postPhaseTest(){
 		log.info("Doing postphase testing!");
 		log.info("Size of DataContainer: " + this.dataContainer.size());
@@ -313,6 +325,17 @@ public class ReplyManager {
 						this.analyticsBean.getCapacity()));
 	
 		
+		//Test if previous moved out key are moved inside again
+		int lostKeysCount = 0;
+		for(Pair<String, Integer> pair : currentRoundFinalObjects){
+			if (dataContainer.containsKey(pair.left)) {
+				++lostKeysCount;
+				//log.error("postphase checking: Still contains key:"
+				//		+ entry.getKey());
+			}	
+		}
+		
+		
 		//Check if try to move some key twice
 		for(Pair<String, Integer> pair : currentRoundFinalObjects){
 			Pair<Integer,Integer> temp = allSentObjects.get(pair.left);
@@ -320,6 +343,7 @@ public class ReplyManager {
 			 allSentObjects.put(pair.left, new Pair<Integer, Integer>(pair.right,1));		  	
 		    else if(pair.right !=  temp.left){
 		      ++temp.right;
+		      temp.right = temp.left;
 		      log.warn("Try to move object twice!");
 		    }
 		}
@@ -342,6 +366,9 @@ public class ReplyManager {
 		
 		log.info(stillContainsCount+ " keys are not moved out correctly!");
 		
+		
+		//Do the same check by iterating currentRoundFinalObjects ( at this moment allSentObjects and currentRoundFinalObjects)
+		// should be the same
 		stillContainsCount = 0;
 		for (Pair<String,Integer> entry : currentRoundFinalObjects) {
 			if (this.dataContainer.containsKey(entry.left)) {
@@ -350,6 +377,7 @@ public class ReplyManager {
 		}
 		log.info("Testing with currentRoundList: "+stillContainsCount+ " keys are not moved out correctly!");
 		
+        //Check if some keys are moved to some other places by using MLHash
 		log.warn("Testing hash look up after sending!");
 		int bfErrorCount = 0;
 		for(Pair<String, Integer> pair: currentRoundFinalObjects){

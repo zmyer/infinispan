@@ -52,7 +52,7 @@ public class DataPlacementManager {
 	private Timer popuTimer, dataPlaceTimer;
 	private int preDataContainerSize;
 	
-	private int DATAPLACE_INTERVAL = 160000, 
+	private int DATAPLACE_INTERVAL = 120000, 
 			    POPULATION_CHECK_INTERVAL = 10000;
 	
 	private Boolean expectPre = true;	

@@ -31,7 +31,7 @@ public class RequestManager {
 	private List<Address> addressList;
 	private Set<Object> movedInList = new HashSet<Object>();
 	private Set<Object> requestSentList = new HashSet<Object>();
-	private Integer requestRound = 0, replyRound = 0;
+	private Integer requestRound = 0;
 	
 	private CommandsFactory commandsFactory;
 	private RpcManager rpcManager;
@@ -59,65 +59,58 @@ public class RequestManager {
 		analyticsBean = StreamLibContainer.getInstance();
 	}
 
-	public void sendRequestToAll(){
+	public Map<Object,Long> sendRequestToAll(){
 		Map<Object, Long> remoteGet = analyticsBean
 				.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 						analyticsBean.getCapacity());
 		
+		log.info("Size of Remote Get is :" + remoteGet.size());
 		// remotePut =
 		// analyticsBean.getTopKFrom(Anal	yticsBean.Stat.REMOTE_PUT,analyticsBean.getCapacity());
 
 		// Only send statistics if there are enough objects
 		if (remoteGet.size() >= analyticsBean.getCapacity() * 0.8) {
-			
 			Map<Object, Long> localGet = getStasticsForMovedInObj();
-			log.info("Moved In Object Size:"+localGet.size());
+			log.info("Size of movedin objects:"+localGet.size());
 			
-			Map<Address, Map<Object, Long>> testList  = sortObjectsByOwner(localGet,true);
-			log.info("DEFAULT: Local List Sorting: Number of owner"+ testList.size());
-			for(Entry<Address,Map<Object, Long>> map : testList.entrySet()){
-				log.info(map.getKey() +": Size of list"+ map.getValue().size());
+			Map<Address, Map<Object, Long>> tmpList = sortObjectsByOwner(remoteGet,true);
+			for(Entry<Address,Map<Object, Long>> map : tmpList.entrySet()){
+				log.info("Sorting remote list:"+map.getKey() +": Size of list"+ map.getValue().size());
 			}
-			
-			testList  = sortObjectsByOwner(remoteGet,true );
-			log.info("DEFAULT: Remote List Sorting: Number of owner"+ testList.size());
-			for(Entry<Address,Map<Object, Long>> map : testList.entrySet()){
-				log.info(map.getKey() +": Size of list"+ map.getValue().size());
-			}
-			
-			
-			testList  = sortObjectsByOwner(localGet, false);
-			log.info("MLHASH: Local List Sorting: Number of owner"+ testList.size());
-			for(Entry<Address,Map<Object, Long>> map : testList.entrySet()){
-				log.info(map.getKey() +": Size of list"+ map.getValue().size());
-			}
-			
-			testList  = sortObjectsByOwner(remoteGet, false);
-			log.info("MLHASH: Remote List Sorting: Number of owner"+ testList.size());
-			for(Entry<Address,Map<Object, Long>> map : testList.entrySet()){
-				log.info(map.getKey() +": Size of list"+ map.getValue().size());
-			}
-			
-			
 			
 			remoteGet.putAll(localGet);
 			requestSentList = remoteGet.keySet();
-			log.info("Merged List Size:"+remoteGet.size());
+			log.info("Merged list size:"+remoteGet.size());
 			Map<Address, Map<Object, Long>> topGetPerOwnerList = sortObjectsByOwner(remoteGet,true);
 
 			for (Entry<Address, Map<Object, Long>> entry : topGetPerOwnerList
 					.entrySet()) {
 				this.sendRequest(entry.getKey(), entry.getValue());
 			}
+			
+			//If there is no request to a node, still send one empty request
 			List<Address> addresses = this.rpcManager.getTransport().getMembers();
 			for (Address add : addresses) {
 				if (topGetPerOwnerList.containsKey(add) == false
-						&& add.equals(this.cacheName)) {
+						&& !add.equals(rpcManager.getAddress())) {
 					this.sendRequest(add, new HashMap<Object, Long>());
 				}
 			}
-			++this.requestRound;
+			
+			if(topGetPerOwnerList.containsKey(rpcManager.getAddress())){
+				log.info("Returning request of my own");
+				return topGetPerOwnerList.get(rpcManager.getAddress());
+			}
+			else{
+				log.info("Returning empty request");
+				return new HashMap<Object, Long>();
+			}
 		}
+		return null;
+	}
+	
+	public void increaseRoundID(){
+		++this.requestRound;
 	}
 	
 	private void sendRequest(Address owner, Map<Object, Long> remoteTopList) {
@@ -190,6 +183,12 @@ public class RequestManager {
 		}
 		
 		log.info("Own number of movedin object after sorting:"+objectLists.size());
+		
+		log.info("MLHASH: List Sorting: Number of owner"+ objectLists.size());
+		for(Entry<Address,Map<Object, Long>> map : objectLists.entrySet()){
+			log.info(map.getKey() +": Size of list"+ map.getValue().size());
+		}
+		
 
 		return objectLists;
 	}
@@ -257,4 +256,8 @@ public class RequestManager {
 		return hash;
 	}
     }
+
+	public Integer getRoundID() {
+		return requestRound;
+	}
 }

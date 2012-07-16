@@ -47,11 +47,12 @@ public class DataPlacementManager {
 			.getLog(DataPlacementManager.class);
 
 	private DataContainer dataContainer;
-	private String cacheName;
+	private RpcManager rpcManager;
+	private Cache cache;
 	private Timer popuTimer, dataPlaceTimer;
 	private int preDataContainerSize;
 	
-	private int DATAPLACE_INTERVAL = 120000, 
+	private int DATAPLACE_INTERVAL = 160000, 
 			    POPULATION_CHECK_INTERVAL = 10000;
 	
 	private Boolean expectPre = true;	
@@ -69,14 +70,17 @@ public class DataPlacementManager {
 			StateTransferManager stateTransfer, DataContainer dataContainer,
 			CacheNotifier cacheNotifier) {
 		this.dataContainer = dataContainer;
+		this.cache = cache;
+		this.rpcManager = rpcManager;
 		if (stateTransfer instanceof DistributedStateTransferManagerImpl) 
 		{
 		requestManager = new RequestManager(commandsFactory, rpcManager, distributionManager, 
 				(DistributedStateTransferManagerImpl)stateTransfer, dataContainer, cache.getName(), this);
-		replyManager = new ReplyManager(commandsFactory, cacheViewsManager,(DistributedStateTransferManagerImpl)stateTransfer, 
+		replyManager = new ReplyManager(commandsFactory, cacheViewsManager, distributionManager, (DistributedStateTransferManagerImpl)stateTransfer, 
 				rpcManager, dataContainer,cache.getName(), this);
 		}
 		cacheNotifier.addListener(this);
+		log.info("My cache name is "+ cache.getName());
 	}
 
 	@Start
@@ -89,7 +93,15 @@ public class DataPlacementManager {
 	public void sendRequestToAll() {
 		log.info("Start sending requests");
 		
-		requestManager.sendRequestToAll();
+		Map<Object, Long> requestSelf = requestManager.sendRequestToAll();
+		
+		if(requestSelf!=null){
+		    aggregateRequests(rpcManager.getAddress(), requestSelf, requestManager.getRoundID());
+		    requestManager.increaseRoundID();
+		}
+		else
+			log.info("Request not ready (top key not filled)!");
+		
 	}
 
 

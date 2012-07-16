@@ -26,6 +26,9 @@ import java.util.HashSet;
 import java.util.Random;
 import java.util.Set;
 
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
+
 /**
  * Implementation of a Bloom-filter, as described here:
  * http://en.wikipedia.org/wiki/Bloom_filter
@@ -47,6 +50,9 @@ import java.util.Set;
  */
 public class BloomFilter implements Serializable {
 	private static final long serialVersionUID = 1L;
+	
+	private static final Log log = LogFactory
+			.getLog(BloomFilter.class);
 
 	public static void main(String[] args) {
 		int nElements = 100000;
@@ -130,6 +136,7 @@ public class BloomFilter implements Serializable {
 		this.bitSetSize = (int) Math.ceil(c * n);
 		this.numberOfAddedElements = 0;
 		this.bitset = new BitSet(this.bitSetSize);
+		log.info("BitSetSize: "+ bitSetSize);
 	}
 
 	/**

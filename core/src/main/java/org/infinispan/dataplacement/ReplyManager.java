@@ -15,6 +15,7 @@ import org.infinispan.container.DataContainer;
 import org.infinispan.dataplacement.c50.TreeElement;
 import org.infinispan.dataplacement.lookup.BloomFilter;
 import org.infinispan.dataplacement.lookup.ObjectLookUpper;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.DistributedStateTransferManagerImpl;
@@ -33,8 +34,8 @@ public class ReplyManager {
 	private List<Address> addressList = new ArrayList<Address>();
 	private CommandsFactory commandsFactory;
 	private RpcManager rpcManager;
-	private List<Pair<String, Integer>> currentRoundSentObjects;
-	private Map<String, Pair<Integer, Integer>> sentObjects = new HashMap<String, Pair<Integer, Integer>>();
+	private List<Pair<String, Integer>> currentRoundFinalObjects;
+	private Map<String, Pair<Integer, Integer>> allSentObjects = new HashMap<String, Pair<Integer, Integer>>();
 	private List<Pair<Integer, Map<Object, Long>>> requestReceivedList = new ArrayList<Pair<Integer, Map<Object, Long>>>();
 
 	private Integer requestRound = 0,replyRound = 0;
@@ -45,8 +46,9 @@ public class ReplyManager {
 	private String cacheName;
 	private TestWriter writer = TestWriter.getInstance();
 	private DataPlacementManager dataPlacementManager;
+	private DistributionManager distributionManager;
 	
-	public ReplyManager(CommandsFactory commandsFactory,CacheViewsManager cacheViewsManager,DistributedStateTransferManagerImpl  stateTransfer,
+	public ReplyManager(CommandsFactory commandsFactory,CacheViewsManager cacheViewsManager,DistributionManager distributionManager, DistributedStateTransferManagerImpl  stateTransfer,
 			RpcManager rpcManager, DataContainer dataContainer, String cacheName, DataPlacementManager dataPlacementManager){
 		analyticsBean = StreamLibContainer.getInstance();
 		this.commandsFactory = commandsFactory; 
@@ -56,6 +58,7 @@ public class ReplyManager {
 		this.dataContainer = dataContainer;
 		this.dataPlacementManager = dataPlacementManager;
 		this.cacheName = cacheName;
+		this.distributionManager = distributionManager;
 	}
 	
 	public boolean aggregateResult(Address sender,
@@ -79,7 +82,7 @@ public class ReplyManager {
 
 			writer.getInstance().write(false, sender, objectRequest);
 			
-			if (this.addressList.size() - this.requestReceivedList.size() == 1) {
+			if (this.addressList.size() == this.requestReceivedList.size()) {
 				return true;
 			}
 			else 
@@ -101,8 +104,8 @@ public class ReplyManager {
 				+ this.addressList.size()
 				+ " in total!");
 		Map<Object, Pair<Long, Integer>> fullRequestList = compactRequestList();
-		currentRoundSentObjects = generateFinalList(fullRequestList);
-		log.info("Writing result");
+		currentRoundFinalObjects = generateFinalList(fullRequestList);
+		log.info("Number of current round sending objects "+ currentRoundFinalObjects.size());
 		//writer.writeResult(currentRoundList);
 
 //		for(Pair<String, Integer> pair : currentRoundSentObjects){
@@ -115,13 +118,23 @@ public class ReplyManager {
 //		}
 		
 		
-		log.info("Sent Objects:"+sentObjects.size());
+		//log.info("Sent Objects:"+allSentObjects.size());
 		log.info("Populate All");
 
-		ObjectLookUpper lookUpper = new ObjectLookUpper(currentRoundSentObjects);
+		ObjectLookUpper lookUpper = new ObjectLookUpper(currentRoundFinalObjects);
 
 		log.info("Rules:");
 		log.info(lookUpper.printRules());
+		
+		log.warn("Testing bloom filter before sending!");
+		int bfErrorCount = 0;
+		for(Pair<String, Integer> pair: currentRoundFinalObjects){
+			if(lookUpper.query(pair.left) != pair.right){
+				++bfErrorCount;
+			}
+		}
+		log.warn("Error of BF before sending :"+bfErrorCount);
+		
 		this.sendLookUpper(lookUpper.getBloomFilter(),
 				lookUpper.getTreeList());
 		this.requestReceivedList.clear();
@@ -277,14 +290,14 @@ public class ReplyManager {
 	public void prePhaseTest(){
 		//log.info("DataContainer: " + dataContainer.entrySet());
 		log.info("Doing prephase testing! sentObjectList size:"
-				+ sentObjects.size());
-		log.info("Doing prephase testing! Current Round Sent Object size:"
-				+ currentRoundSentObjects.size());
+				+ allSentObjects.size());
+		log.info("Current Round Sent Object size:"
+				+ currentRoundFinalObjects.size());
 		//log.info("sentObjectsList: " + sentObjectList);
 		log.info("topremoteget: " + analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 						this.analyticsBean.getCapacity()));
-		for (Pair<String,Integer> pair : currentRoundSentObjects) {
-			if (sentObjects.containsKey(pair.left) == false &&!this.dataContainer.containsKey(pair.left)) {
+		for (Pair<String,Integer> pair : currentRoundFinalObjects) {
+			if (allSentObjects.containsKey(pair.left) == false &&!this.dataContainer.containsKey(pair.left)) {
 				log.error("prephase checking: Doesn't contains key:"
 						+ pair.left);
 			}
@@ -292,37 +305,61 @@ public class ReplyManager {
 	}
 	
 	public void postPhaseTest(){
+		log.info("Doing postphase testing!");
 		log.info("Size of DataContainer: " + this.dataContainer.size());
-		log.info("Doing postphase testing! sentObjectList size:"
-				+ this.sentObjects.size());
-		log.info("sentObjectsList: " + this.sentObjects);
+		log.info("SentObjectsList size before merging current round: " + this.allSentObjects.size());
 		log.info("topremoteget: " + this.analyticsBean
 				.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET,
 						this.analyticsBean.getCapacity()));
 	
 		
-		for(Pair<String, Integer> pair : currentRoundSentObjects){
-			Pair<Integer,Integer> temp = sentObjects.get(pair.left);
+		//Check if try to move some key twice
+		for(Pair<String, Integer> pair : currentRoundFinalObjects){
+			Pair<Integer,Integer> temp = allSentObjects.get(pair.left);
 		    if(temp == null)
-			 sentObjects.put(pair.left, new Pair<Integer, Integer>(pair.right,1));		  	
-		    else{
+			 allSentObjects.put(pair.left, new Pair<Integer, Integer>(pair.right,1));		  	
+		    else if(pair.right !=  temp.left){
 		      ++temp.right;
 		      log.warn("Try to move object twice!");
 		    }
 		}
+		log.info("SentObjectsList size after merging current round: " + this.allSentObjects.size());
 		
+		
+		int stillContainsCount = 0;
 		//Check if there are some keys not moved out (that should be moved).
-		for (Entry<String, Pair<Integer,Integer>> entry : this.sentObjects.entrySet()) {
+		for (Entry<String, Pair<Integer,Integer>> entry : this.allSentObjects.entrySet()) {
 			if (this.dataContainer.containsKey(entry.getKey())) {
-				log.error("postphase checking: Still contains key:"
-						+ entry.getKey());
-			}
+				++stillContainsCount;
+				//log.error("postphase checking: Still contains key:"
+				//		+ entry.getKey());
+			}		
+		//	else{
+		//		++entry.getValue().right;
+				//sentObjects.put(entry.getKey(),entry.getValue());
+		//	}
+		}
 		
-			else{
-				++entry.getValue().right;
-				sentObjects.put(entry.getKey(),entry.getValue());
+		log.info(stillContainsCount+ " keys are not moved out correctly!");
+		
+		stillContainsCount = 0;
+		for (Pair<String,Integer> entry : currentRoundFinalObjects) {
+			if (this.dataContainer.containsKey(entry.left)) {
+				++stillContainsCount;
+			}		
+		}
+		log.info("Testing with currentRoundList: "+stillContainsCount+ " keys are not moved out correctly!");
+		
+		log.warn("Testing hash look up after sending!");
+		int bfErrorCount = 0;
+		for(Pair<String, Integer> pair: currentRoundFinalObjects){
+			if(distributionManager.getConsistentHash().locate(pair.left,1).get(0).equals(addressList.get(pair.right)) == false){
+				++bfErrorCount;
 			}
 		}
+		
+		
+		log.warn("Error of hash look up after sending :"+bfErrorCount);
 		
 //		log.info("Request List Size: "+requestSentList.size());
 //		log.info("Movedin List Size: "+ movedInList.size());

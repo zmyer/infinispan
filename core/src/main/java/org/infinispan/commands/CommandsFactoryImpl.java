@@ -35,6 +35,7 @@ import org.infinispan.commands.read.MapReduceCommand;
 import org.infinispan.commands.read.SizeCommand;
 import org.infinispan.commands.read.ValuesCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.remote.DataPlacementCommand;
 import org.infinispan.commands.remote.MultipleRpcCommand;
 import org.infinispan.commands.remote.PrepareResponseCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
@@ -47,17 +48,7 @@ import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
-import org.infinispan.commands.write.ClearCommand;
-import org.infinispan.commands.write.EvictCommand;
-import org.infinispan.commands.write.InvalidateCommand;
-import org.infinispan.commands.write.InvalidateL1Command;
-import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.commands.write.PutMapCommand;
-import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.commands.write.VersionedPutKeyValueCommand;
-import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commands.write.*;
 import org.infinispan.config.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.InternalEntryFactory;
@@ -65,6 +56,7 @@ import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContextContainer;
+import org.infinispan.dataplacement.DataPlacementManager;
 import org.infinispan.distexec.mapreduce.Mapper;
 import org.infinispan.distexec.mapreduce.Reducer;
 import org.infinispan.distribution.DistributionManager;
@@ -86,9 +78,6 @@ import org.infinispan.transaction.xa.recovery.RecoveryManager;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-import org.infinispan.commands.dataplacement.DataPlacementReplyCommand;
-import org.infinispan.commands.dataplacement.DataPlacementRequestCommand;
-import org.infinispan.dataplacement.DataPlacementManager;
 
 import javax.transaction.xa.Xid;
 import java.util.Collection;
@@ -345,7 +334,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
                   initializeReplicableCommand(nested, false);
                }
             pc.markTransactionAsRemote(isRemote);
-            if (configuration.isEnableDeadlockDetection() && isRemote && 
+            if (configuration.isEnableDeadlockDetection() && isRemote &&
                   pc.getGlobalTransaction() instanceof DldGlobalTransaction) {
                DldGlobalTransaction transaction = (DldGlobalTransaction) pc.getGlobalTransaction();
                transaction.setLocksHeldAtOrigin(pc.getAffectedKeys());
@@ -425,15 +414,10 @@ public class CommandsFactoryImpl implements CommandsFactory {
             PrepareResponseCommand prc = (PrepareResponseCommand) c;
             prc.initialize(totalOrderManager);
             break;
-            //Add data placement
-         case DataPlacementRequestCommand.COMMAND_ID:
-        	 DataPlacementRequestCommand dataPlacementRequestCommand = (DataPlacementRequestCommand)c;
-        	 dataPlacementRequestCommand.init(dataPlacementManager, distributionManager);
-        	 break;
-         case DataPlacementReplyCommand.COMMAND_ID:
-        	 DataPlacementReplyCommand dataPlacementReplyCommand = (DataPlacementReplyCommand)c;
-        	 dataPlacementReplyCommand.init(dataPlacementManager);
-        	 break;
+         case DataPlacementCommand.COMMAND_ID:
+            DataPlacementCommand dataPlacementRequestCommand = (DataPlacementCommand)c;
+            dataPlacementRequestCommand.initialize(dataPlacementManager);
+            break;
          default:
             ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());
             if (mci != null) {
@@ -520,14 +504,9 @@ public class CommandsFactoryImpl implements CommandsFactory {
    public PrepareResponseCommand buildPrepareResponseCommand(GlobalTransaction globalTransaction) {
       return new PrepareResponseCommand(cacheName, globalTransaction);
    }
-   
-   @Override
-   public DataPlacementRequestCommand buildDataPlacementRequestCommand(){
-	   return new DataPlacementRequestCommand(cacheName);
-   }
 
    @Override
-   public DataPlacementReplyCommand buildDataPlacementReplyCommand() {
-	   return new DataPlacementReplyCommand(cacheName);
+   public DataPlacementCommand buildDataPlacementCommand(DataPlacementCommand.Type type, long roundId) {
+      return new DataPlacementCommand(cacheName, type, roundId);
    }
 }

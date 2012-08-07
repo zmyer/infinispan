@@ -33,6 +33,7 @@ import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.MapReduceCommand;
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.remote.DataPlacementCommand;
 import org.infinispan.commands.remote.MultipleRpcCommand;
 import org.infinispan.commands.remote.PrepareResponseCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
@@ -62,8 +63,6 @@ import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.manager.EmbeddedCacheManager;
 
-import org.infinispan.commands.dataplacement.DataPlacementReplyCommand;
-import org.infinispan.commands.dataplacement.DataPlacementRequestCommand;
 import java.util.Map;
 
 /**
@@ -142,7 +141,7 @@ public class RemoteCommandsFactory {
                break;
             case ApplyDeltaCommand.COMMAND_ID:
                command = new ApplyDeltaCommand();
-               break;      
+               break;
             default:
                throw new CacheException("Unknown command id " + id + "!");
          }
@@ -220,17 +219,13 @@ public class RemoteCommandsFactory {
                break;
             case CacheViewControlCommand.COMMAND_ID:
                command = new CacheViewControlCommand(cacheName);
-               break;                      
+               break;
             case PrepareResponseCommand.COMMAND_ID:
                command = new PrepareResponseCommand(cacheName);
-               break;   
-               //Data Placement command received! Li
-            case DataPlacementRequestCommand.COMMAND_ID:
-               command = new DataPlacementRequestCommand(cacheName);
                break;
-            case DataPlacementReplyCommand.COMMAND_ID:
-                command = new DataPlacementReplyCommand(cacheName);
-                break;
+            case DataPlacementCommand.COMMAND_ID:
+               command = new DataPlacementCommand(cacheName);
+               break;
             default:
                throw new CacheException("Unknown command id " + id + "!");
          }

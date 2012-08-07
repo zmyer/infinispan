@@ -21,11 +21,12 @@ package org.infinispan.marshall.exts;
 
 import org.infinispan.commands.RemoveCacheCommand;
 import org.infinispan.commands.control.CacheViewControlCommand;
-import org.infinispan.commands.control.StateTransferControlCommand;
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.control.StateTransferControlCommand;
 import org.infinispan.commands.read.MapReduceCommand;
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.remote.DataPlacementCommand;
 import org.infinispan.commands.remote.MultipleRpcCommand;
 import org.infinispan.commands.remote.PrepareResponseCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
@@ -50,8 +51,6 @@ import org.infinispan.marshall.Ids;
 import org.infinispan.marshall.StreamingMarshaller;
 import org.infinispan.marshall.jboss.ExtendedRiverUnmarshaller;
 import org.infinispan.util.Util;
-import org.infinispan.commands.dataplacement.DataPlacementReplyCommand;
-import org.infinispan.commands.dataplacement.DataPlacementRequestCommand;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -89,8 +88,7 @@ public final class CacheRpcCommandExternalizer extends AbstractExternalizer<Cach
             TxCompletionNotificationCommand.class, GetInDoubtTransactionsCommand.class,
             GetInDoubtTxInfoCommand.class, CompleteTransactionCommand.class,
             CacheViewControlCommand.class, VersionedPrepareCommand.class, VersionedCommitCommand.class,
-            PrepareResponseCommand.class, DataPlacementRequestCommand.class,
-            DataPlacementReplyCommand.class);
+            PrepareResponseCommand.class, DataPlacementCommand.class);
       // Only interested in cache specific replicable commands
       coreCommands.addAll(gcr.getModuleProperties().moduleCacheRpcCommands());
       return coreCommands;

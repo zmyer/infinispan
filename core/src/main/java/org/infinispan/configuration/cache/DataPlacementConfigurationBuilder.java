@@ -1,0 +1,88 @@
+package org.infinispan.configuration.cache;
+
+import org.infinispan.config.ConfigurationException;
+import org.infinispan.dataplacement.keyfeature.KeyFeatureManager;
+import org.infinispan.dataplacement.lookup.ObjectLookupFactory;
+import org.infinispan.util.TypedProperties;
+
+import java.util.Properties;
+
+/**
+ * Builds the Data Placement configuration
+ *
+ * @author Pedro Ruivo
+ * @since 5.2
+ */
+public class DataPlacementConfigurationBuilder extends AbstractConfigurationChildBuilder<DataPlacementConfiguration> {
+
+   private boolean enabled = false;
+   private ObjectLookupFactory objectLookupFactory;
+   private KeyFeatureManager keyFeatureManager;
+   private int coolDownTime = 30000; //30 seconds by default
+   private Properties properties = new Properties();
+
+   protected DataPlacementConfigurationBuilder(ConfigurationBuilder builder) {
+      super(builder);
+   }
+
+   public DataPlacementConfigurationBuilder objectLookupFactory(ObjectLookupFactory objectLookupFactory) {
+      this.objectLookupFactory = objectLookupFactory;
+      return this;
+   }
+
+   public DataPlacementConfigurationBuilder keyFeatureManager(KeyFeatureManager keyFeatureManager) {
+      this.keyFeatureManager = keyFeatureManager;
+      return this;
+   }
+
+   public DataPlacementConfigurationBuilder withProperties(Properties properties) {
+      this.properties = properties;
+      return this;
+   }
+
+   public DataPlacementConfigurationBuilder enable() {
+      this.enabled = true;
+      return this;
+   }
+
+   public DataPlacementConfigurationBuilder disable() {
+      this.enabled = false;
+      return this;
+   }
+
+   public DataPlacementConfigurationBuilder coolDownTime(int coolDownTime) {
+      this.coolDownTime = coolDownTime;
+      return this;
+   }
+
+   public DataPlacementConfigurationBuilder addProperty(String key, String value) {
+      properties.put(key, value);
+      return this;
+   }
+
+   @Override
+   void validate() {
+      if (!enabled) {
+         return;
+      }
+      if (objectLookupFactory == null) {
+         throw new ConfigurationException("Object Lookup Factory cannot be null");
+      }
+      if (coolDownTime < 1000) {
+         throw new ConfigurationException("Cool Down time must be higher or equals to 1000 milliseconds");
+      }
+   }
+
+   @Override
+   DataPlacementConfiguration create() {
+      return new DataPlacementConfiguration(TypedProperties.toTypedProperties(properties), enabled, coolDownTime, objectLookupFactory, keyFeatureManager);
+   }
+
+   @Override
+   public ConfigurationChildBuilder read(DataPlacementConfiguration template) {
+      this.objectLookupFactory = template.objectLookupFactory();
+      this.keyFeatureManager = template.keyFeatureManager();
+      this.properties = template.properties();
+      return this;
+   }
+}

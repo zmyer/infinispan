@@ -9,6 +9,7 @@ import org.infinispan.dataplacement.keyfeature.KeyFeatureManager;
 import org.infinispan.dataplacement.lookup.ObjectLookup;
 import org.infinispan.dataplacement.lookup.ObjectLookupFactory;
 import org.infinispan.util.TypedProperties;
+import org.infinispan.util.Util;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -36,12 +37,13 @@ import java.util.TreeSet;
 @SuppressWarnings("UnusedDeclaration") //this is loaded in runtime
 public class C50MLObjectLookupFactory implements ObjectLookupFactory {
 
-   private static final String LOCATION_PROPERTY_KEY = "location";
-   private static final String BF_FALSE_POSITIVE_PROPERTY_KEY = "bfFalsePositiveProb";
+   public static final String LOCATION = "location";
+   public static final String KEY_FEATURE_MANAGER = "keyFeatureManager";
+   public static final String BF_FALSE_POSITIVE = "bfFalsePositiveProb";
 
    private static final String INPUT = File.separator + "input";
    private static final String INPUT_ML_DATA = INPUT + ".data";
-   private static final String INPUT_ML_NAMES = INPUT + ".name";
+   private static final String INPUT_ML_NAMES = INPUT + ".names";
 
    private static final Log log = LogFactory.getLog(C50MLObjectLookupFactory.class);
 
@@ -57,18 +59,23 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
 
    @Override
    public void setConfiguration(Configuration configuration) {
-      keyFeatureManager = configuration.dataPlacement().keyFeatureManager();
+      TypedProperties typedProperties = configuration.dataPlacement().properties();
+
+      machineLearnerPath = typedProperties.getProperty(LOCATION, machineLearnerPath);
+      String keyFeatureManagerClassName = typedProperties.getProperty(KEY_FEATURE_MANAGER, null);
+
+      if (keyFeatureManagerClassName == null) {
+         throw new IllegalStateException("Key Feature Manager cannot be null");
+      }
+
+      keyFeatureManager = Util.getInstance(keyFeatureManagerClassName, Thread.currentThread().getContextClassLoader());
 
       if (keyFeatureManager == null) {
          throw new IllegalStateException("Key Feature Manager cannot be null");
       }
 
-      TypedProperties typedProperties = configuration.dataPlacement().properties();
-
-      machineLearnerPath = typedProperties.getProperty(LOCATION_PROPERTY_KEY, machineLearnerPath);
-
       try {
-         String tmp =typedProperties.getProperty(BF_FALSE_POSITIVE_PROPERTY_KEY, "0.001");
+         String tmp =typedProperties.getProperty(BF_FALSE_POSITIVE, "0.001");
          bloomFilterFalsePositiveProbability = Double.parseDouble(tmp);
       } catch (NumberFormatException nfe) {
          log.warnf("Error parsing bloom filter false positive probability. The value is %s. %s",
@@ -76,7 +83,7 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
       }
 
       for (AbstractFeature feature : keyFeatureManager.getAllKeyFeatures()) {
-         featureMap.put(feature.getFeatureName().replaceAll("\\s", ""), feature);
+         featureMap.put(feature.getName(), feature);
       }
    }
 
@@ -104,6 +111,11 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
       }
 
       Collection<String> rules = getRulesFromMachineLearner(reader);
+      
+      if (rules.isEmpty()) {
+         log.errorf("Cannot create Object Lookup. Machine Learner didn't return any rule");
+         return null;
+      }
 
       C50MLTree c50MLTree = new C50MLRulesParser(rules, featureMap).parseMachineLearnerRules();
 
@@ -132,6 +144,14 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
       return new C50MLObjectLookup(bloomFilter, c50MLTree, keyFeatureManager);
    }
 
+   public Map<String, AbstractFeature> getFeatureMap() {
+      return featureMap;
+   }
+
+   public KeyFeatureManager getKeyFeatureManager() {
+      return keyFeatureManager;
+   }
+
    /**
     * returns the bloom filter with the objects to move encoding on it
     *
@@ -152,7 +172,7 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
     * @param reader  the machine learner output
     * @return        each line of the output with the rules
     */
-   private Collection<String> getRulesFromMachineLearner(BufferedReader reader) {
+   public final Collection<String> getRulesFromMachineLearner(BufferedReader reader) {
       List<String> rules = new LinkedList<String>();
       boolean beforeTree = true, afterTree = false;
       String line;
@@ -226,7 +246,7 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
          Iterator<Integer> iterator = possibleReturnValues.iterator();
 
          while (iterator.hasNext()) {
-            writer.write(iterator.next());
+            writer.write(iterator.next().toString());
             if (iterator.hasNext()) {
                writer.write(", ");
             } else {
@@ -313,7 +333,7 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
     * @param writer        the writer for input.data
     * @throws IOException  if it cannot write on it
     */
-   private void writeInputData(Object key, int nodeIndex, BufferedWriter writer) throws IOException {
+   private void writeInputData(Object key, Integer nodeIndex, BufferedWriter writer) throws IOException {
       Map<AbstractFeature, FeatureValue> keyFeatures = keyFeatureManager.getFeatures(key);
 
       for (AbstractFeature feature : keyFeatureManager.getAllKeyFeatures()) {
@@ -327,7 +347,8 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
          writer.write(value);
          writer.write(",");
       }
-      writer.write(nodeIndex);
+      writer.write(nodeIndex.toString());
+      writer.newLine();
       writer.flush();
 
    }

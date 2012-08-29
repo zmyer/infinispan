@@ -131,7 +131,6 @@ public enum Attribute {
    USE_1PC_FOR_AUTOCOMMIT_TX("use1PcForAutoCommitTransactions"),
    VERSIONING_SCHEME("versioningScheme"),
    TRANSACTION_PROTOCOL("transactionProtocol"),
-   KEY_FEATURE_MANAGER("keyFeatureManager"),
    OBJECT_LOOKUP_FACTORY("objectLookupFactory"),
    COOL_DOWN_TIME("coolDownTime")
    ;

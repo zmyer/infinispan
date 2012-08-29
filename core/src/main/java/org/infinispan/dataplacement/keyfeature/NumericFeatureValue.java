@@ -19,14 +19,19 @@ public class NumericFeatureValue implements FeatureValue {
    public boolean valueMatch(FeatureValue otherValue, Condition condition) {
 
       if (otherValue == null) {
-         return this.value == null;
-      }
-
-      if (!(otherValue instanceof NumericFeatureValue)) {
+         return value == null;
+      } else if (value == null) {
+         return false;
+      } else if (!(otherValue instanceof NumericFeatureValue)) {
          return false;
       }
 
       NumericFeatureValue numericFeatureValue = (NumericFeatureValue) otherValue;
+      
+      if (numericFeatureValue.value == null) {
+         return false;
+      }
+      
       int compare = Double.compare(numericFeatureValue.value.doubleValue(), this.value.doubleValue());
 
       switch (condition) {

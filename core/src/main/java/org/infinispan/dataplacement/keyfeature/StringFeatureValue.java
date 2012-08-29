@@ -11,7 +11,7 @@ public class StringFeatureValue implements FeatureValue {
    private final String value;
 
    public StringFeatureValue(String value) {
-      this.value = value;
+      this.value = value.replaceAll("\\s,[.]:[|]", "");
    }
 
    @Override

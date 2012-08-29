@@ -16,8 +16,7 @@ import java.util.Properties;
 public class DataPlacementConfigurationBuilder extends AbstractConfigurationChildBuilder<DataPlacementConfiguration> {
 
    private boolean enabled = false;
-   private ObjectLookupFactory objectLookupFactory;
-   private KeyFeatureManager keyFeatureManager;
+   private ObjectLookupFactory objectLookupFactory;   
    private int coolDownTime = 30000; //30 seconds by default
    private Properties properties = new Properties();
 
@@ -28,12 +27,7 @@ public class DataPlacementConfigurationBuilder extends AbstractConfigurationChil
    public DataPlacementConfigurationBuilder objectLookupFactory(ObjectLookupFactory objectLookupFactory) {
       this.objectLookupFactory = objectLookupFactory;
       return this;
-   }
-
-   public DataPlacementConfigurationBuilder keyFeatureManager(KeyFeatureManager keyFeatureManager) {
-      this.keyFeatureManager = keyFeatureManager;
-      return this;
-   }
+   }   
 
    public DataPlacementConfigurationBuilder withProperties(Properties properties) {
       this.properties = properties;
@@ -75,13 +69,12 @@ public class DataPlacementConfigurationBuilder extends AbstractConfigurationChil
 
    @Override
    DataPlacementConfiguration create() {
-      return new DataPlacementConfiguration(TypedProperties.toTypedProperties(properties), enabled, coolDownTime, objectLookupFactory, keyFeatureManager);
+      return new DataPlacementConfiguration(TypedProperties.toTypedProperties(properties), enabled, coolDownTime, objectLookupFactory);
    }
 
    @Override
    public ConfigurationChildBuilder read(DataPlacementConfiguration template) {
-      this.objectLookupFactory = template.objectLookupFactory();
-      this.keyFeatureManager = template.keyFeatureManager();
+      this.objectLookupFactory = template.objectLookupFactory();      
       this.properties = template.properties();
       return this;
    }

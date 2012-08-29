@@ -57,4 +57,12 @@ public class C50MLTree {
       }
       return null;
    }
+   
+   public final String rulesToString() {
+      StringBuilder sb = new StringBuilder("Rules:\n");
+      for (C50MLTreeElement element : rootElement.getChildren()) {
+         element.printRules(0, sb);
+      }
+      return sb.toString();
+   }
 }

@@ -1,7 +1,6 @@
 package org.infinispan.configuration.cache;
 
 import org.infinispan.configuration.AbstractTypedPropertiesConfiguration;
-import org.infinispan.dataplacement.keyfeature.KeyFeatureManager;
 import org.infinispan.dataplacement.lookup.ObjectLookupFactory;
 import org.infinispan.util.TypedProperties;
 
@@ -16,23 +15,17 @@ public class DataPlacementConfiguration extends AbstractTypedPropertiesConfigura
    private final boolean enabled;
    private final int coolDownTime;
    private final ObjectLookupFactory objectLookupFactory;
-   private final KeyFeatureManager keyFeatureManager;
 
    protected DataPlacementConfiguration(TypedProperties properties, boolean enabled, int coolDownTime,
-                                        ObjectLookupFactory objectLookupFactory, KeyFeatureManager keyFeatureManager) {
+                                        ObjectLookupFactory objectLookupFactory) {
       super(properties);
       this.enabled = enabled;
       this.coolDownTime = coolDownTime;
       this.objectLookupFactory = objectLookupFactory;
-      this.keyFeatureManager = keyFeatureManager;
    }
 
    public ObjectLookupFactory objectLookupFactory() {
       return objectLookupFactory;
-   }
-
-   public KeyFeatureManager keyFeatureManager() {
-      return keyFeatureManager;
    }
 
    public boolean enabled() {
@@ -49,7 +42,6 @@ public class DataPlacementConfiguration extends AbstractTypedPropertiesConfigura
             "enabled=" + enabled +
             ", coolDownTime=" + coolDownTime +
             ", objectLookupFactory=" + objectLookupFactory +
-            ", keyFeatureManager=" + keyFeatureManager +
             '}';
    }
 
@@ -63,8 +55,6 @@ public class DataPlacementConfiguration extends AbstractTypedPropertiesConfigura
 
       if (coolDownTime != that.coolDownTime) return false;
       if (enabled != that.enabled) return false;
-      if (keyFeatureManager != null ? !keyFeatureManager.equals(that.keyFeatureManager) : that.keyFeatureManager != null)
-         return false;
       if (objectLookupFactory != null ? !objectLookupFactory.equals(that.objectLookupFactory) : that.objectLookupFactory != null)
          return false;
 
@@ -77,7 +67,6 @@ public class DataPlacementConfiguration extends AbstractTypedPropertiesConfigura
       result = 31 * result + (enabled ? 1 : 0);
       result = 31 * result + coolDownTime;
       result = 31 * result + (objectLookupFactory != null ? objectLookupFactory.hashCode() : 0);
-      result = 31 * result + (keyFeatureManager != null ? keyFeatureManager.hashCode() : 0);
       return result;
    }
 }

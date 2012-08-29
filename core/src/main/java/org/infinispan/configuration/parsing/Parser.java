@@ -31,7 +31,6 @@ import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.configuration.global.ShutdownHookBehavior;
 import org.infinispan.configuration.global.TransportConfigurationBuilder;
 import org.infinispan.container.DataContainer;
-import org.infinispan.dataplacement.keyfeature.KeyFeatureManager;
 import org.infinispan.dataplacement.lookup.ObjectLookupFactory;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.group.Grouper;
@@ -327,10 +326,6 @@ public class Parser {
          String value = replaceSystemProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
-            case KEY_FEATURE_MANAGER:
-               KeyFeatureManager keyFeatureManager = Util.getInstance(value, cl);
-               builder.dataPlacement().keyFeatureManager(keyFeatureManager);
-               break;
             case OBJECT_LOOKUP_FACTORY:
                ObjectLookupFactory objectLookupFactory = Util.getInstance(value, cl);
                builder.dataPlacement().objectLookupFactory(objectLookupFactory);
@@ -358,21 +353,17 @@ public class Parser {
       while (reader.hasNext() && (reader.nextTag() != XMLStreamConstants.END_ELEMENT)) {
          Element element = Element.forName(reader.getLocalName());
          switch (element) {
-            case PROPERTIES: {
+            case PROPERTIES:
                dataPlacementProperties = parseProperties(reader);
                break;
-            }
-            default: {
+            default:
                throw ParseUtils.unexpectedElement(reader);
-            }
          }
       }
 
       if (dataPlacementProperties != null) {
          builder.dataPlacement().withProperties(dataPlacementProperties);
-      }
-
-      ParseUtils.requireNoContent(reader);
+      }      
    }
 
    private void parseVersioning(XMLStreamReader reader, ConfigurationBuilder builder) throws XMLStreamException {

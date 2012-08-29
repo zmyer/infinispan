@@ -3,6 +3,7 @@ package org.infinispan.dataplacement.c50;
 import org.infinispan.dataplacement.c50.lookup.C50MLTree;
 import org.infinispan.dataplacement.c50.lookup.C50MLTreeElement;
 import org.infinispan.dataplacement.keyfeature.AbstractFeature;
+import org.infinispan.dataplacement.lookup.ObjectLookup;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -35,6 +36,9 @@ public class C50MLRulesParser {
    public C50MLRulesParser(Collection<String> rulesLine, Map<String, AbstractFeature> featureMap) {
       rules = rulesLine.toArray(new String[rulesLine.size()]);
       this.featureMap = featureMap;
+      if (rules.length == 0) {
+         currentRule = END_OF_RULES;
+      }
    }
 
    /**
@@ -127,7 +131,7 @@ public class C50MLRulesParser {
             //no-op
          }
       }
-      return -1;
+      return C50MLTreeElement.NO_LEAF_ELEMENT;
    }
 
    /**

@@ -16,6 +16,8 @@ import java.util.Map;
  */
 public class C50MLTreeElement implements Serializable {
 
+   public static final int NO_LEAF_ELEMENT = -1;
+
    private int ownerIndex;
    private AbstractFeature feature;
    private FeatureValue featureValue;
@@ -25,13 +27,14 @@ public class C50MLTreeElement implements Serializable {
    public C50MLTreeElement(int ownerIndex, AbstractFeature feature, String value, String condition) {
       this.ownerIndex = ownerIndex;
       this.feature = feature;
-      this.featureValue = feature.createFeatureValueFromString(value);
+      featureValue = feature.createFeatureValueFromString(value);
       this.condition = FeatureValue.Condition.fromString(condition);
-      this.children = new LinkedList<C50MLTreeElement>();
+      children = new LinkedList<C50MLTreeElement>();
    }
 
    public C50MLTreeElement() {
-      this.children = new LinkedList<C50MLTreeElement>();
+      ownerIndex = NO_LEAF_ELEMENT;
+      children = new LinkedList<C50MLTreeElement>();
    } //to externalize/serialize
 
    /**
@@ -68,7 +71,10 @@ public class C50MLTreeElement implements Serializable {
     * @return              true if the key features matches, false otherwise
     */
    public boolean hasMatch(Map<AbstractFeature, FeatureValue> keyFeatures) {
-      return feature != null && featureValue.valueMatch(keyFeatures.get(feature), condition);
+      boolean notAvailable = featureValue == null;
+      FeatureValue value = keyFeatures.get(feature);
+      return (notAvailable && value == null) ||
+            (!notAvailable && featureValue.valueMatch(value, condition));
    }
 
    /**
@@ -77,7 +83,7 @@ public class C50MLTreeElement implements Serializable {
     * @return  true if this is a leaf element, false otherwise
     */
    public boolean isLeaf() {
-      return ownerIndex != -1;
+      return ownerIndex != NO_LEAF_ELEMENT;
    }
 
    @Override
@@ -89,5 +95,27 @@ public class C50MLTreeElement implements Serializable {
             ", condition=" + condition +
             ", children=" + children +
             '}';
+   }
+
+   public final void printRules(int level, StringBuilder stringBuilder) {
+      for (int i = 0; i < level - 1; ++i) {
+         stringBuilder.append("|  ");
+      }
+      if (level > 0) {
+         stringBuilder.append("|--");
+      }
+      
+      stringBuilder.append(feature.getName())
+            .append(" ").append(condition)
+            .append(" ").append(featureValue == null ? "N/A" : featureValue.getValue());
+      
+      if (ownerIndex != NO_LEAF_ELEMENT) {
+         stringBuilder.append(" ==> ").append(ownerIndex);
+      }
+      
+      stringBuilder.append("\n");
+      for (C50MLTreeElement child : children) {
+         child.printRules(level + 1, stringBuilder);
+      }
    }
 }

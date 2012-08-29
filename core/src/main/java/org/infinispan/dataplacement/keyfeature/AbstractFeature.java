@@ -30,9 +30,11 @@ public abstract class AbstractFeature {
    }
 
    protected final FeatureType featureType;
+   protected final String name;
 
-   protected AbstractFeature(FeatureType featureType) {
+   protected AbstractFeature(String name, FeatureType featureType) {
       this.featureType = featureType;
+      this.name = name.replaceAll("\\s", "");
    }
 
    /**
@@ -70,11 +72,13 @@ public abstract class AbstractFeature {
     * @return        the feature value
     */
    public final FeatureValue createFeatureValueFromString(String value) {
+      if ("N/A".equals(value)) {
+         return null;
+      }
       FeatureValue retVal;
       if (featureType == FeatureType.NUMBER) {
-         try {
-            Number number = NumberFormat.getNumberInstance().parse(value);
-            retVal = new NumericFeatureValue(number);
+         try {            
+            retVal = new NumericFeatureValue(NumberFormat.getNumberInstance().parse(value));
          } catch (ParseException e) {
             retVal = new NumericFeatureValue(null);
          }
@@ -95,5 +99,7 @@ public abstract class AbstractFeature {
     * returns the feature name
     * @return  the feature name
     */
-   public abstract String getFeatureName();
+   public final String getName() {
+      return name;
+   }
 }

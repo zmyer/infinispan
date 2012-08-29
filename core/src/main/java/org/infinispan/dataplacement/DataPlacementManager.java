@@ -75,6 +75,7 @@ public class DataPlacementManager {
       this.cacheName = cache.getName();
 
       if (!configuration.dataPlacement().enabled()) {
+         log.info("Data placement not enabled");
          return;
       }
 
@@ -88,10 +89,10 @@ public class DataPlacementManager {
          objectPlacementManager = new ObjectPlacementManager(distributionManager,dataContainer);
          objectLookupManager = new ObjectLookupManager((DistributedStateTransferManagerImpl) stateTransfer);
          roundManager.enable();
+         log.info("Data placement enabled");
       }
 
       cacheNotifier.addListener(this);
-      log.info("My cache name is "+ cache.getName());
    }
 
    /**
@@ -100,6 +101,9 @@ public class DataPlacementManager {
     * @param newRoundId the new round id
     */
    public final void startDataPlacement(long newRoundId) {
+      if (log.isTraceEnabled()) {
+         log.tracef("Start data placement protocol with round %s", newRoundId);
+      }
       objectPlacementManager.resetState();
       objectLookupManager.resetState();
       remoteAccessesManager.resetState();
@@ -121,21 +125,24 @@ public class DataPlacementManager {
     * @param roundId       the round id
     */
    public final void addRequest(Address sender, Map<Object, Long> objectRequest, long roundId) {
-      try {
-         roundManager.ensure(roundId);
-      } catch (InterruptedException e) {
-         Thread.currentThread().interrupt();
-         log.warnf("The thread was interrupted while waiting for the round %s. returning...", roundId);
-         return;
-      } catch (Exception e) {
-         log.errorf("Data placement not enabled");
+      if (log.isDebugEnabled()) {
+         log.debugf("Keys request received from %s in round %s", sender, roundId);
+      }
+
+      if (!roundManager.ensure(roundId)) {
+         log.warn("Not possible to process key request list");
          return;
       }
 
-      DataPlacementManager.log.info("Aggregating request!");
       if(objectPlacementManager.aggregateResult(sender, objectRequest)){
          Map<Object, Integer> objectsToMove = objectPlacementManager.getObjectsToMove();
+
+         if (log.isTraceEnabled()) {
+            log.tracef("All keys request list received. Object to move are " + objectsToMove);
+         }
+
          ObjectLookup objectLookup = objectLookupFactory.createObjectLookup(objectsToMove);
+
          if (objectLookup == null) {
             objectPlacementManager.testObjectLookup(objectLookup);
          }
@@ -158,18 +165,20 @@ public class DataPlacementManager {
     * @param roundId                the round id
     */
    public final void addObjectLookup(Address from, Object[] objectLookupParameters, long roundId) {
-      try {
-         roundManager.ensure(roundId);
-      } catch (InterruptedException e) {
-         Thread.currentThread().interrupt();
-         log.warnf("The thread was interrupted while waiting for the round %s. returning...", roundId);
-         return;
-      } catch (Exception e) {
-         log.errorf("Data placement not enabled");
+      if (log.isDebugEnabled()) {
+         log.debugf("Remote Object Lookup received from %s in round %s", from, roundId);
+      }
+
+      if (!roundManager.ensure(roundId)) {
+         log.warn("Not possible to process remote Object Lookup");
          return;
       }
+
       ObjectLookup objectLookup = objectLookupFactory.deSerializeObjectLookup(objectLookupParameters);
       if (objectLookupManager.addObjectLookup(from, objectLookup)) {
+         if (log.isTraceEnabled()) {
+            log.tracef("All remote Object Lookup received. Send Ack to coordinator");
+         }
          DataPlacementCommand command = commandsFactory.buildDataPlacementCommand(DataPlacementCommand.Type.ACK_COORDINATOR_PHASE,
                                                                                   roundId);
          rpcManager.invokeRemotely(Collections.singleton(rpcManager.getTransport().getCoordinator()), command, false);
@@ -182,17 +191,19 @@ public class DataPlacementManager {
     * @param roundId the round id
     */
    public final void addAck(long roundId) {
-      try {
-         roundManager.ensure(roundId);
-      } catch (InterruptedException e) {
-         Thread.currentThread().interrupt();
-         log.warnf("The thread was interrupted while waiting for the round %s. returning...", roundId);
-         return;
-      } catch (Exception e) {
-         log.errorf("Data placement not enabled");
+      if (log.isDebugEnabled()) {
+         log.debugf("Ack received in round %s", roundId);
+      }
+
+      if (!roundManager.ensure(roundId)) {
+         log.warn("Not possible to process Ack");
          return;
       }
+
       if (objectLookupManager.addAck()) {
+         if (log.isTraceEnabled()) {
+            log.tracef("All Acks received. Trigger state transfer");
+         }
          cacheViewsManager.handleRequestMoveKeys(cacheName);
       }
    }
@@ -206,45 +217,24 @@ public class DataPlacementManager {
       roundManager.setCoolDownTime(milliseconds);
    }
 
-   @ViewChanged
-   public void viewChange(ViewChangedEvent event) {
-      objectPlacementManager.updateMembersList(event.getNewMembers());
-      objectLookupManager.updateMembersList(event.getNewMembers());
-   }
-
-   @DataRehashed
-   public void keyMovementTest(DataRehashedEvent event) {
-      if (event.getMembersAtEnd().size() == event.getMembersAtStart().size()) {
-         DataPlacementManager.log.info("Doing Keymovement test!");
-         if (event.isPre() && expectPre) {
-            expectPre = false;
-            log.info("View ID:"+event.getNewViewId());
-            objectPlacementManager.prePhaseTest();
-         } else if( !event.isPre() && !expectPre ){
-            expectPre = true;
-            objectPlacementManager.postPhaseTest();
-            remoteAccessesManager.postPhaseTest();
-            roundManager.markRoundFinished();
-         }
-      } else {
-         DataPlacementManager.log.info("KeyMovementTest not triggered!");
-      }
-   }
-
    /**
     * obtains the request list to send for each member and sends it
     */
    private void sendRequestToAll() {
-      log.info("Start sending requests");
+      if (log.isTraceEnabled()) {
+         log.trace("Start sending keys request");
+      }
 
       remoteAccessesManager.calculateRemoteAccessesPerMember();
       Map<Object, Long> request;
 
       for (Address address : rpcManager.getTransport().getMembers()) {
          request = remoteAccessesManager.getRemoteListFor(address);
+
          if (request == null) {
             request = Collections.emptyMap();
          }
+
          if (address.equals(rpcManager.getAddress())) {
             addRequest(address, request, roundManager.getCurrentRoundId());
          } else {
@@ -252,6 +242,48 @@ public class DataPlacementManager {
                                                                                      roundManager.getCurrentRoundId());
             command.setRemoteTopList(request);
             rpcManager.invokeRemotely(Collections.singleton(address), command, false);
+            logRemoteTopListSent(request, address);
+         }
+      }
+   }
+
+   /**
+    * log keys request list to owner
+    * 
+    * @param request the request list
+    * @param to      the owner
+    */
+   private void logRemoteTopListSent(Map<?,?> request, Address to) {
+      if (log.isTraceEnabled()) {
+         log.tracef("Sending request list of %s objects to %s. Request list is %s", request.size(), to, request);
+      } else if (log.isDebugEnabled()) {
+         log.debugf("Sending request list of %s objects to %s", request.size(), to);
+      }
+   }
+
+   @ViewChanged
+   public final void viewChange(ViewChangedEvent event) {
+      objectPlacementManager.updateMembersList(event.getNewMembers());
+      objectLookupManager.updateMembersList(event.getNewMembers());
+   }
+
+   @DataRehashed
+   public final void keyMovementTest(DataRehashedEvent event) {
+      if (event.getMembersAtEnd().size() == event.getMembersAtStart().size()) {
+         if (event.isPre() && expectPre) {
+            if (log.isTraceEnabled()) {
+               log.trace("Doing data placement pre-phase test");
+            }
+            expectPre = false;
+            objectPlacementManager.prePhaseTest();
+         } else if(!event.isPre() && !expectPre) {
+            if (log.isTraceEnabled()) {
+               log.trace("Doing data placement post-phase test");
+            }
+            expectPre = true;
+            objectPlacementManager.postPhaseTest();
+            remoteAccessesManager.postPhaseTest();
+            roundManager.markRoundFinished();
          }
       }
    }
@@ -259,11 +291,17 @@ public class DataPlacementManager {
    @ManagedOperation(description = "Start the data placement algorithm in order to optimize the system performance")
    public final void dataPlacementRequest() throws Exception {
       if (!rpcManager.getTransport().isCoordinator()) {
+         if (log.isTraceEnabled()) {
+            log.trace("Data placement request. Sending request to coordinator");
+         }
          DataPlacementCommand command = commandsFactory.buildDataPlacementCommand(DataPlacementCommand.Type.DATA_PLACEMENT_REQUEST,
                                                                                   roundManager.getCurrentRoundId());
          rpcManager.invokeRemotely(Collections.singleton(rpcManager.getTransport().getCoordinator()),
                                    command, false);
          return;
+      }
+      if (log.isTraceEnabled()) {
+         log.trace("Data placement request received.");
       }
       DataPlacementCommand command = commandsFactory.buildDataPlacementCommand(DataPlacementCommand.Type.DATA_PLACEMENT_START,
                                                                                roundManager.getNewRoundId());
@@ -273,6 +311,9 @@ public class DataPlacementManager {
 
    @ManagedOperation(description = "Updates the cool down time between two or more data placement requests")
    public final void setCoolDownTime(int milliseconds) {
+      if (log.isTraceEnabled()) {
+         log.tracef("Setting new cool down period to %s milliseconds", milliseconds);
+      }
       DataPlacementCommand command = commandsFactory.buildDataPlacementCommand(DataPlacementCommand.Type.SET_COOL_DOWN_TIME,
                                                                                roundManager.getCurrentRoundId());
       command.setCoolDownTime(milliseconds);

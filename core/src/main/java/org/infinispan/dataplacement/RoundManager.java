@@ -1,5 +1,8 @@
 package org.infinispan.dataplacement;
 
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
+
 /**
  * Manages the round Id, blocks commands from round ahead of time and data placement request if another request is 
  * in progress
@@ -8,6 +11,8 @@ package org.infinispan.dataplacement;
  * @since 5.2
  */
 public class RoundManager {
+
+   private static final Log log = LogFactory.getLog(RoundManager.class);
 
    private long currentRoundId;
 
@@ -70,15 +75,31 @@ public class RoundManager {
     * it blocks the current thread until the current round is higher or equals to the round id
     *
     * @param roundId    the round id
-    * @throws Exception if interrupted while waiting or if the component is not enabled
+    * @return           true if the round id is ensured, false otherwise (not enabled or interrupted)    
     */
-   public final synchronized void ensure(long roundId) throws Exception {
+   public final synchronized boolean ensure(long roundId) {
       if (!enabled) {
-         throw new Exception("Data placement optimization not enabled");
+         log.warnf("Not possible to ensure round %s. Data placement not enabled", roundId);
+         return false;
       }
+
+      if (log.isDebugEnabled()) {
+         log.debugf("[%s] trying to ensure round %s", Thread.currentThread().getName(), roundId);
+      }
+
       while (roundId > currentRoundId) {
-         wait();
+         try {
+            wait();
+         } catch (InterruptedException e) {
+            log.warnf("[%s] interrupted while trying to ensure round %s", Thread.currentThread().getName(), roundId);
+            return false;
+         }
       }
+
+      if (log.isDebugEnabled()) {
+         log.debugf("[%s] ensured round %s", Thread.currentThread().getName(), roundId);
+      }
+      return true;
    }
 
    /**

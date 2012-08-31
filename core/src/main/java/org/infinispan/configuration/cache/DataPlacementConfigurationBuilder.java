@@ -1,7 +1,6 @@
 package org.infinispan.configuration.cache;
 
 import org.infinispan.config.ConfigurationException;
-import org.infinispan.dataplacement.keyfeature.KeyFeatureManager;
 import org.infinispan.dataplacement.lookup.ObjectLookupFactory;
 import org.infinispan.util.TypedProperties;
 
@@ -16,7 +15,7 @@ import java.util.Properties;
 public class DataPlacementConfigurationBuilder extends AbstractConfigurationChildBuilder<DataPlacementConfiguration> {
 
    private boolean enabled = false;
-   private ObjectLookupFactory objectLookupFactory;   
+   private ObjectLookupFactory objectLookupFactory;
    private int coolDownTime = 30000; //30 seconds by default
    private Properties properties = new Properties();
 
@@ -27,7 +26,7 @@ public class DataPlacementConfigurationBuilder extends AbstractConfigurationChil
    public DataPlacementConfigurationBuilder objectLookupFactory(ObjectLookupFactory objectLookupFactory) {
       this.objectLookupFactory = objectLookupFactory;
       return this;
-   }   
+   }
 
    public DataPlacementConfigurationBuilder withProperties(Properties properties) {
       this.properties = properties;
@@ -41,6 +40,11 @@ public class DataPlacementConfigurationBuilder extends AbstractConfigurationChil
 
    public DataPlacementConfigurationBuilder disable() {
       this.enabled = false;
+      return this;
+   }
+
+   public DataPlacementConfigurationBuilder enabled(boolean enabled) {
+      this.enabled = enabled;
       return this;
    }
 
@@ -74,7 +78,9 @@ public class DataPlacementConfigurationBuilder extends AbstractConfigurationChil
 
    @Override
    public ConfigurationChildBuilder read(DataPlacementConfiguration template) {
-      this.objectLookupFactory = template.objectLookupFactory();      
+      this.enabled = template.enabled();
+      this.coolDownTime = template.coolDownTime();
+      this.objectLookupFactory = template.objectLookupFactory();
       this.properties = template.properties();
       return this;
    }

@@ -331,10 +331,11 @@ public class Parser {
                builder.dataPlacement().objectLookupFactory(objectLookupFactory);
                break;
             case ENABLED:
-               if (Boolean.parseBoolean(value))
+               if (Boolean.parseBoolean(value)) {
                   builder.dataPlacement().enable();
-               else
+               } else {
                   builder.dataPlacement().disable();
+               }
                break;
             case COOL_DOWN_TIME:
                try {

@@ -2,8 +2,6 @@ package org.infinispan.distribution.ch;
 
 import org.infinispan.dataplacement.lookup.ObjectLookup;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,13 +19,16 @@ import java.util.Set;
  * @since 5.2
  */
 public class DataPlacementConsistentHashing extends AbstractConsistentHash {
-   
+
    ConsistentHash baseHash;
    Map<Address, ObjectLookup> lookUpperList = new HashMap<Address, ObjectLookup>();
-   List<Address> addressList = new ArrayList<Address>();   
+   List<Address> addressList = new ArrayList<Address>();
 
    public void addObjectLookup(Address address, ObjectLookup objectLookup) {
-      this.lookUpperList.put(address, objectLookup);
+      if (objectLookup == null) {
+         return;
+      }
+      lookUpperList.put(address, objectLookup);
    }
 
    @Override
@@ -47,19 +48,21 @@ public class DataPlacementConsistentHashing extends AbstractConsistentHash {
    @Override
    public List<Address> locate(Object key, int replCount) {
       List<Address> defaultAddList = baseHash.locate(key, replCount);
-      Integer index = lookUpperList.get(defaultAddList.get(0)).query(key.toString());
-      if (index == null)
+      ObjectLookup objectLookup = lookUpperList.get(defaultAddList.get(0));
+      int index = objectLookup == null ? ObjectLookup.KEY_NOT_FOUND : objectLookup.query(key);
+
+      if (index == ObjectLookup.KEY_NOT_FOUND) {
          return defaultAddList;
-      else {
+      } else {
          List<Address> addList = new ArrayList<Address>();
-         addList.add(this.addressList.get(index));
+         addList.add(addressList.get(index));
          return addList;
       }
    }
 
    @Override
    public List<Integer> getHashIds(Address a) {
-      throw new RuntimeException("Not yet implemented");
+      throw new UnsupportedOperationException("Not yet implemented");
    }
 
    public void setDefault(ConsistentHash defaultHash) {

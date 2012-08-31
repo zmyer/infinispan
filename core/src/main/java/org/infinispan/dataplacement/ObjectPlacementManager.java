@@ -98,14 +98,15 @@ public class ObjectPlacementManager {
       try {
 
          Integer senderID = addressList.indexOf(sender);
-         log.info("Getting message from node" + sender);
+         log.info("Getting message from " + sender);
 
          requestReceivedMap.put(senderID, objectRequest);
          hasReceivedAllRequests = addressList.size() <= requestReceivedMap.size();
 
          writer.write(false, sender, objectRequest);
 
-         log.info("Gathering request... has received from" + requestReceivedMap.size() + " nodes");
+         log.info("Gathering request... has received from " + requestReceivedMap.size() + " nodes and expects " +
+                        addressList.size());
 
       } catch (Exception e) {
          log.error(e.toString());

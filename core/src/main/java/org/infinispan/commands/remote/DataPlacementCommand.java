@@ -146,7 +146,8 @@ public class DataPlacementCommand extends BaseRpcCommand {
             roundId = (Long) parameters[1];
             break;
          case REMOTE_TOP_LIST_PHASE:
-            remoteTopList = (Map<Object, Long>) parameters[1];
+            roundId = (Long) parameters[1];
+            remoteTopList = (Map<Object, Long>) parameters[2];
             break;
          case OBJECT_LOOKUP_PHASE:
             roundId = (Long) parameters[1];
@@ -155,6 +156,7 @@ public class DataPlacementCommand extends BaseRpcCommand {
             break;
          case SET_COOL_DOWN_TIME:
             coolDownTime = (Integer) parameters[1];
+            break;
       }
    }
 

@@ -10,6 +10,7 @@ import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -70,7 +71,7 @@ public class RemoteAccessesManager {
 
       Map<Object, Long> remoteGet = analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET);
 
-      log.info("Size of Remote Get is :" + remoteGet.size());
+      log.info("Size of Remote Get is: " + remoteGet.size());
 
       // Only send statistics if there are enough objects
       if (remoteGet.size() >= analyticsBean.getCapacity() * 0.8) {
@@ -97,6 +98,9 @@ public class RemoteAccessesManager {
     */
    public synchronized final Map<Object, Long> getRemoteListFor(Address member) {
       Map<Object, Long> request = remoteAccessPerMember.get(member);
+      if (request == null) {
+         request = Collections.emptyMap();
+      }
       writer.write(true, null, request);
       return request;
    }

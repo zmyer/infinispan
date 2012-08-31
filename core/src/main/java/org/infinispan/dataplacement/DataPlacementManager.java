@@ -10,12 +10,15 @@ import org.infinispan.dataplacement.lookup.ObjectLookup;
 import org.infinispan.dataplacement.lookup.ObjectLookupFactory;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.DataRehashed;
 import org.infinispan.notifications.cachelistener.event.DataRehashedEvent;
+import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
+import org.infinispan.notifications.cachemanagerlistener.annotation.Merged;
 import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
 import org.infinispan.notifications.cachemanagerlistener.event.ViewChangedEvent;
 import org.infinispan.remoting.rpc.RpcManager;
@@ -26,6 +29,7 @@ import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 
@@ -68,7 +72,8 @@ public class DataPlacementManager {
    @Inject
    public void inject(CommandsFactory commandsFactory, DistributionManager distributionManager, RpcManager rpcManager,
                       CacheViewsManager cacheViewsManager, Cache cache, StateTransferManager stateTransfer,
-                      DataContainer dataContainer, CacheNotifier cacheNotifier, Configuration configuration) {
+                      DataContainer dataContainer, CacheNotifier cacheNotifier, CacheManagerNotifier cacheManagerNotifier,
+                      Configuration configuration) {
       this.rpcManager = rpcManager;
       this.commandsFactory = commandsFactory;
       this.cacheViewsManager = cacheViewsManager;
@@ -90,9 +95,17 @@ public class DataPlacementManager {
          objectLookupManager = new ObjectLookupManager((DistributedStateTransferManagerImpl) stateTransfer);
          roundManager.enable();
          log.info("Data placement enabled");
+      } else {
+         log.info("Data placement disabled. Not in Distributed mode");
       }
 
       cacheNotifier.addListener(this);
+      cacheManagerNotifier.addListener(this);
+   }
+
+   @Start
+   public void start() {
+      updateMembersList(rpcManager.getTransport().getMembers());
    }
 
    /**
@@ -108,12 +121,12 @@ public class DataPlacementManager {
       objectLookupManager.resetState();
       remoteAccessesManager.resetState();
       roundManager.startNewRound(newRoundId);
-      new Thread() {
+      new Thread("Data-Placement-Thread") {
          @Override
          public void run() {
             sendRequestToAll();
          }
-      };
+      }.start();
    }
 
    /**
@@ -143,7 +156,7 @@ public class DataPlacementManager {
 
          ObjectLookup objectLookup = objectLookupFactory.createObjectLookup(objectsToMove);
 
-         if (objectLookup == null) {
+         if (objectLookup != null) {
             objectPlacementManager.testObjectLookup(objectLookup);
          }
 
@@ -152,7 +165,7 @@ public class DataPlacementManager {
          command.setObjectLookup(objectLookupFactory.serializeObjectLookup(objectLookup));
 
          rpcManager.broadcastRpcCommand(command, false, false);
-         objectLookupManager.addObjectLookup(rpcManager.getAddress(), objectLookup);
+         addObjectLookup(rpcManager.getAddress(), objectLookupFactory.serializeObjectLookup(objectLookup), roundId);
       }
    }
 
@@ -181,7 +194,11 @@ public class DataPlacementManager {
          }
          DataPlacementCommand command = commandsFactory.buildDataPlacementCommand(DataPlacementCommand.Type.ACK_COORDINATOR_PHASE,
                                                                                   roundId);
-         rpcManager.invokeRemotely(Collections.singleton(rpcManager.getTransport().getCoordinator()), command, false);
+         if (rpcManager.getTransport().isCoordinator()) {
+            addAck(roundId);
+         } else {
+            rpcManager.invokeRemotely(Collections.singleton(rpcManager.getTransport().getCoordinator()), command, false);
+         }
       }
    }
 
@@ -231,10 +248,6 @@ public class DataPlacementManager {
       for (Address address : rpcManager.getTransport().getMembers()) {
          request = remoteAccessesManager.getRemoteListFor(address);
 
-         if (request == null) {
-            request = Collections.emptyMap();
-         }
-
          if (address.equals(rpcManager.getAddress())) {
             addRequest(address, request, roundManager.getCurrentRoundId());
          } else {
@@ -249,7 +262,7 @@ public class DataPlacementManager {
 
    /**
     * log keys request list to owner
-    * 
+    *
     * @param request the request list
     * @param to      the owner
     */
@@ -261,10 +274,18 @@ public class DataPlacementManager {
       }
    }
 
+   private void updateMembersList(List<Address> members) {
+      if (log.isDebugEnabled()) {
+         log.debugf("Updating members list. New members are %s", members);
+      }
+      objectPlacementManager.updateMembersList(members);
+      objectLookupManager.updateMembersList(members);
+   }
+
+   @Merged
    @ViewChanged
    public final void viewChange(ViewChangedEvent event) {
-      objectPlacementManager.updateMembersList(event.getNewMembers());
-      objectLookupManager.updateMembersList(event.getNewMembers());
+      updateMembersList(event.getNewMembers());
    }
 
    @DataRehashed

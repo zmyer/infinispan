@@ -111,7 +111,7 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
       }
 
       Collection<String> rules = getRulesFromMachineLearner(reader);
-      
+
       if (rules.isEmpty()) {
          log.errorf("Cannot create Object Lookup. Machine Learner didn't return any rule");
          return null;
@@ -126,7 +126,7 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
 
    @Override
    public Object[] serializeObjectLookup(ObjectLookup objectLookup) {
-      if (objectLookup instanceof C50MLObjectLookup) {
+      if (objectLookup != null && objectLookup instanceof C50MLObjectLookup) {
          C50MLObjectLookup c50MLObjectLookup = (C50MLObjectLookup) objectLookup;
          return new Object[] {c50MLObjectLookup.bloomFilter, c50MLObjectLookup.c50MLTree};
       }

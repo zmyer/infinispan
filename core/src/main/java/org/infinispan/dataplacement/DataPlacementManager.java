@@ -292,18 +292,18 @@ public class DataPlacementManager {
    public final void keyMovementTest(DataRehashedEvent event) {
       if (event.getMembersAtEnd().size() == event.getMembersAtStart().size()) {
          if (event.isPre() && expectPre) {
-            if (log.isTraceEnabled()) {
-               log.trace("Doing data placement pre-phase test");
-            }
             expectPre = false;
-            objectPlacementManager.prePhaseTest();
-         } else if(!event.isPre() && !expectPre) {
-            if (log.isTraceEnabled()) {
-               log.trace("Doing data placement post-phase test");
+            if (log.isDebugEnabled()) {
+               log.debug("Doing data placement pre-phase test");
+               objectPlacementManager.prePhaseTest();
             }
+         } else if(!event.isPre() && !expectPre) {
             expectPre = true;
-            objectPlacementManager.postPhaseTest();
-            remoteAccessesManager.postPhaseTest();
+            if (log.isDebugEnabled()) {
+               log.debug("Doing data placement post-phase test");
+               objectPlacementManager.postPhaseTest();
+               remoteAccessesManager.postPhaseTest();
+            }
             roundManager.markRoundFinished();
          }
       }

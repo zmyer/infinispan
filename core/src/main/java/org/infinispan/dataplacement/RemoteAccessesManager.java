@@ -38,14 +38,11 @@ public class RemoteAccessesManager {
    private final Map<Address, Map<Object, Long>> remoteAccessPerMember;
    private final StreamLibContainer analyticsBean;
 
-   private final TestWriter writer;
-
    public RemoteAccessesManager(DistributionManager distributionManager, DataContainer dataContainer) {
       this.distributionManager = distributionManager;
       this.dataContainer = dataContainer;
 
       analyticsBean = StreamLibContainer.getInstance();
-      writer = TestWriter.getInstance();
       remoteAccessPerMember = new HashMap<Address, Map<Object, Long>>();
       movedInList = new HashSet<Object>();
       requestSentList = new HashSet<Object>();
@@ -98,10 +95,17 @@ public class RemoteAccessesManager {
     */
    public synchronized final Map<Object, Long> getRemoteListFor(Address member) {
       Map<Object, Long> request = remoteAccessPerMember.get(member);
+
       if (request == null) {
          request = Collections.emptyMap();
       }
-      writer.write(true, null, request);
+
+      if (log.isDebugEnabled()) {
+         log.debugf("Getting request list to send to %s. Keys are %s", member, request);
+      } else {
+         log.infof("Getting request list to send to %s", member);
+      }
+
       return request;
    }
 
@@ -114,11 +118,11 @@ public class RemoteAccessesManager {
     * @return  the access number for all moved keys
     */
    private Map<Object, Long> getStaticsForMovedInObjects() {
-      Map<Object, Long> localGetRealStatics = this.analyticsBean.getTopKFrom(StreamLibContainer.Stat.LOCAL_GET);
-
       Map<Object, Long> localGetEstimatedStatics = new HashMap<Object,Long>();
       List<Object> tempList = new ArrayList<Object>();
       long minAccess = Long.MAX_VALUE;
+
+      Map<Object, Long> localGetRealStatics = this.analyticsBean.getTopKFrom(StreamLibContainer.Stat.LOCAL_GET);
 
       for(Object key: movedInList){
          Long accessNum = localGetRealStatics.get(key);

@@ -46,7 +46,6 @@ public class ObjectPlacementManager {
    private boolean hasReceivedAllRequests;
 
    private final DataContainer dataContainer;
-   private final TestWriter writer;
    private final DistributionManager distributionManager;
 
    public ObjectPlacementManager(DistributionManager distributionManager, DataContainer dataContainer){
@@ -58,7 +57,6 @@ public class ObjectPlacementManager {
       allSentObjects = new HashMap<Object, Pair<Integer, Integer>>();
       requestReceivedMap = new TreeMap<Integer, Map<Object, Long>>();
       objectsToMove = new HashMap<Object, Integer>();
-      writer = TestWriter.getInstance();
       hasReceivedAllRequests = false;
    }
 
@@ -95,22 +93,25 @@ public class ObjectPlacementManager {
       if (hasReceivedAllRequests) {
          return false;
       }
-      try {
 
-         Integer senderID = addressList.indexOf(sender);
-         log.info("Getting message from " + sender);
+      int senderID = addressList.indexOf(sender);
 
-         requestReceivedMap.put(senderID, objectRequest);
-         hasReceivedAllRequests = addressList.size() <= requestReceivedMap.size();
-
-         writer.write(false, sender, objectRequest);
-
-         log.info("Gathering request... has received from " + requestReceivedMap.size() + " nodes and expects " +
-                        addressList.size());
-
-      } catch (Exception e) {
-         log.error(e.toString());
+      if (senderID < 0) {
+         log.warnf("Received request list from %s but it does not exits", sender);
+         return false;
       }
+
+      requestReceivedMap.put(senderID, objectRequest);
+      hasReceivedAllRequests = addressList.size() <= requestReceivedMap.size();
+
+      if (log.isDebugEnabled()) {
+         log.debugf("Received request list from %s. Received from %s nodes and expects %s. Keys are %s", sender,
+                    requestReceivedMap.size(), addressList.size(), objectRequest);
+      } else {
+         log.infof("Received request list from %s. Received from %s nodes and expects %s", sender,
+                   requestReceivedMap.size(), addressList.size());
+      }
+
       return hasReceivedAllRequests;
    }
 

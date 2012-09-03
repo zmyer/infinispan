@@ -25,7 +25,7 @@ import org.infinispan.dataplacement.lookup.ObjectLookup;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.ConsistentHashHelper;
-import org.infinispan.distribution.ch.DataPlacementConsistentHashing;
+import org.infinispan.distribution.ch.DataPlacementConsistentHash;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.loaders.CacheStore;
@@ -55,9 +55,8 @@ public class DistributedStateTransferManagerImpl extends BaseStateTransferManage
 
    protected DistributionManager dm;
 
-   private DataPlacementConsistentHashing nextHash = new DataPlacementConsistentHashing();
+   private DataPlacementConsistentHash dataPlacementConsistentHash;
 
-   private boolean mlHashPrepared = false;
    /**
     * Default constructor
     */
@@ -86,24 +85,36 @@ public class DistributedStateTransferManagerImpl extends BaseStateTransferManage
    @Override
    protected ConsistentHash createConsistentHash(List<Address> members) {
       ConsistentHash defaultHash = ConsistentHashHelper.createConsistentHash(configuration, members);
-      if(!mlHashPrepared)
+      if (isDataPlacementConsistentHash()) {
+         dataPlacementConsistentHash.setDefault(defaultHash);
+         return dataPlacementConsistentHash;
+      } else {
          return defaultHash;
-      else{
-         nextHash.setDefault(defaultHash);
-         return  nextHash;
       }
+   }
+
+   @Override
+   public void commitView(int viewId) {
+      dataPlacementConsistentHash = null; //TODO check: if a node fails, it will create a default consistent hash, 
+      //TODO: and it puts the keys back in their original owner (home)
+      super.commitView(viewId);
    }
 
    public void addObjectLookup(Address address, ObjectLookup objectLookup){
-      if(!mlHashPrepared){
-         mlHashPrepared = true;
+      if (dataPlacementConsistentHash == null) {
+         log.errorf("Trying to add the Object Lookup from %s but the Data Placement Consistent Hash is null", address);
+         return;
+      } else {
+         if (log.isDebugEnabled()) {
+            log.debugf("Add Object Lookup from %s", address);
+         }
       }
-      nextHash.addObjectLookup(address, objectLookup);
-      log.warn("Set look upper once :" +address);
+
+      dataPlacementConsistentHash.addObjectLookup(address, objectLookup);
    }
 
-   public void setCachesList(List<Address> cacheList){
-      nextHash.setCacheList(cacheList);
+   public void createDataPlacementConsistentHashing(List<Address> membersList){
+      dataPlacementConsistentHash = new DataPlacementConsistentHash(membersList);
    }
 
    public void invalidateKeys(List<Object> keysToRemove) {
@@ -133,6 +144,10 @@ public class DistributedStateTransferManagerImpl extends BaseStateTransferManage
    public boolean isLocationInDoubt(Object key) {
       return isStateTransferInProgress() && !chOld.isKeyLocalToAddress(getAddress(), key, configuration.getNumOwners())
             && chNew.isKeyLocalToAddress(getAddress(), key, configuration.getNumOwners());
+   }
+
+   private boolean isDataPlacementConsistentHash() {
+      return dataPlacementConsistentHash != null;
    }
 }
 

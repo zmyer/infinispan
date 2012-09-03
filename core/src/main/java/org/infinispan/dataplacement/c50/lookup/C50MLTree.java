@@ -4,6 +4,7 @@ import org.infinispan.dataplacement.keyfeature.AbstractFeature;
 import org.infinispan.dataplacement.keyfeature.FeatureValue;
 import org.infinispan.dataplacement.lookup.ObjectLookup;
 
+import java.io.Serializable;
 import java.util.Collection;
 import java.util.Map;
 
@@ -13,7 +14,7 @@ import java.util.Map;
  * @author Pedro Ruivo
  * @since 5.2
  */
-public class C50MLTree {
+public class C50MLTree implements Serializable {
 
    private final C50MLTreeElement rootElement;
 
@@ -23,7 +24,7 @@ public class C50MLTree {
 
    /**
     * tries to find the key in the tree and the new owner
-    * 
+    *
     * @param keysFeatures  the key features
     * @return              the new owner index or KEY_NOT_FOUND if the keys was not moved
     */
@@ -44,7 +45,7 @@ public class C50MLTree {
 
    /**
     * tries to find a tree element that matches with the features values (and conditions)
-    * 
+    *
     * @param children      the list of tree elements
     * @param keyFeatures   the key features
     * @return              the tree element that matches, null otherwise
@@ -57,7 +58,7 @@ public class C50MLTree {
       }
       return null;
    }
-   
+
    public final String rulesToString() {
       StringBuilder sb = new StringBuilder("Rules:\n");
       for (C50MLTreeElement element : rootElement.getChildren()) {

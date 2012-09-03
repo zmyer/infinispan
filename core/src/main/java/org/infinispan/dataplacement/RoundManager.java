@@ -132,6 +132,33 @@ public class RoundManager {
    }
 
    /**
+    * returns the current cool down time between data placement rounds
+    *
+    * @return  the current cool down time between data placement rounds
+    */
+   public final synchronized long getCoolDownTime() {
+      return coolDownTime;
+   }
+
+   /**
+    * returns true if a data placement round is in progress
+    *
+    * @return  true if a data placement round is in progress, false otherwise
+    */
+   public final synchronized boolean isRoundInProgress() {
+      return roundInProgress;
+   }
+
+   /**
+    * returns true if the data placement is enabled
+    *
+    * @return  true if the data placement is enabled, false otherwise
+    */
+   public final synchronized boolean isEnabled() {
+      return enabled;
+   }
+
+   /**
     * updates the cool down time before start a new request
     */
    private void updateNextRoundTimestamp() {

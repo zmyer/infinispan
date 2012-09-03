@@ -12,6 +12,7 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.jmx.annotations.MBean;
+import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
@@ -89,18 +90,22 @@ public class DataPlacementManager {
 
       roundManager.setCoolDownTime(configuration.dataPlacement().coolDownTime());
 
-      if (stateTransfer instanceof DistributedStateTransferManagerImpl) {
-         remoteAccessesManager = new RemoteAccessesManager(distributionManager,dataContainer);
-         objectPlacementManager = new ObjectPlacementManager(distributionManager,dataContainer);
-         objectLookupManager = new ObjectLookupManager((DistributedStateTransferManagerImpl) stateTransfer);
-         roundManager.enable();
-         log.info("Data placement enabled");
-      } else {
-         log.info("Data placement disabled. Not in Distributed mode");
+      //this is needed because the custom statistics invokes this method twice. the seconds time, it replaces
+      //the original manager (== problems!!)
+      synchronized (this) {
+         if (stateTransfer instanceof DistributedStateTransferManagerImpl && !roundManager.isEnabled()) {
+            remoteAccessesManager = new RemoteAccessesManager(distributionManager,dataContainer);
+            objectPlacementManager = new ObjectPlacementManager(distributionManager,dataContainer);
+            objectLookupManager = new ObjectLookupManager((DistributedStateTransferManagerImpl) stateTransfer);
+            roundManager.enable();
+            cacheNotifier.addListener(this);
+            cacheManagerNotifier.addListener(this);
+            log.info("Data placement enabled");
+         } else {
+            log.info("Data placement disabled. Not in Distributed mode");
+         }
       }
 
-      cacheNotifier.addListener(this);
-      cacheManagerNotifier.addListener(this);
    }
 
    @Start
@@ -124,7 +129,11 @@ public class DataPlacementManager {
       new Thread("Data-Placement-Thread") {
          @Override
          public void run() {
-            sendRequestToAll();
+            try {
+               sendRequestToAll();
+            } catch (Exception e) {
+               log.errorf(e, "Exception caught while starting data placement");
+            }
          }
       }.start();
    }
@@ -158,6 +167,8 @@ public class DataPlacementManager {
 
          if (objectLookup != null) {
             objectPlacementManager.testObjectLookup(objectLookup);
+         } else {
+            log.warn("Object Lookup is null");
          }
 
          DataPlacementCommand command = commandsFactory.buildDataPlacementCommand(DataPlacementCommand.Type.OBJECT_LOOKUP_PHASE,
@@ -274,6 +285,11 @@ public class DataPlacementManager {
       }
    }
 
+   /**
+    * updates the members in the cluster
+    *
+    * @param members the new members
+    */
    private void updateMembersList(List<Address> members) {
       if (log.isDebugEnabled()) {
          log.debugf("Updating members list. New members are %s", members);
@@ -353,5 +369,35 @@ public class DataPlacementManager {
       command.setCoolDownTime(milliseconds);
       rpcManager.broadcastRpcCommand(command, false, false);
       internalSetCoolDownTime(milliseconds);
+   }
+
+   @ManagedAttribute(description = "The cache name", writable = false)
+   public final String getCacheName() {
+      return cacheName;
+   }
+
+   @ManagedAttribute(description = "The current cool down time between rounds", writable = false)
+   public final long getCoolDownTime() {
+      return roundManager.getCoolDownTime();
+   }
+
+   @ManagedAttribute(description = "The current round Id", writable = false)
+   public final long getCurrentRoundId() {
+      return roundManager.getCurrentRoundId();
+   }
+
+   @ManagedAttribute(description = "Check if a data placement round is in progress", writable = false)
+   public final boolean isRoundInProgress() {
+      return roundManager.isRoundInProgress();
+   }
+
+   @ManagedAttribute(description = "Check if the data placement is enabled", writable = false)
+   public final boolean isEnabled() {
+      return roundManager.isEnabled();
+   }
+
+   @ManagedAttribute(description = "The Object Lookup Factory class name", writable = false)
+   public final String getObjectLookupFactoryClassName() {
+      return objectLookupFactory.getClass().getCanonicalName();
    }
 }

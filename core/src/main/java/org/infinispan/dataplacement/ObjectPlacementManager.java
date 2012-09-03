@@ -65,8 +65,6 @@ public class ObjectPlacementManager {
     */
    public final synchronized void resetState() {
       requestReceivedMap.clear();
-      objectsToMove.clear();
-      allSentObjects.clear();
       hasReceivedAllRequests = false;
    }
 
@@ -121,10 +119,8 @@ public class ObjectPlacementManager {
     * @return  a map with each object and the new owner index 
     */
    public final synchronized Map<Object, Integer> getObjectsToMove() {
-      if (objectsToMove.isEmpty()) {
-         Map<Object, Pair<Long, Integer>> fullRequestList = compactRequestList();
-         populateObjectToMove(fullRequestList);
-      }
+      Map<Object, Pair<Long, Integer>> fullRequestList = compactRequestList();
+      populateObjectToMove(fullRequestList);
       return objectsToMove;
    }
 
@@ -206,10 +202,6 @@ public class ObjectPlacementManager {
     * @param fullRequestList  the merged request list
     */
    private void populateObjectToMove(Map<Object, Pair<Long, Integer>> fullRequestList) {
-      if (!objectsToMove.isEmpty()) {
-         return;
-      }
-
       log.info("Generating final list");
       Map<Object, Long> localGetList = this.analyticsBean.getTopKFrom(StreamLibContainer.Stat.LOCAL_GET);
 
@@ -231,13 +223,13 @@ public class ObjectPlacementManager {
    }
 
    public void prePhaseTest(){
-      log.info("Doing prephase testing! sentObjectList size:" + allSentObjects.size());
-      log.info("Current Round Sent Object size:" + objectsToMove.size());
-      log.info("topremoteget: " + analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET));
+      log.debugf("Doing pre-phase testing!");
+      log.debugf("SentObjectList size: %s", allSentObjects.size());
+      log.debugf("Current round sent object size: %s", objectsToMove.size());
 
-      for (Entry<Object,Integer> entry : objectsToMove.entrySet()) {
-         if (!allSentObjects.containsKey(entry.getKey()) && !this.dataContainer.containsKey(entry.getKey())) {
-            log.error("prephase checking: Doesn't contains key:" + entry.getKey());
+      for (Object key : objectsToMove.keySet()) {
+         if (!allSentObjects.containsKey(key) && !dataContainer.containsKey(key)) {
+            log.errorf("Trying to move a key that it does not have. Key is %s", key);
          }
       }
    }
@@ -246,66 +238,48 @@ public class ObjectPlacementManager {
     * Test if keys are moved out as expected 
     */
    public void postPhaseTest(){
-      log.info("Doing postphase testing!");
-      log.info("Size of DataContainer: " + this.dataContainer.size());
-      log.info("SentObjectsList size before merging current round: " + this.allSentObjects.size());
-      log.info("topremoteget: " + this.analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET));
-
-
-      //Test if previous moved out key are moved inside again
-      int lostKeysCount = 0;
-      for(Entry<Object, Integer> entry : objectsToMove.entrySet()){
-         if (dataContainer.containsKey(entry.getKey())) {
-            ++lostKeysCount;
-         }
-      }
-
-      log.infof("Lost key count is %s", lostKeysCount);
-
+      log.debug("Doing post-phase testing!");
+      log.debugf("Size of DataContainer: %s", dataContainer.size());
+      log.debugf("SentObjectsList size before merging current round: %s", allSentObjects.size());
 
       //Check if try to move some key twice
+      log.debugf("Testing if keys are moved more than once");
       for(Entry<Object, Integer> entry : objectsToMove.entrySet()){
          Pair<Integer,Integer> temp = allSentObjects.get(entry.getKey());
          if(temp == null) {
             allSentObjects.put(entry.getKey(), new Pair<Integer, Integer>(entry.getValue(),1));
          } else if(entry.getValue() !=  temp.left.intValue()){
             ++temp.right;
-            log.warn("Try to move object twice!");
+            log.warnf("Moved %s more than one. Key moved %s times", entry.getKey(), temp.right);
          }
       }
-      log.info("SentObjectsList size after merging current round: " + allSentObjects.size());
 
+      log.debugf("SentObjectsList size after merging current round: %s", allSentObjects.size());
 
+      log.debugf("Testing if keys are moved correctly");
       int stillContainsCount = 0;
-      //Check if there are some keys not moved out (that should be moved).
-      for (Entry<Object, Pair<Integer,Integer>> entry : allSentObjects.entrySet()) {
-         if (this.dataContainer.containsKey(entry.getKey())) {
+      for (Object key : objectsToMove.keySet()) {
+         if (dataContainer.containsKey(key)) {
+            log.errorf("Key %s not moved correctly", key);
             ++stillContainsCount;
          }
       }
 
-      log.info(stillContainsCount+ " keys are not moved out correctly!");
-
-
-      //Do the same check by iterating currentRoundFinalObjects ( at this moment allSentObjects and currentRoundFinalObjects)
-      // should be the same
-      stillContainsCount = 0;
-      for (Entry<Object, Integer> entry : objectsToMove.entrySet()) {
-         if (this.dataContainer.containsKey(entry.getKey())) {
-            ++stillContainsCount;
-         }
-      }
-      log.info("Testing with currentRoundList: "+stillContainsCount+ " keys are not moved out correctly!");
+      log.debugf("Test result: %s keys are not moved out correctly!", stillContainsCount);
 
       //Check if some keys are moved to some other places by using MLHash
-      log.warn("Testing hash look up after sending!");
+      log.debugf("Testing keys new owner");
       int bfErrorCount = 0;
       for (Entry<Object, Integer> entry : objectsToMove.entrySet()) {
-         if(!distributionManager.locate(entry.getKey()).get(0).equals(addressList.get(entry.getValue()))){
+         Address expectedOwner = distributionManager.locate(entry.getKey()).get(0);
+         Address newOwner = addressList.get(entry.getValue());
+         if(!expectedOwner.equals(newOwner)){
+            log.errorf("Key %s moved to a wrong owner. Expected owner is %s and the new owner is %s", entry.getKey(),
+                       expectedOwner, newOwner);
             ++bfErrorCount;
          }
       }
 
-      log.warn("Error of hash look up after sending :"+bfErrorCount);
+      log.debugf("Test result: %s keys are in wrong place" ,bfErrorCount);
    }
 }

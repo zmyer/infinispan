@@ -3,7 +3,7 @@ package org.infinispan.dataplacement;
 import org.infinispan.container.DataContainer;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
-import org.infinispan.distribution.ch.DataPlacementConsistentHashing;
+import org.infinispan.distribution.ch.DataPlacementConsistentHash;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.stats.topK.StreamLibContainer;
 import org.infinispan.util.logging.Log;
@@ -221,11 +221,7 @@ public class RemoteAccessesManager {
 
       //Clean up- the local and remote top get list 
       analyticsBean.resetAll();
-      log.info(analyticsBean.getTopKFrom(StreamLibContainer.Stat.REMOTE_GET).size());
-
-      log.info(analyticsBean.getTopKFrom(StreamLibContainer.Stat.LOCAL_GET).size());
-
-      log.info("Request Sent List:"+requestSentList.toString());
+      log.info("Request Sent List:"+requestSentList);
    }
 
    /**
@@ -236,10 +232,10 @@ public class RemoteAccessesManager {
     */
    private ConsistentHash getConsistentHashingFunction(boolean useDefaultHash) {
       ConsistentHash hash = this.distributionManager.getConsistentHash();
-      if (hash instanceof DataPlacementConsistentHashing){
+      if (hash instanceof DataPlacementConsistentHash){
          if(useDefaultHash){
             log.info("Returning default hash of MLHash");
-            return ((DataPlacementConsistentHashing) hash).getDefaultHash();
+            return ((DataPlacementConsistentHash) hash).getDefaultHash();
          }
          else{
             log.info("Returning MLHash");

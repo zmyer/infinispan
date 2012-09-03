@@ -237,8 +237,8 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
          writer.newLine();
          writer.newLine();
 
-         for (Map.Entry<String, AbstractFeature> entry : featureMap.entrySet()) {
-            writeInputNames(writer, entry.getKey(), entry.getValue());
+         for (AbstractFeature feature : keyFeatureManager.getAllKeyFeatures()) {
+            writeInputNames(writer, feature);
          }
 
          writer.write("home: -2,-1");
@@ -262,12 +262,11 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
     * writes a single feature in the input.names 
     *
     * @param writer        the writer for the file          
-    * @param attributeName the feature name
     * @param feature       the feature instance (with type, etc...)
     * @throws IOException  if it cannot write in the file
     */
-   private void writeInputNames(BufferedWriter writer, String attributeName, AbstractFeature feature) throws IOException {
-      writer.write(attributeName);
+   private void writeInputNames(BufferedWriter writer, AbstractFeature feature) throws IOException {
+      writer.write(feature.getName());
       writer.write(": ");
       AbstractFeature.FeatureType type = feature.getType();
       if (type == AbstractFeature.FeatureType.NUMBER) {

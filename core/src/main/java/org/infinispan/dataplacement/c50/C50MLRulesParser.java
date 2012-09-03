@@ -54,7 +54,7 @@ public class C50MLRulesParser {
 
       if (isASingleRule()) {
          StringTokenizer ruleTokenizer = parseCurrentRule();
-         if (ruleTokenizer.countTokens() == 1) {
+         if (ruleTokenizer.countTokens() == 2) {
             rootElement.setLeaf(parseNewOwnerIndex(ruleTokenizer));
          } else {
             parseMachineLeanerRuleLevel(0, rootElement);

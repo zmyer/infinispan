@@ -1,5 +1,6 @@
 package org.infinispan.dataplacement.keyfeature;
 
+import java.io.Serializable;
 import java.text.NumberFormat;
 import java.text.ParseException;
 import java.util.List;
@@ -10,7 +11,7 @@ import java.util.List;
  * @author Pedro Ruivo
  * @since 5.2
  */
-public abstract class AbstractFeature {
+public abstract class AbstractFeature implements Serializable {
 
    public static enum FeatureType {
       NUMBER("continuous."),
@@ -29,8 +30,10 @@ public abstract class AbstractFeature {
       }
    }
 
-   protected final FeatureType featureType;
-   protected final String name;
+   private FeatureType featureType;
+   private String name;
+
+   public AbstractFeature() {} //To serialize / de-serialize
 
    protected AbstractFeature(String name, FeatureType featureType) {
       this.featureType = featureType;
@@ -77,7 +80,7 @@ public abstract class AbstractFeature {
       }
       FeatureValue retVal;
       if (featureType == FeatureType.NUMBER) {
-         try {            
+         try {
             retVal = new NumericFeatureValue(NumberFormat.getNumberInstance().parse(value));
          } catch (ParseException e) {
             retVal = new NumericFeatureValue(null);

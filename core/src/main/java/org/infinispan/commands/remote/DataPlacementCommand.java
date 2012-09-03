@@ -2,6 +2,8 @@ package org.infinispan.commands.remote;
 
 import org.infinispan.context.InvocationContext;
 import org.infinispan.dataplacement.DataPlacementManager;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 import java.util.Map;
 
@@ -12,6 +14,8 @@ import java.util.Map;
  * @since 5.2
  */
 public class DataPlacementCommand extends BaseRpcCommand {
+
+   private static final Log log = LogFactory.getLog(DataPlacementCommand.class);
 
    public static final short COMMAND_ID = 102;
 
@@ -85,25 +89,29 @@ public class DataPlacementCommand extends BaseRpcCommand {
 
    @Override
    public Object perform(InvocationContext ctx) throws Throwable {
-      switch (type) {
-         case DATA_PLACEMENT_REQUEST:
-            dataPlacementManager.dataPlacementRequest();
-            break;
-         case DATA_PLACEMENT_START:
-            dataPlacementManager.startDataPlacement(roundId);
-            break;
-         case REMOTE_TOP_LIST_PHASE:
-            dataPlacementManager.addRequest(getOrigin(), remoteTopList, roundId);
-            break;
-         case OBJECT_LOOKUP_PHASE:
-            dataPlacementManager.addObjectLookup(getOrigin(), objectLookupParameters, roundId);
-            break;
-         case ACK_COORDINATOR_PHASE:
-            dataPlacementManager.addAck(roundId);
-            break;
-         case SET_COOL_DOWN_TIME:
-            dataPlacementManager.internalSetCoolDownTime(coolDownTime);
-            break;
+      try {
+         switch (type) {
+            case DATA_PLACEMENT_REQUEST:
+               dataPlacementManager.dataPlacementRequest();
+               break;
+            case DATA_PLACEMENT_START:
+               dataPlacementManager.startDataPlacement(roundId);
+               break;
+            case REMOTE_TOP_LIST_PHASE:
+               dataPlacementManager.addRequest(getOrigin(), remoteTopList, roundId);
+               break;
+            case OBJECT_LOOKUP_PHASE:
+               dataPlacementManager.addObjectLookup(getOrigin(), objectLookupParameters, roundId);
+               break;
+            case ACK_COORDINATOR_PHASE:
+               dataPlacementManager.addAck(roundId);
+               break;
+            case SET_COOL_DOWN_TIME:
+               dataPlacementManager.internalSetCoolDownTime(coolDownTime);
+               break;
+         }
+      } catch (Exception e) {
+         log.errorf(e, "Exception caught while processing command. Type is %s", type);
       }
       return null;
    }

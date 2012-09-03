@@ -18,11 +18,16 @@ import java.util.Set;
  * @author Pedro Ruivo
  * @since 5.2
  */
-public class DataPlacementConsistentHashing extends AbstractConsistentHash {
+public class DataPlacementConsistentHash extends AbstractConsistentHash {
 
-   ConsistentHash baseHash;
-   Map<Address, ObjectLookup> lookUpperList = new HashMap<Address, ObjectLookup>();
-   List<Address> addressList = new ArrayList<Address>();
+   private ConsistentHash defaultConsistentHash;
+   private final Map<Address, ObjectLookup> lookUpperList;
+   private final List<Address> addressList;
+
+   public DataPlacementConsistentHash(List<Address> addressList) {
+      this.addressList = new ArrayList<Address>(addressList);
+      lookUpperList = new HashMap<Address, ObjectLookup>();
+   }
 
    public void addObjectLookup(Address address, ObjectLookup objectLookup) {
       if (objectLookup == null) {
@@ -33,21 +38,17 @@ public class DataPlacementConsistentHashing extends AbstractConsistentHash {
 
    @Override
    public void setCaches(Set<Address> caches) {
-      this.baseHash.setCaches(caches);
-   }
-
-   public void setCacheList(List<Address> cacheList) {
-      this.addressList = cacheList;
+      defaultConsistentHash.setCaches(caches);
    }
 
    @Override
    public Set<Address> getCaches() {
-      return this.baseHash.getCaches();
+      return defaultConsistentHash.getCaches();
    }
 
    @Override
    public List<Address> locate(Object key, int replCount) {
-      List<Address> defaultAddList = baseHash.locate(key, replCount);
+      List<Address> defaultAddList = defaultConsistentHash.locate(key, replCount);
       ObjectLookup objectLookup = lookUpperList.get(defaultAddList.get(0));
       int index = objectLookup == null ? ObjectLookup.KEY_NOT_FOUND : objectLookup.query(key);
 
@@ -66,10 +67,10 @@ public class DataPlacementConsistentHashing extends AbstractConsistentHash {
    }
 
    public void setDefault(ConsistentHash defaultHash) {
-      this.baseHash = defaultHash;
+      defaultConsistentHash = defaultHash;
    }
 
    public ConsistentHash getDefaultHash() {
-      return this.baseHash;
+      return defaultConsistentHash;
    }
 }

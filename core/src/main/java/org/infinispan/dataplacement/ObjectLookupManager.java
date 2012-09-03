@@ -4,6 +4,7 @@ import org.infinispan.dataplacement.lookup.ObjectLookup;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.DistributedStateTransferManagerImpl;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -15,8 +16,7 @@ import java.util.List;
  */
 public class ObjectLookupManager {
 
-   //contains the current number of members
-   private int membersSize;
+   private final List<Address> membersList;
 
    //the state transfer manager
    private final DistributedStateTransferManagerImpl stateTransfer;
@@ -27,7 +27,7 @@ public class ObjectLookupManager {
 
    public ObjectLookupManager(DistributedStateTransferManagerImpl stateTransfer) {
       this.stateTransfer = stateTransfer;
-      membersSize = 0;
+      membersList = new ArrayList<Address>();
       objectLookupReceived = 0;
    }
 
@@ -37,6 +37,7 @@ public class ObjectLookupManager {
    public final synchronized void resetState() {
       objectLookupReceived = 0;
       acksReceived = 0;
+      stateTransfer.createDataPlacementConsistentHashing(membersList);
    }
 
    /**
@@ -45,8 +46,8 @@ public class ObjectLookupManager {
     * @param members the new members list
     */
    public final synchronized void updateMembersList(List<Address> members) {
-      membersSize = members.size();
-      stateTransfer.setCachesList(members);
+      membersList.clear();
+      membersList.addAll(members);
    }
 
    /**
@@ -89,7 +90,7 @@ public class ObjectLookupManager {
     * @return  true if it has all the Object Lookup from all members
     */
    private boolean hasAllObjectLookup() {
-      return membersSize <= objectLookupReceived;
+      return membersList.size() <= objectLookupReceived;
    }
 
    /**
@@ -98,6 +99,6 @@ public class ObjectLookupManager {
     * @return  true if it has all the acks from all members
     */
    private boolean hasAllAcks() {
-      return membersSize <= acksReceived;
+      return membersList.size() <= acksReceived;
    }
 }

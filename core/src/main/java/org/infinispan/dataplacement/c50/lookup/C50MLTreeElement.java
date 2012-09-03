@@ -42,7 +42,7 @@ public class C50MLTreeElement implements Serializable {
     *
     * @return  the owner index
     */
-   public int getOwnerIndex() {
+   public final int getOwnerIndex() {
       return ownerIndex;
    }
 
@@ -51,7 +51,7 @@ public class C50MLTreeElement implements Serializable {
     *
     * @return  the children elements
     */
-   public List<C50MLTreeElement> getChildren() {
+   public final List<C50MLTreeElement> getChildren() {
       return children;
    }
 
@@ -60,7 +60,7 @@ public class C50MLTreeElement implements Serializable {
     *
     * @param child   the tree element
     */
-   public void addChild(C50MLTreeElement child) {
+   public final void addChild(C50MLTreeElement child) {
       children.add(child);
    }
 
@@ -70,7 +70,7 @@ public class C50MLTreeElement implements Serializable {
     * @param keyFeatures   the key features
     * @return              true if the key features matches, false otherwise
     */
-   public boolean hasMatch(Map<AbstractFeature, FeatureValue> keyFeatures) {
+   public final boolean hasMatch(Map<AbstractFeature, FeatureValue> keyFeatures) {
       boolean notAvailable = featureValue == null;
       FeatureValue value = keyFeatures.get(feature);
       return (notAvailable && value == null) ||
@@ -82,8 +82,45 @@ public class C50MLTreeElement implements Serializable {
     *
     * @return  true if this is a leaf element, false otherwise
     */
-   public boolean isLeaf() {
+   public final boolean isLeaf() {
       return ownerIndex != NO_LEAF_ELEMENT;
+   }
+
+   /**
+    * pretty prints the machine rules represented in this tree
+    *
+    * @param level         the level of the rule
+    * @param stringBuilder the string builder to concatenate this element (and their children)
+    */
+   public final void printRules(int level, StringBuilder stringBuilder) {
+      for (int i = 0; i < level - 1; ++i) {
+         stringBuilder.append("|  ");
+      }
+      if (level > 0) {
+         stringBuilder.append("|--");
+      }
+
+      stringBuilder.append(feature.getName())
+            .append(" ").append(condition)
+            .append(" ").append(featureValue == null ? "N/A" : featureValue.getValue());
+
+      if (ownerIndex != NO_LEAF_ELEMENT) {
+         stringBuilder.append(" ==> ").append(ownerIndex);
+      }
+
+      stringBuilder.append("\n");
+      for (C50MLTreeElement child : children) {
+         child.printRules(level + 1, stringBuilder);
+      }
+   }
+
+   /**
+    * sets the current element as leaf with the owner index in argument
+    *
+    * @param ownerIndex the owner index
+    */
+   public final void setLeaf(int ownerIndex) {
+      this.ownerIndex = ownerIndex;
    }
 
    @Override
@@ -97,25 +134,4 @@ public class C50MLTreeElement implements Serializable {
             '}';
    }
 
-   public final void printRules(int level, StringBuilder stringBuilder) {
-      for (int i = 0; i < level - 1; ++i) {
-         stringBuilder.append("|  ");
-      }
-      if (level > 0) {
-         stringBuilder.append("|--");
-      }
-      
-      stringBuilder.append(feature.getName())
-            .append(" ").append(condition)
-            .append(" ").append(featureValue == null ? "N/A" : featureValue.getValue());
-      
-      if (ownerIndex != NO_LEAF_ELEMENT) {
-         stringBuilder.append(" ==> ").append(ownerIndex);
-      }
-      
-      stringBuilder.append("\n");
-      for (C50MLTreeElement child : children) {
-         child.printRules(level + 1, stringBuilder);
-      }
-   }
 }

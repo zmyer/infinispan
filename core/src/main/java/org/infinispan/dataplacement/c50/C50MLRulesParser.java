@@ -3,7 +3,6 @@ package org.infinispan.dataplacement.c50;
 import org.infinispan.dataplacement.c50.lookup.C50MLTree;
 import org.infinispan.dataplacement.c50.lookup.C50MLTreeElement;
 import org.infinispan.dataplacement.keyfeature.AbstractFeature;
-import org.infinispan.dataplacement.lookup.ObjectLookup;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -50,11 +49,40 @@ public class C50MLRulesParser {
       if (parsed) {
          return c50MLTree;
       }
+
       C50MLTreeElement rootElement = new C50MLTreeElement();
-      parseMachineLeanerRuleLevel(0, rootElement);
+
+      if (isASingleRule()) {
+         StringTokenizer ruleTokenizer = parseCurrentRule();
+         if (ruleTokenizer.countTokens() == 1) {
+            rootElement.setLeaf(parseNewOwnerIndex(ruleTokenizer));
+         } else {
+            parseMachineLeanerRuleLevel(0, rootElement);
+         }
+      } else {
+         parseMachineLeanerRuleLevel(0, rootElement);
+      }
       parsed = true;
       c50MLTree = new C50MLTree(rootElement);
       return c50MLTree;
+   }
+
+   /**
+    * returns true if the machine leaner only has one rule
+    *
+    * @return  true if the machine leaner only has one rule, false otherwise
+    */
+   private boolean isASingleRule() {
+      return rules.length == 1;
+   }
+
+   /**
+    * creates a String Tokenizer where each token is part of the rule
+    *
+    * @return  String Tokenizer where each token is part of the rule
+    */
+   private StringTokenizer parseCurrentRule() {
+      return new StringTokenizer(getCurrentRule(), " :.");
    }
 
    /**
@@ -140,7 +168,7 @@ public class C50MLRulesParser {
     * @return  the tree element
     */
    private C50MLTreeElement parseTreeElement() {
-      StringTokenizer ruleTokenizer = new StringTokenizer(getCurrentRule(), " :.");
+      StringTokenizer ruleTokenizer = parseCurrentRule();
       String featureName = ruleTokenizer.nextToken();
       AbstractFeature feature = featureMap.get(featureName);
       String condition = ruleTokenizer.nextToken();

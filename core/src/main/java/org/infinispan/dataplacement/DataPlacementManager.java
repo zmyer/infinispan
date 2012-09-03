@@ -327,9 +327,16 @@ public class DataPlacementManager {
                                    command, false);
          return;
       }
+
+      if (rpcManager.getTransport().getMembers().size() == 1) {
+         log.warn("Data placement request received but we are the only member. ignoring...");
+         return;
+      }
+
       if (log.isTraceEnabled()) {
          log.trace("Data placement request received.");
       }
+
       DataPlacementCommand command = commandsFactory.buildDataPlacementCommand(DataPlacementCommand.Type.DATA_PLACEMENT_START,
                                                                                roundManager.getNewRoundId());
       rpcManager.broadcastRpcCommand(command, false, false);

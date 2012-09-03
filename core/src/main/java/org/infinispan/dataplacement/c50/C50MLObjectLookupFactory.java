@@ -241,18 +241,13 @@ public class C50MLObjectLookupFactory implements ObjectLookupFactory {
             writeInputNames(writer, entry.getKey(), entry.getValue());
          }
 
-         writer.write("home: ");
+         writer.write("home: -2,-1");
 
-         Iterator<Integer> iterator = possibleReturnValues.iterator();
-
-         while (iterator.hasNext()) {
-            writer.write(iterator.next().toString());
-            if (iterator.hasNext()) {
-               writer.write(", ");
-            } else {
-               writer.write(".");
-            }
+         for (Integer possibleReturnValue : possibleReturnValues) {
+            writer.write(",");
+            writer.write(possibleReturnValue.toString());
          }
+         writer.write(".");
          writer.flush();
 
       } catch (IOException e) {

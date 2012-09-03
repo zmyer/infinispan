@@ -285,11 +285,17 @@ public class DataPlacementManager {
    @Merged
    @ViewChanged
    public final void viewChange(ViewChangedEvent event) {
+      if (log.isTraceEnabled()) {
+         log.trace("View changed event trigger");
+      }
       updateMembersList(event.getNewMembers());
    }
 
    @DataRehashed
    public final void keyMovementTest(DataRehashedEvent event) {
+      if (log.isTraceEnabled()) {
+         log.trace("Data rehashed event trigger");
+      }
       if (event.getMembersAtEnd().size() == event.getMembersAtStart().size()) {
          if (event.isPre() && expectPre) {
             expectPre = false;

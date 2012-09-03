@@ -55,14 +55,17 @@ public class RoundManager {
     */
    public final synchronized long getNewRoundId() throws Exception {
       if (!enabled) {
+         log.warn("Trying to start data placement algorithm but it is not enabled");
          throw new Exception("Data Placement optimization not enabled");
       }
 
       if (System.currentTimeMillis() < nextRoundTimestamp) {
+         log.warn("Trying to start data placement algorithm but the last round happened recently");
          throw new Exception("Cannot start the next round. The last round happened recently");
       }
 
       if (roundInProgress) {
+         log.warn("Trying to start data placement algorithm but it is already in progress");
          throw new Exception("Cannot start the next round. Another round is in progress");
       }
 

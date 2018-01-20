@@ -11,6 +11,7 @@ import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.marshall.core.MarshalledEntryImpl;
 import org.infinispan.persistence.dummy.DummyInMemoryStore;
 import org.infinispan.persistence.spi.CacheLoader;
@@ -50,7 +51,7 @@ public class DistSyncStoreSharedTest extends BaseDistStoreTest<Object, String> {
       CacheLoader nonOwnerStore = TestingUtil.getFirstLoader(nonOwner);
       assert !nonOwnerStore.contains(key);
       Object retval = nonOwner.put(key, value);
-      asyncWait(key, PutKeyValueCommand.class, getSecondNonOwner(key));
+      asyncWait(key, PutKeyValueCommand.class);
 
       Cache[] owners = getOwners(key);
       CacheLoader store = TestingUtil.getFirstLoader(owners[0]);
@@ -78,7 +79,7 @@ public class DistSyncStoreSharedTest extends BaseDistStoreTest<Object, String> {
       for (Cache<Object, String> c : caches) assert c.isEmpty();
       Cache[] owners = getOwners(key);
       Object retval = owners[0].put(key, value);
-      asyncWait(key, PutKeyValueCommand.class, getNonOwners(key));
+      asyncWait(key, PutKeyValueCommand.class);
       CacheLoader store = TestingUtil.getFirstLoader(owners[0]);
       assertIsInContainerImmortal(owners[0], key);
       assert store.contains(key);
@@ -139,12 +140,17 @@ public class DistSyncStoreSharedTest extends BaseDistStoreTest<Object, String> {
       }
 
       Object retval = getFirstNonOwner(key).remove(key);
-      asyncWait("k1", RemoveCommand.class, getSecondNonOwner("k1"));
+      asyncWait("k1", RemoveCommand.class);
       if (testRetVals) assert value.equals(retval);
       for (Cache<Object, String> c : caches) {
          CacheLoader store = TestingUtil.getFirstLoader(c);
-         assert !store.contains(key);
-         assertNumberOfInvocations(store, "delete", 1);
+         MarshalledEntry me = store.load(key);
+         if (me == null) {
+            assertNumberOfInvocations(store, "delete", 1);
+            assertNumberOfInvocations(store, "write", 1);
+         } else {
+            assertNumberOfInvocations(store, "write", 2);
+         }
       }
    }
 
@@ -161,7 +167,7 @@ public class DistSyncStoreSharedTest extends BaseDistStoreTest<Object, String> {
       }
 
       Object retval = getFirstNonOwner(key).replace(key, value2);
-      asyncWait(key, ReplaceCommand.class, getSecondNonOwner(key));
+      asyncWait(key, ReplaceCommand.class);
       if (testRetVals) assert value.equals(retval);
       for (Cache<Object, String> c : caches) {
          CacheLoader store = TestingUtil.getFirstLoader(c);
@@ -177,7 +183,7 @@ public class DistSyncStoreSharedTest extends BaseDistStoreTest<Object, String> {
       for (Cache<Object, String> c : caches) assert c.isEmpty();
       for (int i = 0; i < 5; i++) {
          getOwners("k" + i)[0].put("k" + i, "value" + i);
-         asyncWait("k" + i, PutKeyValueCommand.class, getNonOwners("k" + i));
+         asyncWait("k" + i, PutKeyValueCommand.class);
       }
       // this will fill up L1 as well
       for (int i = 0; i < 5; i++) assertOnAllCachesAndOwnership("k" + i, "value" + i);
@@ -200,7 +206,7 @@ public class DistSyncStoreSharedTest extends BaseDistStoreTest<Object, String> {
 
    public void testGetOnlyQueriesCacheOnOwners() throws PersistenceException {
       // Make a key that own'ers is c1 and c2
-      final MagicKey k = new MagicKey("key1", c1, c2);
+      final MagicKey k = getMagicKey();
       final String v1 = "real-data";
       final String v2 = "stale-data";
 

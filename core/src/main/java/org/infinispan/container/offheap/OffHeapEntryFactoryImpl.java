@@ -8,9 +8,11 @@ import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.marshall.WrappedBytes;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.container.entries.ExpiryHelper;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.util.TimeService;
@@ -22,12 +24,15 @@ import org.infinispan.util.TimeService;
  * @since 9.0
  */
 public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
-   private static final UnsafeWrapper UNSAFE = UnsafeWrapper.INSTANCE;
+   private static final OffHeapMemory MEMORY = OffHeapMemory.INSTANCE;
+   private static final byte[] EMPTY_BYTES = new byte[0];
 
-   private Marshaller marshaller;
-   private OffHeapMemoryAllocator allocator;
-   private TimeService timeService;
-   private InternalEntryFactory internalEntryFactory;
+   @Inject private Marshaller marshaller;
+   @Inject private OffHeapMemoryAllocator allocator;
+   @Inject private TimeService timeService;
+   @Inject private InternalEntryFactory internalEntryFactory;
+   @Inject private Configuration configuration;
+
    private boolean evictionEnabled;
 
    // If custom than we just store the metadata as is (no other bits should be used)
@@ -40,21 +45,15 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
    private static final byte TRANSIENT = 1 << 4;
    private static final byte TRANSIENT_MORTAL = 1 << 5;
 
-   private static final int BYTE_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(byte[].class);
-
    /**
-    * HEADER is composed of hashCode (int), keyLength (int), metadataLength (int), valueLength (int), type (byte)
+    * HEADER is composed of type (byte), hashCode (int), keyLength (int), valueLength (int)
+    * Note that metadata is not included as this is now optional
     */
-   private static final int HEADER_LENGTH = 4 + 4 + 4 + 4 + 1;
+   private static final int HEADER_LENGTH = 1 + 4 + 4 + 4;
 
-   @Inject
-   public void inject(Marshaller marshaller, OffHeapMemoryAllocator allocator, TimeService timeService,
-         InternalEntryFactory internalEntryFactory, Configuration configuration) {
-      this.marshaller = marshaller;
-      this.allocator = allocator;
-      this.timeService = timeService;
-      this.internalEntryFactory = internalEntryFactory;
-      this.evictionEnabled = configuration.memory().size() > 0;
+   @Start
+   public void start() {
+      this.evictionEnabled = configuration.memory().isEvictionEnabled();
    }
 
    /**
@@ -67,13 +66,14 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
    @Override
    public long create(WrappedBytes key, WrappedBytes value, Metadata metadata) {
       byte type;
+      boolean shouldWriteMetadataSize = false;
       byte[] metadataBytes;
       if (metadata instanceof EmbeddedMetadata) {
-
          EntryVersion version = metadata.version();
          byte[] versionBytes;
          if (version != null) {
             type = HAS_VERSION;
+            shouldWriteMetadataSize = true;
             try {
                versionBytes = marshaller.objectToByteBuffer(version);
             } catch (IOException | InterruptedException e) {
@@ -81,7 +81,7 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
             }
          } else {
             type = 0;
-            versionBytes = new byte[0];
+            versionBytes = EMPTY_BYTES;
          }
 
          long lifespan = metadata.lifespan();
@@ -95,24 +95,26 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
             metadataBytes = new byte[16 + versionBytes.length];
             Bits.putLong(metadataBytes, 0, lifespan);
             Bits.putLong(metadataBytes, 8, timeService.wallClockTime());
-            System.arraycopy(metadataBytes, 0, versionBytes, 16, versionBytes.length);
+            System.arraycopy(versionBytes, 0, metadataBytes, 16, versionBytes.length);
          } else if (lifespan < 0 && maxIdle > -1) {
             type |= TRANSIENT;
             metadataBytes = new byte[16 + versionBytes.length];
             Bits.putLong(metadataBytes, 0, maxIdle);
             Bits.putLong(metadataBytes, 8, timeService.wallClockTime());
-            System.arraycopy(metadataBytes, 0, versionBytes, 16, versionBytes.length);
+            System.arraycopy(versionBytes, 0, metadataBytes, 16, versionBytes.length);
          } else {
             type |= TRANSIENT_MORTAL;
             metadataBytes = new byte[32 + versionBytes.length];
             Bits.putLong(metadataBytes, 0, maxIdle);
             Bits.putLong(metadataBytes, 8, lifespan);
-            Bits.putLong(metadataBytes, 16, timeService.wallClockTime());
-            Bits.putLong(metadataBytes, 24, timeService.wallClockTime());
-            System.arraycopy(metadataBytes, 0, versionBytes, 16, versionBytes.length);
+            long time = timeService.wallClockTime();
+            Bits.putLong(metadataBytes, 16, time);
+            Bits.putLong(metadataBytes, 24, time);
+            System.arraycopy(versionBytes, 0, metadataBytes, 32, versionBytes.length);
          }
       } else {
          type = CUSTOM;
+         shouldWriteMetadataSize = true;
          try {
             metadataBytes = marshaller.objectToByteBuffer(metadata);
          } catch (IOException | InterruptedException e) {
@@ -120,84 +122,90 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
          }
       }
       int keySize = key.getLength();
-      int valueSize = value.getLength();
       int metadataSize = metadataBytes.length;
-      long totalSize = 8 + HEADER_LENGTH + keySize + metadataSize + valueSize;
+      int valueSize = value.getLength();
 
-      long memoryAddress;
-      long memoryOffset;
-
-      // Eviction requires an additional memory pointer at the beginning that points to
-      // its linked node
-      if (evictionEnabled) {
-         memoryAddress = allocator.allocate(totalSize + 8);
-         memoryOffset = memoryAddress + 8;
-      } else {
-         memoryAddress = allocator.allocate(totalSize);
-         memoryOffset =  memoryAddress;
-      }
-
-      int offset = 0;
-      byte[] header = new byte[HEADER_LENGTH];
-
-      Bits.putInt(header, offset, key.hashCode());
-      offset += 4;
-      Bits.putInt(header, offset, key.getLength());
-      offset += 4;
-      Bits.putInt(header, offset, metadataBytes.length);
-      offset += 4;
-      Bits.putInt(header, offset, value.getLength());
-      offset += 4;
-      header[offset++] = type;
-
+      // Eviction requires 2 additional pointers at the beginning
+      int offset = evictionEnabled ? 16 : 0;
+      // Next 8 is for linked pointer to next address
+      long totalSize = offset + 8 + HEADER_LENGTH +
+            // If the type has a version or is custom we have to add 4 more bytes for an int to include that
+            (shouldWriteMetadataSize ? 4 : 0)
+            + keySize + metadataSize + valueSize;
+      long memoryAddress = allocator.allocate(totalSize);
 
       // Write the empty linked address pointer first
-      UNSAFE.putLong(memoryOffset, 0);
-      memoryOffset += 8;
+      MEMORY.putLong(memoryAddress, offset, 0);
+      offset += 8;
 
-      UNSAFE.copyMemory(header, BYTE_ARRAY_BASE_OFFSET, null, memoryOffset, HEADER_LENGTH);
-      memoryOffset += HEADER_LENGTH;
+      MEMORY.putByte(memoryAddress, offset, type);
+      offset += 1;
+      MEMORY.putInt(memoryAddress, offset, key.hashCode());
+      offset += 4;
+      MEMORY.putInt(memoryAddress, offset, key.getLength());
+      offset += 4;
+      if (shouldWriteMetadataSize) {
+         MEMORY.putInt(memoryAddress, offset, metadataBytes.length);
+         offset += 4;
+      }
+      MEMORY.putInt(memoryAddress, offset, value.getLength());
+      offset += 4;
 
-      UNSAFE.copyMemory(key.getBytes(), key.backArrayOffset() + BYTE_ARRAY_BASE_OFFSET, null, memoryOffset, keySize);
-      memoryOffset += keySize;
+      MEMORY.putBytes(key.getBytes(), key.backArrayOffset(), memoryAddress, offset, keySize);
+      offset += keySize;
 
-      UNSAFE.copyMemory(metadataBytes, BYTE_ARRAY_BASE_OFFSET, null, memoryOffset, metadataSize);
-      memoryOffset += metadataSize;
+      MEMORY.putBytes(metadataBytes, 0, memoryAddress, offset, metadataSize);
+      offset += metadataSize;
 
-      UNSAFE.copyMemory(value.getBytes(), value.backArrayOffset() + BYTE_ARRAY_BASE_OFFSET, null, memoryOffset,
-            valueSize);
+      MEMORY.putBytes(value.getBytes(), value.backArrayOffset(), memoryAddress, offset, valueSize);
+      offset += valueSize;
+
+      assert offset == totalSize;
 
       return memoryAddress;
    }
 
    @Override
-   public long determineSize(long address) {
-      int beginningOffset = evictionEnabled ? 16 : 8;
-      byte[] header = readHeader(beginningOffset + address);
+   public long getSize(long entryAddress) {
+      int headerOffset = evictionEnabled ? 24 : 8;
 
-      int keyLength = Bits.getInt(header, 4);
-      int metadataLength = Bits.getInt(header, 8);
-      int valueLength = Bits.getInt(header, 12);
+      byte type = MEMORY.getByte(entryAddress, headerOffset);
+      headerOffset++;
+      // Skip the hashCode
+      headerOffset += 4;
+      int keyLength = MEMORY.getInt(entryAddress, headerOffset);
+      headerOffset += 4;
+      int metadataLength;
+      if ((type & (CUSTOM | HAS_VERSION)) != 0) {
+         metadataLength = MEMORY.getInt(entryAddress, headerOffset);
+         headerOffset += 4;
+      } else {
+         metadataLength = 0;
+      }
 
-      return beginningOffset + HEADER_LENGTH + keyLength + metadataLength + valueLength;
+      int valueLength = MEMORY.getInt(entryAddress, headerOffset);
+      headerOffset += 4;
+
+      return UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(headerOffset + keyLength + metadataLength + valueLength);
    }
 
    @Override
-   public long getNextLinkedPointerAddress(long address) {
-      return UNSAFE.getLong(evictionEnabled ? address + 8 : address);
+   public long getNext(long entryAddress) {
+      return MEMORY.getLong(entryAddress, evictionEnabled ? 16 : 0);
    }
 
    @Override
-   public void updateNextLinkedPointerAddress(long address, long value) {
-      UNSAFE.putLong(evictionEnabled ? address + 8 : address, value);
+   public void setNext(long entryAddress, long value) {
+      MEMORY.putLong(entryAddress, evictionEnabled ? 16 : 0, value);
    }
 
    @Override
-   public int getHashCodeForAddress(long address) {
-      // 8 bytes for eviction if needed (optional)
+   public int getHashCode(long entryAddress) {
+      // 16 bytes for eviction if needed (optional)
       // 8 bytes for linked pointer
-      byte[] header = readHeader(evictionEnabled ? address + 16 : address + 8);
-      return Bits.getInt(header, 0);
+      // 1 for type
+      int headerOffset = evictionEnabled ? 25 : 9;
+      return MEMORY.getInt(entryAddress, headerOffset);
    }
 
    /**
@@ -207,39 +215,56 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
     */
    @Override
    public InternalCacheEntry<WrappedBytes, WrappedBytes> fromMemory(long address) {
-      address += (evictionEnabled ? 16 : 8);
-      byte[] header = readHeader(address);
+      // 16 bytes for eviction if needed (optional)
+      // 8 bytes for linked pointer
+      int offset = evictionEnabled ? 24 : 8;
 
-      int offset = 0;
-      int hashCode = Bits.getInt(header, offset);
+      byte metadataType = MEMORY.getByte(address, offset);
+      offset += 1;
+      int hashCode = MEMORY.getInt(address, offset);
       offset += 4;
-      byte[] keyBytes = new byte[Bits.getInt(header, offset)];
-      offset += 4;
-      byte[] metadataBytes = new byte[Bits.getInt(header, offset)];
-      offset += 4;
-      byte[] valueBytes = new byte[Bits.getInt(header, offset)];
+      byte[] keyBytes = new byte[MEMORY.getInt(address, offset)];
       offset += 4;
 
-      byte metadataType = header[offset++];
+      byte[] metadataBytes;
+      switch (metadataType) {
+         case IMMORTAL:
+            metadataBytes = EMPTY_BYTES;
+            break;
+         case MORTAL:
+            metadataBytes = new byte[16];
+            break;
+         case TRANSIENT:
+            metadataBytes = new byte[16];
+            break;
+         case TRANSIENT_MORTAL:
+            metadataBytes = new byte[32];
+            break;
+         default:
+            // This means we had CUSTOM or HAS_VERSION so we have to read it all
+            metadataBytes = new byte[MEMORY.getInt(address, offset)];
+            offset += 4;
+      }
 
-      long memoryOffset = address + offset;
+      byte[] valueBytes = new byte[MEMORY.getInt(address, offset)];
+      offset += 4;
 
-      UNSAFE.copyMemory(null, memoryOffset, keyBytes, BYTE_ARRAY_BASE_OFFSET, keyBytes.length);
-      memoryOffset += keyBytes.length;
-      UNSAFE.copyMemory(null, memoryOffset, metadataBytes, BYTE_ARRAY_BASE_OFFSET, metadataBytes.length);
-      memoryOffset += metadataBytes.length;
-      UNSAFE.copyMemory(null, memoryOffset, valueBytes, BYTE_ARRAY_BASE_OFFSET, valueBytes.length);
-      memoryOffset += valueBytes.length;
+      MEMORY.getBytes(address, offset, keyBytes, 0, keyBytes.length);
+      offset += keyBytes.length;
+      MEMORY.getBytes(address, offset, metadataBytes, 0, metadataBytes.length);
+      offset += metadataBytes.length;
+      MEMORY.getBytes(address, offset, valueBytes, 0, valueBytes.length);
+      offset += valueBytes.length;
 
       Metadata metadata;
       // This is a custom metadata
-      if ((metadataType & 1) == 1) {
+      if ((metadataType & CUSTOM) == CUSTOM) {
          try {
             metadata = (Metadata) marshaller.objectFromByteBuffer(metadataBytes);
          } catch (IOException | ClassNotFoundException e) {
             throw new CacheException(e);
          }
-         return internalEntryFactory.create(new WrappedByteArray(keyBytes),
+         return internalEntryFactory.create(new WrappedByteArray(keyBytes, hashCode),
                new WrappedByteArray(valueBytes), metadata);
       } else {
          long lifespan;
@@ -247,7 +272,7 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
          long created;
          long lastUsed;
          offset = 0;
-         boolean hasVersion = (metadataType & 2) == 2;
+         boolean hasVersion = (metadataType & HAS_VERSION) == HAS_VERSION;
          // Ignore CUSTOM and VERSION to find type
          switch (metadataType & 0xFC) {
             case IMMORTAL:
@@ -258,18 +283,18 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
                break;
             case MORTAL:
                maxIdle = -1;
-               lifespan = Bits.getLong(metadataBytes, offset++);
+               lifespan = Bits.getLong(metadataBytes, offset);
                created = Bits.getLong(metadataBytes, offset += 8);
                lastUsed = -1;
                break;
             case TRANSIENT:
                lifespan = -1;
-               maxIdle = Bits.getLong(metadataBytes, offset++);
+               maxIdle = Bits.getLong(metadataBytes, offset);
                created = -1;
                lastUsed = Bits.getLong(metadataBytes, offset += 8);
                break;
             case TRANSIENT_MORTAL:
-               lifespan = Bits.getLong(metadataBytes, offset++);
+               lifespan = Bits.getLong(metadataBytes, offset);
                maxIdle = Bits.getLong(metadataBytes, offset += 8);
                created = Bits.getLong(metadataBytes, offset += 8);
                lastUsed = Bits.getLong(metadataBytes, offset += 8);
@@ -293,23 +318,6 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
       }
    }
 
-   @Override
-   public WrappedBytes getKey(long address) {
-      address += (evictionEnabled ? 16 : 8);
-      byte[] header = readHeader(address);
-      int keyLength = Bits.getInt(header, 4);
-      byte[] keyBytes = new byte[keyLength];
-
-      UNSAFE.copyMemory(null, address + HEADER_LENGTH, keyBytes, BYTE_ARRAY_BASE_OFFSET, keyBytes.length);
-      return new WrappedByteArray(keyBytes);
-   }
-
-   private byte[] readHeader(long address) {
-      byte[] header = new byte[HEADER_LENGTH];
-      UNSAFE.copyMemory(null, address, header, BYTE_ARRAY_BASE_OFFSET, header.length);
-      return header;
-   }
-
    /**
     * Assumes the address points to the entry excluding the pointer reference at the beginning
     * @param address the address of an entry to read
@@ -318,17 +326,151 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
     */
    @Override
    public boolean equalsKey(long address, WrappedBytes wrappedBytes) {
-      address += evictionEnabled ? 16 : 8;
-      byte[] header = readHeader(address);
+      // 16 bytes for eviction if needed (optional)
+      // 8 bytes for linked pointer
+      int headerOffset = evictionEnabled ? 24 : 8;
+      byte type = MEMORY.getByte(address, headerOffset);
+      headerOffset++;
+      // First if hashCode doesn't match then the key can't be equal
       int hashCode = wrappedBytes.hashCode();
-      if (hashCode != Bits.getInt(header, 0)) {
+      if (hashCode != MEMORY.getInt(address, headerOffset)) {
          return false;
       }
-      int keyLength = Bits.getInt(header, 4);
-      byte[] keyBytes = new byte[keyLength];
-      UNSAFE.copyMemory(null, address + HEADER_LENGTH, keyBytes,
-            BYTE_ARRAY_BASE_OFFSET, keyLength);
+      headerOffset += 4;
+      // If the length of the key is not the same it can't match either!
+      int keyLength = MEMORY.getInt(address, headerOffset);
+      if (keyLength != wrappedBytes.getLength()) {
+         return false;
+      }
+      headerOffset += 4;
+      if (requiresMetadataSize(type)) {
+         headerOffset += 4;
+      }
+      // This is for the value size which we don't need to read
+      headerOffset += 4;
+      // Finally read each byte individually so we don't have to copy them into a byte[]
+      for (int i = 0; i < keyLength; i++) {
+         byte b = MEMORY.getByte(address, headerOffset + i);
+         if (b != wrappedBytes.getByte(i))
+            return false;
+      }
 
-      return new WrappedByteArray(keyBytes, hashCode).equalsWrappedBytes(wrappedBytes);
+      return true;
+   }
+
+   /**
+    * Returns whether entry is expired.
+    * @param address the address of the entry to check
+    * @return {@code true} if the entry is expired, {@code false} otherwise
+    */
+   @Override
+   public boolean isExpired(long address) {
+      // 16 bytes for eviction if needed (optional)
+      // 8 bytes for linked pointer
+      int offset = evictionEnabled ? 24 : 8;
+
+      byte metadataType = MEMORY.getByte(address, offset);
+      if ((metadataType & IMMORTAL) != 0) {
+         return false;
+      }
+      // type
+      offset += 1;
+      // hashCode
+      offset += 4;
+      // key length
+      int keyLength = MEMORY.getInt(address, offset);
+      offset += 4;
+
+      long now = timeService.wallClockTime();
+
+      byte[] metadataBytes;
+      if ((metadataType & CUSTOM) == CUSTOM) {
+         // TODO: this needs to be fixed in ISPN-8539
+         return false;
+//         int metadataLength = MEMORY.getInt(address, offset);
+//         metadataBytes = new byte[metadataLength];
+//
+//         // value and keyLength
+//         offset += 4 + keyLength;
+//
+//         MEMORY.getBytes(address, offset, metadataBytes, 0, metadataBytes.length);
+//
+//         Metadata metadata;
+//         try {
+//            metadata = (Metadata) marshaller.objectFromByteBuffer(metadataBytes);
+//            // TODO: custom metadata is not implemented properly for expiration
+//            return false;
+//         } catch (IOException | ClassNotFoundException e) {
+//            throw new CacheException(e);
+//         }
+      } else {
+         // value and keyLength
+         offset += 4 + keyLength;
+
+         // If it has version that means we wrote the size as well which goes after key length
+         if ((metadataType & HAS_VERSION) != 0) {
+            offset += 4;
+         }
+
+         switch (metadataType & 0xFC) {
+            case MORTAL:
+               metadataBytes = new byte[16];
+               MEMORY.getBytes(address, offset, metadataBytes, 0, metadataBytes.length);
+               return ExpiryHelper.isExpiredMortal(Bits.getLong(metadataBytes, 0), Bits.getLong(metadataBytes, 8), now);
+            case TRANSIENT:
+               metadataBytes = new byte[16];
+               MEMORY.getBytes(address, offset, metadataBytes, 0, metadataBytes.length);
+               return ExpiryHelper.isExpiredTransient(Bits.getLong(metadataBytes, 0), Bits.getLong(metadataBytes, 8), now);
+            case TRANSIENT_MORTAL:
+               metadataBytes = new byte[32];
+               MEMORY.getBytes(address, offset, metadataBytes, 0, metadataBytes.length);
+               long lifespan = Bits.getLong(metadataBytes, 0);
+               long maxIdle = Bits.getLong(metadataBytes, 8);
+               long created = Bits.getLong(metadataBytes, 16);
+               long lastUsed = Bits.getLong(metadataBytes, 24);
+               return ExpiryHelper.isExpiredTransientMortal(maxIdle, lastUsed, lifespan, created, now);
+            default:
+               return false;
+         }
+      }
+   }
+
+   static private boolean requiresMetadataSize(byte type) {
+      return (type & (CUSTOM | HAS_VERSION)) != 0;
+   }
+
+   @Override
+   public long calculateSize(WrappedBytes key, WrappedBytes value, Metadata metadata) {
+      long totalSize = evictionEnabled ? 24 : 8;
+      totalSize += HEADER_LENGTH;
+      totalSize += key.getLength() + value.getLength();
+      long metadataSize = 0;
+      if (metadata instanceof EmbeddedMetadata) {
+         EntryVersion version = metadata.version();
+         if (version != null) {
+            try {
+               metadataSize += marshaller.objectToByteBuffer(version).length;
+            } catch (IOException | InterruptedException e) {
+               throw new CacheException(e);
+            }
+            // We have to write the size of the version
+            metadataSize += 4;
+         }
+         if (metadata.maxIdle() >= 0) {
+            metadataSize += 16;
+         }
+         if (metadata.lifespan() >= 0) {
+            metadataSize += 16;
+         }
+      } else {
+         // We have to write the size of the metadata object
+         metadataSize += 4;
+         try {
+            metadataSize += marshaller.objectToByteBuffer(metadata).length;
+         } catch (IOException | InterruptedException e) {
+            throw new CacheException(e);
+         }
+      }
+      return UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(totalSize + metadataSize);
    }
 }

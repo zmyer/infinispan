@@ -4,6 +4,7 @@ import static java.lang.String.format;
 import static org.infinispan.test.TestingUtil.sleepRandom;
 import static org.infinispan.test.fwk.TestCacheManagerFactory.createClusteredCacheManager;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -26,13 +27,13 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.context.Flag;
 import org.infinispan.distribution.DistributionTestHelper;
-import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.LockingMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.logging.Log;
@@ -40,7 +41,7 @@ import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
 
 // As this is a SLOW stress test, leave it disabled by default.  Only run it manually.
-@Test(groups = "stress", testName = "distribution.rehash.ConsistencyStressTest")
+@Test(groups = "stress", testName = "distribution.rehash.ConsistencyStressTest", timeOut = 15*60*1000)
 public class ConsistencyStressTest extends MultipleCacheManagersTest {
    private static final int NUM_NODES = 10;
    private static final int WORKERS_PER_NODE = 2;
@@ -59,19 +60,16 @@ public class ConsistencyStressTest extends MultipleCacheManagersTest {
             .useLockStriping(false)
          .clustering()
             .cacheMode(CacheMode.DIST_SYNC)
+            .remoteTimeout(30000)
             .l1().disable()
-            .sync()
-               .replTimeout(30000)
          .transaction()
             .lockingMode(LockingMode.PESSIMISTIC)
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
-            .syncCommitPhase(true)
-            .syncRollbackPhase(true);
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup());
 
       GlobalConfigurationBuilder gc = GlobalConfigurationBuilder.defaultClusteredBuilder();
       gc.transport().distributedSyncTimeout(60000);
 
-      List<EmbeddedCacheManager> cacheManagers = new LinkedList<EmbeddedCacheManager>();
+      List<EmbeddedCacheManager> cacheManagers = new LinkedList<>();
 
       for (int i = 0; i < NUM_NODES; i++)
          cacheManagers.add(createClusteredCacheManager(gc, c));
@@ -79,9 +77,9 @@ public class ConsistencyStressTest extends MultipleCacheManagersTest {
       registerCacheManager(cacheManagers.toArray(new EmbeddedCacheManager[NUM_NODES]));
    }
 
-   public void testConsistency() throws Throwable, InterruptedException {
-      Set<Future<Void>> futures = new HashSet<Future<Void>>(NUM_NODES * WORKERS_PER_NODE);
-      Set<String> keysToIgnore = new HashSet<String>();
+   public void testConsistency() throws Throwable {
+      Set<Future<Void>> futures = new HashSet<>(NUM_NODES * WORKERS_PER_NODE);
+      Set<String> keysToIgnore = new HashSet<>();
 
       for (int i = 0; i < NUM_NODES; i++) {
          Cache<String, String> c = cache(i);
@@ -103,7 +101,7 @@ public class ConsistencyStressTest extends MultipleCacheManagersTest {
       // ... and ensure no data is lost.
       // Stressors encode data in the format nodeNumber|workerNumber|iterationNumber, and all have the value "value".
 
-      Map<Address, Cache<Object, Object>> cacheMap = new HashMap<Address, Cache<Object, Object>>();
+      Map<Address, Cache<Object, Object>> cacheMap = new HashMap<>();
       for (int i = 1; i < NUM_NODES; i++) {
          Cache<Object, Object> c = cache(i);
          cacheMap.put(address(c), c);
@@ -114,8 +112,8 @@ public class ConsistencyStressTest extends MultipleCacheManagersTest {
 
       // lets make sure any rehashing work has completed
       TestingUtil.blockUntilViewsReceived(60000, false, cacheMap.values());
-      TestingUtil.waitForRehashToComplete(cacheMap.values());
-      ConsistentHash hash = cache(1).getAdvancedCache().getDistributionManager().getConsistentHash();
+      TestingUtil.waitForNoRebalance(cacheMap.values());
+      LocalizedCacheTopology cacheTopology = cache(1).getAdvancedCache().getDistributionManager().getCacheTopology();
 
       for (int i = 0; i < NUM_NODES; i++) {
          for (int j = 0; j < WORKERS_PER_NODE; j++) {
@@ -124,13 +122,16 @@ public class ConsistencyStressTest extends MultipleCacheManagersTest {
                if (keysToIgnore.contains(key)) {
                   log.infof("Skipping test on failing key %s", key);
                } else {
-                  List<Address> owners = hash.locateOwners(key);
+                  Collection<Address> owners = cacheTopology.getWriteOwners(key);
                   for (Map.Entry<Address, Cache<Object, Object>> e : cacheMap.entrySet()) {
                      try {
-                        if (owners.contains(e.getKey())) DistributionTestHelper.assertIsInContainerImmortal(e.getValue(), key);
+                        if (owners.contains(e.getKey())) {
+                           DistributionTestHelper.assertIsInContainerImmortal(e.getValue(), key);
+                        }
                         // Don't bother testing non-owners since invalidations caused by rehashing are async!
                      } catch (Throwable th) {
-                        log.fatalf("Key %s (segment %s) should be on owners %s according to %s", key, hash.getSegment(key), owners, hash);
+                        log.fatalf("Key %s (segment %s) should be on owners %s according to %s",
+                                   key, cacheTopology.getSegment(key), owners, cacheTopology);
                         throw th;
                      }
                   }
@@ -159,7 +160,7 @@ public class ConsistencyStressTest extends MultipleCacheManagersTest {
       }
 
       @Override
-      public Void call() {
+      public Void call() throws TimeoutException {
          for (int iterationId = 0; iterationId < NUM_ITERATIONS; iterationId++) {
             if (iterationId % 500 == 0)
                log.infof("  >> Stressor %s Worker %s Iteration %s", cacheId, workerId, iterationId);
@@ -171,22 +172,7 @@ public class ConsistencyStressTest extends MultipleCacheManagersTest {
                tm.begin();
                cache.getAdvancedCache().withFlags(Flag.SKIP_REMOTE_LOOKUP).put(key, "value");
                tm.commit();
-            } catch (HeuristicRollbackException e) {
-               txError = true;
-               exception = e;
-            } catch (RollbackException e) {
-               txError = true;
-               exception = e;
-            } catch (SystemException e) {
-               txError = true;
-               exception = e;
-            } catch (HeuristicMixedException e) {
-               txError = true;
-               exception = e;
-            } catch (NotSupportedException e) {
-               txError = true;
-               exception = e;
-            } catch (TimeoutException e) {
+            } catch (HeuristicRollbackException | RollbackException | SystemException | HeuristicMixedException | NotSupportedException | TimeoutException e) {
                txError = true;
                exception = e;
             }

@@ -19,17 +19,19 @@ import net.jcip.annotations.Immutable;
  */
 @Immutable
 public class SimpleClusteredVersion implements IncrementableEntryVersion {
-
    /**
     * The cache topology id in which it was first created.
     */
-   private final int topologyId;
-
-   final long version;
+   public final int topologyId;
+   public final long version;
 
    public SimpleClusteredVersion(int topologyId, long version) {
       this.version = version;
       this.topologyId = topologyId;
+   }
+
+   public long getVersion() {
+      return version;
    }
 
    @Override
@@ -51,6 +53,25 @@ public class SimpleClusteredVersion implements IncrementableEntryVersion {
       } else {
          throw new IllegalArgumentException("I only know how to deal with SimpleClusteredVersions, not " + other.getClass().getName());
       }
+   }
+
+   @Override
+   public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+
+      SimpleClusteredVersion that = (SimpleClusteredVersion) o;
+
+      if (topologyId != that.topologyId) return false;
+      return version == that.version;
+
+   }
+
+   @Override
+   public int hashCode() {
+      int result = topologyId;
+      result = 31 * result + (int) (version ^ (version >>> 32));
+      return result;
    }
 
    @Override

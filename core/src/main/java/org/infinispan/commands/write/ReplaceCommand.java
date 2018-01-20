@@ -79,17 +79,17 @@ public class ReplaceCommand extends AbstractDataWriteCommand implements Metadata
          Object old = e.setValue(newValue);
          Metadatas.updateMetadata(e, metadata);
          if (valueMatcher != ValueMatcher.MATCH_EXPECTED_OR_NEW) {
-            return returnValue(e, old, e.getMetadata(), true, ctx);
+            return returnValue(old, e.getMetadata(), true, ctx);
          } else {
             // Return the expected value when retrying
-            return returnValue(e, oldValue, e.getMetadata(), true, ctx);
+            return returnValue(oldValue, e.getMetadata(), true, ctx);
          }
       }
 
-      return returnValue(null, null, null, false, ctx);
+      return returnValue(null, null, false, ctx);
    }
 
-   private Object returnValue(MVCCEntry e, Object beingReplaced, Metadata previousMetadata, boolean successful,
+   private Object returnValue(Object beingReplaced, Metadata previousMetadata, boolean successful,
          InvocationContext ctx) {
       this.successful = successful;
 
@@ -203,12 +203,8 @@ public class ReplaceCommand extends AbstractDataWriteCommand implements Metadata
    }
 
    @Override
-   public void updateStatusFromRemoteResponse(Object remoteResponse) {
-      if (oldValue == null) {
-         successful = remoteResponse != null;
-      } else {
-         successful = (Boolean) remoteResponse;
-      }
+   public void fail() {
+      successful = false;
    }
 
    @Override
@@ -224,23 +220,15 @@ public class ReplaceCommand extends AbstractDataWriteCommand implements Metadata
             ", newValue=" + toStr(newValue) +
             ", metadata=" + metadata +
             ", flags=" + printFlags() +
+            ", commandInvocationId=" + CommandInvocationId.show(commandInvocationId) +
             ", successful=" + successful +
             ", valueMatcher=" + valueMatcher +
+            ", topologyId=" + getTopologyId() +
             '}';
    }
 
    @Override
-   public void initBackupWriteRcpCommand(BackupWriteRcpCommand command) {
+   public void initBackupWriteRpcCommand(BackupWriteRpcCommand command) {
       command.setReplace(commandInvocationId, key, newValue, metadata, getFlagsBitSet(), getTopologyId());
-   }
-
-   @Override
-   public void initPrimaryAck(PrimaryAckCommand command, Object localReturnValue) {
-      command.initCommandInvocationIdAndTopologyId(commandInvocationId, getTopologyId());
-      if (oldValue == null) {
-         command.initWithReturnValue(successful, localReturnValue);
-      } else {
-         command.initWithBoolReturnValue(successful);
-      }
    }
 }

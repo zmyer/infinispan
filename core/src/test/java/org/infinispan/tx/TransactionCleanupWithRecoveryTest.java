@@ -12,7 +12,7 @@ import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.impl.TransactionTable;
-import org.infinispan.tx.recovery.RecoveryDummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.annotations.Test;
 
@@ -28,11 +28,11 @@ public class TransactionCleanupWithRecoveryTest extends MultipleCacheManagersTes
             .isolationLevel(IsolationLevel.REPEATABLE_READ)
             .lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis())
             .useLockStriping(false)
-            .writeSkewCheck(false)
+
             .transaction()
             .transactionMode(TransactionMode.TRANSACTIONAL)
             .lockingMode(LockingMode.PESSIMISTIC)
-            .transactionManagerLookup(new RecoveryDummyTransactionManagerLookup())
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup())
             .recovery().enable();
 
       registerCacheManager(TestCacheManagerFactory.createClusteredCacheManager(cfg),
@@ -75,23 +75,17 @@ public class TransactionCleanupWithRecoveryTest extends MultipleCacheManagersTes
    private void assertNoTx() {
       final TransactionTable tt0 = TestingUtil.getTransactionTable(cache(0));
       // Message to forget transactions is sent asynchronously
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            int localTxCount = tt0.getLocalTxCount();
-            int remoteTxCount = tt0.getRemoteTxCount();
-            return localTxCount == 0 && remoteTxCount == 0;
-         }
+      eventually(() -> {
+         int localTxCount = tt0.getLocalTxCount();
+         int remoteTxCount = tt0.getRemoteTxCount();
+         return localTxCount == 0 && remoteTxCount == 0;
       });
 
       final TransactionTable tt1 = TestingUtil.getTransactionTable(cache(1));
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            int localTxCount = tt1.getLocalTxCount();
-            int remoteTxCount = tt1.getRemoteTxCount();
-            return localTxCount == 0 && remoteTxCount == 0;
-         }
+      eventually(() -> {
+         int localTxCount = tt1.getLocalTxCount();
+         int remoteTxCount = tt1.getRemoteTxCount();
+         return localTxCount == 0 && remoteTxCount == 0;
       });
    }
 }

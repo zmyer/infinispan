@@ -1,14 +1,35 @@
 package org.infinispan.stats.impl;
 
+import static org.infinispan.stats.impl.StatKeys.ACTIVATIONS;
+import static org.infinispan.stats.impl.StatKeys.AVERAGE_READ_TIME;
+import static org.infinispan.stats.impl.StatKeys.AVERAGE_REMOVE_TIME;
+import static org.infinispan.stats.impl.StatKeys.AVERAGE_WRITE_TIME;
+import static org.infinispan.stats.impl.StatKeys.CACHE_LOADER_LOADS;
+import static org.infinispan.stats.impl.StatKeys.CACHE_LOADER_MISSES;
+import static org.infinispan.stats.impl.StatKeys.CACHE_WRITER_STORES;
+import static org.infinispan.stats.impl.StatKeys.EVICTIONS;
+import static org.infinispan.stats.impl.StatKeys.HITS;
+import static org.infinispan.stats.impl.StatKeys.INVALIDATIONS;
+import static org.infinispan.stats.impl.StatKeys.MISSES;
+import static org.infinispan.stats.impl.StatKeys.NUMBER_OF_ENTRIES;
+import static org.infinispan.stats.impl.StatKeys.NUMBER_OF_ENTRIES_IN_MEMORY;
+import static org.infinispan.stats.impl.StatKeys.NUMBER_OF_LOCKS_AVAILABLE;
+import static org.infinispan.stats.impl.StatKeys.NUMBER_OF_LOCKS_HELD;
+import static org.infinispan.stats.impl.StatKeys.OFF_HEAP_MEMORY_USED;
+import static org.infinispan.stats.impl.StatKeys.PASSIVATIONS;
+import static org.infinispan.stats.impl.StatKeys.REMOVE_HITS;
+import static org.infinispan.stats.impl.StatKeys.REMOVE_MISSES;
+import static org.infinispan.stats.impl.StatKeys.REQUIRED_MIN_NODES;
+import static org.infinispan.stats.impl.StatKeys.STORES;
+import static org.infinispan.stats.impl.StatKeys.TIME_SINCE_START;
+
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
@@ -25,99 +46,38 @@ import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.impl.CacheLoaderInterceptor;
 import org.infinispan.interceptors.impl.CacheWriterInterceptor;
 import org.infinispan.interceptors.impl.InvalidationInterceptor;
-import org.infinispan.jmx.JmxStatisticsExposer;
-import org.infinispan.jmx.annotations.DataType;
 import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
-import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
-import org.infinispan.jmx.annotations.Parameter;
 import org.infinispan.jmx.annotations.Units;
 import org.infinispan.stats.ClusterCacheStats;
 import org.infinispan.stats.Stats;
-import org.infinispan.util.TimeService;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 @MBean(objectName = "ClusterCacheStats", description = "General cluster statistics such as timings, hit/miss ratio, etc.")
-public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsExposer {
+public class ClusterCacheStatsImpl extends AbstractClusterStats implements ClusterCacheStats {
 
-   private static final long serialVersionUID = -7692443865184602500L;
-
-   private static final String TIME_SINCE_START = "timeSinceStart";
-   private static final String REMOVE_MISSES = "removeMisses";
-   private static final String REMOVE_HITS = "removeHits";
-   private static final String AVERAGE_WRITE_TIME = "averageWriteTime";
-   private static final String AVERAGE_READ_TIME = "averageReadTime";
-   private static final String AVERAGE_REMOVE_TIME = "averageRemoveTime";
-   private static final String EVICTIONS = "evictions";
-   private static final String HITS = "hits";
-   private static final String MISSES = "misses";
-   private static final String NUMBER_OF_ENTRIES = "numberOfEntries";
-   private static final String OFF_HEAP_MEMORY_USED = "offHeapMemoryUsed";
-   private static final String STORES = "stores";
-
-   //LockManager
-   private static final String NUMBER_OF_LOCKS_HELD = "numberOfLocksHeld";
-   private static final String NUMBER_OF_LOCKS_AVAILABLE = "numberOfLocksAvailable";
-
-   //Invalidation/passivation/activation
-   private static final String INVALIDATIONS = "invalidations";
-   private static final String PASSIVATIONS = "passivations";
-   private static final String ACTIVATIONS = "activations";
-
-   //cache loaders
-   private static final String CACHE_LOADER_LOADS = "cacheLoaderLoads";
-   private static final String CACHE_LOADER_MISSES = "cacheLoaderMisses";
-   private static final String CACHE_WRITER_STORES = "cacheWriterStores";
-
-
-   public static final long DEFAULT_STALE_STATS_THRESHOLD = 3000;
+   private static String[] LONG_ATTRIBUTES = new String[]{EVICTIONS, HITS, MISSES, OFF_HEAP_MEMORY_USED, REMOVE_HITS,
+         REMOVE_MISSES, INVALIDATIONS, PASSIVATIONS, ACTIVATIONS, CACHE_LOADER_LOADS, CACHE_LOADER_MISSES, CACHE_WRITER_STORES,
+         STORES};
 
    private static final Log log = LogFactory.getLog(ClusterCacheStatsImpl.class);
-   private transient AdvancedCache<?, ?> cache;
-   private transient DefaultExecutorService des;
-   private TimeService ts;
-   private boolean statisticsEnabled = false;
-   private long staleStatsTreshold = DEFAULT_STALE_STATS_THRESHOLD;
-   private long statsUpdateTimestamp = 0;
-   private final AtomicLong resetNanoseconds = new AtomicLong(0);
 
-   private long stores;
-   private long timeSinceStart;
-   private long removeMisses;
-   private long removeHits;
-   private long misses;
-   private long hits;
-   private long evictions;
-   private long numberOfEntries;
-   private long offHeapMemoryUsed;
-   private long averageWriteTime;
-   private long averageReadTime;
-   private long averageRemoveTime;
+   private DefaultExecutorService des;
+   private AdvancedCache cache;
    private double readWriteRatio;
    private double hitRatio;
 
-   //LockManager
-   private int numberOfLocksHeld;
-   private int numberOfLocksAvailable;
-
-   //invalidation, passivation activation
-   private long invalidations;
-   private long activations;
-   private long passivations;
-
-   //cacheloader metrics
-   private long cacheLoaderLoads;
-   private long cacheLoaderMisses;
-   private long cacheWriterStores;
+   public ClusterCacheStatsImpl() {
+      super(log);
+   }
 
    @Inject
-   public void injectDependencies(Cache<?, ?> cache, TimeService ts, Configuration configuration) {
+   public void injectDependencies(Cache<?, ?> cache, Configuration configuration) {
       this.cache = cache.getAdvancedCache();
-      this.ts = ts;
       this.statisticsEnabled = configuration.jmxStatistics().enabled();
    }
 
@@ -133,49 +93,36 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
       }
    }
 
-   public long getStaleStatsTreshold() {
-      return staleStatsTreshold;
-   }
+   @Override
+   void updateStats() throws Exception {
+      List<Map<String, Number>> responseList = new ArrayList<>();
+      List<CompletableFuture<Map<String, Number>>> responseFutures = des.submitEverywhere(new DistributedCacheStatsCallable());
+      for (CompletableFuture<Map<String, Number>> cf : responseFutures)
+         responseList.add(cf.get());
 
-   @ManagedOperation(description = "Sets the treshold for cluster wide stats refresh (miliseconds)",
-         name = "setStaleStatsTreshold",
-         displayName = "Set the cluster wide stats refresh treshold")
-   public void setStaleStatsTreshold(@Parameter(name = "staleStatsTreshold", description = "Stats refresh treshold in miliseconds") long staleStatsTreshold) {
-      this.staleStatsTreshold = staleStatsTreshold;
+      for (String att : LONG_ATTRIBUTES)
+         putLongAttributes(responseList, att);
+
+      putLongAttributesAverage(responseList, AVERAGE_WRITE_TIME);
+      putLongAttributesAverage(responseList, AVERAGE_READ_TIME);
+      putLongAttributesAverage(responseList, AVERAGE_REMOVE_TIME);
+      putLongAttributesAverage(responseList, OFF_HEAP_MEMORY_USED);
+
+      putIntAttributes(responseList, NUMBER_OF_LOCKS_HELD);
+      putIntAttributes(responseList, NUMBER_OF_LOCKS_AVAILABLE);
+      putIntAttributesMax(responseList, REQUIRED_MIN_NODES);
+
+      long numberOfEntriesInMemory = getCacheMode(cache).isReplicated() ?
+            cache.getStats().getCurrentNumberOfEntriesInMemory() :
+            (long) addDoubleAttributes(responseList, NUMBER_OF_ENTRIES_IN_MEMORY);
+      statsMap.put(NUMBER_OF_ENTRIES_IN_MEMORY, numberOfEntriesInMemory);
+      statsMap.put(NUMBER_OF_ENTRIES, cache.size());
+
+      updateTimeSinceStart(responseList);
+      updateRatios(responseList);
    }
 
    // -------------------------------------------- JMX information -----------------------------------------------
-
-   @Override
-   @ManagedOperation(description = "Resets statistics gathered by this component", displayName = "Reset statistics")
-   public void resetStatistics() {
-      if (isStatisticsEnabled()) {
-         reset();
-         resetNanoseconds.set(ts.time());
-      }
-   }
-
-   @Override
-   public void setStatisticsEnabled(boolean enabled) {
-      this.statisticsEnabled = enabled;
-      if (enabled) {
-         //yes technically we do not reset stats but we initialize them
-         resetNanoseconds.set(ts.time());
-      }
-   }
-
-   @Override
-   public boolean getStatisticsEnabled() {
-      return statisticsEnabled;
-   }
-
-   @ManagedAttribute(description = "Enables or disables the gathering of statistics by this component",
-         displayName = "Statistics enabled",
-         dataType = DataType.TRAIT,
-         writable = true)
-   public boolean isStatisticsEnabled() {
-      return getStatisticsEnabled();
-   }
 
    @Override
    @ManagedAttribute(description = "Cluster wide total average number of milliseconds for a read operation on the cache",
@@ -183,12 +130,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          units = Units.MILLISECONDS,
          displayType = DisplayType.SUMMARY)
    public long getAverageReadTime() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return averageReadTime;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(AVERAGE_READ_TIME);
    }
 
    @Override
@@ -197,12 +139,12 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          units = Units.MILLISECONDS,
          displayType = DisplayType.SUMMARY)
    public long getAverageRemoveTime() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return averageRemoveTime;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(AVERAGE_REMOVE_TIME);
+   }
+
+   @Override
+   public int getRequiredMinimumNumberOfNodes() {
+      return getStatAsInt(REQUIRED_MIN_NODES);
    }
 
    @Override
@@ -211,12 +153,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          units = Units.MILLISECONDS,
          displayType = DisplayType.SUMMARY)
    public long getAverageWriteTime() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return averageWriteTime;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(AVERAGE_WRITE_TIME);
    }
 
    @ManagedAttribute(description = "Cluster wide total number of cache eviction operations",
@@ -225,12 +162,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayType = DisplayType.SUMMARY)
    @Override
    public long getEvictions() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return evictions;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(EVICTIONS);
    }
 
    @ManagedAttribute(description = "Cluster wide total number of cache attribute hits",
@@ -239,12 +171,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayType = DisplayType.SUMMARY)
    @Override
    public long getHits() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return hits;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(HITS);
    }
 
    @ManagedAttribute(description = "Cluster wide total percentage hit/(hit+miss) ratio for this cache",
@@ -267,24 +194,22 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY)
    public long getMisses() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return misses;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(MISSES);
    }
 
-   @ManagedAttribute(description = "Cluster wide total number of entries currently in the cache",
+   @ManagedAttribute(description = "Cluster wide total number of entries currently in the cache, including passivated entries",
          displayName = "Cluster wide total number of current cache entries",
          displayType = DisplayType.SUMMARY)
    public int getNumberOfEntries() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return (int) numberOfEntries;
-      } else {
-         return -1;
-      }
+      return getStatAsInt(NUMBER_OF_ENTRIES);
+   }
+
+   @Override
+   @ManagedAttribute(description = "Cluster wide total number of entries currently stored in-memory",
+         displayName = "Cluster wide total number of in-memory cache entries",
+         displayType = DisplayType.SUMMARY)
+   public int getCurrentNumberOfEntriesInMemory() {
+      return getStatAsInt(NUMBER_OF_ENTRIES_IN_MEMORY);
    }
 
    @ManagedAttribute(description = "Cluster wide read/writes ratio for the cache",
@@ -307,12 +232,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayType = DisplayType.SUMMARY)
    @Override
    public long getRemoveHits() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return removeHits;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(REMOVE_HITS);
    }
 
    @ManagedAttribute(description = "Cluster wide total number of cache removals where keys were not found",
@@ -321,12 +241,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayType = DisplayType.SUMMARY)
    @Override
    public long getRemoveMisses() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return removeMisses;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(REMOVE_MISSES);
    }
 
    @ManagedAttribute(description = "Cluster wide total number of cache attribute put operations",
@@ -335,12 +250,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayType = DisplayType.SUMMARY)
    @Override
    public long getStores() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return stores;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(STORES);
    }
 
    @ManagedAttribute(description = "Number of seconds since the first cache node started",
@@ -349,27 +259,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayType = DisplayType.SUMMARY)
    @Override
    public long getTimeSinceStart() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return timeSinceStart;
-      } else {
-         return -1;
-      }
-   }
-
-   @Override
-   @ManagedAttribute(
-         description = "Number of seconds since the cluster-wide cache statistics were last reset",
-         displayName = "Seconds since cluster-wide cache statistics were reset",
-         units = Units.SECONDS,
-         displayType = DisplayType.SUMMARY
-   )
-   public long getTimeSinceReset() {
-      long result = -1;
-      if (isStatisticsEnabled()) {
-         result = ts.timeDuration(resetNanoseconds.get(), TimeUnit.SECONDS);
-      }
-      return result;
+      return getStatAsLong(TIME_SINCE_START);
    }
 
    @Override
@@ -389,12 +279,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayType = DisplayType.SUMMARY
    )
    public long getOffHeapMemoryUsed() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return offHeapMemoryUsed;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(OFF_HEAP_MEMORY_USED);
    }
 
    @Override
@@ -404,31 +289,9 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
 
    @Override
    public void reset() {
-      stores = 0;
-      timeSinceStart = 0;
-      removeMisses = 0;
-      removeHits = 0;
-      misses = 0;
-      hits = 0;
-      evictions = 0;
-      numberOfEntries = 0;
-      offHeapMemoryUsed = 0;
-      averageWriteTime = 0;
-      averageReadTime = 0;
-      averageRemoveTime = 0;
+      super.reset();
       readWriteRatio = 0;
       hitRatio = 0;
-
-      numberOfLocksHeld = 0;
-      numberOfLocksAvailable = 0;
-
-      invalidations = 0;
-      activations = 0;
-      passivations = 0;
-
-      cacheLoaderLoads = 0;
-      cacheLoaderMisses = 0;
-      cacheWriterStores = 0;
    }
 
    @ManagedAttribute(description = "Total number of exclusive locks available in the cluster",
@@ -436,13 +299,8 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          measurementType = MeasurementType.DYNAMIC,
          displayType = DisplayType.SUMMARY)
    @Override
-   public int getNumberOfLocksAvailable(){
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return numberOfLocksAvailable;
-      } else {
-         return -1;
-      }
+   public int getNumberOfLocksAvailable() {
+      return getStatAsInt(NUMBER_OF_LOCKS_AVAILABLE);
    }
 
    @ManagedAttribute(description = "Total number of locks held in the cluster",
@@ -450,13 +308,8 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          measurementType = MeasurementType.DYNAMIC,
          displayType = DisplayType.SUMMARY)
    @Override
-   public int getNumberOfLocksHeld(){
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return numberOfLocksHeld;
-      } else {
-         return -1;
-      }
+   public int getNumberOfLocksHeld() {
+      return getStatAsInt(NUMBER_OF_LOCKS_HELD);
    }
 
    @Override
@@ -464,13 +317,8 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayName = "Cluster wide total number of invalidations",
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY)
-   public long getInvalidations(){
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return invalidations;
-      } else {
-         return -1;
-      }
+   public long getInvalidations() {
+      return getStatAsLong(INVALIDATIONS);
    }
 
    @ManagedAttribute(description = "The total number of activations in the cluster",
@@ -479,12 +327,7 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          displayType = DisplayType.SUMMARY)
    @Override
    public long getActivations() {
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return activations;
-      } else {
-         return -1;
-      }
+      return getStatAsLong(ACTIVATIONS);
    }
 
    @ManagedAttribute(description = "The total number of passivations in the cluster",
@@ -492,13 +335,8 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY)
    @Override
-   public long getPassivations(){
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return passivations;
-      } else {
-         return -1;
-      }
+   public long getPassivations() {
+      return getStatAsLong(PASSIVATIONS);
    }
 
    @ManagedAttribute(description = "The total number of cacheloader load operations in the cluster",
@@ -506,13 +344,8 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY)
    @Override
-   public long getCacheLoaderLoads(){
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return cacheLoaderLoads;
-      } else {
-         return -1;
-      }
+   public long getCacheLoaderLoads() {
+      return getStatAsLong(CACHE_LOADER_LOADS);
    }
 
    @ManagedAttribute(description = "The total number of cacheloader load misses in the cluster",
@@ -520,13 +353,8 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY)
    @Override
-   public long getCacheLoaderMisses(){
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return cacheLoaderMisses;
-      } else {
-         return -1;
-      }
+   public long getCacheLoaderMisses() {
+      return getStatAsLong(CACHE_LOADER_MISSES);
    }
 
    @ManagedAttribute(description = "The total number of cachestore store operations in the cluster",
@@ -534,139 +362,40 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY)
    @Override
-   public long getStoreWrites(){
-      if (isStatisticsEnabled()) {
-         fetchClusterWideStatsIfNeeded();
-         return cacheWriterStores;
-      } else {
-         return -1;
-      }
+   public long getStoreWrites() {
+      return getStatAsLong(CACHE_WRITER_STORES);
    }
 
-   private boolean launchNewDistTask() {
-      long duration = ts.timeDuration(statsUpdateTimestamp, ts.time(), TimeUnit.MILLISECONDS);
-      return duration > staleStatsTreshold;
-   }
-
-   private synchronized void fetchClusterWideStatsIfNeeded() {
-      if (launchNewDistTask()) {
-         try {
-            List<CompletableFuture<Map<String, Number>>> responseList = des.submitEverywhere(new DistributedCacheStatsCallable());
-            updateFieldsFromResponseMap(responseList);
-         } catch (Exception e) {
-            log.warn("Could not execute cluster wide cache stats operation ", e);
-         } finally {
-            statsUpdateTimestamp = ts.time();
-         }
-      }
-   }
-
-   private void updateFieldsFromResponseMap(List<CompletableFuture<Map<String, Number>>> responseList) throws Exception {
-
-      averageWriteTime = addLongAttributes(responseList, AVERAGE_WRITE_TIME) / responseList.size();
-      averageReadTime = addLongAttributes(responseList, AVERAGE_READ_TIME) / responseList.size();
-      averageRemoveTime = addLongAttributes(responseList, AVERAGE_REMOVE_TIME) / responseList.size();
-      evictions = addLongAttributes(responseList, EVICTIONS);
-      hits = addLongAttributes(responseList, HITS);
-      misses = addLongAttributes(responseList, MISSES);
-      numberOfEntries = getCacheMode(cache).isReplicated() ?
-            cache.getStats().getCurrentNumberOfEntries() :
-            addLongAttributes(responseList, NUMBER_OF_ENTRIES);
-      offHeapMemoryUsed = addLongAttributes(responseList, OFF_HEAP_MEMORY_USED);
-      removeHits = addLongAttributes(responseList, REMOVE_HITS);
-      removeMisses = addLongAttributes(responseList, REMOVE_MISSES);
-      stores = addLongAttributes(responseList, STORES);
-      hitRatio = updateHitRatio(responseList);
-      readWriteRatio = updateReadWriteRatio(responseList);
-      timeSinceStart = updateTimeSinceStart(responseList);
-
-      numberOfLocksHeld = addIntAttributes(responseList, NUMBER_OF_LOCKS_HELD);
-      numberOfLocksAvailable = addIntAttributes(responseList, NUMBER_OF_LOCKS_AVAILABLE);
-
-      invalidations = addLongAttributes(responseList, INVALIDATIONS);
-      passivations = addLongAttributes(responseList, PASSIVATIONS);
-      activations = addLongAttributes(responseList, ACTIVATIONS);
-
-      cacheLoaderLoads = addLongAttributes(responseList, CACHE_LOADER_LOADS);
-      cacheLoaderMisses = addLongAttributes(responseList, CACHE_LOADER_MISSES);
-      cacheWriterStores = addLongAttributes(responseList, CACHE_WRITER_STORES);
-   }
-
-   private long addLongAttributes(List<CompletableFuture<Map<String, Number>>> responseList, String attribute) throws Exception {
-      long total = 0;
-      for (Future<Map<String, Number>> f : responseList) {
-         Map<String, Number> m = f.get();
-         Number value = m.get(attribute);
-         long longValue = value.longValue();
-         if (longValue > -1) {
-            total += longValue;
-         }
-      }
-      return total;
-   }
-
-   private int addIntAttributes(List<CompletableFuture<Map<String, Number>>> responseList, String attribute) throws Exception {
-      int total = 0;
-      for (Future<Map<String, Number>> f : responseList) {
-         Map<String, Number> m = f.get();
-         Number value = m.get(attribute);
-         long intValue = value.intValue();
-         if (intValue > -1) {
-            total += intValue;
-         }
-      }
-      return total;
-   }
-
-   private long updateTimeSinceStart(List<CompletableFuture<Map<String, Number>>> responseList) throws Exception {
+   private void updateTimeSinceStart(List<Map<String, Number>> responseList) {
       long timeSinceStartMax = 0;
-      for (Future<Map<String, Number>> f : responseList) {
-         Map<String, Number> m = f.get();
+      for (Map<String, Number> m : responseList) {
          Number timeSinceStart = m.get(TIME_SINCE_START);
          if (timeSinceStart.longValue() > timeSinceStartMax) {
             timeSinceStartMax = timeSinceStart.longValue();
          }
       }
-      return timeSinceStartMax;
+      statsMap.put(TIME_SINCE_START, timeSinceStartMax);
    }
 
-   private double updateReadWriteRatio(List<CompletableFuture<Map<String, Number>>> responseList) throws Exception {
-      long sumOfAllReads = 0;
-      long sumOfAllWrites = 0;
-      double rwRatio = 0;
-      for (Future<Map<String, Number>> f : responseList) {
-         Map<String, Number> m = f.get();
-         Number hits = m.get(HITS);
-         Number misses = m.get(MISSES);
-         Number stores = m.get(STORES);
-         sumOfAllReads += (hits.longValue() + misses.longValue());
-         sumOfAllWrites += stores.longValue();
-      }
-      if (sumOfAllWrites > 0) {
-         rwRatio = (double) sumOfAllReads / sumOfAllWrites;
-      }
-      return rwRatio;
-   }
-
-   private double updateHitRatio(List<CompletableFuture<Map<String, Number>>> responseList) throws Exception {
+   private void updateRatios(List<Map<String, Number>> responseList) {
       long totalHits = 0;
       long totalRetrievals = 0;
-      double hitRatio = 0;
-      for (Future<Map<String, Number>> f : responseList) {
-         Map<String, Number> m = f.get();
-         Number hits = m.get(HITS);
-         Number misses = m.get(MISSES);
-         totalHits += hits.longValue();
-         totalRetrievals += (hits.longValue() + misses.longValue());
+      long sumOfAllReads = 0;
+      long sumOfAllWrites = 0;
+      for (Map<String, Number> m : responseList) {
+         long hits = m.get(HITS).longValue();
+         long misses = m.get(MISSES).longValue();
+         totalHits += hits;
+         sumOfAllReads += (totalHits + misses);
+         sumOfAllWrites += m.get(STORES).longValue();
+         totalRetrievals += (hits + misses);
       }
-      if (totalRetrievals > 0) {
-         hitRatio = (double) totalHits / totalRetrievals;
-      }
-      return hitRatio;
+      this.hitRatio = totalRetrievals > 0 ? (double) totalHits / totalRetrievals : 0;
+      this.readWriteRatio = sumOfAllWrites > 0 ? (double) sumOfAllReads / sumOfAllWrites : 0;
    }
 
    private static <T extends AsyncInterceptor> T getFirstInterceptorWhichExtends(AdvancedCache<?, ?> cache,
-         Class<T> interceptorClass) {
+                                                                                 Class<T> interceptorClass) {
       return interceptorClass
             .cast(cache.getAsyncInterceptorChain().findInterceptorExtending(interceptorClass));
    }
@@ -678,16 +407,11 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
    private static class DistributedCacheStatsCallable implements
          DistributedCallable<Object, Object, Map<String, Number>>, Serializable {
 
-      /**
-       *
-       */
       private static final long serialVersionUID = -8400973931071456798L;
-
       private transient AdvancedCache<Object, Object> remoteCache;
 
       @Override
       public Map<String, Number> call() throws Exception {
-
          Map<String, Number> map = new HashMap<>();
          Stats stats = remoteCache.getStats();
          map.put(AVERAGE_READ_TIME, stats.getAverageReadTime());
@@ -696,14 +420,15 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
          map.put(EVICTIONS, stats.getEvictions());
          map.put(HITS, stats.getHits());
          map.put(MISSES, stats.getMisses());
-         final CacheMode cacheMode = getCacheMode(remoteCache);
-         //for replicated caches, we don't need to send the number of entries since it is the same in all the nodes.
-         if (cacheMode.isDistributed()) {
-            map.put(NUMBER_OF_ENTRIES, stats.getCurrentNumberOfEntries() / numOwners());
-         } else if (!cacheMode.isReplicated()){
-            map.put(NUMBER_OF_ENTRIES, stats.getCurrentNumberOfEntries());
+
+         if (!getCacheMode(remoteCache).isReplicated()) {
+            double numberOfEntriesInMemory = stats.getCurrentNumberOfEntriesInMemory();
+            numberOfEntriesInMemory /= remoteCache.getCacheConfiguration().clustering().hash().numOwners();
+            map.put(NUMBER_OF_ENTRIES_IN_MEMORY, numberOfEntriesInMemory);
          }
+
          map.put(OFF_HEAP_MEMORY_USED, stats.getOffHeapMemoryUsed());
+         map.put(REQUIRED_MIN_NODES, stats.getRequiredMinimumNumberOfNodes());
          map.put(STORES, stats.getStores());
          map.put(REMOVE_HITS, stats.getRemoveHits());
          map.put(REMOVE_MISSES, stats.getRemoveMisses());
@@ -765,10 +490,6 @@ public class ClusterCacheStatsImpl implements ClusterCacheStats, JmxStatisticsEx
       @Override
       public void setEnvironment(Cache<Object, Object> cache, Set<Object> inputKeys) {
          remoteCache = cache.getAdvancedCache();
-      }
-
-      private int numOwners(){
-         return remoteCache.getCacheConfiguration().clustering().hash().numOwners();
       }
    }
 }

@@ -5,8 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-tools</artifactId>
@@ -16,45 +16,45 @@
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-        <groupId>${project.groupId}</groupId>
+        <groupId>org.infinispan</groupId>
         <artifactId>infinispan-cachestore-jdbc</artifactId>
       </dependency>
 
       <dependency>
-        <groupId>${project.groupId}</groupId>
+        <groupId>org.infinispan</groupId>
         <artifactId>infinispan-cachestore-jpa</artifactId>
       </dependency>
 
       <dependency>
-        <groupId>${project.groupId}</groupId>
+        <groupId>org.infinispan</groupId>
         <artifactId>infinispan-cachestore-leveldb</artifactId>
       </dependency>
 
       <dependency>
-        <groupId>${project.groupId}</groupId>
+        <groupId>org.infinispan</groupId>
         <artifactId>infinispan-cachestore-remote</artifactId>
       </dependency>
 
       <dependency>
-        <groupId>${project.groupId}</groupId>
+        <groupId>org.infinispan</groupId>
         <artifactId>infinispan-cachestore-rest</artifactId>
       </dependency>
 
@@ -64,13 +64,13 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-core</artifactId>
          <scope>provided</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-query</artifactId>
          <scope>provided</scope>
       </dependency>
@@ -96,6 +96,12 @@
          <artifactId>commons-logging</artifactId>
          <scope>test</scope>
       </dependency>
+
+      <dependency>
+         <groupId>com.h2database</groupId>
+         <artifactId>h2</artifactId>
+         <scope>test</scope>
+      </dependency>
    </dependencies>
 
    <profiles>
@@ -103,14 +109,14 @@
          <id>default-tools.jar</id>
          <activation>
             <file>
-              <exists>${java.home}/../lib/tools.jar</exists>
+               <exists>${java.home}/../lib/tools.jar</exists>
             </file>
          </activation>
          <dependencies>
             <dependency>
                <groupId>com.sun</groupId>
                <artifactId>tools</artifactId>
-               <version>1.4.2</version>
+               <version>${java.version}</version>
                <scope>system</scope>
                <systemPath>${java.home}/../lib/tools.jar</systemPath>
             </dependency>
@@ -138,4 +144,3 @@
       </plugins>
    </build>
 </project>
-

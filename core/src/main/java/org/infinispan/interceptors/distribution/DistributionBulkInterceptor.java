@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.Spliterator;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
+import java.util.function.Supplier;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
@@ -22,25 +22,26 @@ import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CloseableIteratorMapper;
 import org.infinispan.commons.util.CloseableSpliterator;
 import org.infinispan.commons.util.Closeables;
+import org.infinispan.commons.util.RemovableCloseableIterator;
+import org.infinispan.commons.util.RemovableIterator;
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.container.entries.ForwardingCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.LocalTxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.stream.StreamMarshalling;
 import org.infinispan.stream.impl.ClusterStreamManager;
 import org.infinispan.stream.impl.DistributedCacheStream;
-import org.infinispan.stream.impl.RemovableCloseableIterator;
-import org.infinispan.stream.impl.RemovableIterator;
 import org.infinispan.stream.impl.intops.IntermediateOperation;
 import org.infinispan.stream.impl.intops.object.MapOperation;
 import org.infinispan.stream.impl.tx.TxClusterStreamManager;
 import org.infinispan.stream.impl.tx.TxDistributedCacheStream;
+import org.infinispan.util.EntryWrapper;
 import org.infinispan.util.function.RemovableFunction;
 
 /**
@@ -51,12 +52,7 @@ import org.infinispan.util.function.RemovableFunction;
  * @param <V> The value type of entries
  */
 public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
-   private Cache<K, V> cache;
-
-   @Inject
-   public void inject(Cache<K, V> cache) {
-      this.cache = cache;
-   }
+   @Inject private Cache<K, V> cache;
 
    @Override
    public Object visitEntrySetCommand(InvocationContext ctx, EntrySetCommand command) throws Throwable {
@@ -76,6 +72,16 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
       });
    }
 
+   protected static <K, V> Supplier<CacheStream<CacheEntry<K, V>>> supplier(Cache<K, V> cache,
+         Supplier<CacheStream<CacheEntry<K, V>>> streamSupplier) {
+      if (cache.getCacheConfiguration().clustering().cacheMode().isScattered()) {
+         // ignore tombstones
+         return () -> streamSupplier.get().filter(entry -> entry.getValue() != null);
+      } else {
+         return streamSupplier;
+      }
+   }
+
    protected static class BackingEntrySet<K, V> extends AbstractCloseableIteratorCollection<CacheEntry<K, V>, K, V>
            implements CacheSet<CacheEntry<K, V>> {
       protected final CacheSet<CacheEntry<K, V>> entrySet;
@@ -89,8 +95,8 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
 
       @Override
       public CloseableIterator<CacheEntry<K, V>> iterator() {
-         return new CloseableIteratorMapper<>(new RemovableCloseableIterator<>(Closeables.iterator(stream()), cache,
-                 CacheEntry::getKey), e -> new EntryWrapper<>(cache, e));
+         return new CloseableIteratorMapper<>(new RemovableCloseableIterator<>(Closeables.iterator(stream()),
+               e -> cache.remove(e.getKey(), e.getValue())), e -> new EntryWrapper<>(cache, e));
       }
 
       @Override
@@ -131,7 +137,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          ComponentRegistry registry = advancedCache.getComponentRegistry();
          CacheStream<CacheEntry<K, V>> cacheStream = new DistributedCacheStream<CacheEntry<K, V>>(
                  cache.getCacheManager().getAddress(), false, advancedCache.getDistributionManager(),
-                 () -> entrySet.stream(), registry.getComponent(ClusterStreamManager.class),
+                 supplier(cache, entrySet::stream), registry.getComponent(ClusterStreamManager.class),
                  !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
                  cache.getCacheConfiguration().clustering().stateTransfer().chunkSize(),
                  registry.getComponent(Executor.class, ASYNC_OPERATIONS_EXECUTOR), registry) {
@@ -140,7 +146,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
                int size = intermediateOperations.size();
                if (size == 0) {
                   // If no intermediate operations we can support remove
-                  return new RemovableIterator<>(super.iterator(), cache, e -> e.getKey());
+                  return new RemovableIterator<>(super.iterator(), e -> cache.remove(e.getKey(), e.getValue()));
                }
                else if (size == 1) {
                   IntermediateOperation intOp = intermediateOperations.peek();
@@ -148,7 +154,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
                      MapOperation map = (MapOperation) intOp;
                      if (map.getFunction() instanceof RemovableFunction) {
                         // If function was removable means we can just use remove as is
-                        return new RemovableIterator<>(super.iterator(), cache, e -> e.getKey());
+                        return new RemovableIterator<>(super.iterator(), e -> cache.remove(e.getKey(), e.getValue()));
                      }
                   }
                }
@@ -163,7 +169,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          AdvancedCache<K, V> advancedCache = cache.getAdvancedCache();
          ComponentRegistry registry = advancedCache.getComponentRegistry();
          CacheStream<CacheEntry<K, V>> cacheStream = new DistributedCacheStream<>(cache.getCacheManager().getAddress(),
-                 true, advancedCache.getDistributionManager(), () -> entrySet.parallelStream(),
+                 true, advancedCache.getDistributionManager(), supplier(cache, entrySet::parallelStream),
                  registry.getComponent(ClusterStreamManager.class), !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
                  cache.getCacheConfiguration().clustering().stateTransfer().chunkSize(),
                  registry.getComponent(Executor.class, ASYNC_OPERATIONS_EXECUTOR), registry);
@@ -186,10 +192,12 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          DistributionManager dm = advancedCache.getDistributionManager();
          ComponentRegistry registry = advancedCache.getComponentRegistry();
          ClusterStreamManager<K> realManager = registry.getComponent(ClusterStreamManager.class);
-         TxClusterStreamManager<K> txManager = new TxClusterStreamManager<>(realManager, ctx, dm.getConsistentHash());
+         LocalizedCacheTopology cacheTopology = dm.getCacheTopology();
+         TxClusterStreamManager<K> txManager = new TxClusterStreamManager<>(realManager, ctx,
+               cacheTopology.getCurrentCH().getNumSegments(), cacheTopology::getSegment);
 
          CacheStream<CacheEntry<K, V>> cacheStream = new TxDistributedCacheStream<>(cache.getCacheManager().getAddress(),
-                 false, dm, () -> entrySet.stream(), txManager, !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
+                 false, dm, entrySet::stream, txManager, !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
                  cache.getCacheConfiguration().clustering().stateTransfer().chunkSize(),
                  registry.getComponent(Executor.class, ASYNC_OPERATIONS_EXECUTOR), registry, ctx);
          return applyTimeOut(cacheStream, cache);
@@ -201,10 +209,12 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          DistributionManager dm = advancedCache.getDistributionManager();
          ComponentRegistry registry = advancedCache.getComponentRegistry();
          ClusterStreamManager<K> realManager = registry.getComponent(ClusterStreamManager.class);
-         TxClusterStreamManager<K> txManager = new TxClusterStreamManager<>(realManager, ctx, dm.getConsistentHash());
+         LocalizedCacheTopology cacheTopology = dm.getCacheTopology();
+         TxClusterStreamManager<K> txManager = new TxClusterStreamManager<>(realManager, ctx,
+               cacheTopology.getCurrentCH().getNumSegments(), cacheTopology::getSegment);
 
          CacheStream<CacheEntry<K, V>> cacheStream = new TxDistributedCacheStream<>(cache.getCacheManager().getAddress(),
-                 true, dm, () -> entrySet.parallelStream(), txManager, !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
+                 true, dm, entrySet::parallelStream, txManager, !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
                  cache.getCacheConfiguration().clustering().stateTransfer().chunkSize(),
                  registry.getComponent(Executor.class, ASYNC_OPERATIONS_EXECUTOR), registry, ctx);
          return applyTimeOut(cacheStream, cache);
@@ -214,32 +224,6 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
    private static <C> CacheStream<C> applyTimeOut(CacheStream<C> stream, Cache<?, ?> cache) {
       return stream.timeout(cache.getCacheConfiguration().clustering().remoteTimeout(),
               TimeUnit.MILLISECONDS);
-   }
-
-   /**
-    * Wrapper for CacheEntry(s) that can be used to update the cache when it's value is set.
-    * @param <K> The key type
-    * @param <V> The value type
-    */
-   private static class EntryWrapper<K, V> extends ForwardingCacheEntry<K, V> {
-      private final Cache<K, V> cache;
-      private final CacheEntry<K, V> entry;
-
-      public EntryWrapper(Cache<K, V> cache, CacheEntry<K, V> entry) {
-         this.cache = cache;
-         this.entry = entry;
-      }
-
-      @Override
-      protected CacheEntry<K, V> delegate() {
-         return entry;
-      }
-
-      @Override
-      public V setValue(V value) {
-         cache.put(entry.getKey(), value);
-         return super.setValue(value);
-      }
    }
 
    @Override
@@ -273,7 +257,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
 
       @Override
       public CloseableIterator<K> iterator() {
-         return new RemovableCloseableIterator(Closeables.iterator(stream()), cache, Function.identity());
+         return new RemovableCloseableIterator<>(Closeables.iterator(stream()), cache::remove);
       }
 
       @Override
@@ -297,7 +281,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          AdvancedCache<K, V> advancedCache = cache.getAdvancedCache();
          ComponentRegistry registry = advancedCache.getComponentRegistry();
          return new DistributedCacheStream<K>(cache.getCacheManager().getAddress(), false,
-                 advancedCache.getDistributionManager(), () -> entrySet.stream(),
+                 advancedCache.getDistributionManager(), supplier(cache, entrySet::stream),
                  registry.getComponent(ClusterStreamManager.class), !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
                  cache.getCacheConfiguration().clustering().stateTransfer().chunkSize(),
                  registry.getComponent(Executor.class, ASYNC_OPERATIONS_EXECUTOR), registry,
@@ -307,7 +291,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
                int size = intermediateOperations.size();
                // The act of mapping to key requires 1 intermediate operation
                if (size == 1) {
-                  return new RemovableIterator<>(super.iterator(), cache, Function.identity());
+                  return new RemovableIterator<>(super.iterator(), cache::remove);
                } else if (size == 2) {
                   Iterator<IntermediateOperation> iter = intermediateOperations.iterator();
                   iter.next();
@@ -316,7 +300,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
                      MapOperation map = (MapOperation) intOp;
                      if (map.getFunction() instanceof RemovableFunction) {
                         // If function was removable means we can just use remove as is
-                        return new RemovableIterator<>(super.iterator(), cache, Function.identity());
+                        return new RemovableIterator<>(super.iterator(), cache::remove);
                      }
                   }
                }
@@ -330,7 +314,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          AdvancedCache<K, V> advancedCache = cache.getAdvancedCache();
          ComponentRegistry registry = advancedCache.getComponentRegistry();
          return new DistributedCacheStream<>(cache.getCacheManager().getAddress(), true,
-                 advancedCache.getDistributionManager(), () -> entrySet.parallelStream(),
+                 advancedCache.getDistributionManager(), supplier(cache, entrySet::parallelStream),
                  registry.getComponent(ClusterStreamManager.class), !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
                  cache.getCacheConfiguration().clustering().stateTransfer().chunkSize(),
                  registry.getComponent(Executor.class, ASYNC_OPERATIONS_EXECUTOR), registry,
@@ -353,10 +337,12 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          DistributionManager dm = advancedCache.getDistributionManager();
          ComponentRegistry registry = advancedCache.getComponentRegistry();
          ClusterStreamManager<K> realManager = registry.getComponent(ClusterStreamManager.class);
-         TxClusterStreamManager<K> txManager = new TxClusterStreamManager<>(realManager, ctx, dm.getConsistentHash());
+         LocalizedCacheTopology cacheTopology = dm.getCacheTopology();
+         TxClusterStreamManager<K> txManager = new TxClusterStreamManager<>(realManager, ctx,
+               cacheTopology.getCurrentCH().getNumSegments(), cacheTopology::getSegment);
 
          return new TxDistributedCacheStream<>(cache.getCacheManager().getAddress(), false,
-                 dm, () -> entrySet.stream(), txManager, !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
+                 dm, entrySet::stream, txManager, !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
                  cache.getCacheConfiguration().clustering().stateTransfer().chunkSize(),
                 registry.getComponent(Executor.class, ASYNC_OPERATIONS_EXECUTOR), registry,
                  StreamMarshalling.entryToKeyFunction(), ctx);
@@ -368,10 +354,12 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          DistributionManager dm = advancedCache.getDistributionManager();
          ComponentRegistry registry = advancedCache.getComponentRegistry();
          ClusterStreamManager<K> realManager = registry.getComponent(ClusterStreamManager.class);
-         TxClusterStreamManager<K> txManager = new TxClusterStreamManager<>(realManager, ctx, dm.getConsistentHash());
+         LocalizedCacheTopology cacheTopology = dm.getCacheTopology();
+         TxClusterStreamManager<K> txManager = new TxClusterStreamManager<>(realManager, ctx,
+               cacheTopology.getCurrentCH().getNumSegments(), cacheTopology::getSegment);
 
          return new TxDistributedCacheStream<>(cache.getCacheManager().getAddress(), true,
-                 dm, () -> entrySet.parallelStream(), txManager, !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
+                 dm, entrySet::parallelStream, txManager, !command.hasAnyFlag(FlagBitSets.SKIP_CACHE_LOAD),
                  cache.getCacheConfiguration().clustering().stateTransfer().chunkSize(),
                  registry.getComponent(Executor.class, ASYNC_OPERATIONS_EXECUTOR), registry,
                  StreamMarshalling.entryToKeyFunction(), ctx);

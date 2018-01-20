@@ -41,7 +41,7 @@ import org.infinispan.query.dsl.embedded.testdomain.User;
 import org.infinispan.query.remote.CompatibilityProtoStreamMarshaller;
 import org.infinispan.query.remote.ProtobufMetadataManager;
 import org.infinispan.query.remote.client.ProtobufMetadataManagerConstants;
-import org.infinispan.query.remote.impl.filter.JPAContinuousQueryProtobufCacheEventFilterConverterFactory;
+import org.infinispan.query.remote.impl.filter.IckleContinuousQueryProtobufCacheEventFilterConverterFactory;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.util.ControlledTimeService;
 import org.infinispan.util.KeyValuePair;
@@ -61,7 +61,7 @@ public class EmbeddedCompatContinuousQueryTest extends MultiHotRodServersTest {
 
    private RemoteCache<String, User> remoteCache;
 
-   private ControlledTimeService timeService = new ControlledTimeService(0);
+   private ControlledTimeService timeService = new ControlledTimeService();
 
    @Override
    protected void createCacheManagers() throws Throwable {
@@ -72,9 +72,9 @@ public class EmbeddedCompatContinuousQueryTest extends MultiHotRodServersTest {
 
       // Register the filter/converter factory. This should normally be discovered by the server via class path instead
       // of being added manually here, but this is ok in a test.
-      JPAContinuousQueryProtobufCacheEventFilterConverterFactory factory = new JPAContinuousQueryProtobufCacheEventFilterConverterFactory();
+      IckleContinuousQueryProtobufCacheEventFilterConverterFactory factory = new IckleContinuousQueryProtobufCacheEventFilterConverterFactory();
       for (int i = 0; i < NUM_NODES; i++) {
-         server(i).addCacheEventFilterConverterFactory(JPAContinuousQueryProtobufCacheEventFilterConverterFactory.FACTORY_NAME, factory);
+         server(i).addCacheEventFilterConverterFactory(IckleContinuousQueryProtobufCacheEventFilterConverterFactory.FACTORY_NAME, factory);
          TestingUtil.replaceComponent(server(i).getCacheManager(), TimeService.class, timeService, true);
       }
 
@@ -82,7 +82,7 @@ public class EmbeddedCompatContinuousQueryTest extends MultiHotRodServersTest {
 
       //initialize server-side serialization context
       RemoteCache<String, String> metadataCache = client(0).getCache(ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME);
-      metadataCache.put("sample_bank_account/bank.proto", Util.read(Util.getResourceAsStream("/sample_bank_account/bank.proto", getClass().getClassLoader())));
+      metadataCache.put("sample_bank_account/bank.proto", Util.getResourceAsString("/sample_bank_account/bank.proto", getClass().getClassLoader()));
       assertFalse(metadataCache.containsKey(ProtobufMetadataManagerConstants.ERRORS_KEY_SUFFIX));
 
       for (int i = 0; i < NUM_NODES; i++) {
@@ -99,7 +99,7 @@ public class EmbeddedCompatContinuousQueryTest extends MultiHotRodServersTest {
       ConfigurationBuilder cfgBuilder = hotRodCacheConfiguration(getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, false));
       cfgBuilder.compatibility().enable().marshaller(new CompatibilityProtoStreamMarshaller());
       cfgBuilder.indexing().index(Index.ALL)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT");
       cfgBuilder.expiration().disableReaper();
       return cfgBuilder;
@@ -128,7 +128,6 @@ public class EmbeddedCompatContinuousQueryTest extends MultiHotRodServersTest {
       continuousQuery.addContinuousQueryListener(query, listener);
    }
 
-   @Test(enabled = false, description = "Disabled due to https://issues.jboss.org/browse/ISPN-6730")
    public void testContinuousQuery() {
       User user1 = new UserPB();
       user1.setId(1);

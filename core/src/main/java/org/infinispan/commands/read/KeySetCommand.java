@@ -8,6 +8,7 @@ import java.util.stream.StreamSupport;
 import org.infinispan.Cache;
 import org.infinispan.CacheSet;
 import org.infinispan.CacheStream;
+import org.infinispan.cache.impl.AbstractDelegatingCache;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.Visitor;
 import org.infinispan.commons.util.CloseableIterator;
@@ -36,6 +37,7 @@ public class KeySetCommand<K, V> extends AbstractLocalCommand implements Visitab
 
    public KeySetCommand(Cache<K, V> cache, long flagsBitSet) {
       setFlagsBitSet(flagsBitSet);
+      cache = AbstractDelegatingCache.unwrapCache(cache);
       if (flagsBitSet != EnumUtil.EMPTY_BIT_SET) {
          this.cache = cache.getAdvancedCache().withFlags(EnumUtil.enumArrayOf(flagsBitSet, Flag.class));
       } else {
@@ -62,6 +64,7 @@ public class KeySetCommand<K, V> extends AbstractLocalCommand implements Visitab
    public String toString() {
       return "KeySetCommand{" +
             "cache=" + cache.getName() +
+            ", flags=" + printFlags() +
             '}';
    }
 
@@ -78,7 +81,7 @@ public class KeySetCommand<K, V> extends AbstractLocalCommand implements Visitab
 
       @Override
       public CloseableSpliterator<K> spliterator() {
-         return Closeables.spliterator(iterator(), cache.getAdvancedCache().getDataContainer().size(),
+         return Closeables.spliterator(iterator(), cache.getAdvancedCache().getDataContainer().sizeIncludingExpired(),
                  Spliterator.CONCURRENT | Spliterator.DISTINCT | Spliterator.NONNULL);
       }
 
@@ -100,7 +103,7 @@ public class KeySetCommand<K, V> extends AbstractLocalCommand implements Visitab
       @Override
       public CacheStream<K> stream() {
          DistributionManager dm = cache.getAdvancedCache().getDistributionManager();
-         return new LocalCacheStream<>(new KeyStreamSupplier<>(cache, dm != null ? dm.getConsistentHash() : null,
+         return new LocalCacheStream<>(new KeyStreamSupplier<>(cache, dm != null ? dm.getCacheTopology()::getSegment : null,
                  () -> StreamSupport.stream(spliterator(), false)), false,
                  cache.getAdvancedCache().getComponentRegistry());
       }
@@ -108,7 +111,7 @@ public class KeySetCommand<K, V> extends AbstractLocalCommand implements Visitab
       @Override
       public CacheStream<K> parallelStream() {
          DistributionManager dm = cache.getAdvancedCache().getDistributionManager();
-         return new LocalCacheStream<>(new KeyStreamSupplier<>(cache, dm != null ? dm.getConsistentHash() : null,
+         return new LocalCacheStream<>(new KeyStreamSupplier<>(cache, dm != null ? dm.getCacheTopology()::getSegment : null,
                  () -> StreamSupport.stream(spliterator(), false)), true,
                  cache.getAdvancedCache().getComponentRegistry());
       }

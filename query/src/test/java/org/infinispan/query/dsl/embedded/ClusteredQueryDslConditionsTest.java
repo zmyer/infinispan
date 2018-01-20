@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.hibernate.search.spi.SearchIntegrator;
+import org.hibernate.search.spi.impl.PojoIndexedTypeIdentifier;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -60,7 +61,7 @@ public class ClusteredQueryDslConditionsTest extends QueryDslConditionsTest {
       IndexingConfigurationBuilder indexingConfigurationBuilder = cfg.clustering()
             .stateTransfer().fetchInMemoryState(true)
             .indexing()
-            .index(Index.LOCAL)
+            .index(Index.PRIMARY_OWNER)
             .addIndexedEntity(getModelFactory().getUserImplClass())
             .addIndexedEntity(getModelFactory().getAccountImplClass())
             .addIndexedEntity(getModelFactory().getTransactionImplClass());
@@ -84,18 +85,21 @@ public class ClusteredQueryDslConditionsTest extends QueryDslConditionsTest {
    }
 
    private void checkIndexPresence(Cache cache) {
-      SearchIntegrator searchFactory = Search.getSearchManager(cache).unwrap(SearchIntegrator.class);
+      SearchIntegrator searchIntegrator = Search.getSearchManager(cache).unwrap(SearchIntegrator.class);
 
-      assertTrue(searchFactory.getIndexedTypes().contains(getModelFactory().getUserImplClass()));
-      assertNotNull(searchFactory.getIndexManager(getModelFactory().getUserImplClass().getName()));
+      verifyClassIsIndexed(searchIntegrator, getModelFactory().getUserImplClass());
+      verifyClassIsIndexed(searchIntegrator, getModelFactory().getAccountImplClass());
+      verifyClassIsIndexed(searchIntegrator, getModelFactory().getTransactionImplClass());
+      verifyClassIsNotIndexed(searchIntegrator, getModelFactory().getAddressImplClass());
+   }
 
-      assertTrue(searchFactory.getIndexedTypes().contains(getModelFactory().getAccountImplClass()));
-      assertNotNull(searchFactory.getIndexManager(getModelFactory().getAccountImplClass().getName()));
+   private void verifyClassIsNotIndexed(SearchIntegrator searchIntegrator, Class<?> type) {
+      assertFalse(searchIntegrator.getIndexBindings().containsKey(PojoIndexedTypeIdentifier.convertFromLegacy(type)));
+      assertNull(searchIntegrator.getIndexManager(type.getName()));
+   }
 
-      assertTrue(searchFactory.getIndexedTypes().contains(getModelFactory().getTransactionImplClass()));
-      assertNotNull(searchFactory.getIndexManager(getModelFactory().getTransactionImplClass().getName()));
-
-      assertFalse(searchFactory.getIndexedTypes().contains(getModelFactory().getAddressImplClass()));
-      assertNull(searchFactory.getIndexManager(getModelFactory().getAddressImplClass().getName()));
+   private void verifyClassIsIndexed(SearchIntegrator searchIntegrator, Class<?> type) {
+      assertTrue(searchIntegrator.getIndexBindings().containsKey(PojoIndexedTypeIdentifier.convertFromLegacy(type)));
+      assertNotNull(searchIntegrator.getIndexManager(type.getName()));
    }
 }

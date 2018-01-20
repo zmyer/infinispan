@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-jcache-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
+      <version>9.2.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -20,18 +20,17 @@
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
-         <scope>provided</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-jcache-commons</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-jcache-commons</artifactId>
          <version>${project.version}</version>
          <type>test-jar</type>
@@ -51,18 +50,18 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cdi-embedded</artifactId>
-         <scope>provided</scope>
+         <optional>true</optional>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
@@ -105,7 +104,8 @@
                   <Include-Resource>
                      {maven-resources},
                      /META-INF/services=${project.basedir}/target/classes/META-INF/services,
-                     /OSGI-INF/blueprint/blueprint.xml=${project.basedir}/target/classes/OSGI-INF/blueprint/blueprint.xml
+                     /OSGI-INF/blueprint/blueprint.xml=${project.basedir}/target/classes/OSGI-INF/blueprint/blueprint.xml,
+                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
                   </Include-Resource>
                </instructions>
             </configuration>
@@ -170,28 +170,6 @@
                <scope>test</scope>
             </dependency>
          </dependencies>
-         <build>
-            <plugins>
-               <plugin>
-                  <groupId>org.scala-tools</groupId>
-                  <artifactId>maven-scala-plugin</artifactId>
-                  <executions>
-                     <execution>
-                        <id>default</id>
-                        <phase>none</phase>
-                     </execution>
-                     <execution>
-                        <id>compile</id>
-                        <phase>none</phase>
-                     </execution>
-                     <execution>
-                        <id>test-compile</id>
-                        <phase>none</phase>
-                     </execution>
-                  </executions>
-               </plugin>
-            </plugins>
-         </build>
       </profile>
       <profile>
          <id>smoke</id>
@@ -200,7 +178,6 @@
                <plugin>
                   <groupId>org.apache.maven.plugins</groupId>
                   <artifactId>maven-invoker-plugin</artifactId>
-                  <version>${version.maven.invoker}</version>
                   <executions>
                      <execution>
                         <id>integration-test</id>

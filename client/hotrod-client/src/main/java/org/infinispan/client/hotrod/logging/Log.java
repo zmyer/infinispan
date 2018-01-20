@@ -14,12 +14,12 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
 
-import org.infinispan.client.hotrod.event.ClientEvent;
 import org.infinispan.client.hotrod.event.IncorrectClientListenerException;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
 import org.infinispan.client.hotrod.impl.transport.Transport;
 import org.infinispan.client.hotrod.impl.transport.tcp.TcpTransport;
 import org.infinispan.commons.CacheConfigurationException;
+import org.infinispan.commons.CacheException;
 import org.infinispan.commons.CacheListenerException;
 import org.jboss.logging.BasicLogger;
 import org.jboss.logging.annotations.Cause;
@@ -155,7 +155,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = ERROR)
    @Message(value = "Unexpected error consuming event %s", id = 4038)
-   void unexpectedErrorConsumingEvent(ClientEvent clientEvent, @Cause Throwable t);
+   void unexpectedErrorConsumingEvent(Object event, @Cause Throwable t);
 
    @LogMessage(level = WARN)
    @Message(value = "Unable to complete reading event from server %s", id = 4039)
@@ -182,7 +182,7 @@ public interface Log extends BasicLogger {
    @Message(value = "When enabling near caching, number of max entries must be configured", id = 4045)
    CacheConfigurationException nearCacheMaxEntriesUndefined();
 
-   @LogMessage(level = INFO)
+   @LogMessage(level = DEBUG)
    @Message(value = "Successfully closed remote iterator '%s'", id = 4046)
    void iterationClosed(String iterationId);
 
@@ -252,4 +252,8 @@ public interface Log extends BasicLogger {
 
    @Message(value = "Cannot specify both a callback handler and a username for authentication", id = 4067)
    CacheConfigurationException callbackHandlerAndUsernameMutuallyExclusive();
+
+   @Message(value = "Class '%s' blocked by Java standard deserialization white list. Adjust the client configuration java serialization white list regular expression to include this class.", id = 4068)
+   CacheException classNotInWhitelist(String className);
+
 }

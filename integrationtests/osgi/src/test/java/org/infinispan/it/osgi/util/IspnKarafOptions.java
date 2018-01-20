@@ -19,7 +19,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.jar.Attributes;
@@ -29,8 +28,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.ops4j.pax.exam.Option;
+import org.ops4j.pax.exam.karaf.options.KarafDistributionConfigurationConsoleOption;
 import org.ops4j.pax.exam.karaf.options.LogLevelOption.LogLevel;
 import org.ops4j.pax.exam.options.AbstractUrlProvisionOption;
+import org.ops4j.pax.exam.options.MavenUrlReference;
 import org.ops4j.pax.exam.options.UrlProvisionOption;
 import org.ops4j.pax.exam.options.WrappedUrlProvisionOption;
 
@@ -39,6 +40,7 @@ public class IspnKarafOptions {
    private static final String PROP_VERSION_PAX_EXAM = "version.pax.exam";
    private static final String PROP_VERSION_MOCKITO = "version.mockito";
    private static final String PROP_VERSION_OBJENESIS = "version.mockito_dep.objenesis";
+   private static final String PROP_VERSION_BYTEBUDDY = "version.mockito_dep.bytebuddy";
    private static final String PROP_VERBOSE_KARAF = "verbose.karaf";
    private static final String PROP_UBER_JAR = "uberjar";
 
@@ -60,11 +62,15 @@ public class IspnKarafOptions {
    }
 
    public static Option verboseKaraf() {
-      Option result = null;
-      if (Boolean.parseBoolean(System.getProperty(PROP_VERBOSE_KARAF))) {
-         result = logLevel(LogLevel.TRACE);
-      }
-      return result;
+      LogLevel logLevel = Boolean.getBoolean(PROP_VERBOSE_KARAF) ? LogLevel.TRACE : LogLevel.INFO;
+
+      return composite(logLevel(logLevel),
+                       vmOptions("-Dorg.ops4j.pax.logging.DefaultServiceLog.level=" + logLevel,
+                                 "-Dorg.apache.logging.log4j.level=" + logLevel));
+   }
+
+   public static Option runWithoutConsole() {
+      return new KarafDistributionConfigurationConsoleOption(false, false);
    }
 
    public static Option karafContainer() throws Exception {
@@ -108,6 +114,13 @@ public class IspnKarafOptions {
       return mavenBundle().groupId("org.testng").artifactId("testng").versionAsInProject();
    }
 
+   public static Option bundleLog4J() {
+      return composite(
+            mavenBundle().groupId("org.apache.logging.log4j").artifactId("log4j-api").versionAsInProject(),
+            mavenBundle().groupId("org.apache.logging.log4j").artifactId("log4j-core").versionAsInProject()
+      );
+   }
+
    public static Option bundleTestAnnotations() {
       return wrappedBundle(mavenBundle().groupId("org.infinispan").artifactId("infinispan-commons-test").versionAsInProject().getURL());
    }
@@ -137,9 +150,12 @@ public class IspnKarafOptions {
    public static Option bundleMockito() throws Exception {
       String versionMockito = MavenUtils.getProperties().getProperty(PROP_VERSION_MOCKITO);
       String versionObjenesis = MavenUtils.getProperties().getProperty(PROP_VERSION_OBJENESIS);
+      String versionByteBuddy = MavenUtils.getProperties().getProperty(PROP_VERSION_BYTEBUDDY);
       return composite(
             mavenBundle().groupId("org.objenesis").artifactId("objenesis").version(versionObjenesis),
-            mavenBundle().groupId("org.mockito").artifactId("mockito-core").version(versionMockito));
+            mavenBundle().groupId("org.mockito").artifactId("mockito-core").version(versionMockito),
+            mavenBundle().groupId("net.bytebuddy").artifactId("byte-buddy").version(versionByteBuddy),
+      mavenBundle().groupId("net.bytebuddy").artifactId("byte-buddy-agent").version(versionByteBuddy));
    }
 
    public static Option featureKarafJNDI() throws Exception {
@@ -151,9 +167,7 @@ public class IspnKarafOptions {
    }
 
    public static Option bundleH2Database() {
-      return composite(
-            mavenBundle().groupId("com.h2database").artifactId("h2").versionAsInProject(),
-            mavenBundle().groupId("org.osgi").artifactId("org.osgi.enterprise").version("4.2.0"));
+      return mavenBundle().groupId("com.h2database").artifactId("h2").versionAsInProject();
    }
 
    public static Option mvnFeature(String groupId, String artifactId, String feature) {
@@ -168,12 +182,6 @@ public class IspnKarafOptions {
    /**
     * Wraps the specified test jars as bundles fragments and attaches them to the specified host bundle. The host bundle
     * must be the one exporting the packages contained in the test jar.
-    *
-    * @param groupId
-    * @param artifactId
-    * @param hostBundle
-    * @return
-    * @throws Exception
     */
    public static WrappedUrlProvisionOption mvnTestsAsFragmentBundle(String groupId, String artifactId, String hostBundle, String... instructions) throws Exception {
       PaxURLUtils.registerURLHandlers();
@@ -209,9 +217,6 @@ public class IspnKarafOptions {
    /**
     * Some test packages are split across several Maven modules this option repackages them and exposes them through a
     * single bundle.
-    *
-    * @return
-    * @throws Exception
     */
    public static Option bundleSplitTestPackages() throws Exception {
       PaxURLUtils.registerURLHandlers();
@@ -240,33 +245,26 @@ public class IspnKarafOptions {
                        wrappedSplitTestBundle);
    }
 
-   public static UrlProvisionOption asStreamBundle(AbstractUrlProvisionOption<?> option, String newURLFormat, String... args) throws MalformedURLException, IOException {
-      return asStreamBundle(option.getURL(), newURLFormat, args);
+   public static UrlProvisionOption asStreamBundle(AbstractUrlProvisionOption<?> option, String newURLFormat, String... args) throws IOException {
+      return asStreamBundle(option.getURL(), newURLFormat);
    }
 
-   public static UrlProvisionOption asStreamBundle(String url) throws MalformedURLException, IOException {
+   public static UrlProvisionOption asStreamBundle(String url) throws IOException {
       return asStreamBundle(url, "%s");
    }
 
    /**
     * Some PAX-URL protocols are not supported by Karaf. This method can be used when one of the unsupported protocol is
     * required. The URLs are resolved outside Karaf and the bundles are provided as stream bundles.
-    *
-    * @param option
-    * @param newURLFormat
-    * @param args
-    * @return
-    * @throws MalformedURLException
-    * @throws IOException
     */
-   public static UrlProvisionOption asStreamBundle(String url, String newURLFormat, String... args) throws MalformedURLException, IOException {
-      InputStream in = new URL(String.format(newURLFormat, url, args)).openStream();
+   public static UrlProvisionOption asStreamBundle(String url, String newURLFormat) throws IOException {
+      InputStream in = new URL(String.format(newURLFormat, url)).openStream();
       try {
          return streamBundle(in);
       } finally {
          try {
             in.close();
-         } catch (IOException ex) {
+         } catch (IOException ignored) {
          }
       }
    }
@@ -280,7 +278,6 @@ public class IspnKarafOptions {
     * container.
     *
     * @return an Option or null if no custom repo location is specified by the maven build.
-    * @throws Exception
     */
    public static Option localRepoForPAXUrl() throws Exception {
       String localRepo = MavenUtils.getLocalRepository();
@@ -305,16 +302,32 @@ public class IspnKarafOptions {
       return wrappedBundle(mavenBundle().groupId("org.ops4j.pax.exam").artifactId("pax-exam-spi").version(version));
    }
 
+   public static Option featurePaxUrlWrap() throws Exception {
+      MavenUrlReference karafStandardRepo = maven()
+            .groupId("org.apache.karaf.features")
+            .artifactId("standard")
+            .version(karafVersion())
+            .classifier("features")
+            .type("xml");
+      return features(karafStandardRepo, "(wrap)");
+   }
+
    public static Option commonOptions() throws Exception {
       return composite(karafContainer(),
                        vmOptions("-Djava.net.preferIPv4Stack=true", "-Djgroups.bind_addr=127.0.0.1"),
+                       vmOptions("-Xmx500m", "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=" + System.getProperty("user.dir")),
+//                       vmOptions("-agentlib:jdwp=transport=dt_socket,server=n,suspend=y,address=5006"),
                        verboseKaraf(),
+                       runWithoutConsole(),
                        junitBundles(),
                        keepRuntimeFolder(),
-            /* Required for the @Category(Per{Suite,Class,Method}) annotations. */
-            bundlePaxExamSpi(),
-            bundleTestAnnotations(),
-            localRepoForPAXUrl());
+                       /* For the wrap: protocol used for non-OSGi dependencies */
+                       /* Infinispan features already that need it depend on it, but the test-dependencies feature doesn't have any dependencies */
+                       featurePaxUrlWrap(),
+                       /* Required for the @ExamReactorStrategy, @Category(Per{Suite,Class,Method}.class) annotations. */
+                       bundlePaxExamSpi(),
+                       bundleTestAnnotations(),
+                       localRepoForPAXUrl());
    }
 
    public static Option perSuiteOptions() throws Exception {
@@ -327,6 +340,7 @@ public class IspnKarafOptions {
                           featureRocksDBJNI(),
                           featureRemoteStore(),
                           bundleH2Database(),
+                          bundleLog4J(),
                           hibernatePersistenceH2(),
                           bundleSplitTestPackages());
       } else {
@@ -336,15 +350,16 @@ public class IspnKarafOptions {
                           bundleSplitTestPackages(),
                           bundleH2Database(),
                           hibernatePersistenceH2(),
+                          bundleLog4J(),
                           bundleTestNG(),
                           bundleMockito());
       }
    }
 
    /* Run tests with uberjar by default */
-   private static boolean useUberJar() throws Exception {
+   private static boolean useUberJar() {
       String uberJar = System.getProperty(PROP_UBER_JAR);
-      return uberJar == null ? true : Boolean.parseBoolean(uberJar);
+      return uberJar == null || Boolean.parseBoolean(uberJar);
    }
 
 }

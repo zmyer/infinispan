@@ -3,6 +3,7 @@ package org.infinispan.persistence.jdbc.configuration;
 import org.infinispan.commons.configuration.attributes.Attribute;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.configuration.cache.AbstractStoreConfiguration;
 import org.infinispan.persistence.jdbc.table.management.TableManager;
 
 public class TableManipulationConfiguration {
@@ -14,7 +15,8 @@ public class TableManipulationConfiguration {
    public static final AttributeDefinition<String> DATA_COLUMN_TYPE = AttributeDefinition.builder("dataColumnType", null, String.class).immutable().build();
    public static final AttributeDefinition<String> TIMESTAMP_COLUMN_NAME = AttributeDefinition.builder("timestampColumnName", null, String.class).immutable().build();
    public static final AttributeDefinition<String> TIMESTAMP_COLUMN_TYPE = AttributeDefinition.builder("timestampColumnType", null, String.class).immutable().build();
-   public static final AttributeDefinition<Integer> BATCH_SIZE = AttributeDefinition.builder("batchSize", TableManager.DEFAULT_BATCH_SIZE).immutable().build();
+   // TODO remove in 10.0
+   public static final AttributeDefinition<Integer> BATCH_SIZE = AttributeDefinition.builder("batchSize", AbstractStoreConfiguration.MAX_BATCH_SIZE.getDefaultValue()).immutable().build();
    public static final AttributeDefinition<Integer> FETCH_SIZE = AttributeDefinition.builder("fetchSize", TableManager.DEFAULT_FETCH_SIZE).immutable().build();
    public static final AttributeDefinition<Boolean> CREATE_ON_START = AttributeDefinition.builder("createOnStart", true).immutable().build();
    public static final AttributeDefinition<Boolean> DROP_ON_EXIT = AttributeDefinition.builder("dropOnExit", false).immutable().build();
@@ -99,8 +101,10 @@ public class TableManipulationConfiguration {
    }
 
    /**
+    * @deprecated please use {@link org.infinispan.configuration.cache.AbstractStoreConfiguration#maxBatchSize()} instead.
     * @return the size of batches to process.  Guaranteed to be a power of two.
     */
+   @Deprecated
    public int batchSize() {
       return batchSize.get();
    }

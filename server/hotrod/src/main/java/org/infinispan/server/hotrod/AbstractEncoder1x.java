@@ -1,5 +1,6 @@
 package org.infinispan.server.hotrod;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -15,12 +16,13 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.ch.impl.HashFunctionPartitioner;
-import org.infinispan.distribution.group.PartitionerConsistentHash;
+import org.infinispan.distribution.group.impl.PartitionerConsistentHash;
 import org.infinispan.distribution.group.impl.GroupingPartitioner;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.server.hotrod.Events.Event;
+import org.infinispan.server.hotrod.counter.listener.ClientCounterEvent;
 import org.infinispan.server.hotrod.logging.Log;
 import org.infinispan.server.hotrod.transport.ExtendedByteBuf;
 import org.infinispan.util.KeyValuePair;
@@ -33,13 +35,18 @@ import io.netty.buffer.ByteBuf;
  * @author Galder Zamarreño
  * @since 5.1
  */
-abstract class AbstractEncoder1x implements VersionedEncoder {
+public abstract class AbstractEncoder1x implements VersionedEncoder {
 
-   protected final Log log = LogFactory.getLog(getClass(), Log.class);
+   protected static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass(), Log.class);
    protected final boolean trace = log.isTraceEnabled();
 
    @Override
    public void writeEvent(Event e, ByteBuf buf) {
+      // Not implemented in this version of the protocol
+   }
+
+   @Override
+   public void writeCounterEvent(ClientCounterEvent event, ByteBuf buffer) {
       // Not implemented in this version of the protocol
    }
 
@@ -213,7 +220,7 @@ abstract class AbstractEncoder1x implements VersionedEncoder {
    void writeHashTopologyUpdate(AbstractHashDistAwareResponse h, HotRodServer server, Response r, ByteBuf buffer) {
       AdvancedCache<byte[], byte[]> cache = server.getCacheInstance(r.cacheName, server.getCacheManager(), false, true);
       DistributionManager distManager = cache.getDistributionManager();
-      ConsistentHash ch = distManager.getConsistentHash();
+      ConsistentHash ch = distManager.getWriteConsistentHash();
 
       Map<Address, ServerAddress> topologyMap = h.serverEndpointsMap;
       if (topologyMap.isEmpty()) {

@@ -9,6 +9,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 
@@ -16,6 +17,7 @@ import org.infinispan.commands.AbstractTopologyAffectedCommand;
 import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.MetadataAwareCommand;
 import org.infinispan.commands.Visitor;
+import org.infinispan.commons.marshall.MarshallUtil;
 import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
@@ -117,6 +119,7 @@ public class PutMapCommand extends AbstractTopologyAffectedCommand implements Wr
 
             // Even though putAll() returns void, QueryInterceptor reads the previous values
             // TODO The previous values are not correct if the entries exist only in a store
+            // We have to add null values due to the handling in distribution interceptor, see ISPN-7975
             if (previousValues != null) {
                previousValues.put(key, previousValue);
             }
@@ -156,7 +159,7 @@ public class PutMapCommand extends AbstractTopologyAffectedCommand implements Wr
 
    @Override
    public void writeTo(ObjectOutput output) throws IOException {
-      output.writeObject(map);
+      MarshallUtil.marshallMap(map, output);
       output.writeObject(metadata);
       output.writeBoolean(isForwarded);
       output.writeLong(FlagBitSets.copyWithoutRemotableFlags(getFlagsBitSet()));
@@ -165,8 +168,7 @@ public class PutMapCommand extends AbstractTopologyAffectedCommand implements Wr
 
    @Override
    public void readFrom(ObjectInput input) throws IOException, ClassNotFoundException {
-      //noinspection unchecked
-      map = (Map<Object, Object>) input.readObject();
+      map = MarshallUtil.unmarshallMap(input, LinkedHashMap::new);
       metadata = (Metadata) input.readObject();
       isForwarded = input.readBoolean();
       setFlagsBitSet(input.readLong());
@@ -246,8 +248,8 @@ public class PutMapCommand extends AbstractTopologyAffectedCommand implements Wr
    }
 
    @Override
-   public void updateStatusFromRemoteResponse(Object remoteResponse) {
-      // Do nothing
+   public void fail() {
+      throw new UnsupportedOperationException();
    }
 
    @Override

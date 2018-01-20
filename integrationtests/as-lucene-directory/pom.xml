@@ -5,8 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-as-lucene-integration</artifactId>
@@ -87,13 +87,11 @@
       <dependency>
          <groupId>org.apache.lucene</groupId>
          <artifactId>lucene-facet</artifactId>
-         <version>${version.lucene}</version>
          <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.apache.lucene</groupId>
          <artifactId>lucene-grouping</artifactId>
-         <version>${version.lucene}</version>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -105,7 +103,11 @@
          <groupId>com.h2database</groupId>
          <artifactId>h2</artifactId>
          <scope>test</scope>
-
+         <!--
+           This H2 version has to match the version bundled within WildFly
+           as we start the server and then connect to it from within WildFly:
+           it can not connect between different versions.
+           -->
          <version>${version.h2.driver-within-wildfly}</version>
       </dependency>
       <dependency>
@@ -156,6 +158,7 @@
                           <version.hibernate.search>${version.hibernate.search}</version.hibernate.search>
                           <version.hibernate.core>${version.hibernate.core}</version.hibernate.core>
                       </systemPropertyVariables>
+                     <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
                   </configuration>
                </execution>
             </executions>
@@ -170,6 +173,7 @@
                      <goal>unpack</goal>
                   </goals>
                   <configuration>
+                     <skip>${skipTests}</skip>
                      <artifactItems>
                         <artifactItem>
                            <groupId>org.wildfly</groupId>
@@ -191,7 +195,7 @@
                             <groupId>org.hibernate</groupId>
                             <artifactId>hibernate-search-modules</artifactId>
                             <version>${version.hibernate.search}</version>
-                            <classifier>wildfly-10-dist</classifier>
+                            <classifier>wildfly-11-dist</classifier>
                             <type>zip</type>
                             <overWrite>false</overWrite>
                             <outputDirectory>${project.build.directory}/node1/wildfly-${version.org.wildfly}/modules</outputDirectory>
@@ -200,7 +204,7 @@
                             <groupId>org.hibernate</groupId>
                             <artifactId>hibernate-search-modules</artifactId>
                             <version>${version.hibernate.search}</version>
-                            <classifier>wildfly-10-dist</classifier>
+                            <classifier>wildfly-11-dist</classifier>
                             <type>zip</type>
                             <overWrite>false</overWrite>
                             <outputDirectory>${project.build.directory}/node2/wildfly-${version.org.wildfly}/modules</outputDirectory>
@@ -251,7 +255,7 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-resources-plugin</artifactId>
             <executions>
-
+               <!-- Copy the AS configuration files so we can use our custom configurations -->
                <execution>
                   <id>configure-as-node-node1</id>
                   <phase>pre-integration-test</phase>
@@ -259,6 +263,7 @@
                      <goal>copy-resources</goal>
                   </goals>
                   <configuration>
+                     <skip>${skipTests}</skip>
                      <outputDirectory>${project.build.directory}/node1/wildfly-${version.org.wildfly}</outputDirectory>
                      <overwrite>true</overwrite>
                      <resources>
@@ -275,6 +280,7 @@
                      <goal>copy-resources</goal>
                   </goals>
                   <configuration>
+                     <skip>${skipTests}</skip>
                      <outputDirectory>${project.build.directory}/node2/wildfly-${version.org.wildfly}</outputDirectory>
                          <overwrite>true</overwrite>
                           <resources>

@@ -146,7 +146,7 @@ public class MetadataTransientCacheEntry extends AbstractInternalCacheEntry impl
 
       @Override
       public Set<Class<? extends MetadataTransientCacheEntry>> getTypeClasses() {
-         return Util.<Class<? extends MetadataTransientCacheEntry>>asSet(MetadataTransientCacheEntry.class);
+         return Util.asSet(MetadataTransientCacheEntry.class);
       }
    }
 }

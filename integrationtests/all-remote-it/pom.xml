@@ -5,8 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
 
    <properties>
@@ -34,7 +34,7 @@
          <artifactId>infinispan-remote</artifactId>
          <scope>test</scope>
       </dependency>
-
+      <!-- Make sure this suite is triggered after full server build -->
       <dependency>
          <groupId>org.infinispan.server</groupId>
          <artifactId>infinispan-server-build</artifactId>
@@ -93,6 +93,7 @@
                      <goal>unpack</goal>
                   </goals>
                   <configuration>
+                     <skip>${skipTests}</skip>
                      <artifactItems>
                         <artifactItem>
                            <groupId>org.infinispan.server</groupId>
@@ -121,8 +122,9 @@
                <systemPropertyVariables>
                   <infinispan.jcache.mgmt.lookup.skip>true</infinispan.jcache.mgmt.lookup.skip>
                </systemPropertyVariables>
-               <groups combine.self="override"/>
-               <excludedGroups combine.self="override"/>
+               <groups combine.self="override" />
+               <excludedGroups combine.self="override" />
+               <disableXmlReport>false</disableXmlReport>
                <properties>
                   <property>
                      <name>usedefaultlisteners</name>
@@ -137,4 +139,34 @@
          </plugin>
       </plugins>
    </build>
+
+   <profiles>
+      <profile>
+         <id>smoke</id>
+         <properties>
+            <skipTests>true</skipTests>
+         </properties>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <executions>
+                     <execution>
+                        <id>default-test</id>
+                        <phase>none</phase>
+                     </execution>
+                  </executions>
+               </plugin>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-failsafe-plugin</artifactId>
+                  <configuration>
+                     <skipITs>${skipTests}</skipITs>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

@@ -26,7 +26,7 @@ import org.testng.annotations.Test;
  *
  * @author Anna Manukyan
  */
-@Test(groups = {"functional", "smoke"}, testName = "query.queries.phrases.QueryPhrasesTest")
+@Test(groups = {"functional"}, testName = "query.queries.phrases.QueryPhrasesTest")
 public class QueryPhrasesTest extends SingleCacheManagerTest {
    private Person person1;
    private Person person2;
@@ -53,7 +53,7 @@ public class QueryPhrasesTest extends SingleCacheManagerTest {
             .addIndexedEntity(NumericType.class)
             .addIndexedEntity(Person.class)
             .addIndexedEntity(AnotherGrassEater.class)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT");
       return TestCacheManagerFactory.createCacheManager(cfg);
    }

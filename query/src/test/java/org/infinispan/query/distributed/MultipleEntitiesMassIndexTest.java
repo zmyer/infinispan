@@ -11,7 +11,6 @@ import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.infinispan.Cache;
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
@@ -41,7 +40,7 @@ public class MultipleEntitiesMassIndexTest extends DistributedMassIndexingTest {
             .index(Index.ALL)
             .addIndexedEntity(Car.class)
             .addIndexedEntity(Person.class)
-            .addProperty("hibernate.search.person.directory_provider", "ram")
+            .addProperty("hibernate.search.person.directory_provider", "local-heap")
             .addProperty("hibernate.search.car.indexmanager", "org.infinispan.query.indexmanager.InfinispanIndexManager")
             .addProperty("error_handler", "org.infinispan.query.helper.StaticTestingErrorHandler")
             .addProperty("lucene_version", "LUCENE_CURRENT");

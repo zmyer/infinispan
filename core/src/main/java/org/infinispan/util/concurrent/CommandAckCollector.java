@@ -1,17 +1,9 @@
 package org.infinispan.util.concurrent;
 
-import org.infinispan.commands.CommandInvocationId;
-import org.infinispan.commons.util.Util;
-import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.factories.KnownComponentNames;
-import org.infinispan.factories.annotations.ComponentName;
-import org.infinispan.factories.annotations.Inject;
-import org.infinispan.remoting.transport.Address;
-import org.infinispan.statetransfer.OutdatedTopologyException;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
+import static java.lang.String.format;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -26,6 +18,26 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
+
+import org.infinispan.commands.CommandInvocationId;
+import org.infinispan.commons.util.Util;
+import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.factories.KnownComponentNames;
+import org.infinispan.factories.annotations.ComponentName;
+import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.interceptors.distribution.Collector;
+import org.infinispan.interceptors.distribution.PrimaryOwnerOnlyCollector;
+import org.infinispan.remoting.responses.Response;
+import org.infinispan.remoting.responses.SuccessfulResponse;
+import org.infinispan.remoting.responses.UnsuccessfulResponse;
+import org.infinispan.remoting.transport.Address;
+import org.infinispan.statetransfer.OutdatedTopologyException;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 import net.jcip.annotations.GuardedBy;
 
@@ -43,100 +55,104 @@ import net.jcip.annotations.GuardedBy;
  * @author Pedro Ruivo
  * @since 9.0
  */
+@Scope(Scopes.NAMED_CACHE)
 public class CommandAckCollector {
 
    private static final Log log = LogFactory.getLog(CommandAckCollector.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   private final ConcurrentHashMap<CommandInvocationId, Collector<?>> collectorMap;
+   @Inject @ComponentName(KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR)
    private ScheduledExecutorService timeoutExecutor;
+   @Inject private Configuration configuration;
+
+   private final ConcurrentHashMap<Long, BaseAckTarget> collectorMap;
    private long timeoutNanoSeconds;
+   private Collection<Address> currentMembers;
 
    public CommandAckCollector() {
       collectorMap = new ConcurrentHashMap<>();
    }
 
-   @Inject
-   public void inject(
-         @ComponentName(value = KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR) ScheduledExecutorService timeoutExecutor,
-         Configuration configuration) {
-      this.timeoutExecutor = timeoutExecutor;
+   @Start
+   public void start() {
       this.timeoutNanoSeconds = TimeUnit.MILLISECONDS.toNanos(configuration.clustering().remoteTimeout());
    }
 
    /**
     * Creates a collector for a single key write operation.
-    *
-    * @param id         the {@link CommandInvocationId}.
-    * @param owners     the owners of the key. It assumes the first element as primary owner.
-    * @param topologyId the current topology id.
+    * @param id           the id from {@link CommandInvocationId}.
+    * @param backupOwners the backup owners of the key.
+    * @param topologyId   the current topology id.
     */
-   public void create(CommandInvocationId id, Collection<Address> owners, int topologyId) {
-      collectorMap.putIfAbsent(id, new SingleKeyCollector(id, owners, topologyId));
-      if (trace) {
-         log.tracef("Created new collector for %s. Owners=%s", id, owners);
+   public <T> Collector<T> create(long id, Collection<Address> backupOwners, int topologyId) {
+      if (backupOwners.isEmpty()) {
+         return new PrimaryOwnerOnlyCollector<>();
       }
+      SingleKeyCollector<T> collector = new SingleKeyCollector<>(id, backupOwners, topologyId);
+      BaseAckTarget prev = collectorMap.put(id, collector);
+      //is it possible the have a previous collector when the topology changes after the first collector is created
+      //in that case, the previous collector must have a lower topology id
+      assert prev == null || prev.topologyId < topologyId : format("replaced old collector '%s' by '%s'", prev, collector);
+      if (trace) {
+         log.tracef("Created new collector for %s. BackupOwners=%s", id, backupOwners);
+      }
+      return collector;
    }
 
-   /**
-    * Creates a collector for a single key write operation.
-    * <p>
-    * It should be used when the primary owner is the local node and the return value and its acknowledge is already
-    * known.
-    *
-    * @param id          the {@link CommandInvocationId}.
-    * @param returnValue the primary owner result.
-    * @param owners      the owners of the key. It assumes the first element as primary owner.
-    * @param topologyId  the current topology id.
-    */
-   public void create(CommandInvocationId id, Object returnValue, Collection<Address> owners, int topologyId) {
-      collectorMap.putIfAbsent(id, new SingleKeyCollector(id, returnValue, owners, topologyId));
+   public <T> Collector<T> createBiased(long id, Address primaryOwner, int topologyId) {
+      SingleKeyCollector<T> collector = new BiasedKeyCollector<>(id, primaryOwner, topologyId);
+      BaseAckTarget prev = collectorMap.put(id, collector);
+      assert prev == null : prev.toString();
       if (trace) {
-         log.tracef("Created new collector for %s. ReturnValue=%s. Owners=%s", id, returnValue, owners);
+         log.tracef("Created new biased collector for %s, primary is %s", id, primaryOwner);
       }
+      return collector;
+   }
+
+   public Collector<Response> createMultiTargetCollector(long id, Address target, int topologyId) {
+      MultiAckTarget multiAckTarget = new MultiAckTarget(id, topologyId);
+      BaseAckTarget prev = collectorMap.put(id, multiAckTarget);
+      assert prev == null : prev.toString();
+      if (trace) {
+         log.tracef("Created new multi target collector for %s and primary %s", id, target);
+      }
+      return multiAckTarget.collectorFor(target);
    }
 
    /**
     * Creates a collector for {@link org.infinispan.commands.write.PutMapCommand}.
     *
-    * @param id         the {@link CommandInvocationId}.
+    * @param id         the id from {@link CommandInvocationId#getId()}.
     * @param primary    a primary owners collection..
     * @param backups    a map between a backup owner and its segments affected.
     * @param topologyId the current topology id.
     */
-   public void createMultiKeyCollector(CommandInvocationId id, Collection<Address> primary,
-         Map<Address, Collection<Integer>> backups, int topologyId) {
-      collectorMap.putIfAbsent(id, new MultiKeyCollector(id, primary, backups, topologyId));
+   public Collector<Map<Object, Object>> createSegmentBasedCollector(long id, Collection<Address> primary,
+                                                                     Map<Address, Collection<Integer>> backups, int topologyId) {
+      if (backups.isEmpty()) {
+         return new PrimaryOwnerOnlyCollector<>();
+      }
+      SegmentBasedCollector collector = new SegmentBasedCollector(id, backups, topologyId);
+      BaseAckTarget prev = collectorMap.put(id, collector);
+      //is it possible the have a previous collector when the topology changes after the first collector is created
+      //in that case, the previous collector must have a lower topology id
+      assert prev == null || prev.topologyId < topologyId : format("replaced old collector '%s' by '%s'", prev, collector);
       if (trace) {
          log.tracef("Created new collector for %s. Primary=%s. BackupSegments=%s", id, primary, backups);
       }
-   }
-
-   /**
-    * Acknowledges a {@link org.infinispan.commands.write.PutMapCommand} completion in the primary owner.
-    *
-    * @param id          the {@link CommandInvocationId}.
-    * @param from        the primary owner.
-    * @param returnValue the return value.
-    * @param topologyId  the topology id.
-    */
-   public void multiKeyPrimaryAck(CommandInvocationId id, Address from, Map<Object, Object> returnValue,
-         int topologyId) {
-      MultiKeyCollector collector = (MultiKeyCollector) collectorMap.get(id);
-      if (collector != null) {
-         collector.primaryAck(returnValue, from, topologyId);
-      }
+      return collector;
    }
 
    /**
     * Acknowledges a {@link org.infinispan.commands.write.PutMapCommand} completion in the backup owner.
-    * @param id         the {@link CommandInvocationId}.
+    *
+    * @param id         the id from {@link CommandInvocationId#getId()}.
     * @param from       the backup owner.
-    * @param segment   the segments affected and acknowledged.
+    * @param segment    the segments affected and acknowledged.
     * @param topologyId the topology id.
     */
-   public void multiKeyBackupAck(CommandInvocationId id, Address from, int segment, int topologyId) {
-      MultiKeyCollector collector = (MultiKeyCollector) collectorMap.get(id);
+   public void multiKeyBackupAck(long id, Address from, int segment, int topologyId) {
+      SegmentBasedCollector collector = (SegmentBasedCollector) collectorMap.get(id);
       if (collector != null) {
          collector.backupAck(from, segment, topologyId);
       }
@@ -145,33 +161,40 @@ public class CommandAckCollector {
    /**
     * Acknowledges a write operation completion in the backup owner.
     *
-    * @param id         the {@link CommandInvocationId}.
+    * @param id         the id from {@link CommandInvocationId#getId()}.
     * @param from       the backup owner.
     * @param topologyId the topology id.
     */
-   public void backupAck(CommandInvocationId id, Address from, int topologyId) {
-      SingleKeyCollector collector = (SingleKeyCollector) collectorMap.get(id);
-      if (collector != null) {
-         collector.backupAck(topologyId, from);
+   public void backupAck(long id, Address from, int topologyId) {
+      BaseAckTarget ackTarget = collectorMap.get(id);
+      if (ackTarget instanceof SingleKeyCollector) {
+         ((SingleKeyCollector) ackTarget).backupAck(topologyId, from);
+      } else if (ackTarget instanceof MultiAckTarget) {
+         ((MultiAckTarget) ackTarget).backupAck(topologyId, from);
       }
    }
 
-   /**
-    * Acknowledges a write operation completion in the primary owner.
-    * <p>
-    * If the operation does not succeed (conditional commands), the collector is completed without waiting for the
-    * acknowledges from the backup owners.
-    *
-    * @param id          the {@link CommandInvocationId}.
-    * @param returnValue the return value.
-    * @param success     {@code true} if the operation succeed in the primary owner, {@code false} otherwise.
-    * @param from        the primary owner.
-    * @param topologyId  the topology id.
-    */
-   public void primaryAck(CommandInvocationId id, Object returnValue, boolean success, Address from, int topologyId) {
-      SingleKeyCollector collector = (SingleKeyCollector) collectorMap.get(id);
-      if (collector != null) {
-         collector.primaryAck(topologyId, returnValue, success, from);
+   // This method is used only by scattered cache with biased reads
+   public void primaryAck(long id, Address from, Object value, boolean success, Address[] waitFor) {
+      BaseAckTarget ackTarget = collectorMap.get(id);
+      if (ackTarget == null) {
+         if (trace) {
+            log.tracef("No collector for %d", id);
+         }
+      } else if (ackTarget instanceof BiasedKeyCollector) {
+         //noinspection unchecked
+         BiasedKeyCollector<Response> collector = (BiasedKeyCollector) ackTarget;
+         collector.addPendingAcks(success, waitFor);
+         // TODO: Using response here is suboptimal but we can't signal non-success through CF in any other way
+         collector.primaryResult(success ? SuccessfulResponse.create(value) : UnsuccessfulResponse.create(value), success);
+      } else if (ackTarget instanceof MultiAckTarget) {
+         MultiAckTarget multiAckTarget = (MultiAckTarget) ackTarget;
+         if (success && waitFor != null) {
+            multiAckTarget.addPendingAcks(waitFor);
+         }
+         multiAckTarget.primaryResult(from, value, success);
+      } else {
+         throw new IllegalStateException("Unexpected ack: " + ackTarget);
       }
    }
 
@@ -180,66 +203,33 @@ public class CommandAckCollector {
     * <p>
     * The collector is completed without waiting any further acknowledges.
     *
-    * @param id         the {@link CommandInvocationId}.
+    * @param id         the id from {@link CommandInvocationId#getId()}.
     * @param throwable  the {@link Throwable}.
     * @param topologyId the topology id.
     */
-   public void completeExceptionally(CommandInvocationId id, Throwable throwable, int topologyId) {
-      Collector<?> collector = collectorMap.get(id);
-      if (collector != null) {
-         collector.completeExceptionally(throwable, topologyId);
+   public void completeExceptionally(long id, Throwable throwable, int topologyId) {
+      BaseAckTarget ackTarget = collectorMap.get(id);
+      if (ackTarget != null) {
+         ackTarget.completeExceptionally(throwable, topologyId);
       }
    }
 
    /**
-    * Returns the {@link CompletableFuture} associated tot the collector.
-    *
-    * @param <T> the type of the return value.
-    * @param id  the {@link CommandInvocationId}.
-    * @return the collector's {@link CompletableFuture}.
+    * @return the pending ids from {@link CommandInvocationId#getId()} (testing purposes only)
     */
-   public <T> CompletableFuture<T> getCollectorCompletableFuture(CommandInvocationId id) {
-      //noinspection unchecked
-      Collector<T> collector = (Collector<T>) collectorMap.get(id);
-      return collector == null ? null : collector.getFuture();
-   }
-
-   /**
-    * Returns the {@link CompletableFuture} associated tot the collector.
-    * <p>
-    * The collector is cleanup after the {@link CompletableFuture} is completed and it register a timeout task.
-    *
-    * @param <T> the type of the return value.
-    * @param id  the {@link CommandInvocationId}.
-    * @return the collector's {@link CompletableFuture}.
-    */
-   public <T> CompletableFuture<T> getCollectorCompletableFutureToWait(CommandInvocationId id) {
-      //noinspection unchecked
-      Collector<T> collector = (Collector<T>) collectorMap.get(id);
-      if (collector == null) {
-         return null;
-      }
-      if (trace) {
-         log.tracef("[Collector#%s] Waiting for acks asynchronously.", id);
-      }
-      return collector.addCleanupTasksAndGetFuture();
-   }
-
-   /**
-    * @return the pending {@link CommandInvocationId} (testing purposes only)
-    */
-   public List<CommandInvocationId> getPendingCommands() {
+   public List<Long> getPendingCommands() {
       return new ArrayList<>(collectorMap.keySet());
    }
 
    /**
-    * @param id the command id.
+    * @param id the id from {@link CommandInvocationId#getId()}.
     * @return {@code true} if there are acknowledges pending from the backup owners, {@code false} otherwise. (testing
     * purposes only)
     */
-   public boolean hasPendingBackupAcks(CommandInvocationId id) {
-      Collector<?> collector = collectorMap.get(id);
-      return collector != null && collector.hasPendingBackupAcks();
+   @SuppressWarnings("BooleanMethodIsAlwaysInverted") //testing only
+   public boolean hasPendingBackupAcks(long id) {
+      BaseAckTarget ackTarget = collectorMap.get(id);
+      return ackTarget != null && ackTarget.hasPendingBackupAcks();
    }
 
    /**
@@ -249,38 +239,43 @@ public class CommandAckCollector {
     */
    public void onMembersChange(Collection<Address> members) {
       Set<Address> currentMembers = new HashSet<>(members);
-      for (Collector<?> collector : collectorMap.values()) {
-         collector.onMembersChange(currentMembers);
+      this.currentMembers = currentMembers;
+      for (BaseAckTarget ackTarget : collectorMap.values()) {
+         ackTarget.onMembersChange(currentMembers);
       }
    }
 
-   /**
-    * Removes the collector associated with the command.
-    *
-    * @param id the {@link CommandInvocationId}.
-    */
-   public void dispose(CommandInvocationId id) {
-      if (trace) {
-         log.tracef("[Collector#%s] Dispose collector.", id);
-      }
-      collectorMap.remove(id);
-   }
-
-   private TimeoutException createTimeoutException(CommandInvocationId id) {
+   private TimeoutException createTimeoutException(long id) {
       return log.timeoutWaitingForAcks(Util.prettyPrintTime(timeoutNanoSeconds, TimeUnit.NANOSECONDS), id);
    }
 
-   private abstract class Collector<T> implements Callable<Void>, BiConsumer<T, Throwable> {
-
-      final CommandInvocationId id;
-      final CompletableFuture<T> future;
+   private abstract class BaseAckTarget implements Callable<Void> {
+      final long id;
       final int topologyId;
-      private volatile ScheduledFuture<?> timeoutTask;
+      final ScheduledFuture<?> timeoutTask;
 
-      protected Collector(CommandInvocationId id, int topologyId) {
-         this.id = id;
+      private BaseAckTarget(long id, int topologyId) {
          this.topologyId = topologyId;
+         this.id = id;
+         this.timeoutTask = timeoutExecutor.schedule(this, timeoutNanoSeconds, TimeUnit.NANOSECONDS);
+      }
+
+      abstract void completeExceptionally(Throwable throwable, int topologyId);
+      abstract boolean hasPendingBackupAcks();
+      abstract void onMembersChange(Collection<Address> members);
+   }
+
+   private abstract class BaseCollector<T> extends BaseAckTarget implements BiConsumer<T, Throwable>, Collector<T> {
+
+      final CompletableFuture<T> future;
+      final CompletableFuture<T> exposedFuture;
+      volatile T primaryResult;
+      volatile boolean primaryResultReceived = false;
+
+      BaseCollector(long id, int topologyId) {
+         super(id, topologyId);
          this.future = new CompletableFuture<>();
+         this.exposedFuture = future.whenComplete(this);
       }
 
       /**
@@ -289,8 +284,8 @@ public class CommandAckCollector {
        * It completes the future with the timeout exception.
        */
       @Override
-      public final synchronized Void call() throws Exception {
-         doCompleteExceptionally(createTimeoutException(id));
+      public final synchronized Void call() {
+         future.completeExceptionally(createTimeoutException(id));
          return null;
       }
 
@@ -301,86 +296,60 @@ public class CommandAckCollector {
        */
       @Override
       public final void accept(T t, Throwable throwable) {
-         collectorMap.remove(id);
+         if (trace) {
+            log.tracef("[Collector#%s] Collector completed with ret=%s, throw=%s", id, t, throwable);
+         }
+         boolean removed = collectorMap.remove(id, this);
+         assert removed;
          timeoutTask.cancel(false);
       }
 
-      synchronized final void completeExceptionally(Throwable throwable, int topologyId) {
+      @Override
+      public final CompletableFuture<T> getFuture() {
+         return exposedFuture;
+      }
+
+      @Override
+      public void primaryException(Throwable throwable) {
+         future.completeExceptionally(throwable);
+      }
+
+      final void completeExceptionally(Throwable throwable, int topologyId) {
          if (trace) {
             log.tracef(throwable, "[Collector#%s] completed exceptionally. TopologyId=%s (expected=%s)",
                   id, topologyId, this.topologyId);
          }
-         if (this.topologyId != topologyId) {
+         if (isWrongTopologyOrIsDone(topologyId)) {
             return;
          }
-         doCompleteExceptionally(throwable);
+         future.completeExceptionally(throwable);
       }
 
-      abstract boolean hasPendingBackupAcks();
-
-      final CompletableFuture<T> getFuture() {
-         return future;
-      }
-
-      abstract void onMembersChange(Collection<Address> members);
-
-      abstract void doCompleteExceptionally(Throwable throwable);
-
-      final CompletableFuture<T> addCleanupTasksAndGetFuture() {
-         if (future.isDone()) {
-            collectorMap.remove(id);
-            return future;
-         }
-         this.timeoutTask = timeoutExecutor.schedule(this, timeoutNanoSeconds, TimeUnit.NANOSECONDS);
-         return future.whenComplete(this);
+      final boolean isWrongTopologyOrIsDone(int topologyId) {
+         return this.topologyId != topologyId || future.isDone();
       }
    }
 
-   private class SingleKeyCollector extends Collector<Object> {
-      @GuardedBy("this")
-      private final Collection<Address> owners;
-      @GuardedBy("this")
-      private final Address primaryOwner;
-      @GuardedBy("this")
-      private Object returnValue;
+   private class SingleKeyCollector<T> extends BaseCollector<T> {
+      final Collection<Address> backupOwners;
 
-      private SingleKeyCollector(CommandInvocationId id, Collection<Address> owners, int topologyId) {
+      private SingleKeyCollector(long id, Collection<Address> backupOwners, int topologyId) {
          super(id, topologyId);
-         this.primaryOwner = owners.iterator().next();
-         this.owners = new HashSet<>(owners); //removal is fast
+         this.backupOwners = new HashSet<>(backupOwners);
       }
 
-      private SingleKeyCollector(CommandInvocationId id, Object returnValue, Collection<Address> owners,
-            int topologyId) {
-         super(id, topologyId);
-         this.returnValue = returnValue;
-         this.primaryOwner = owners.iterator().next();
-         Collection<Address> tmpOwners = new HashSet<>(owners);
-         tmpOwners.remove(primaryOwner);
-         if (tmpOwners.isEmpty()) { //num owners is 1 or single member in cluster
-            this.owners = Collections.emptyList();
-            this.future.complete(returnValue);
-         } else {
-            this.owners = tmpOwners;
+      @Override
+      synchronized boolean hasPendingBackupAcks() {
+         return !backupOwners.isEmpty();
+      }
+
+      @Override
+      void onMembersChange(Collection<Address> members) {
+         boolean empty;
+         synchronized (this) {
+            empty = backupOwners.retainAll(members) && backupOwners.isEmpty();
          }
-      }
-
-      @Override
-      public synchronized boolean hasPendingBackupAcks() {
-         return owners.size() > 1 || //at least one backup + primary address
-               //if one is missing, make sure that it isn't the primary
-               owners.size() == 1 && !primaryOwner.equals(owners.iterator().next());
-      }
-
-      @Override
-      public synchronized void onMembersChange(Collection<Address> members) {
-         if (!members.contains(primaryOwner)) {
-            //primary owner left. throw OutdatedTopologyException to trigger a retry
-            if (trace) {
-               log.tracef("[Collector#%s] The Primary Owner left the cluster.", id);
-            }
-            doCompleteExceptionally(OutdatedTopologyException.getCachedInstance());
-         } else if (owners.retainAll(members) && owners.isEmpty()) {
+         if (empty && primaryResultReceived) {
             if (trace) {
                log.tracef("[Collector#%s] Some backups left the cluster.", id);
             }
@@ -388,69 +357,105 @@ public class CommandAckCollector {
          }
       }
 
-      synchronized void primaryAck(int topologyId, Object returnValue, boolean success, Address from) {
-         if (trace) {
-            log.tracef(
-                  "[Collector#%s] Primary ACK. Success=%s. ReturnValue=%s. Address=%s, TopologyId=%s (expected=%s)",
-                  id, success, returnValue, from, topologyId, this.topologyId);
-         }
-         if (this.topologyId != topologyId || !owners.remove(from)) {
-            //already received!
-            return;
-         }
-         this.returnValue = returnValue;
-
-         if (!success) {
-            //we are not receiving any backups ack!
-            owners.clear();
-            future.complete(returnValue);
-            if (trace) {
-               log.tracef("[Collector#%s] Ready! Command not succeed on primary.", id);
-            }
-         } else if (owners.isEmpty()) {
+      @Override
+      public void primaryResult(T result, boolean success) {
+         primaryResult = result;
+         primaryResultReceived = true;
+         if (!success || !hasPendingBackupAcks()) {
             markReady();
          }
       }
 
-      synchronized void backupAck(int topologyId, Address from) {
+      void backupAck(int topologyId, Address from) {
          if (trace) {
             log.tracef("[Collector#%s] Backup ACK. Address=%s, TopologyId=%s (expected=%s)",
                   id, from, topologyId, this.topologyId);
          }
-         if (this.topologyId == topologyId && owners.remove(from) && owners.isEmpty()) {
+         if (isWrongTopologyOrIsDone(topologyId)) {
+            return;
+         }
+         boolean empty;
+         synchronized (this) {
+            empty = backupOwners.remove(from) && backupOwners.isEmpty();
+         }
+         if (empty && primaryResultReceived) {
             markReady();
          }
       }
 
-      @GuardedBy("this")
-      void doCompleteExceptionally(Throwable throwable) {
-         owners.clear();
-         future.completeExceptionally(throwable);
-      }
-
-      @GuardedBy("this")
-      private void markReady() {
+      void markReady() {
          if (trace) {
-            log.tracef("[Collector#%s] Ready! Return value=%ss.", id, returnValue);
+            log.tracef("[Collector#%s] Ready!", id);
          }
-         future.complete(returnValue);
+         future.complete(primaryResult);
       }
    }
 
-   private class MultiKeyCollector extends Collector<Map<Object, Object>> {
-      @GuardedBy("this")
-      private final Collection<Address> primary;
+   private class BiasedKeyCollector<T> extends SingleKeyCollector<T> {
+      private final Address primaryOwner;
+      @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
+      private Collection<Address> unsolicitedAcks;
+
+      private BiasedKeyCollector(long id, Address primaryOwner, int topologyId) {
+         super(id, Collections.emptyList(), topologyId);
+         this.primaryOwner = primaryOwner;
+      }
+
+      @Override
+      public void onMembersChange(Collection<Address> members) {
+         if (primaryOwner != null && !members.contains(primaryOwner)) {
+            future.completeExceptionally(log.remoteNodeSuspected(primaryOwner));
+         }
+         super.onMembersChange(members);
+      }
+
+      void backupAck(int topologyId, Address from) {
+         if (trace) {
+            log.tracef("[Collector#%s] Backup ACK. Address=%s, TopologyId=%s (expected=%s)",
+                  id, from, topologyId, this.topologyId);
+         }
+         if (isWrongTopologyOrIsDone(topologyId)) {
+            return;
+         }
+         boolean empty;
+         synchronized (this) {
+            if (!backupOwners.remove(from)) {
+               if (unsolicitedAcks == null) {
+                  unsolicitedAcks = new ArrayList<>(4);
+               }
+               log.tracef("[Collector#%s] Unsolicited ACK", id);
+               unsolicitedAcks.add(from);
+            }
+            empty = backupOwners.isEmpty();
+         }
+         if (empty && primaryResultReceived) {
+            markReady();
+         }
+      }
+
+      synchronized void addPendingAcks(boolean success, Address[] waitFor) {
+         if (success && waitFor != null) {
+            Collection<Address> members = currentMembers;
+            for (Address address : waitFor) {
+               if (members == null || members.contains(address)) {
+                  backupOwners.add(address);
+               }
+            }
+         }
+         if (unsolicitedAcks != null) {
+            unsolicitedAcks.removeIf(backupOwners::remove);
+         }
+      }
+   }
+
+   private class SegmentBasedCollector extends BaseCollector<Map<Object, Object>> {
       @GuardedBy("this")
       private final Map<Address, Collection<Integer>> backups;
-      @GuardedBy("this")
-      private Map<Object, Object> returnValue;
 
-      MultiKeyCollector(CommandInvocationId id, Collection<Address> primary, Map<Address, Collection<Integer>> backups,
-            int topologyId) {
+      SegmentBasedCollector(long id, Map<Address, Collection<Integer>> backups,
+                            int topologyId) {
          super(id, topologyId);
-         this.returnValue = null;
          this.backups = backups;
-         this.primary = new HashSet<>(primary);
       }
 
       @Override
@@ -460,13 +465,7 @@ public class CommandAckCollector {
 
       @Override
       public synchronized void onMembersChange(Collection<Address> members) {
-         if (!members.containsAll(primary)) {
-            //primary owner left. throw OutdatedTopologyException to trigger a retry
-            if (trace) {
-               log.tracef("[Collector#%s] A primary Owner left the cluster.", id);
-            }
-            doCompleteExceptionally(OutdatedTopologyException.getCachedInstance());
-         } else if (backups.keySet().retainAll(members)) {
+         if (backups.keySet().retainAll(members)) {
             if (trace) {
                log.tracef("[Collector#%s] Some backups left the cluster.", id);
             }
@@ -474,56 +473,205 @@ public class CommandAckCollector {
          }
       }
 
-      synchronized void primaryAck(Map<Object, Object> returnValue, Address from, int topologyId) {
-         if (trace) {
-            log.tracef("[Collector#%s] PutMap Primary ACK. Address=%s. TopologyId=%s (expected=%s)",
-                  id, from, topologyId, this.topologyId);
-         }
-         if (this.topologyId != topologyId) {
-            return;
-         }
-         if (returnValue != null) {
-            if (this.returnValue == null) {
-               this.returnValue = new HashMap<>(returnValue.size());
-            }
-            this.returnValue.putAll(returnValue);
-         }
-         if (primary.remove(from)) {
+      @Override
+      public void primaryResult(Map<Object, Object> result, boolean success) {
+         primaryResult = result;
+         primaryResultReceived = true;
+         synchronized (this) {
             checkCompleted();
          }
       }
 
-      synchronized void backupAck(Address from, int segment, int topologyId) {
+      void backupAck(Address from, int segment, int topologyId) {
          if (trace) {
             log.tracef("[Collector#%s] PutMap Backup ACK. Address=%s. TopologyId=%s (expected=%s). Segment=%s",
                   id, from, topologyId, this.topologyId, segment);
          }
-         if (this.topologyId != topologyId) {
+         if (isWrongTopologyOrIsDone(topologyId)) {
             return;
          }
-         Collection<Integer> pendingSegments = backups.getOrDefault(from, Collections.emptyList());
-         if (pendingSegments.remove(segment) && pendingSegments.isEmpty()) {
-            backups.remove(from);
+         synchronized (this) {
+            Collection<Integer> pendingSegments = backups.getOrDefault(from, Collections.emptyList());
+            if (pendingSegments.remove(segment) && pendingSegments.isEmpty()) {
+               backups.remove(from);
+            }
             checkCompleted();
          }
       }
 
       @GuardedBy("this")
-      void doCompleteExceptionally(Throwable throwable) {
-         returnValue = null;
-         primary.clear();
-         backups.clear();
-         future.completeExceptionally(throwable);
+      private void checkCompleted() {
+         if (primaryResultReceived && backups.isEmpty()) {
+            if (trace) {
+               log.tracef("[Collector#%s] Ready! Return value=%ss.", id, primaryResult);
+            }
+            future.complete(primaryResult);
+         }
       }
 
-      @GuardedBy("this")
-      private void checkCompleted() {
-         if (primary.isEmpty() && backups.isEmpty()) {
-            if (trace) {
-               log.tracef("[Collector#%s] Ready! Return value=%ss.", id, returnValue);
-            }
-            future.complete(returnValue);
+      @Override
+      public String toString() {
+         final StringBuilder sb = new StringBuilder("SegmentBasedCollector{");
+         sb.append("id=").append(id);
+         sb.append(", topologyId=").append(topologyId);
+         sb.append(", primaryResult=").append(primaryResult);
+         sb.append(", primaryResultReceived=").append(primaryResultReceived);
+         sb.append(", backups=").append(backups);
+         sb.append('}');
+         return sb.toString();
+      }
+   }
+
+   private static class ExceptionCollector<T> extends CompletableFuture<T> implements Collector<T> {
+      ExceptionCollector(Throwable throwable) {
+         completeExceptionally(throwable);
+      }
+
+      @Override
+      public CompletableFuture<T> getFuture() {
+         return this;
+      }
+
+      @Override
+      public void primaryException(Throwable throwable) {
+         throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public void primaryResult(T result, boolean success) {
+         throw new UnsupportedOperationException();
+      }
+   }
+
+   private static class CombiningCollector<T> implements Collector<T>, Function<Void, CompletableFuture<T>> {
+      private final CompletableFuture<T> resultFuture = new CompletableFuture<>();
+      private final CompletableFuture<T> combinedFuture;
+
+      private CombiningCollector(CompletableFuture<?> acksFuture) {
+         this.combinedFuture = CompletableFuture.allOf(resultFuture, acksFuture).thenCompose(this);
+      }
+
+      @Override
+      public CompletableFuture<T> getFuture() {
+         return combinedFuture;
+      }
+
+      @Override
+      public void primaryException(Throwable throwable) {
+         // exceptions can propagate immediately
+         combinedFuture.completeExceptionally(throwable);
+      }
+
+      @Override
+      public void primaryResult(T result, boolean success) {
+         resultFuture.complete(result);
+      }
+
+      @Override
+      public CompletableFuture<T> apply(Void nil) {
+         return resultFuture;
+      }
+   }
+
+   private class MultiAckTarget extends BaseAckTarget {
+      private final Map<Address, Collector<Response>> primaryCollectors = new HashMap<>();
+      // Note that this is a list, since we may expect multiple acks from single node.
+      private final List<Address> pendingAcks = new ArrayList<>();
+      private final CompletableFuture<Void> acksFuture = new CompletableFuture<>();
+      @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
+      private List<Address> unsolicitedAcks;
+      private Throwable throwable;
+
+      MultiAckTarget(long id, int topologyId) {
+         super(id, topologyId);
+      }
+
+      synchronized Collector<Response> collectorFor(Address target) {
+         if (throwable != null) {
+            return new ExceptionCollector<>(throwable);
+         } else {
+            Collector<Response> collector = new CombiningCollector<>(acksFuture);
+            Collector<Response> prev = primaryCollectors.put(target, collector);
+            assert prev == null : prev.toString();
+            return collector;
          }
+      }
+
+      synchronized void addPendingAcks(Address[] waitFor) {
+         if (trace) {
+            log.tracef("[Collector#%s] Adding pending acks from %s, existing are %s",
+                  id, Arrays.toString(waitFor), pendingAcks);
+         }
+         Collection<Address> members = currentMembers;
+         for (Address member : waitFor) {
+            if (members == null || members.contains(member)) {
+               pendingAcks.add(member);
+            }
+         }
+      }
+
+      /**
+       * This method must be called after {@link #addPendingAcks(Address[])}
+       */
+      synchronized void primaryResult(Address from, Object value, boolean success) {
+         Collector<Response> collector = primaryCollectors.get(from);
+         if (trace) {
+            log.tracef("[Collector#%s] PutMap Primary ACK. Address=%s", id, from);
+         }
+         collector.primaryResult(success ? SuccessfulResponse.create(value) : UnsuccessfulResponse.create(value), success);
+         if (unsolicitedAcks != null) {
+            // this should work for multiple acks from same node as well
+            unsolicitedAcks.removeIf(pendingAcks::remove);
+         }
+         if (pendingAcks.isEmpty()) {
+            acksFuture.complete(null);
+         }
+      }
+
+      synchronized void backupAck(int topologyId, Address from) {
+         if (trace) {
+            log.tracef("[Collector#%s] PutMap Backup ACK. Address=%s. TopologyId=%s (expected=%s).",
+                  id, from, topologyId, this.topologyId);
+         }
+         if (topologyId == this.topologyId) {
+            if (!pendingAcks.remove(from)) {
+               if (unsolicitedAcks == null) {
+                  unsolicitedAcks = new ArrayList<>(4);
+               }
+               unsolicitedAcks.add(from);
+            }
+         }
+      }
+
+      @Override
+      synchronized void completeExceptionally(Throwable throwable, int topologyId) {
+         if (topologyId == this.topologyId) {
+            this.throwable = throwable;
+            for (Collector<?> collector : primaryCollectors.values()) {
+               collector.primaryException(throwable);
+            }
+         }
+      }
+
+      @Override
+      synchronized boolean hasPendingBackupAcks() {
+         return !pendingAcks.isEmpty();
+      }
+
+      @Override
+      synchronized void onMembersChange(Collection<Address> members) {
+         pendingAcks.retainAll(members);
+         for (Map.Entry<Address, Collector<Response>> pair : primaryCollectors.entrySet()) {
+            if (!members.contains(pair.getKey())) {
+               pair.getValue().primaryException(OutdatedTopologyException.INSTANCE);
+            }
+         }
+      }
+
+      @Override
+      public Void call() {
+         completeExceptionally(createTimeoutException(id), topologyId);
+         return null;
       }
    }
 }

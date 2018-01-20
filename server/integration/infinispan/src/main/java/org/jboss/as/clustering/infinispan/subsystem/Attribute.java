@@ -64,6 +64,8 @@ public enum Attribute {
     CLUSTER(ModelKeys.CLUSTER),
     CONCURRENCY_LEVEL(ModelKeys.CONCURRENCY_LEVEL),
     CONFIGURATION(ModelKeys.CONFIGURATION),
+    CONFIGURATION_STORAGE(ModelKeys.CONFIGURATION_STORAGE),
+    CONFIGURATION_STORAGE_CLASS(ModelKeys.CONFIGURATION_STORAGE_CLASS),
     CONNECTION_TIMEOUT(ModelKeys.CONNECTION_TIMEOUT),
     CREATE_ON_START(ModelKeys.CREATE_ON_START),
     DATASOURCE(ModelKeys.DATASOURCE),
@@ -73,7 +75,6 @@ public enum Attribute {
     DB_MINOR_VERSION(ModelKeys.DB_MINOR_VERSION),
     DIALECT(ModelKeys.DIALECT),
     DROP_ON_EXIT(ModelKeys.DROP_ON_EXIT),
-    @Deprecated EAGER_LOCKING("eager-locking"),
     ENABLED(ModelKeys.ENABLED),
     EVICTION(ModelKeys.EVICTION),
     @Deprecated
@@ -91,6 +92,7 @@ public enum Attribute {
     INDEX(ModelKeys.INDEX),
     INITIAL_CLUSTER_SIZE(ModelKeys.INITIAL_CLUSTER_SIZE),
     INITIAL_CLUSTER_TIMEOUT(ModelKeys.INITIAL_CLUSTER_TIMEOUT),
+    INITIAL_VALUE(ModelKeys.INITIAL_VALUE),
     INTERVAL(ModelKeys.INTERVAL),
     ISOLATION(ModelKeys.ISOLATION),
     JNDI_NAME(ModelKeys.JNDI_NAME),
@@ -101,25 +103,33 @@ public enum Attribute {
     LISTENER_EXECUTOR(ModelKeys.LISTENER_EXECUTOR),
     LOCK_TIMEOUT(ModelKeys.LOCK_TIMEOUT),
     LOCKING(ModelKeys.LOCKING),
+    LOWER_BOUND(ModelKeys.LOWER_BOUND),
     MACHINE(ModelKeys.MACHINE),
     MAPPER(ModelKeys.MAPPER),
     MARSHALLER(ModelKeys.MARSHALLER),
+    MAX_BATCH_SIZE(ModelKeys.MAX_BATCH_SIZE),
     MAX_CONNECTIONS_PER_HOST(ModelKeys.MAX_CONNECTIONS_PER_HOST),
+    MAX_CONTENT_LENGTH(ModelKeys.MAX_CONTENT_LENGTH),
     MAX_ENTRIES(ModelKeys.MAX_ENTRIES),
     MAX_IDLE(ModelKeys.MAX_IDLE),
     MAX_RETRIES(ModelKeys.MAX_RETRIES),
     MAX_THREADS(ModelKeys.MAX_THREADS),
     MAX_TOTAL_CONNECTIONS(ModelKeys.MAX_TOTAL_CONNECTIONS),
+    MECHANISM(ModelKeys.MECHANISM),
+    MERGE_POLICY(ModelKeys.MERGE_POLICY),
+    MEDIA_TYPE(ModelKeys.MEDIA_TYPE),
     MIN_THREADS(ModelKeys.MIN_THREADS),
     MODE(ModelKeys.MODE),
     MODIFICATION_QUEUE_SIZE(ModelKeys.MODIFICATION_QUEUE_SIZE),
     MODULE(ModelKeys.MODULE),
     NAME(ModelKeys.NAME),
     NAMESPACE(XMLConstants.XMLNS_ATTRIBUTE),
+    NUM_OWNERS(ModelKeys.NUM_OWNERS),
     NOTIFICATIONS(ModelKeys.NOTIFICATIONS),
     OUTBOUND_SOCKET_BINDING(ModelKeys.OUTBOUND_SOCKET_BINDING),
     OWNERS(ModelKeys.OWNERS),
     PASSIVATION(ModelKeys.PASSIVATION),
+    PASSWORD(ModelKeys.PASSWORD),
     PATH(ModelKeys.PATH),
     PERMISSIONS(ModelKeys.PERMISSIONS),
     PREFIX(ModelKeys.PREFIX),
@@ -133,7 +143,9 @@ public enum Attribute {
     RACK(ModelKeys.RACK),
     RAW_VALUES(ModelKeys.RAW_VALUES),
     READ_ONLY(ModelKeys.READ_ONLY),
+    REALM(ModelKeys.REALM),
     RELATIVE_TO(ModelKeys.RELATIVE_TO),
+    RELIABILITY(ModelKeys.RELIABILITY),
     REMOTE_CACHE(ModelKeys.REMOTE_CACHE),
     @Deprecated
     REMOTE_COMMAND_EXECUTOR(ModelKeys.REMOTE_COMMAND_EXECUTOR),
@@ -142,6 +154,7 @@ public enum Attribute {
     @Deprecated
     REPLICATION_QUEUE_EXECUTOR(ModelKeys.REPLICATION_QUEUE_EXECUTOR),
     ROLES(ModelKeys.ROLES),
+    SECURITY_REALM(ModelKeys.SECURITY_REALM),
     SEGMENTS(ModelKeys.SEGMENTS),
     SHARED(ModelKeys.SHARED),
     SHUTDOWN_TIMEOUT(ModelKeys.SHUTDOWN_TIMEOUT),
@@ -150,7 +163,9 @@ public enum Attribute {
     SINGLETON(ModelKeys.SINGLETON),
     SITE(ModelKeys.SITE),
     SIZE(ModelKeys.SIZE),
+    SLOT(ModelKeys.SLOT),
     SOCKET_TIMEOUT(ModelKeys.SOCKET_TIMEOUT),
+    SNI_HOSTNAME(ModelKeys.SNI_HOSTNAME),
     STACK(ModelKeys.STACK),
     START(ModelKeys.START),
     @Deprecated
@@ -159,6 +174,7 @@ public enum Attribute {
     STATISTICS_AVAILABLE(ModelKeys.STATISTICS_AVAILABLE),
     STRICT_PEER_TO_PEER(ModelKeys.STRICT_PEER_TO_PEER),
     STOP_TIMEOUT(ModelKeys.STOP_TIMEOUT),
+    STORAGE(ModelKeys.STORAGE),
     STRATEGY(ModelKeys.STRATEGY),
     STRIPING(ModelKeys.STRIPING),
     TAKE_BACKUP_OFFLINE_AFTER_FAILURES(ModelKeys.TAKE_BACKUP_OFFLINE_AFTER_FAILURES),
@@ -169,18 +185,22 @@ public enum Attribute {
     @Deprecated
     TOTAL_ORDER_EXECUTOR(ModelKeys.TOTAL_ORDER_EXECUTOR),
     TYPE(ModelKeys.TYPE),
+    USERNAME(ModelKeys.USERNAME),
+    UPPER_BOUND(ModelKeys.UPPER_BOUND),
+    VALUE(ModelKeys.VALUE),
     WAIT_TIME(ModelKeys.WAIT_TIME),
+    WHEN_SPLIT(ModelKeys.WHEN_SPLIT),
     ;
 
     private final String name;
     private final AttributeDefinition definition;
 
-    private Attribute(final String name) {
+    Attribute(final String name) {
         this.name = name;
         this.definition = null;
     }
 
-    private Attribute(final AttributeDefinition definition) {
+    Attribute(final AttributeDefinition definition) {
         this.name = definition.getXmlName();
         this.definition = definition;
     }

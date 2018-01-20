@@ -23,6 +23,7 @@ import org.jboss.shrinkwrap.api.asset.StringAsset;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.jboss.shrinkwrap.descriptor.api.Descriptors;
 import org.jboss.shrinkwrap.descriptor.api.spec.se.manifest.ManifestDescriptor;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -35,6 +36,8 @@ import org.junit.runner.RunWith;
 @RunWith(Arquillian.class)
 public class InfinispanStoreJpaIT {
 
+   private EmbeddedCacheManager cm;
+
    @Deployment
    public static Archive<?> deployment() {
       return ShrinkWrap
@@ -46,6 +49,12 @@ public class InfinispanStoreJpaIT {
             .add(manifest(), "META-INF/MANIFEST.MF");
    }
 
+   @After
+   public void cleanUp() {
+      if (cm != null)
+         cm.stop();
+   }
+
    private static Asset manifest() {
       String manifest = Descriptors.create(ManifestDescriptor.class)
             .attribute("Dependencies", "org.infinispan:" + Version.getModuleSlot() + " services, org.infinispan.persistence.jpa:" + Version.getModuleSlot() + " services").exportAsString();
@@ -55,39 +64,26 @@ public class InfinispanStoreJpaIT {
    @Test
    public void testCacheManager() {
       GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder();
-      gcb.globalJmxStatistics().allowDuplicateDomains(true);
 
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.persistence().addStore(JpaStoreConfigurationBuilder.class)
-         .persistenceUnitName("org.infinispan.persistence.jpa")
-         .entityClass(KeyValueEntity.class);
+            .persistenceUnitName("org.infinispan.persistence.jpa")
+            .entityClass(KeyValueEntity.class);
 
-      EmbeddedCacheManager cm = null;
-      try {
-         cm = new DefaultCacheManager(gcb.build(), builder.build());
-         Cache<String, KeyValueEntity> cache = cm.getCache();
-         KeyValueEntity entity = new KeyValueEntity("a", "a");
-         cache.put(entity.getK(), entity);
-         assertEquals("a", cache.get(entity.getK()).getValue());
-      } finally {
-         if (cm != null)
-            cm.stop();
-      }
+      cm = new DefaultCacheManager(gcb.build(), builder.build());
+      Cache<String, KeyValueEntity> cache = cm.getCache();
+      KeyValueEntity entity = new KeyValueEntity("a", "a");
+      cache.put(entity.getK(), entity);
+      assertEquals("a", cache.get(entity.getK()).getValue());
    }
 
    @Test
    public void testXmlConfig() throws IOException {
-      EmbeddedCacheManager cm = null;
-      try {
-         cm = new DefaultCacheManager("jpa-config.xml");
-         Cache<String, KeyValueEntity> specificCache = cm.getCache("specificCache");
-         validateConfig(specificCache);
-         KeyValueEntity entity = new KeyValueEntity("k", "v");
-         specificCache.put(entity.getK(), entity);
-      } finally {
-         if (cm != null)
-            cm.stop();
-      }
+      cm = new DefaultCacheManager("jpa-config.xml");
+      Cache<String, KeyValueEntity> specificCache = cm.getCache("specificCache");
+      validateConfig(specificCache);
+      KeyValueEntity entity = new KeyValueEntity("k", "v");
+      specificCache.put(entity.getK(), entity);
    }
 
    private void validateConfig(Cache<String, KeyValueEntity> vehicleCache) {

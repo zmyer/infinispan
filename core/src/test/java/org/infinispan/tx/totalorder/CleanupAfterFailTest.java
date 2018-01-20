@@ -12,7 +12,6 @@ import org.infinispan.Cache;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.interceptors.AsyncInterceptorChain;
@@ -105,20 +104,13 @@ public class CleanupAfterFailTest extends MultipleCacheManagersTest {
       ConfigurationBuilder dcc = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
       dcc.transaction()
             .transactionProtocol(TransactionProtocol.TOTAL_ORDER)
-            .syncCommitPhase(true)
-            .syncRollbackPhase(true)
             .useSynchronization(false)
             .recovery().disable();
-      dcc.locking()
-            .isolationLevel(IsolationLevel.REPEATABLE_READ)
-            .writeSkewCheck(true);
+      dcc.locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
       dcc.clustering().hash()
             .numOwners(1)
             .numSegments(60);
       dcc.clustering().remoteTimeout(1, TimeUnit.SECONDS);
-      dcc.versioning()
-            .enable()
-            .scheme(VersioningScheme.SIMPLE);
       createCluster(dcc, 2);
       waitForClusterToForm();
    }
@@ -130,16 +122,13 @@ public class CleanupAfterFailTest extends MultipleCacheManagersTest {
    }
 
    private void assertNoLocks() {
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            for (Cache cache : caches()) {
-               if (TestingUtil.extractComponent(cache, TotalOrderManager.class).hasAnyLockAcquired()) {
-                  return false;
-               }
+      eventually(() -> {
+         for (Cache cache : caches()) {
+            if (TestingUtil.extractComponent(cache, TotalOrderManager.class).hasAnyLockAcquired()) {
+               return false;
             }
-            return true;
          }
+         return true;
       });
    }
 

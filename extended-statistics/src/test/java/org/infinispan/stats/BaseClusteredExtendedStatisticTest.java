@@ -1,9 +1,7 @@
 package org.infinispan.stats;
 
-import static org.infinispan.test.TestingUtil.extractComponent;
 import static org.infinispan.test.TestingUtil.k;
-import static org.infinispan.test.TestingUtil.replaceComponent;
-import static org.infinispan.test.TestingUtil.replaceField;
+import static org.infinispan.test.TestingUtil.wrapInboundInvocationHandler;
 import static org.testng.AssertJUnit.assertNull;
 
 import java.lang.reflect.Method;
@@ -17,6 +15,8 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import org.infinispan.Cache;
 import org.infinispan.commands.ReplicableCommand;
@@ -27,6 +27,8 @@ import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderNonVersionedPrepareCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -35,8 +37,6 @@ import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.InterceptorConfiguration;
-import org.infinispan.configuration.cache.VersioningScheme;
-import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
@@ -46,6 +46,8 @@ import org.infinispan.stats.wrappers.ExtendedStatisticInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.transaction.TransactionProtocol;
 import org.infinispan.util.concurrent.IsolationLevel;
+import org.infinispan.util.function.SerializableBiFunction;
+import org.infinispan.util.function.SerializableFunction;
 import org.testng.AssertJUnit;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -64,24 +66,19 @@ public abstract class BaseClusteredExtendedStatisticTest extends MultipleCacheMa
    private static final String VALUE_4 = "value_4";
    private final List<ControlledPerCacheInboundInvocationHandler> inboundHandlerList = new ArrayList<>(NUM_NODES);
    private final CacheMode mode;
-   private final boolean sync2ndPhase;
-   private final boolean writeSkew;
    private final boolean totalOrder;
 
-   protected BaseClusteredExtendedStatisticTest(CacheMode mode, boolean sync2ndPhase, boolean writeSkew,
-                                                boolean totalOrder) {
+   protected BaseClusteredExtendedStatisticTest(CacheMode mode, boolean totalOrder) {
       this.mode = mode;
-      this.sync2ndPhase = sync2ndPhase;
-      this.writeSkew = writeSkew;
       this.totalOrder = totalOrder;
    }
 
    protected static Collection<Address> getOwners(Cache<?, ?> cache, Object key) {
-      return new ArrayList<>(cache.getAdvancedCache().getDistributionManager().locate(key));
+      return new ArrayList<>(cache.getAdvancedCache().getDistributionManager().getCacheTopology().getWriteOwners(key));
    }
 
    protected static Collection<Address> getOwners(Cache<?, ?> cache, Collection<Object> keys) {
-      return new ArrayList<>(cache.getAdvancedCache().getDistributionManager().locateAll(keys));
+      return new ArrayList<>(cache.getAdvancedCache().getDistributionManager().getCacheTopology().getWriteOwners(keys));
    }
 
    public void testPut(Method method) throws InterruptedException {
@@ -277,6 +274,82 @@ public abstract class BaseClusteredExtendedStatisticTest extends MultipleCacheMa
       assertNoTxStats();
    }
 
+   public void testCompute(Method method) throws InterruptedException {
+      final String key1 = k(method, 1);
+      final String key2 = k(method, 2);
+
+      assertEmpty(key1);
+
+      put(1, key1, VALUE_1);
+
+      assertCacheValue(key1, VALUE_1);
+
+      SerializableBiFunction computeFunction = (k, v) -> VALUE_2 + k + v;
+      compute(0, key1, computeFunction);
+
+      assertCacheValue(key1, VALUE_2 + key1 + VALUE_1);
+
+      compute(1, key2, computeFunction);
+      assertCacheValue(key2, VALUE_2 + key2 + "null");
+
+      SerializableBiFunction computeFunctionToNull = (k, v) -> null;
+      compute(0, key1, computeFunctionToNull);
+      assertEmpty(key1);
+
+      assertNoTransactions();
+      assertNoTxStats();
+   }
+
+   public void testComputeIfPresent(Method method) throws InterruptedException {
+      final String key1 = k(method, 1);
+      final String key2 = k(method, 2);
+
+      assertEmpty(key1);
+      assertEmpty(key2);
+
+      put(1, key1, VALUE_1);
+
+      assertCacheValue(key1, VALUE_1);
+
+      SerializableBiFunction computeFunction = (k, v) -> VALUE_2 + k + v;
+      computeIfPresent(0, key1, computeFunction);
+
+      assertCacheValue(key1, VALUE_2 + key1 + VALUE_1);
+
+      // failed operation is not added to the transaction
+      cache(1).computeIfPresent(key2, computeFunction);
+      assertEmpty(key2);
+
+      assertNoTransactions();
+      assertNoTxStats();
+   }
+
+   public void testComputeIfAbsent(Method method) throws InterruptedException {
+      final String key1 = k(method, 1);
+      final String key2 = k(method, 2);
+
+      assertEmpty(key1);
+      assertEmpty(key2);
+
+      put(1, key1, VALUE_1);
+
+      assertCacheValue(key1, VALUE_1);
+
+      SerializableFunction computeFunction = v -> VALUE_3 + v;
+      // failed operation is not added to the transaction
+      cache(0).computeIfAbsent(key1, computeFunction);
+
+      assertCacheValue(key1, VALUE_1);
+
+      SerializableFunction computeFunction2 = v -> VALUE_2;
+
+      computeIfAbsent(1, key2, computeFunction2);
+      assertCacheValue(key2, VALUE_2);
+
+      assertNoTransactions();
+      assertNoTxStats();
+   }
+
    @BeforeMethod(alwaysRun = true)
    public void resetInboundHandler() {
       inboundHandlerList.forEach(ControlledPerCacheInboundInvocationHandler::reset);
@@ -286,15 +359,11 @@ public abstract class BaseClusteredExtendedStatisticTest extends MultipleCacheMa
    protected void createCacheManagers() throws Throwable {
       for (int i = 0; i < 2; ++i) {
          ConfigurationBuilder builder = getDefaultClusteredCacheConfig(mode, true);
-         builder.transaction().syncCommitPhase(sync2ndPhase).syncRollbackPhase(sync2ndPhase);
          if (totalOrder) {
             builder.transaction().transactionProtocol(TransactionProtocol.TOTAL_ORDER);
          }
-         builder.locking().isolationLevel(IsolationLevel.REPEATABLE_READ).writeSkewCheck(writeSkew);
+         builder.locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
          builder.clustering().hash().numOwners(1);
-         if (writeSkew) {
-            builder.versioning().enable().scheme(VersioningScheme.SIMPLE);
-         }
          builder.transaction().recovery().disable();
          builder.customInterceptors().addInterceptor().interceptor(new ExtendedStatisticInterceptor())
                .position(InterceptorConfiguration.Position.FIRST);
@@ -314,7 +383,7 @@ public abstract class BaseClusteredExtendedStatisticTest extends MultipleCacheMa
 
    protected void assertCacheValue(Object key, Object value) {
       for (int index = 0; index < caches().size(); ++index) {
-         if (mode.isSynchronous() && sync2ndPhase) {
+         if (mode.isSynchronous()) {
             assertEquals(index, key, value);
          } else {
             assertEventuallyEquals(index, key, value);
@@ -328,6 +397,15 @@ public abstract class BaseClusteredExtendedStatisticTest extends MultipleCacheMa
    protected abstract void awaitReplace(int cacheIndex, Object key) throws InterruptedException;
 
    protected abstract void awaitRemove(int cacheIndex, Object key) throws InterruptedException;
+
+   protected abstract void awaitCompute(int cacheIndex, Object key, BiFunction<? super Object, ? super Object, ?> remappingFunction)
+         throws InterruptedException;
+
+   protected abstract void awaitComputeIfPresent(int cacheIndex, Object key, BiFunction<? super Object, ? super Object, ?> remappingFunction)
+         throws InterruptedException;
+
+   protected abstract void awaitComputeIfAbsent(int cacheIndex, Object key, Function<? super Object, ?> computeFunction)
+         throws InterruptedException;
 
    private void awaitClear(int cacheIndex) throws InterruptedException {
       Set<Address> all = new HashSet<>(cache(cacheIndex).getAdvancedCache().getRpcManager().getMembers());
@@ -377,6 +455,21 @@ public abstract class BaseClusteredExtendedStatisticTest extends MultipleCacheMa
       awaitRemove(cacheIndex, key);
    }
 
+   private void compute(int cacheIndex, Object key, BiFunction<? super Object, ? super Object, ?> computeFunction) throws InterruptedException {
+      cache(cacheIndex).compute(key, computeFunction);
+      awaitCompute(cacheIndex, key, computeFunction);
+   }
+
+   private void computeIfPresent(int cacheIndex, Object key, BiFunction<? super Object, ? super Object, ?> computeFunction) throws InterruptedException {
+      cache(cacheIndex).computeIfPresent(key, computeFunction);
+      awaitComputeIfPresent(cacheIndex, key, computeFunction);
+   }
+
+   private void computeIfAbsent(int cacheIndex, Object key, Function<? super Object, ?> computeFunction) throws InterruptedException {
+      cache(cacheIndex).computeIfAbsent(key, computeFunction);
+      awaitComputeIfAbsent(cacheIndex, key, computeFunction);
+   }
+
    private void assertNoTxStats() {
       final ExtendedStatisticInterceptor[] statisticInterceptors = new ExtendedStatisticInterceptor[caches().size()];
       for (int i = 0; i < caches().size(); ++i) {
@@ -408,20 +501,12 @@ public abstract class BaseClusteredExtendedStatisticTest extends MultipleCacheMa
 
    private void replaceAllPerCacheInboundInvocationHandler() {
       for (Cache<?, ?> cache : caches()) {
-         inboundHandlerList.add(replacePerCacheInboundInvocationHandler(cache));
+         inboundHandlerList.add(wrapInboundInvocationHandler(cache, ControlledPerCacheInboundInvocationHandler::new));
       }
    }
 
-   private ControlledPerCacheInboundInvocationHandler replacePerCacheInboundInvocationHandler(Cache<?, ?> cache) {
-      ControlledPerCacheInboundInvocationHandler handler = new ControlledPerCacheInboundInvocationHandler(
-            extractComponent(cache, PerCacheInboundInvocationHandler.class));
-      replaceComponent(cache, PerCacheInboundInvocationHandler.class, handler, true);
-      replaceField(handler, "inboundInvocationHandler", cache.getAdvancedCache().getComponentRegistry(), ComponentRegistry.class);
-      return handler;
-   }
-
    protected enum Operation {
-      PUT, REMOVE, REPLACE, CLEAR, PUT_MAP
+      PUT, REMOVE, REPLACE, CLEAR, PUT_MAP, COMPUTE, COMPUTE_IF_ABSENT
    }
 
    private static class ControlledPerCacheInboundInvocationHandler implements PerCacheInboundInvocationHandler {
@@ -463,6 +548,12 @@ public abstract class BaseClusteredExtendedStatisticTest extends MultipleCacheMa
                   break;
                case ReplaceCommand.COMMAND_ID:
                   operationQueue.add(Operation.REPLACE);
+                  break;
+               case ComputeCommand.COMMAND_ID:
+                  operationQueue.add(Operation.COMPUTE);
+                  break;
+               case ComputeIfAbsentCommand.COMMAND_ID:
+                  operationQueue.add(Operation.COMPUTE_IF_ABSENT);
                   break;
                case RemoveCommand.COMMAND_ID:
                   operationQueue.add(Operation.REMOVE);

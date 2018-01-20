@@ -17,6 +17,7 @@ import static org.junit.Assert.assertTrue;
 import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -72,7 +73,6 @@ public class QueryDslConditionsTest extends AbstractQueryTest {
 
    protected static EmbeddedCacheManager createCacheManager() throws Exception {
       GlobalConfigurationBuilder gcfg = new GlobalConfigurationBuilder();
-      gcfg.globalJmxStatistics().allowDuplicateDomains(true);
 
       ConfigurationBuilder cfg = new ConfigurationBuilder();
       cfg.transaction()
@@ -82,7 +82,7 @@ public class QueryDslConditionsTest extends AbstractQueryTest {
             .addIndexedEntity(getModelFactory().getUserImplClass())
             .addIndexedEntity(getModelFactory().getAccountImplClass())
             .addIndexedEntity(getModelFactory().getTransactionImplClass())
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("error_handler", "org.infinispan.all.embeddedquery.testdomain.StaticTestingErrorHandler")
             .addProperty("lucene_version", "LUCENE_CURRENT");
 
@@ -120,6 +120,8 @@ public class QueryDslConditionsTest extends AbstractQueryTest {
       user1.setAge(22);
       user1.setAccountIds(new HashSet<>(Arrays.asList(1, 2)));
       user1.setNotes("Lorem ipsum dolor sit amet");
+      user1.setCreationDate(Instant.parse("2011-12-03T10:15:30Z"));
+      user1.setPasswordExpirationDate(Instant.parse("2011-12-03T10:15:30Z"));
 
       Address address1 = getModelFactory().makeAddress();
       address1.setStreet("Main Street");
@@ -131,8 +133,11 @@ public class QueryDslConditionsTest extends AbstractQueryTest {
       user2.setId(2);
       user2.setName("Spider");
       user2.setSurname("Man");
+      user2.setSalutation("Mr.");
       user2.setGender(User.Gender.MALE);
       user2.setAccountIds(Collections.singleton(3));
+      user2.setCreationDate(Instant.parse("2011-12-03T10:15:30Z"));
+      user2.setPasswordExpirationDate(Instant.parse("2011-12-03T10:15:30Z"));
 
       Address address2 = getModelFactory().makeAddress();
       address2.setStreet("Old Street");
@@ -148,8 +153,11 @@ public class QueryDslConditionsTest extends AbstractQueryTest {
       user3.setId(3);
       user3.setName("Spider");
       user3.setSurname("Woman");
+      user3.setSalutation("Ms.");
       user3.setGender(User.Gender.FEMALE);
       user3.setAccountIds(Collections.emptySet());
+      user3.setCreationDate(Instant.parse("2011-12-03T10:15:30Z"));
+      user3.setPasswordExpirationDate(Instant.parse("2011-12-03T10:15:30Z"));
 
       Account account1 = getModelFactory().makeAccount();
       account1.setId(1);
@@ -2559,6 +2567,45 @@ public class QueryDslConditionsTest extends AbstractQueryTest {
    }
 
    @Test
+   public void testCountNull2() {
+      QueryFactory qf = getQueryFactory();
+      Query q = qf.from(getModelFactory().getUserImplClass())
+            .select(property("name"), count("age"))
+            .groupBy("name")
+            .orderBy("name")
+            .build();
+
+      List<Object[]> list = q.list();
+      assertEquals(2, list.size());
+      assertEquals(2, list.get(0).length);
+      assertEquals("John", list.get(0)[0]);
+      assertEquals(1L, list.get(0)[1]);
+      assertEquals(2, list.get(1).length);
+      assertEquals("Spider", list.get(1)[0]);
+      assertEquals(0L, list.get(1)[1]);
+   }
+
+   @Test
+   public void testCountNull3() {
+      QueryFactory qf = getQueryFactory();
+
+      Query q = qf.from(getModelFactory().getUserImplClass())
+            .select(property("name"), count("salutation"))
+            .groupBy("name")
+            .orderBy("name")
+            .build();
+
+      List<Object[]> list = q.list();
+      assertEquals(2, list.size());
+      assertEquals(2, list.get(0).length);
+      assertEquals("John", list.get(0)[0]);
+      assertEquals(0L, list.get(0)[1]);
+      assertEquals(2, list.get(1).length);
+      assertEquals("Spider", list.get(1)[0]);
+      assertEquals(2L, list.get(1)[1]);
+   }
+
+   @Test
    public void testAvgNull() {
       QueryFactory qf = getQueryFactory();
       Query q = qf.from(getModelFactory().getUserImplClass())
@@ -2567,7 +2614,7 @@ public class QueryDslConditionsTest extends AbstractQueryTest {
       List<Object[]> list = q.list();
       assertEquals(1, list.size());
       assertEquals(1, list.get(0).length);
-      assertEquals(22.0, list.get(0)[0]);  // only non-null "age"s were counted
+      assertEquals(22.0, list.get(0)[0]);  // only non-null "age"s were used in the average
    }
 
    @Test
@@ -3167,5 +3214,29 @@ public class QueryDslConditionsTest extends AbstractQueryTest {
 
       List<Transaction> list = q.list();
       assertEquals(50, list.size());
+   }
+
+   @Test
+   public void testInstant1() throws Exception {
+      QueryFactory qf = getQueryFactory();
+
+      Query q = qf.from(getModelFactory().getUserImplClass())
+            .having("creationDate").eq(Instant.parse("2011-12-03T10:15:30Z"))
+            .build();
+
+      List<User> list = q.list();
+      assertEquals(3, list.size());
+   }
+
+   @Test
+   public void testInstant2() throws Exception {
+      QueryFactory qf = getQueryFactory();
+
+      Query q = qf.from(getModelFactory().getUserImplClass())
+            .having("passwordExpirationDate").eq(Instant.parse("2011-12-03T10:15:30Z"))
+            .build();
+
+      List<User> list = q.list();
+      assertEquals(3, list.size());
    }
 }

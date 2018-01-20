@@ -1,5 +1,8 @@
 package org.infinispan.container.entries;
 
+import java.util.Map;
+import java.util.Objects;
+
 import org.infinispan.container.DataContainer;
 import org.infinispan.metadata.Metadata;
 
@@ -21,7 +24,7 @@ public abstract class AbstractInternalCacheEntry implements InternalCacheEntry {
    }
 
    @Override
-   public final void commit(DataContainer container, Metadata metadata) {
+   public final void commit(DataContainer container) {
       // no-op
    }
 
@@ -42,16 +45,6 @@ public abstract class AbstractInternalCacheEntry implements InternalCacheEntry {
 
    @Override
    public final void setEvicted(boolean evicted) {
-      // no-op
-   }
-
-   @Override
-   public final void setValid(boolean valid) {
-      // no-op
-   }
-
-   @Override
-   public void setLoaded(boolean loaded) {
       // no-op
    }
 
@@ -83,16 +76,6 @@ public abstract class AbstractInternalCacheEntry implements InternalCacheEntry {
    @Override
    public final boolean isEvicted() {
       return true;
-   }
-
-   @Override
-   public final boolean isValid() {
-      return true;
-   }
-
-   @Override
-   public boolean isLoaded() {
-      return false;
    }
 
    @Override
@@ -134,5 +117,20 @@ public abstract class AbstractInternalCacheEntry implements InternalCacheEntry {
       } catch (CloneNotSupportedException e) {
          throw new RuntimeException("Should never happen!", e);
       }
+   }
+
+   @Override
+   public final boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || !(o instanceof Map.Entry)) return false;
+
+      Map.Entry that = (Map.Entry) o;
+
+      return Objects.equals(getKey(), that.getKey()) && Objects.equals(getValue(), that.getValue());
+   }
+
+   @Override
+   public final int hashCode() {
+      return  31 * Objects.hashCode(getKey()) + Objects.hashCode(getValue());
    }
 }

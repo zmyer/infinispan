@@ -16,10 +16,12 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.context.TransactionalInvocationContextFactory;
 import org.infinispan.interceptors.InterceptorChain;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.impl.TransactionCoordinator;
-import org.infinispan.transaction.tm.DummyBaseTransactionManager;
-import org.infinispan.transaction.tm.DummyTransaction;
-import org.infinispan.transaction.tm.DummyXid;
+import org.infinispan.transaction.impl.TransactionOriginatorChecker;
+import org.infinispan.transaction.tm.EmbeddedBaseTransactionManager;
+import org.infinispan.transaction.tm.EmbeddedTransaction;
+import org.infinispan.transaction.tm.EmbeddedXid;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.transaction.xa.LocalXaTransaction;
 import org.infinispan.transaction.xa.TransactionFactory;
@@ -32,11 +34,11 @@ import org.testng.annotations.Test;
  * @author Mircea.Markus@jboss.com
  * @since 4.2
  */
-@Test(testName = "tx.TransactionXaAdapterTmIntegrationTest", groups = "unstable", description = "Disabled due to instability - see ISPN-1123 -- original group: unit")
+@Test(groups = "unit", testName = "tx.TransactionXaAdapterTmIntegrationTest")
 public class TransactionXaAdapterTmIntegrationTest {
    private LocalXaTransaction localTx;
    private TransactionXaAdapter xaAdapter;
-   private DummyXid xid;
+   private EmbeddedXid xid;
    private UUID uuid = UUID.randomUUID();
    private TransactionCoordinator txCoordinator;
 
@@ -45,29 +47,31 @@ public class TransactionXaAdapterTmIntegrationTest {
       Cache mockCache = mock(Cache.class);
       Configuration configuration = new ConfigurationBuilder().build();
       XaTransactionTable txTable = new XaTransactionTable();
-      txTable.initialize(null, configuration, null, null,
-                         null, null, null, null, mockCache, null, null, null, null);
+      txCoordinator = new TransactionCoordinator();
+
+
+      TestingUtil.inject(txTable, configuration, txCoordinator, mockCache, TransactionOriginatorChecker.LOCAL);
       txTable.start();
       txTable.startXidMapping();
       TransactionFactory gtf = new TransactionFactory();
       gtf.init(false, false, true, false);
       GlobalTransaction globalTransaction = gtf.newGlobalTransaction(null, false);
-      DummyBaseTransactionManager tm = new DummyBaseTransactionManager();
-      localTx = new LocalXaTransaction(new DummyTransaction(tm), globalTransaction, false, 1, 0);
-      xid = new DummyXid(uuid);
+      EmbeddedBaseTransactionManager tm = new EmbeddedBaseTransactionManager();
+      localTx = new LocalXaTransaction(new EmbeddedTransaction(tm), globalTransaction, false, 1, 0);
+      xid = new EmbeddedXid(uuid);
 
       InvocationContextFactory icf = new TransactionalInvocationContextFactory();
       CommandsFactory commandsFactory = mock(CommandsFactory.class);
       InterceptorChain invoker = mock(InterceptorChain.class);
-      txCoordinator = new TransactionCoordinator();
-      txCoordinator.init(commandsFactory, icf, invoker, txTable, null, configuration);
+
+      TestingUtil.inject(txCoordinator, commandsFactory, icf, invoker, txTable, configuration);
       xaAdapter = new TransactionXaAdapter(localTx, txTable);
 
       xaAdapter.start(xid, 0);
    }
 
    public void testPrepareOnNonexistentXid() {
-      DummyXid xid = new DummyXid(uuid);
+      EmbeddedXid xid = new EmbeddedXid(uuid);
       try {
          xaAdapter.prepare(xid);
          assert false;
@@ -77,7 +81,7 @@ public class TransactionXaAdapterTmIntegrationTest {
    }
 
    public void testCommitOnNonexistentXid() {
-      DummyXid xid = new DummyXid(uuid);
+      EmbeddedXid xid = new EmbeddedXid(uuid);
       try {
          xaAdapter.commit(xid, false);
          assert false;
@@ -87,7 +91,7 @@ public class TransactionXaAdapterTmIntegrationTest {
    }
 
    public void testRollabckOnNonexistentXid() {
-      DummyXid xid = new DummyXid(uuid);
+      EmbeddedXid xid = new EmbeddedXid(uuid);
       try {
          xaAdapter.rollback(xid);
          assert false;
@@ -108,15 +112,16 @@ public class TransactionXaAdapterTmIntegrationTest {
 
    public void testOnePhaseCommitConfigured() throws XAException {
       Configuration configuration = new ConfigurationBuilder().clustering().cacheMode(CacheMode.INVALIDATION_ASYNC).build();
-      txCoordinator.init(null, null, null, null, null, configuration);
+      TestingUtil.inject(txCoordinator, configuration);
+      txCoordinator.start();
       assert XAResource.XA_OK == xaAdapter.prepare(xid);
    }
 
    public void test1PcAndNonExistentXid() {
       Configuration configuration = new ConfigurationBuilder().clustering().cacheMode(CacheMode.INVALIDATION_ASYNC).build();
-      txCoordinator.init(null, null, null, null, null, configuration);
+      TestingUtil.inject(txCoordinator, configuration);
       try {
-         DummyXid doesNotExists = new DummyXid(uuid);
+         EmbeddedXid doesNotExists = new EmbeddedXid(uuid);
          xaAdapter.commit(doesNotExists, false);
          assert false;
       } catch (XAException e) {
@@ -126,9 +131,9 @@ public class TransactionXaAdapterTmIntegrationTest {
 
    public void test1PcAndNonExistentXid2() {
       Configuration configuration = new ConfigurationBuilder().clustering().cacheMode(CacheMode.DIST_SYNC).build();
-      txCoordinator.init(null, null, null, null, null, configuration);
+      TestingUtil.inject(txCoordinator, configuration);
       try {
-         DummyXid doesNotExists = new DummyXid(uuid);
+         EmbeddedXid doesNotExists = new EmbeddedXid(uuid);
          xaAdapter.commit(doesNotExists, true);
          assert false;
       } catch (XAException e) {

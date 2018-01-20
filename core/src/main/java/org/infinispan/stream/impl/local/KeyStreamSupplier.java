@@ -1,19 +1,18 @@
 package org.infinispan.stream.impl.local;
 
-import java.util.BitSet;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.function.ToIntFunction;
 import java.util.stream.Stream;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.cache.impl.AbstractDelegatingCache;
 import org.infinispan.commons.util.CloseableIterator;
-import org.infinispan.compat.TypeConverter;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.RemovableCloseableIterator;
+import org.infinispan.commons.util.SmallIntSet;
 import org.infinispan.context.Flag;
-import org.infinispan.distribution.ch.ConsistentHash;
-import org.infinispan.stream.impl.RemovableCloseableIterator;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -26,12 +25,12 @@ public class KeyStreamSupplier<K, V> implements AbstractLocalCacheStream.StreamS
    private static final boolean trace = log.isTraceEnabled();
 
    private final Cache<K, V> cache;
-   private final ConsistentHash hash;
+   private final ToIntFunction<Object> toIntFunction;
    private final Supplier<Stream<K>> supplier;
 
-   public KeyStreamSupplier(Cache<K, V> cache, ConsistentHash hash, Supplier<Stream<K>> supplier) {
+   public KeyStreamSupplier(Cache<K, V> cache, ToIntFunction<Object> toIntFunction, Supplier<Stream<K>> supplier) {
       this.cache = cache;
-      this.hash = hash;
+      this.toIntFunction = toIntFunction;
       this.supplier = supplier;
    }
 
@@ -43,30 +42,24 @@ public class KeyStreamSupplier<K, V> implements AbstractLocalCacheStream.StreamS
             log.tracef("Applying key filtering %s", keysToFilter);
          }
          // Make sure we aren't going remote to retrieve these
-         AdvancedCache<K, V> advancedCache =  AbstractDelegatingCache.unwrapCache(cache).getAdvancedCache()
+         AdvancedCache<K, V> advancedCache = AbstractDelegatingCache.unwrapCache(cache).getAdvancedCache()
                .withFlags(Flag.CACHE_MODE_LOCAL);
-         // Need to box the key to get the correct segment
-         TypeConverter<Object, Object, Object, Object> typeConverter =
-               advancedCache.getComponentRegistry().getComponent(TypeConverter.class);
-         stream = (Stream<K>) keysToFilter.stream()
-               .map(typeConverter::boxKey)
-               .filter(advancedCache::containsKey);
+         stream = (Stream<K>) keysToFilter.stream().filter(advancedCache::containsKey);
       } else {
          stream = supplier.get();
       }
-      if (segmentsToFilter != null && hash != null) {
+      if (segmentsToFilter != null && toIntFunction != null) {
          if (trace) {
             log.tracef("Applying segment filter %s", segmentsToFilter);
          }
-         BitSet bitSet = new BitSet(hash.getNumSegments());
-         segmentsToFilter.forEach(bitSet::set);
-         stream = stream.filter(k -> bitSet.get(hash.getSegment(k)));
+         IntSet intSet = SmallIntSet.from(segmentsToFilter);
+         stream = stream.filter(k -> intSet.contains(toIntFunction.applyAsInt(k)));
       }
       return stream;
    }
 
    @Override
    public CloseableIterator<K> removableIterator(CloseableIterator<K> realIterator) {
-      return new RemovableCloseableIterator<>(realIterator, cache, Function.identity());
+      return new RemovableCloseableIterator<>(realIterator, cache::remove);
    }
 }

@@ -5,8 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-compatibility-mode-it</artifactId>
@@ -15,50 +15,59 @@
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-client-hotrod</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-remote-query-client</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-remote-query-server</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-client-hotrod</artifactId>
          <scope>test</scope>
          <type>test-jar</type>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-rest</artifactId>
-         <classifier>classes</classifier>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -68,12 +77,12 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-memcached</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-memcached</artifactId>
          <scope>test</scope>
          <type>test-jar</type>
@@ -86,6 +95,11 @@
       <dependency>
          <groupId>org.testng</groupId>
          <artifactId>testng</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.codehaus.jackson</groupId>
+         <artifactId>jackson-mapper-asl</artifactId>
          <scope>test</scope>
       </dependency>
    </dependencies>

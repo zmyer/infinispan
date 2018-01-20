@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.infinispan.commons.marshall.SerializeWith;
 import org.infinispan.protostream.MessageMarshaller;
 import org.infinispan.protostream.WrappedMessage;
 
@@ -13,6 +14,7 @@ import org.infinispan.protostream.WrappedMessage;
  * @author anistor@redhat.com
  * @since 6.0
  */
+@SerializeWith(Externalizers.QueryRequestExternalizer.class)
 public final class QueryRequest {
 
    private String queryString;
@@ -22,6 +24,8 @@ public final class QueryRequest {
    private Long startOffset;
 
    private Integer maxResults;
+
+   private String indexedQueryMode;
 
    public String getQueryString() {
       return queryString;
@@ -66,6 +70,14 @@ public final class QueryRequest {
       return params;
    }
 
+   public void setIndexedQueryMode(String indexedQueryMode) {
+      this.indexedQueryMode = indexedQueryMode;
+   }
+
+   public String getIndexedQueryMode() {
+      return indexedQueryMode;
+   }
+
    static final class Marshaller implements MessageMarshaller<QueryRequest> {
 
       @Override
@@ -75,6 +87,7 @@ public final class QueryRequest {
          queryRequest.setStartOffset(reader.readLong("startOffset"));
          queryRequest.setMaxResults(reader.readInt("maxResults"));
          queryRequest.setNamedParameters(reader.readCollection("namedParameters", new ArrayList<>(), NamedParameter.class));
+         queryRequest.setIndexedQueryMode(reader.readString("indexedQueryMode"));
          return queryRequest;
       }
 
@@ -84,6 +97,7 @@ public final class QueryRequest {
          writer.writeLong("startOffset", queryRequest.getStartOffset());
          writer.writeInt("maxResults", queryRequest.getMaxResults());
          writer.writeCollection("namedParameters", queryRequest.getNamedParameters(), NamedParameter.class);
+         writer.writeString("indexedQueryMode", queryRequest.getIndexedQueryMode());
       }
 
       @Override
@@ -97,11 +111,12 @@ public final class QueryRequest {
       }
    }
 
+   @SerializeWith(Externalizers.NamedParameterExternalizer.class)
    public static final class NamedParameter {
 
-      private String name;
+      private final String name;
 
-      private Object value;
+      private final Object value;
 
       public NamedParameter(String name, Object value) {
          if (name == null) {

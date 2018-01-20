@@ -1,7 +1,5 @@
 package org.infinispan.functional.impl;
 
-import static org.infinispan.functional.impl.Params.withFuture;
-
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -14,14 +12,13 @@ import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
 import org.infinispan.commands.functional.ReadWriteManyCommand;
 import org.infinispan.commands.functional.ReadWriteManyEntriesCommand;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadWriteMap;
-import org.infinispan.commons.api.functional.Listeners.ReadWriteListeners;
-import org.infinispan.commons.api.functional.Param;
-import org.infinispan.commons.api.functional.Param.FutureMode;
-import org.infinispan.commons.api.functional.Traversable;
 import org.infinispan.commons.util.Experimental;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.FunctionalMap.ReadWriteMap;
+import org.infinispan.functional.Listeners.ReadWriteListeners;
+import org.infinispan.functional.Param;
+import org.infinispan.functional.Traversable;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -33,15 +30,13 @@ import org.infinispan.util.logging.LogFactory;
 @Experimental
 public final class ReadWriteMapImpl<K, V> extends AbstractFunctionalMap<K, V> implements ReadWriteMap<K, V> {
    private static final Log log = LogFactory.getLog(ReadWriteMapImpl.class);
-   private final Params params;
 
    private ReadWriteMapImpl(Params params, FunctionalMapImpl<K, V> functionalMap) {
-      super(functionalMap);
-      this.params = params;
+      super(params, functionalMap);
    }
 
    public static <K, V> ReadWriteMap<K, V> create(FunctionalMapImpl<K, V> functionalMap) {
-      return new ReadWriteMapImpl<>(Params.from(functionalMap.params.params), functionalMap);
+      return create(Params.from(functionalMap.params.params), functionalMap);
    }
 
    private static <K, V> ReadWriteMap<K, V> create(Params params, FunctionalMapImpl<K, V> functionalMap) {
@@ -51,39 +46,50 @@ public final class ReadWriteMapImpl<K, V> extends AbstractFunctionalMap<K, V> im
    @Override
    public <R> CompletableFuture<R> eval(K key, Function<ReadWriteEntryView<K, V>, R> f) {
       log.tracef("Invoked eval(k=%s, %s)", key, params);
-      Param<FutureMode> futureMode = params.get(FutureMode.ID);
-      ReadWriteKeyCommand cmd = fmap.cmdFactory().buildReadWriteKeyCommand(key, f, params);
+      Object keyEncoded = keyDataConversion.toStorage(key);
+      ReadWriteKeyCommand cmd = fmap.commandsFactory.buildReadWriteKeyCommand(keyEncoded, (Function) f, params, keyDataConversion, valueDataConversion);
       InvocationContext ctx = getInvocationContext(true, 1);
-      ctx.setLockOwner(cmd.getKeyLockOwner());
-      return withFuture(futureMode, fmap.asyncExec(), () -> (R) invoke(ctx, cmd));
+      if (ctx.getLockOwner() == null) {
+         ctx.setLockOwner(cmd.getKeyLockOwner());
+      }
+      return invokeAsync(ctx, cmd);
    }
 
    @Override
    public <R> CompletableFuture<R> eval(K key, V value, BiFunction<V, ReadWriteEntryView<K, V>, R> f) {
       log.tracef("Invoked eval(k=%s, v=%s, %s)", key, value, params);
-      Param<FutureMode> futureMode = params.get(FutureMode.ID);
-      ReadWriteKeyValueCommand cmd = fmap.cmdFactory().buildReadWriteKeyValueCommand(key, value, f, params);
+      Object keyEncoded = keyDataConversion.toStorage(key);
+      Object valueEncoded = valueDataConversion.toStorage(value);
+      ReadWriteKeyValueCommand cmd = fmap.commandsFactory.buildReadWriteKeyValueCommand(keyEncoded, valueEncoded, (BiFunction) f, params, keyDataConversion, valueDataConversion);
       InvocationContext ctx = getInvocationContext(true, 1);
-      ctx.setLockOwner(cmd.getKeyLockOwner());
-      return withFuture(futureMode, fmap.asyncExec(), () -> (R) invoke(ctx, cmd));
+      if (ctx.getLockOwner() == null) {
+         ctx.setLockOwner(cmd.getKeyLockOwner());
+      }
+      return invokeAsync(ctx, cmd);
    }
 
    @Override
    public <R> Traversable<R> evalMany(Map<? extends K, ? extends V> entries, BiFunction<V, ReadWriteEntryView<K, V>, R> f) {
       log.tracef("Invoked evalMany(entries=%s, %s)", entries, params);
-      ReadWriteManyEntriesCommand cmd = fmap.cmdFactory().buildReadWriteManyEntriesCommand(entries, f, params);
+      Map encodedEntries = encodeEntries(entries);
+      ReadWriteManyEntriesCommand cmd = fmap.commandsFactory.buildReadWriteManyEntriesCommand(encodedEntries, f, params, keyDataConversion, valueDataConversion);
       InvocationContext ctx = getInvocationContext(true, entries.size());
-      ctx.setLockOwner(cmd.getKeyLockOwner());
-      return Traversables.of(((List<R>) invoke(ctx, cmd)).stream());
+      if (ctx.getLockOwner() == null) {
+         ctx.setLockOwner(cmd.getKeyLockOwner());
+      }
+      return Traversables.of(((List<R>) invokeAsync(ctx, cmd).join()).stream());
    }
 
    @Override
    public <R> Traversable<R> evalMany(Set<? extends K> keys, Function<ReadWriteEntryView<K, V>, R> f) {
       log.tracef("Invoked evalMany(keys=%s, %s)", keys, params);
-      ReadWriteManyCommand cmd = fmap.cmdFactory().buildReadWriteManyCommand(keys, f, params);
+      Set encodedKeys = encodeKeys(keys);
+      ReadWriteManyCommand cmd = fmap.commandsFactory.buildReadWriteManyCommand(encodedKeys, f, params, keyDataConversion, valueDataConversion);
       InvocationContext ctx = getInvocationContext(true, keys.size());
-      ctx.setLockOwner(cmd.getKeyLockOwner());
-      return Traversables.of(((List<R>) invoke(ctx, cmd)).stream());
+      if (ctx.getLockOwner() == null) {
+         ctx.setLockOwner(cmd.getKeyLockOwner());
+      }
+      return Traversables.of(((List<R>) invokeAsync(ctx, cmd).join()).stream());
    }
 
    @Override
@@ -92,15 +98,18 @@ public final class ReadWriteMapImpl<K, V> extends AbstractFunctionalMap<K, V> im
       // TODO: during commmand execution the set is iterated multiple times, and can execute remote operations
       // therefore we should rather have separate command (or different semantics for keys == null)
       Set<K> keys = new HashSet<>(fmap.cache.keySet());
-      ReadWriteManyCommand cmd = fmap.cmdFactory().buildReadWriteManyCommand(keys, f, params);
-      InvocationContext ctx = getInvocationContext(true, keys.size());
-      ctx.setLockOwner(cmd.getKeyLockOwner());
-      return Traversables.of(((List<R>) invoke(ctx, cmd)).stream());
+      Set<K> encodedKeys = encodeKeys(keys);
+      ReadWriteManyCommand cmd = fmap.commandsFactory.buildReadWriteManyCommand(encodedKeys, f, params, keyDataConversion, valueDataConversion);
+      InvocationContext ctx = getInvocationContext(true, encodedKeys.size());
+      if (ctx.getLockOwner() == null) {
+         ctx.setLockOwner(cmd.getKeyLockOwner());
+      }
+      return Traversables.of(((List<R>) invokeAsync(ctx, cmd).join()).stream());
    }
 
    @Override
    public ReadWriteListeners<K, V> listeners() {
-      return fmap.notifier();
+      return fmap.notifier;
    }
 
    @Override

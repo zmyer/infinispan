@@ -6,6 +6,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.infinispan.commons.util.ByRef;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.InternalCacheEntry;
@@ -73,32 +74,53 @@ public class PersistenceUtil {
    public static <K, V> InternalCacheEntry<K,V> loadAndStoreInDataContainer(DataContainer<K, V> dataContainer, final PersistenceManager persistenceManager,
                                                          K key, final InvocationContext ctx, final TimeService timeService,
                                                          final AtomicReference<Boolean> isLoaded) {
-      return dataContainer.compute(key, (k, oldEntry, factory) -> {
+      final ByRef<Boolean> expired = new ByRef<>(null);
+      InternalCacheEntry<K,V> entry = dataContainer.compute(key, (k, oldEntry, factory) -> {
          //under the lock, check if the entry exists in the DataContainer
-         if (oldEntry != null && (!oldEntry.canExpire() || !oldEntry.isExpired(timeService.wallClockTime()))) {
-            isLoaded.set(null); //not loaded
+         if (oldEntry != null) {
+            if (isLoaded != null) {
+               isLoaded.set(null); //not loaded
+            }
+            if (oldEntry.canExpire() && oldEntry.isExpired(timeService.wallClockTime())) {
+               expired.set(Boolean.TRUE);
+               return oldEntry;
+            }
             return oldEntry; //no changes in container
          }
 
          MarshalledEntry loaded = loadAndCheckExpiration(persistenceManager, k, ctx, timeService);
          if (loaded == null) {
-            isLoaded.set(Boolean.FALSE); //not loaded
+            if (isLoaded != null) {
+               isLoaded.set(Boolean.FALSE); //not loaded
+            }
             return null; //no changed in container
          }
 
          InternalCacheEntry<K, V> newEntry = convert(loaded, factory);
 
-         isLoaded.set(Boolean.TRUE); //loaded!
+         if (isLoaded != null) {
+            isLoaded.set(Boolean.TRUE); //loaded!
+         }
          return newEntry;
       });
+      if (expired.get() == Boolean.TRUE) {
+         return null;
+      } else {
+         return entry;
+      }
    }
 
    public static <K, V> InternalCacheEntry<K,V> loadAndComputeInDataContainer(DataContainer<K, V> dataContainer, final PersistenceManager persistenceManager,
                                                                               K key, final InvocationContext ctx, final TimeService timeService,
                                                                               DataContainer.ComputeAction<K, V> action) {
-      return dataContainer.compute(key, (k, oldEntry, factory) -> {
+      final ByRef<Boolean> expired = new ByRef<>(null);
+      InternalCacheEntry<K,V> entry = dataContainer.compute(key, (k, oldEntry, factory) -> {
          //under the lock, check if the entry exists in the DataContainer
-         if (oldEntry != null && (!oldEntry.canExpire() || !oldEntry.isExpired(timeService.wallClockTime()))) {
+         if (oldEntry != null) {
+            if (oldEntry.canExpire() && oldEntry.isExpired(timeService.wallClockTime())) {
+               expired.set(Boolean.TRUE);
+               return oldEntry;
+            }
             return action.compute(k, oldEntry, factory);
          }
 
@@ -110,6 +132,11 @@ public class PersistenceUtil {
          InternalCacheEntry<K, V> newEntry = convert(loaded, factory);
          return action.compute(k, newEntry, factory);
       });
+      if (expired.get() == Boolean.TRUE) {
+         return null;
+      } else {
+         return entry;
+      }
    }
 
    public static MarshalledEntry loadAndCheckExpiration(PersistenceManager persistenceManager, Object key,

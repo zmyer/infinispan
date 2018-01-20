@@ -6,6 +6,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -63,7 +64,7 @@ public class RemoteListenerWithDslFilterIT extends RemoteQueryBaseIT {
    }
 
    @Test
-   public void testEventFilter() throws Exception {
+   public void testEventFilter() {
       User user1 = new User();
       user1.setId(1);
       user1.setName("John");
@@ -154,7 +155,7 @@ public class RemoteListenerWithDslFilterIT extends RemoteQueryBaseIT {
          useRawData = true, includeCurrentState = true)
    public static class ClientEntryListener {
 
-      private final Log log = LogFactory.getLog(getClass());
+      private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
       public final BlockingQueue<FilterResult> createEvents = new LinkedBlockingQueue<>();
 
@@ -167,6 +168,7 @@ public class RemoteListenerWithDslFilterIT extends RemoteQueryBaseIT {
       }
 
       @ClientCacheEntryCreated
+      @SuppressWarnings("unused")
       public void handleClientCacheEntryCreatedEvent(ClientCacheEntryCustomEvent event) throws IOException {
          FilterResult r = ProtobufUtil.fromWrappedByteArray(serializationContext, (byte[]) event.getEventData());
          createEvents.add(r);
@@ -178,6 +180,7 @@ public class RemoteListenerWithDslFilterIT extends RemoteQueryBaseIT {
       }
 
       @ClientCacheEntryModified
+      @SuppressWarnings("unused")
       public void handleClientCacheEntryModifiedEvent(ClientCacheEntryCustomEvent event) throws IOException {
          FilterResult r = ProtobufUtil.fromWrappedByteArray(serializationContext, (byte[]) event.getEventData());
          modifyEvents.add(r);
@@ -190,6 +193,7 @@ public class RemoteListenerWithDslFilterIT extends RemoteQueryBaseIT {
       }
 
       @ClientCacheEntryRemoved
+      @SuppressWarnings("unused")
       public void handleClientCacheEntryRemovedEvent(ClientCacheEntryRemovedEvent event) {
          log.debugf("handleClientCacheEntryRemovedEvent %s\n", event.getKey());
       }

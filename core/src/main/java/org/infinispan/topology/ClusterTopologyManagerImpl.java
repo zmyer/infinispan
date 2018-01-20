@@ -8,11 +8,13 @@ import static org.infinispan.util.logging.events.Messages.MESSAGES;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
@@ -26,6 +28,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.commons.util.InfinispanCollections;
+import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.executors.LimitedExecutor;
@@ -43,7 +47,9 @@ import org.infinispan.notifications.cachemanagerlistener.annotation.Merged;
 import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
 import org.infinispan.notifications.cachemanagerlistener.event.ViewChangedEvent;
 import org.infinispan.partitionhandling.AvailabilityMode;
+import org.infinispan.partitionhandling.PartitionHandling;
 import org.infinispan.partitionhandling.impl.AvailabilityStrategy;
+import org.infinispan.partitionhandling.impl.LostDataCheck;
 import org.infinispan.partitionhandling.impl.PreferAvailabilityStrategy;
 import org.infinispan.partitionhandling.impl.PreferConsistencyStrategy;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
@@ -56,6 +62,7 @@ import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
+import org.infinispan.statetransfer.RebalanceType;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.logging.Log;
@@ -97,15 +104,15 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
    private static final Log log = LogFactory.getLog(ClusterTopologyManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   private Transport transport;
-   private GlobalConfiguration globalConfiguration;
-   private GlobalComponentRegistry gcr;
-   private CacheManagerNotifier cacheManagerNotifier;
-   private EmbeddedCacheManager cacheManager;
+   @Inject private Transport transport;
+   @Inject private GlobalConfiguration globalConfiguration;
+   @Inject private GlobalComponentRegistry gcr;
+   @Inject private CacheManagerNotifier cacheManagerNotifier;
+   @Inject private EmbeddedCacheManager cacheManager;
+   @Inject @ComponentName(ASYNC_TRANSPORT_EXECUTOR)
    private ExecutorService asyncTransportExecutor;
-   private LimitedExecutor viewHandlingExecutor;
-   private EventLogManager eventLogManager;
-   private PersistentUUIDManager persistentUUIDManager;
+   @Inject private EventLogManager eventLogManager;
+   @Inject private PersistentUUIDManager persistentUUIDManager;
 
    // These need to be volatile because they are sometimes read without holding the view handling lock.
    private volatile int viewId = -1;
@@ -113,28 +120,12 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
    private final Lock clusterManagerLock = new ReentrantLock();
    private final Condition clusterStateChanged = clusterManagerLock.newCondition();
 
-
    private final ConcurrentMap<String, ClusterCacheStatus> cacheStatusMap = CollectionFactory.makeConcurrentMap();
    private ClusterViewListener viewListener;
+   private LimitedExecutor viewHandlingExecutor;
 
    // The global rebalancing status
    private volatile boolean globalRebalancingEnabled = true;
-
-   @Inject
-   public void inject(Transport transport,
-                      @ComponentName(ASYNC_TRANSPORT_EXECUTOR) ExecutorService asyncTransportExecutor,
-                      GlobalConfiguration globalConfiguration, GlobalComponentRegistry gcr,
-                      CacheManagerNotifier cacheManagerNotifier, EmbeddedCacheManager cacheManager,
-                      EventLogManager eventLogManager, PersistentUUIDManager persistentUUIDManager) {
-      this.transport = transport;
-      this.asyncTransportExecutor = asyncTransportExecutor;
-      this.globalConfiguration = globalConfiguration;
-      this.gcr = gcr;
-      this.cacheManagerNotifier = cacheManagerNotifier;
-      this.cacheManager = cacheManager;
-      this.eventLogManager = eventLogManager;
-      this.persistentUUIDManager = persistentUUIDManager;
-   }
 
    @Start(priority = 100)
    public void start() {
@@ -219,7 +210,7 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
             return null;
          }
 
-         cacheStatus = initCacheStatusIfAbsent(cacheName);
+         cacheStatus = initCacheStatusIfAbsent(cacheName, joinInfo.getCacheMode());
       } finally {
          clusterManagerLock.unlock();
       }
@@ -246,25 +237,25 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
    }
 
    @Override
-   public void handleRebalanceCompleted(String cacheName, Address node, int topologyId, Throwable throwable, int viewId) throws Exception {
+   public void handleRebalancePhaseConfirm(String cacheName, Address node, int topologyId, Throwable throwable, int viewId) throws Exception {
       if (throwable != null) {
          // TODO We could try to update the pending CH such that nodes reporting errors are not considered to hold any state
          // For now we are just logging the error and proceeding as if the rebalance was successful everywhere
-         log.rebalanceError(cacheName, node, throwable);
+         log.rebalanceError(cacheName, node, topologyId, throwable);
       }
 
       CLUSTER.rebalanceCompleted(cacheName, node, topologyId);
-      eventLogManager.getEventLogger().context(cacheName).scope(node.toString()).info(EventLogCategory.CLUSTER, MESSAGES.rebalanceCompleted());
+      eventLogManager.getEventLogger().context(cacheName).scope(node.toString()).info(EventLogCategory.CLUSTER, MESSAGES.rebalancePhaseConfirmed(node, topologyId));
 
 
       ClusterCacheStatus cacheStatus = cacheStatusMap.get(cacheName);
-      if (cacheStatus == null || !cacheStatus.isRebalanceInProgress()) {
+      if (cacheStatus == null) {
          log.debugf("Ignoring rebalance confirmation from %s " +
                "for cache %s because it doesn't have a cache status entry", node, cacheName);
          return;
       }
 
-      cacheStatus.doConfirmRebalance(node, topologyId);
+      cacheStatus.confirmRebalancePhase(node, topologyId);
    }
 
    private static class CacheTopologyFilterReuser implements ResponseFilter {
@@ -413,27 +404,58 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
       return true;
    }
 
-   private ClusterCacheStatus initCacheStatusIfAbsent(String cacheName) {
+   private ClusterCacheStatus initCacheStatusIfAbsent(String cacheName, CacheMode cacheMode) {
       return cacheStatusMap.computeIfAbsent(cacheName, (name) -> {
          // We assume that any cache with partition handling configured is already defined on all the nodes
          // (including the coordinator) before it starts on any node.
-         Configuration cacheConfiguration = cacheManager.getCacheConfiguration(cacheName);
-         AvailabilityStrategy availabilityStrategy;
-         if (cacheConfiguration != null && cacheConfiguration.clustering().partitionHandling().enabled()) {
-            availabilityStrategy = new PreferConsistencyStrategy(eventLogManager, persistentUUIDManager);
+         LostDataCheck lostDataCheck;
+         if (cacheMode.isScattered()) {
+            lostDataCheck = (stableCH, newMembers) -> {
+               // data can be lost if more than one node is lost
+               Set<Address> lostMembers = new HashSet<>(stableCH.getMembers());
+               lostMembers.removeAll(newMembers);
+               log.debugf("Stable CH members: %s, actual members: %s, lost members: %s",
+                  stableCH.getMembers(), newMembers, lostMembers);
+               return lostMembers.size() > 1;
+            };
          } else {
-            availabilityStrategy = new PreferAvailabilityStrategy(eventLogManager, persistentUUIDManager);
+            lostDataCheck = (stableCH, newMembers) -> {
+               // data is lost when some segment lost all owners
+               for (int i = 0; i < stableCH.getNumSegments(); i++) {
+                  if (!InfinispanCollections.containsAny(newMembers, stableCH.locateOwnersForSegment(i)))
+                     return true;
+               }
+               return false;
+            };
          }
-         Optional<GlobalStateManager> globalStateManager = cacheManager.getGlobalComponentRegistry().getOptionalComponent(GlobalStateManager.class);
+         AvailabilityStrategy availabilityStrategy;
+         Configuration config = cacheManager.getCacheConfiguration(cacheName);
+         PartitionHandling partitionHandling = config != null ? config.clustering().partitionHandling().whenSplit() : null;
+         boolean resolveConflictsOnMerge = resolveConflictsOnMerge(config, cacheMode);
+         if (partitionHandling != null && partitionHandling != PartitionHandling.ALLOW_READ_WRITES) {
+            availabilityStrategy = new PreferConsistencyStrategy(eventLogManager, persistentUUIDManager, lostDataCheck);
+         } else {
+            availabilityStrategy = new PreferAvailabilityStrategy(eventLogManager, persistentUUIDManager, lostDataCheck);
+         }
+         Optional<GlobalStateManager> globalStateManager = gcr.getOptionalComponent(GlobalStateManager.class);
          Optional<ScopedPersistentState> persistedState = globalStateManager.flatMap(gsm -> gsm.readScopedState(cacheName));
-         return new ClusterCacheStatus(cacheName, availabilityStrategy, this, transport, persistedState, persistentUUIDManager);
+         return new ClusterCacheStatus(cacheManager, cacheName, availabilityStrategy, RebalanceType.from(cacheMode),
+               this, transport,
+               persistedState, persistentUUIDManager, resolveConflictsOnMerge);
       });
+   }
+
+   private boolean resolveConflictsOnMerge(Configuration config, CacheMode cacheMode) {
+      if (config == null || cacheMode.isScattered() || cacheMode.isInvalidation())
+         return false;
+
+      return config.clustering().partitionHandling().resolveConflictsOnMerge();
    }
 
    @Override
    public void broadcastRebalanceStart(String cacheName, CacheTopology cacheTopology, boolean totalOrder, boolean distributed) {
       CLUSTER.startRebalance(cacheName, cacheTopology);
-      eventLogManager.getEventLogger().context(cacheName).scope(transport.getAddress()).info(EventLogCategory.CLUSTER, MESSAGES.rebalanceStarted());
+      eventLogManager.getEventLogger().context(cacheName).scope(transport.getAddress()).info(EventLogCategory.CLUSTER, MESSAGES.rebalanceStarted(cacheTopology.getTopologyId()));
       ReplicableCommand command = new CacheTopologyControlCommand(cacheName,
             CacheTopologyControlCommand.Type.REBALANCE_START, transport.getAddress(), cacheTopology, null,
             viewId);
@@ -459,8 +481,9 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
                   log.debug("Timed out waiting for cluster status responses, trying again");
                } else if (e.getCause() instanceof SuspectException) {
                   if (transport.getMembers().containsAll(clusterMembers)) {
-                     log.debug("Received a CacheNotFoundResponse from one of the members, trying again");
-                     Thread.sleep(getGlobalTimeout() / CLUSTER_RECOVERY_ATTEMPTS / 2);
+                     int sleepTime = getGlobalTimeout() / CLUSTER_RECOVERY_ATTEMPTS / 2;
+                     log.debugf(e, "Received an exception from one of the members, will try again after %d ms", sleepTime);
+                     Thread.sleep(sleepTime);
                   }
                }
                continue;
@@ -478,11 +501,7 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
          recoveredRebalancingStatus &= nodeStatus.isRebalancingEnabled();
          for (Map.Entry<String, CacheStatusResponse> statusEntry : nodeStatus.getCaches().entrySet()) {
             String cacheName = statusEntry.getKey();
-            Map<Address, CacheStatusResponse> cacheResponses = responsesByCache.get(cacheName);
-            if (cacheResponses == null) {
-               cacheResponses = new HashMap<>();
-               responsesByCache.put(cacheName, cacheResponses);
-            }
+            Map<Address, CacheStatusResponse> cacheResponses = responsesByCache.computeIfAbsent(cacheName, k -> new HashMap<>());
             cacheResponses.put(sender, statusEntry.getValue());
          }
       }
@@ -493,7 +512,8 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
       CountDownLatch latch = new CountDownLatch(responsesByCache.size());
       LimitedExecutor cs = new LimitedExecutor("Merge-" + newViewId, asyncTransportExecutor, maxThreads);
       for (final Map.Entry<String, Map<Address, CacheStatusResponse>> e : responsesByCache.entrySet()) {
-         ClusterCacheStatus cacheStatus = initCacheStatusIfAbsent(e.getKey());
+         CacheJoinInfo joinInfo = e.getValue().values().stream().findAny().get().getCacheJoinInfo();
+         ClusterCacheStatus cacheStatus = initCacheStatusIfAbsent(e.getKey(), joinInfo.getCacheMode());
          cs.execute(() -> {
             try {
                cacheStatus.doMergePartitions(e.getValue());
@@ -556,7 +576,7 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
          while ((viewId < joinerViewId || clusterManagerStatus == ClusterManagerStatus.RECOVERING_CLUSTER) &&
                clusterManagerStatus.isRunning()) {
             if (nanosTimeout <= 0) {
-               throw log.timeoutWaitingForView(joinerViewId, transport.getViewId(), clusterManagerStatus);
+               throw log.coordinatorTimeoutWaitingForView(joinerViewId, transport.getViewId(), clusterManagerStatus);
             }
             nanosTimeout = clusterStateChanged.awaitNanos(nanosTimeout);
          }
@@ -711,6 +731,13 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
       ReplicableCommand command = new CacheTopologyControlCommand(cacheName,
             CacheTopologyControlCommand.Type.SHUTDOWN_PERFORM, transport.getAddress(), cacheTopology, null, viewId);
       executeOnClusterSync(command, getGlobalTimeout(), totalOrder, distributed, null);
+   }
+
+   @Override
+   public void setInitialCacheTopologyId(String cacheName, int topologyId) {
+      Configuration configuration = cacheManager.getCacheConfiguration(cacheName);
+      ClusterCacheStatus cacheStatus = initCacheStatusIfAbsent(cacheName, configuration.clustering().cacheMode());
+      cacheStatus.setInitialTopologyId(topologyId);
    }
 
    @Override

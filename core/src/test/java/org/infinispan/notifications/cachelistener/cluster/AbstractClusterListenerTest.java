@@ -222,7 +222,7 @@ public abstract class AbstractClusterListenerTest extends AbstractClusterListene
       log.info("Node 0 killed");
 
       TestingUtil.blockUntilViewsReceived(60000, false, cache1, cache2);
-      TestingUtil.waitForRehashToComplete(cache1, cache2);
+      TestingUtil.waitForNoRebalance(cache1, cache2);
 
       assertEquals(cache1.getAdvancedCache().getListeners().size(), cache1ListenerSize -
             (cacheMode.isDistributed() ? 1 : 0));
@@ -240,8 +240,6 @@ public abstract class AbstractClusterListenerTest extends AbstractClusterListene
       log.info("Adding a new node ..");
       addClusterEnabledCacheManager(builderUsed);
       log.info("Added a new node");
-
-      defineConfigurationOnAllManagers(CACHE_NAME, builderUsed);
 
       Cache<Object, String> cache3 = cache(3, CACHE_NAME);
       MagicKey key = new MagicKey(cache3);
@@ -261,8 +259,6 @@ public abstract class AbstractClusterListenerTest extends AbstractClusterListene
       log.info("Adding a new node ..");
       addClusterEnabledCacheManager(builderUsed);
       log.info("Added a new node");
-
-      defineConfigurationOnAllManagers(CACHE_NAME, builderUsed);
 
       Cache<Object, String> cache3 = cache(3, CACHE_NAME);
       MagicKey key = new MagicKey(cache3);
@@ -379,7 +375,7 @@ public abstract class AbstractClusterListenerTest extends AbstractClusterListene
       log.info("Node 1 killed");
 
       TestingUtil.blockUntilViewsReceived(10000, false, cacheManagers);
-      TestingUtil.waitForRehashToComplete(caches(CACHE_NAME));
+      TestingUtil.waitForNoRebalance(caches(CACHE_NAME));
 
       assertEquals(clusterListener.hasIncludeState() ? 1 : 0, clusterListener.events.size());
    }

@@ -29,6 +29,7 @@ import java.util.Map;
 
 import javax.xml.stream.XMLStreamException;
 
+import org.infinispan.globalstate.ConfigurationStorage;
 import org.infinispan.security.impl.ClusterRoleMapper;
 import org.infinispan.security.impl.CommonNameRoleMapper;
 import org.infinispan.security.impl.IdentityRoleMapper;
@@ -85,6 +86,20 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
                     writer.writeEndElement();
                 }
 
+                if (container.hasDefined(ModelKeys.MODULES)) {
+                    writer.writeStartElement(Element.MODULES.getLocalName());
+                    ModelNode modules = container.get(ModelKeys.MODULES, ModelKeys.MODULES_NAME);
+                    for (ModelNode moduleNode : modules.asList()) {
+                        writer.writeStartElement(Element.MODULE.getLocalName());
+                        CacheContainerModuleResource.NAME.marshallAsAttribute(moduleNode.get(ModelKeys.NAME), writer);
+                        if (moduleNode.hasDefined(ModelKeys.SLOT)) {
+                            CacheContainerModuleResource.SLOT.marshallAsAttribute(moduleNode.get(ModelKeys.SLOT), false, writer);
+                        }
+                        writer.writeEndElement();
+                    }
+                    writer.writeEndElement();
+                }
+
                 if (container.hasDefined(ModelKeys.SECURITY)) {
                     writer.writeStartElement(Element.SECURITY.getLocalName());
                     ModelNode security = container.get(ModelKeys.SECURITY, ModelKeys.SECURITY_NAME);
@@ -127,7 +142,27 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
                     writer.writeStartElement(Element.GLOBAL_STATE.getLocalName());
                     ModelNode globalState = container.get(ModelKeys.GLOBAL_STATE, ModelKeys.GLOBAL_STATE_NAME);
                     writeStatePathElement(Element.PERSISTENT_LOCATION, ModelKeys.PERSISTENT_LOCATION, writer, globalState);
+                    writeStatePathElement(Element.SHARED_PERSISTENT_LOCATION, ModelKeys.SHARED_PERSISTENT_LOCATION, writer, globalState);
                     writeStatePathElement(Element.TEMPORARY_LOCATION, ModelKeys.TEMPORARY_LOCATION, writer, globalState);
+                    if (globalState.hasDefined(ModelKeys.CONFIGURATION_STORAGE)) {
+                        ConfigurationStorage configurationStorage = ConfigurationStorage.valueOf(globalState.get(ModelKeys.CONFIGURATION_STORAGE).asString());
+                        switch (configurationStorage) {
+                            case VOLATILE:
+                                writer.writeEmptyElement(Element.VOLATILE_CONFIGURATION_STORAGE.getLocalName());
+                                break;
+                            case OVERLAY:
+                                writer.writeEmptyElement(Element.OVERLAY_CONFIGURATION_STORAGE.getLocalName());
+                                break;
+                            case MANAGED:
+                                writer.writeEmptyElement(Element.MANAGED_CONFIGURATION_STORAGE.getLocalName());
+                                break;
+                            case CUSTOM:
+                                writer.writeStartElement(Element.CUSTOM_CONFIGURATION_STORAGE.getLocalName());
+                                writer.writeAttribute(Attribute.CLASS.getLocalName(), globalState.get(ModelKeys.CONFIGURATION_STORAGE_CLASS).asString());
+                                writer.writeEndElement();
+                                break;
+                        }
+                    }
                     writer.writeEndElement();
                 }
 
@@ -150,6 +185,9 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
                 processCacheConfiguration(writer, container, configurations, ModelKeys.INVALIDATION_CACHE);
                 processCacheConfiguration(writer, container, configurations, ModelKeys.REPLICATED_CACHE);
                 processCacheConfiguration(writer, container, configurations, ModelKeys.DISTRIBUTED_CACHE);
+
+                // counters
+                processCounterConfigurations(writer, container);
 
                 writer.writeEndElement();
             }
@@ -190,7 +228,69 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
         }
     }
 
-    private void processCacheConfiguration(XMLExtendedStreamWriter writer, ModelNode container, ModelNode configurations, String cacheType)
+   private void processCounterConfigurations(XMLExtendedStreamWriter writer, ModelNode container)
+         throws XMLStreamException {
+
+      if (container.hasDefined(ModelKeys.COUNTERS)) {
+         writer.writeStartElement(Element.COUNTERS.getLocalName());
+
+         //counters element and its attributes
+         ModelNode counterRoot = container.get(ModelKeys.COUNTERS);
+         this.writeOptional(writer, Attribute.RELIABILITY, counterRoot, ModelKeys.RELIABILITY);
+         this.writeOptional(writer, Attribute.NUM_OWNERS, counterRoot, ModelKeys.NUM_OWNERS);
+
+         //all counters configurations
+         ModelNode counterConfigurations = counterRoot.get(ModelKeys.COUNTERS_NAME);
+         processStrongCounterConfigurations(writer, counterConfigurations.get(ModelKeys.STRONG_COUNTER));
+         processWeakCounterConfigurations(writer, counterConfigurations.get(ModelKeys.WEAK_COUNTER));
+         writer.writeEndElement();
+      }
+   }
+
+   private void processWeakCounterConfigurations(XMLExtendedStreamWriter writer, ModelNode configurations) throws XMLStreamException {
+      if (configurations != null &&  configurations.isDefined()) {
+         for (Property e : configurations.asPropertyList()) {
+            processWeakCounterConfiguration(writer, e.getValue());
+         }
+      }
+   }
+
+   private void processStrongCounterConfigurations(XMLExtendedStreamWriter writer, ModelNode configurations) throws XMLStreamException {
+      if (configurations != null && configurations.isDefined()) {
+         for (Property e : configurations.asPropertyList()) {
+            processStrongCounterConfiguration(writer, e.getValue());
+         }
+      }
+   }
+
+   private void processWeakCounterConfiguration(XMLExtendedStreamWriter writer, ModelNode weakConfiguration) throws XMLStreamException {
+      writer.writeStartElement(Element.WEAK_COUNTER.getLocalName());
+      this.writeRequired(writer, Attribute.NAME, weakConfiguration, ModelKeys.NAME);
+      this.writeOptional(writer, Attribute.INITIAL_VALUE, weakConfiguration, ModelKeys.INITIAL_VALUE);
+      this.writeOptional(writer, Attribute.STORAGE, weakConfiguration, ModelKeys.STORAGE);
+      this.writeOptional(writer, Attribute.CONCURRENCY_LEVEL, weakConfiguration, ModelKeys.CONCURRENCY_LEVEL);
+      writer.writeEndElement();
+   }
+
+   private void processStrongCounterConfiguration(XMLExtendedStreamWriter writer, ModelNode strongConfiguration) throws XMLStreamException {
+      writer.writeStartElement(Element.STRONG_COUNTER.getLocalName());
+      this.writeRequired(writer, Attribute.NAME, strongConfiguration, ModelKeys.NAME);
+      this.writeOptional(writer, Attribute.INITIAL_VALUE, strongConfiguration, ModelKeys.INITIAL_VALUE);
+      this.writeOptional(writer, Attribute.STORAGE, strongConfiguration, ModelKeys.STORAGE);
+      if (strongConfiguration.hasDefined(ModelKeys.LOWER_BOUND)) {
+         writer.writeStartElement(Element.LOWER_BOUND.getLocalName());
+         this.writeRequired(writer, Attribute.VALUE, strongConfiguration, ModelKeys.LOWER_BOUND);
+         writer.writeEndElement();
+      }
+      if (strongConfiguration.hasDefined(ModelKeys.UPPER_BOUND)) {
+         writer.writeStartElement(Element.UPPER_BOUND.getLocalName());
+         this.writeRequired(writer, Attribute.VALUE, strongConfiguration, ModelKeys.UPPER_BOUND);
+         writer.writeEndElement();
+      }
+      writer.writeEndElement();
+   }
+
+   private void processCacheConfiguration(XMLExtendedStreamWriter writer, ModelNode container, ModelNode configurations, String cacheType)
             throws XMLStreamException {
         String cacheConfigurationType = cacheType + ModelKeys.CONFIGURATION_SUFFIX;
         Map<String, List<String>> configurationMappings = new HashMap<>();
@@ -308,6 +408,25 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
                        writer.writeEndElement();
                     }
                 }
+                writer.writeEndElement();
+            }
+            writer.writeEndElement();
+        }
+
+        ModelNode dataType = cache.get(ModelKeys.ENCODING);
+        if (dataType.isDefined()) {
+            writer.writeStartElement(Element.DATA_TYPE.getLocalName());
+
+            ModelNode key = dataType.get(ModelKeys.KEY);
+            if (key.isDefined()) {
+                writer.writeStartElement(Element.KEY.getLocalName());
+                this.writeOptional(writer, Attribute.MEDIA_TYPE, key, ModelKeys.MEDIA_TYPE);
+                writer.writeEndElement();
+            }
+            ModelNode value = dataType.get(ModelKeys.VALUE);
+            if (value.isDefined()) {
+                writer.writeStartElement(Element.VALUE.getLocalName());
+                this.writeOptional(writer, Attribute.MEDIA_TYPE, value, ModelKeys.MEDIA_TYPE);
                 writer.writeEndElement();
             }
             writer.writeEndElement();
@@ -517,6 +636,39 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
                     writer.writeAttribute(Attribute.OUTBOUND_SOCKET_BINDING.getLocalName(), remoteServer.get(ModelKeys.OUTBOUND_SOCKET_BINDING).asString());
                     writer.writeEndElement();
                 }
+                if (store.get(ModelKeys.AUTHENTICATION, ModelKeys.AUTHENTICATION_NAME).isDefined()) {
+                    ModelNode authentication = store.get(ModelKeys.AUTHENTICATION, ModelKeys.AUTHENTICATION_NAME);
+                    writer.writeStartElement(Element.AUTHENTICATION.getLocalName());
+                    switch(authentication.get(ModelKeys.MECHANISM).asString()) {
+                        case "PLAIN": {
+                            writer.writeStartElement(Element.PLAIN.getLocalName());
+                            this.writeRequired(writer, Attribute.USERNAME, authentication, ModelKeys.USERNAME);
+                            this.writeRequired(writer, Attribute.PASSWORD, authentication, ModelKeys.PASSWORD);
+                            writer.writeEndElement();
+                            break;
+                        }
+                        case "DIGEST-MD5": {
+                            writer.writeStartElement(Element.DIGEST.getLocalName());
+                            this.writeRequired(writer, Attribute.USERNAME, authentication, ModelKeys.USERNAME);
+                            this.writeRequired(writer, Attribute.PASSWORD, authentication, ModelKeys.PASSWORD);
+                            this.writeRequired(writer, Attribute.REALM, authentication, ModelKeys.REALM);
+                            writer.writeEndElement();
+                            break;
+                        }
+                        case "EXTERNAL": {
+                            writer.writeEmptyElement(Element.EXTERNAL.getLocalName());
+                            break;
+                        }
+                    }
+                    writer.writeEndElement();
+                }
+                if (store.get(ModelKeys.ENCRYPTION, ModelKeys.ENCRYPTION_NAME).isDefined()) {
+                    ModelNode encryption = store.get(ModelKeys.ENCRYPTION, ModelKeys.ENCRYPTION_NAME);
+                    writer.writeStartElement(Element.ENCRYPTION.getLocalName());
+                    this.writeRequired(writer, Attribute.SECURITY_REALM, encryption, ModelKeys.SECURITY_REALM);
+                    this.writeOptional(writer, Attribute.SNI_HOSTNAME, encryption, ModelKeys.SNI_HOSTNAME);
+                    writer.writeEndElement();
+                }
                 writer.writeEndElement();
             }
         }
@@ -585,7 +737,8 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
         if (cache.get(ModelKeys.PARTITION_HANDLING, ModelKeys.PARTITION_HANDLING_NAME).isDefined()) {
             ModelNode partitionHandling = cache.get(ModelKeys.PARTITION_HANDLING, ModelKeys.PARTITION_HANDLING_NAME);
             writer.writeStartElement(Element.PARTITION_HANDLING.getLocalName());
-            this.writeOptional(writer, Attribute.ENABLED, partitionHandling, ModelKeys.ENABLED);
+            this.writeOptional(writer, Attribute.WHEN_SPLIT, partitionHandling, ModelKeys.WHEN_SPLIT);
+            this.writeOptional(writer, Attribute.MERGE_POLICY, partitionHandling, ModelKeys.MERGE_POLICY);
             writer.writeEndElement();
         }
 
@@ -655,6 +808,7 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
         this.writeOptional(writer, Attribute.PURGE, store, ModelKeys.PURGE);
         this.writeOptional(writer, Attribute.READ_ONLY, store, ModelKeys.READ_ONLY);
         this.writeOptional(writer, Attribute.SINGLETON, store, ModelKeys.SINGLETON);
+        this.writeOptional(writer, Attribute.MAX_BATCH_SIZE, store, ModelKeys.MAX_BATCH_SIZE);
     }
 
     private void writeStoreWriteBehind(XMLExtendedStreamWriter writer, ModelNode store) throws XMLStreamException {

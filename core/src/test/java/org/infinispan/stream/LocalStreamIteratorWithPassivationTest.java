@@ -6,6 +6,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.withSettings;
 import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertNull;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -35,7 +36,6 @@ import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CheckPoint;
 import org.mockito.AdditionalAnswers;
-import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.testng.annotations.Test;
 
@@ -76,7 +76,7 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
       TestObjectStreamMarshaller sm = new TestObjectStreamMarshaller();
       PersistenceManager pm = null;
       try {
-         store.write(new MarshalledEntryImpl(loaderKey, loaderValue, null, sm));
+         store.write(new MarshalledEntryImpl<>(loaderKey, loaderValue, null, sm));
 
          final CheckPoint checkPoint = new CheckPoint();
          pm = waitUntilAboutToProcessStoreTask(cache, checkPoint);
@@ -102,19 +102,19 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
             results.put(entry.getKey(), entry.getValue());
             count++;
          }
-         assertEquals(count, 4);
+         assertEquals(4, count);
          assertEquals(originalValues, results);
 
          future.get(10, TimeUnit.SECONDS);
       } finally {
          if (pm != null) {
-            TestingUtil.replaceComponent(cache, PersistenceManager.class, pm, true);
+            TestingUtil.replaceComponent(cache, PersistenceManager.class, pm, true, true);
          }
          sm.stop();
       }
    }
 
-   @Test
+   @Test(enabled = false, description = "This requires supporting concurrent activation in cache loader interceptor")
    public void testConcurrentActivationWithFilter() throws InterruptedException, ExecutionException, TimeoutException {
       final Cache<String, String> cache = cache(0, CACHE_NAME);
 
@@ -126,7 +126,13 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
       final String loaderKey = cache.toString() + " in loader";
       final String loaderValue = "loader0";
 
+      final String filteredLoaderKey = cache.toString() + " in loader1";
+      final String filteredLoaderValue = "loader1";
+
       cache.putAll(originalValues);
+
+      // Put this in after the cache has been updated
+      originalValues.put(loaderKey, loaderValue);
 
       PersistenceManager persistenceManager = TestingUtil.extractComponent(cache, PersistenceManager.class);
       DummyInMemoryStore store = persistenceManager.getStores(DummyInMemoryStore.class).iterator().next();
@@ -134,7 +140,8 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
       TestObjectStreamMarshaller sm = new TestObjectStreamMarshaller();
       PersistenceManager pm = null;
       try {
-         store.write(new MarshalledEntryImpl(loaderKey, loaderValue, null, sm));
+         store.write(new MarshalledEntryImpl<>(loaderKey, loaderValue, null, sm));
+         store.write(new MarshalledEntryImpl<>(filteredLoaderKey, filteredLoaderValue, null, sm));
 
          final CheckPoint checkPoint = new CheckPoint();
          pm = waitUntilAboutToProcessStoreTask(cache, checkPoint);
@@ -163,13 +170,13 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
             count++;
          }
          // We shouldn't have found the value in the loader
-         assertEquals(count, 3);
+         assertEquals(4, count);
          assertEquals(originalValues, results);
 
          future.get(10, TimeUnit.SECONDS);
       } finally {
          if (pm != null) {
-            TestingUtil.replaceComponent(cache, PersistenceManager.class, pm, true);
+            TestingUtil.replaceComponent(cache, PersistenceManager.class, pm, true, true);
          }
          sm.stop();
       }
@@ -198,7 +205,7 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
       TestObjectStreamMarshaller sm = new TestObjectStreamMarshaller();
       PersistenceManager pm = null;
       try {
-         store.write(new MarshalledEntryImpl(loaderKey, loaderValue, null, sm));
+         store.write(new MarshalledEntryImpl<>(loaderKey, loaderValue, null, sm));
 
          final CheckPoint checkPoint = new CheckPoint();
          pm = waitUntilAboutToProcessStoreTask(cache, checkPoint);
@@ -226,7 +233,7 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
             count++;
          }
          // We shouldn't have found the value in the loader
-         assertEquals(count, 4);
+         assertEquals(4, count);
          for (Map.Entry<String, String> entry : originalValues.entrySet()) {
             assertEquals(entry.getValue().substring(1, 4), results.get(entry.getKey()));
          }
@@ -234,7 +241,7 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
          future.get(10, TimeUnit.SECONDS);
       } finally {
          if (pm != null) {
-            TestingUtil.replaceComponent(cache, PersistenceManager.class, pm, true);
+            TestingUtil.replaceComponent(cache, PersistenceManager.class, pm, true, true);
          }
          sm.stop();
       }
@@ -245,18 +252,15 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
       PersistenceManager pm = TestingUtil.extractComponent(cache, PersistenceManager.class);
       final Answer<Object> forwardedAnswer = AdditionalAnswers.delegatesTo(pm);
       PersistenceManager mockManager = mock(PersistenceManager.class, withSettings().defaultAnswer(forwardedAnswer));
-      doAnswer(new Answer() {
-         @Override
-         public Object answer(InvocationOnMock invocation) throws Throwable {
-            // Wait for main thread to sync up
-            checkPoint.trigger("pre_process_on_all_stores_invoked");
-            // Now wait until main thread lets us through
-            checkPoint.awaitStrict("pre_process_on_all_stores_released", 10, TimeUnit.SECONDS);
+      doAnswer(invocation -> {
+         // Wait for main thread to sync up
+         checkPoint.trigger("pre_process_on_all_stores_invoked");
+         // Now wait until main thread lets us through
+         checkPoint.awaitStrict("pre_process_on_all_stores_released", 100, TimeUnit.SECONDS);
 
-            return forwardedAnswer.answer(invocation);
-         }
-      }).when(mockManager).processOnAllStores(any(Executor.class),      any(KeyFilter.class), any(AdvancedCacheLoader.CacheLoaderTask.class),
-                                                  anyBoolean(), anyBoolean());
+         return forwardedAnswer.answer(invocation);
+      }).when(mockManager).processOnAllStores(any(Executor.class), any(KeyFilter.class), any(AdvancedCacheLoader.CacheLoaderTask.class),
+                                                 anyBoolean(), anyBoolean());
       TestingUtil.replaceComponent(cache, PersistenceManager.class, mockManager, true);
       return pm;
    }
@@ -264,11 +268,7 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
    /**
     * This test is to verify that if a concurrent passivation occurs while switching between data container and loader(s)
     * that we don't return the same key/value twice
-    * @throws InterruptedException
-    * @throws ExecutionException
-    * @throws TimeoutException
     */
-   @Test
    public void testConcurrentPassivation() throws InterruptedException, ExecutionException, TimeoutException {
       final Cache<String, String> cache = cache(0, CACHE_NAME);
 
@@ -293,7 +293,7 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
 
          Future<Void> future = fork(() -> {
             // Wait until loader is invoked
-            checkPoint.awaitStrict("pre_process_on_all_stores_invoked", 1000, TimeUnit.SECONDS);
+            checkPoint.awaitStrict("pre_process_on_all_stores_invoked", 10, TimeUnit.SECONDS);
 
             // Now force the entry to be moved to loader
             TestingUtil.extractComponent(cache, PassivationManager.class).passivate(new ImmortalCacheEntry(loaderKey, loaderValue));
@@ -305,20 +305,18 @@ public class LocalStreamIteratorWithPassivationTest extends DistributedStreamIte
          Iterator<Map.Entry<String, String>> iterator = cache.entrySet().stream().iterator();
 
          // we need this count since the map will replace same key'd value
-         int count = 0;
          Map<String, String> results = new HashMap<>();
          while (iterator.hasNext()) {
             Map.Entry<String, String> entry = iterator.next();
-            results.put(entry.getKey(), entry.getValue());
-            count++;
+            String prev = results.put(entry.getKey(), entry.getValue());
+            assertNull("Entry " + entry + " replaced an existing value of " + prev, prev);
          }
-         assertEquals(4, count);
          assertEquals(originalValues, results);
 
          future.get(10, TimeUnit.SECONDS);
       } finally {
          if (pm != null) {
-            TestingUtil.replaceComponent(cache, PersistenceManager.class, pm, true);
+            TestingUtil.replaceComponent(cache, PersistenceManager.class, pm, true, true);
          }
       }
    }

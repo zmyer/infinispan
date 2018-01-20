@@ -1,7 +1,6 @@
 package org.infinispan.distribution.group.impl;
 
 import org.infinispan.distribution.ch.KeyPartitioner;
-import org.infinispan.distribution.group.GroupManager;
 
 /**
  * Key partitioner that uses {@link org.infinispan.distribution.group.Group} annotations to map
@@ -21,7 +20,7 @@ public class GroupingPartitioner implements KeyPartitioner {
 
    @Override
    public int getSegment(Object key) {
-      String groupKey = groupManager.getGroup(key);
+      Object groupKey = groupManager.getGroup(key);
       return partitioner.getSegment(groupKey != null ? groupKey : key);
    }
 

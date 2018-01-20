@@ -9,10 +9,12 @@ import org.infinispan.Cache;
 import org.infinispan.cli.interpreter.codec.Codec;
 import org.infinispan.cli.interpreter.codec.CodecException;
 import org.infinispan.cli.interpreter.codec.CodecRegistry;
+import org.infinispan.cli.interpreter.codec.NoneCodec;
 import org.infinispan.cli.interpreter.logging.Log;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.CreateCacheCommand;
 import org.infinispan.commons.api.BasicCacheContainer;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -22,6 +24,8 @@ import org.infinispan.util.logging.LogFactory;
 
 public class SessionImpl implements Session {
    public static final Log log = LogFactory.getLog(SessionImpl.class, Log.class);
+   private static final Codec NO_OP_CODEC = new NoneCodec();
+
    private final EmbeddedCacheManager cacheManager;
    private final CodecRegistry codecRegistry;
    private final String id;
@@ -75,7 +79,7 @@ public class SessionImpl implements Session {
       if (c == null) {
          throw log.nonExistentCache(cacheName);
       }
-      return c;
+      return (Cache<K, V>) c.getAdvancedCache().withEncoding(IdentityEncoder.class);
    }
 
    @Override
@@ -122,7 +126,8 @@ public class SessionImpl implements Session {
 
    @Override
    public void reset() {
-      resetCache(cacheManager.getCache());
+      if (cacheManager.getCacheManagerConfiguration().defaultCacheName().isPresent())
+         resetCache(cacheManager.getCache());
       for (String cacheName : cacheManager.getCacheNames()) {
          resetCache(cacheManager.getCache(cacheName));
       }
@@ -132,14 +137,15 @@ public class SessionImpl implements Session {
    private void resetCache(final Cache<Object, Object> cache) {
       Configuration configuration = SecurityActions.getCacheConfiguration(cache.getAdvancedCache());
       if (configuration.invocationBatching().enabled()) {
-         cache.endBatch(false);
+         SecurityActions.endBatch(cache.getAdvancedCache());
       }
       TransactionManager tm = cache.getAdvancedCache().getTransactionManager();
       try {
-         if (tm.getTransaction() != null) {
+         if (tm != null && tm.getTransaction() != null) {
             tm.rollback();
          }
       } catch (Exception e) {
+         // Ignore the exception
       }
    }
 
@@ -160,6 +166,7 @@ public class SessionImpl implements Session {
 
    @Override
    public Codec getCodec() {
+      if(cache.getCacheConfiguration().compatibility().enabled()) return NO_OP_CODEC;
       return codec;
    }
 
@@ -169,6 +176,7 @@ public class SessionImpl implements Session {
       if (c == null) {
          throw log.noSuchCodec(codec);
       } else {
+         if(cache.getCacheConfiguration().compatibility().enabled()) return NO_OP_CODEC;
          return c;
       }
    }

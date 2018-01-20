@@ -9,7 +9,6 @@ import static org.testng.AssertJUnit.assertTrue;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -18,10 +17,8 @@ import org.infinispan.Cache;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
-import org.infinispan.commons.CacheException;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.InvocationContext;
@@ -114,7 +111,7 @@ rebalance_start
       //it waits until all nodes has replied. then, we change the topology ID and let it collect the responses.
       nodeARpcManager.waitForCommandToBlock();
       nodeAController.topologyManager.stopBlocking(BlockingLocalTopologyManager.LatchType.CONSISTENT_HASH_UPDATE);
-      awaitForTopology(currentTopologyId + 2, cache(0));
+      awaitForTopology(currentTopologyId + 4, cache(0));
 
       nodeARpcManager.stopBlocking();
       assertNull("Wrong put() return value.", tx.get());
@@ -125,9 +122,9 @@ rebalance_start
 
       nodeC.joinerFuture.get();
 
-      awaitForTopology(currentTopologyId + 2, cache(0));
-      awaitForTopology(currentTopologyId + 2, cache(1));
-      awaitForTopology(currentTopologyId + 2, cache(2));
+      awaitForTopology(currentTopologyId + 4, cache(0));
+      awaitForTopology(currentTopologyId + 4, cache(1));
+      awaitForTopology(currentTopologyId + 4, cache(2));
 
       assertKeyVersionInDataContainer(key, cache(1), cache(2));
       cache(0).put(key, "v2");
@@ -156,12 +153,7 @@ rebalance_start
    }
 
    private void awaitForTopology(final int expectedTopologyId, final Cache cache) {
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            return expectedTopologyId == currentTopologyId(cache);
-         }
-      });
+      eventually(() -> expectedTopologyId == currentTopologyId(cache));
    }
 
    private int currentTopologyId(Cache cache) {
@@ -169,17 +161,7 @@ rebalance_start
    }
 
    private Future<Object> executeTransaction(final Cache<Object, Object> cache, final Object key) {
-      return fork(new Callable<Object>() {
-         @Override
-         public Object call() throws Exception {
-            return TestingUtil.withTx(cache.getAdvancedCache().getTransactionManager(), new Callable<Object>() {
-               @Override
-               public Object call() throws Exception {
-                  return cache.put(key, "value");
-               }
-            });
-         }
-      });
+      return fork(() -> TestingUtil.withTx(cache.getAdvancedCache().getTransactionManager(), () -> cache.put(key, "value")));
    }
 
    private NewNode addNode(final int currentTopologyId) {
@@ -222,12 +204,9 @@ rebalance_start
       });
 
       newNode.controller.topologyManager.startBlocking(BlockingLocalTopologyManager.LatchType.CONSISTENT_HASH_UPDATE);
-      newNode.joinerFuture = fork(new Callable<Void>() {
-         @Override
-         public Void call() throws Exception {
-            waitForClusterToForm();
-            return null;
-         }
+      newNode.joinerFuture = fork(() -> {
+         waitForClusterToForm();
+         return null;
       });
       return newNode;
    }
@@ -237,12 +216,7 @@ rebalance_start
       builder.clustering()
             .stateTransfer().fetchInMemoryState(true)
             .hash().numSegments(1).numOwners(3).consistentHashFactory(new ConsistentHashFactoryImpl());
-      builder.locking()
-            .isolationLevel(IsolationLevel.REPEATABLE_READ)
-            .writeSkewCheck(true);
-      builder.versioning()
-            .enable()
-            .scheme(VersioningScheme.SIMPLE);
+      builder.locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
       return builder;
    }
 
@@ -321,30 +295,32 @@ rebalance_start
 
    public interface Action {
 
-      public boolean isApplicable(InvocationContext context, VisitableCommand command);
+      boolean isApplicable(InvocationContext context, VisitableCommand command);
 
-      public void before(InvocationContext context, VisitableCommand command, Cache cache);
+      void before(InvocationContext context, VisitableCommand command, Cache cache);
 
-      public void after(InvocationContext context, VisitableCommand command, Cache cache);
+      void after(InvocationContext context, VisitableCommand command, Cache cache);
 
    }
 
-   public static class ConsistentHashFactoryImpl extends BaseControlledConsistentHashFactory {
+   public static class ConsistentHashFactoryImpl extends BaseControlledConsistentHashFactory.Default {
 
       public ConsistentHashFactoryImpl() {
          super(1);
       }
 
       @Override
-      protected final List<Address> createOwnersCollection(List<Address> members, int numberOfOwners, int segmentIndex) {
-         assertEquals("Wrong number of owners", 3, numberOfOwners);
+      protected final int[][] assignOwners(int numSegments, int numOwners, List<Address> members) {
+         assertEquals("Wrong number of owners", 3, numOwners);
          //the primary owner is the last member.
-         final List<Address> owners = new ArrayList<Address>(3);
-         owners.add(members.get(members.size() - 1));
-         for (int i = 0; i < members.size() - 1; ++i) {
-            owners.add(members.get(i));
+         switch (members.size()) {
+            case 1:
+               return new int[][]{{0}};
+            case 2:
+               return new int[][]{{1, 0}};
+            default:
+               return new int[][]{{members.size() - 1, 0, 1}};
          }
-         return owners;
       }
    }
 
@@ -353,7 +329,7 @@ rebalance_start
       private final List<Action> actionList;
 
       public ControlledCommandInterceptor(Cache<Object, Object> cache) {
-         actionList = new ArrayList<Action>(3);
+         actionList = new ArrayList<>(3);
          this.cache = cache;
          this.cacheConfiguration = cache.getCacheConfiguration();
          this.embeddedCacheManager = cache.getCacheManager();
@@ -361,7 +337,7 @@ rebalance_start
       }
 
       public ControlledCommandInterceptor() {
-         actionList = new ArrayList<Action>(3);
+         actionList = new ArrayList<>(3);
       }
 
       public void addAction(Action action) {
@@ -388,7 +364,7 @@ rebalance_start
          if (actionList.isEmpty()) {
             return Collections.emptyList();
          }
-         List<Action> actions = new ArrayList<Action>(actionList.size());
+         List<Action> actions = new ArrayList<>(actionList.size());
          for (Action action : actionList) {
             if (action.isApplicable(context, command)) {
                actions.add(action);

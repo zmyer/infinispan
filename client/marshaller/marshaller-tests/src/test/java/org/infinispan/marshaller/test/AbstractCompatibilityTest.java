@@ -7,6 +7,8 @@ import org.apache.commons.httpclient.HttpStatus;
 import org.apache.commons.httpclient.methods.ByteArrayRequestEntity;
 import org.apache.commons.httpclient.methods.EntityEnclosingMethod;
 import org.apache.commons.httpclient.methods.PutMethod;
+import org.infinispan.commons.dataconversion.Encoder;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.it.compatibility.CompatibilityCacheFactory;
 import org.infinispan.it.compatibility.EmbeddedRestMemcachedHotRodTest;
@@ -25,6 +27,8 @@ public abstract class AbstractCompatibilityTest extends EmbeddedRestMemcachedHot
       CompatibilityCacheFactory.killCacheFactories(cacheFactory);
    }
 
+   protected abstract Class<? extends Encoder> getEncoderClass();
+
    @Test
    public void testRestPutEmbeddedMemcachedHotRodGetTest() throws Exception {
       final String key = "3";
@@ -41,7 +45,8 @@ public abstract class AbstractCompatibilityTest extends EmbeddedRestMemcachedHot
       assertEquals("", put.getResponseBodyAsString().trim());
 
       // 2. Get with Embedded (given a marshaller, it can unmarshall the result)
-      assertEquals(value, cacheFactory.getEmbeddedCache().get(key));
+      assertEquals(value, cacheFactory.getEmbeddedCache().getAdvancedCache()
+            .withEncoding(IdentityEncoder.class, getEncoderClass()).get(key));
 
       // 3. Get with Memcached (given a marshaller, it can unmarshall the result)
       bytes = (byte[]) cacheFactory.getMemcachedClient().get(key);

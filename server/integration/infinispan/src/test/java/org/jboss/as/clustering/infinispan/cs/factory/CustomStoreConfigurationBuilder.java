@@ -13,6 +13,7 @@ import org.infinispan.configuration.cache.ConfigurationChildBuilder;
 import org.infinispan.configuration.cache.CustomInterceptorsConfigurationBuilder;
 import org.infinispan.configuration.cache.DataContainerConfigurationBuilder;
 import org.infinispan.configuration.cache.DeadlockDetectionConfigurationBuilder;
+import org.infinispan.configuration.cache.EncodingConfigurationBuilder;
 import org.infinispan.configuration.cache.EvictionConfigurationBuilder;
 import org.infinispan.configuration.cache.ExpirationConfigurationBuilder;
 import org.infinispan.configuration.cache.IndexingConfigurationBuilder;
@@ -98,6 +99,11 @@ public class CustomStoreConfigurationBuilder implements StoreConfigurationBuilde
    }
 
    @Override
+   public Object maxBatchSize(int maxBatchSize) {
+      return null;
+   }
+
+   @Override
    public Object addProperty(String key, String value) {
       return null;
    }
@@ -124,6 +130,11 @@ public class CustomStoreConfigurationBuilder implements StoreConfigurationBuilde
 
    @Override
    public DeadlockDetectionConfigurationBuilder deadlockDetection() {
+      return null;
+   }
+
+   @Override
+   public EncodingConfigurationBuilder encoding() {
       return null;
    }
 

@@ -5,8 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-cdi-jcache-it</artifactId>
@@ -15,23 +15,23 @@
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cdi-embedded</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cdi-embedded</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
@@ -47,7 +47,7 @@
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-jcache</artifactId>
          <scope>test</scope>
       </dependency>
@@ -75,7 +75,7 @@
 
    <build>
       <plugins>
-
+         <!-- Disable parallel execution of tests ARQ-127 -->
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
@@ -123,6 +123,23 @@
                <scope>test</scope>
             </dependency>
          </dependencies>
+      </profile>
+      <profile>
+         <id>smoke</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <executions>
+                     <execution>
+                        <id>default-test</id>
+                        <phase>none</phase>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
       </profile>
    </profiles>
 

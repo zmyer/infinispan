@@ -4,12 +4,12 @@ The Infinispan community
 :icons: font
 :toclevels: 3
 :numbered:
+:stem: asciimath
 
 // Load all default values here for use in all sub-chapters
 include::{defaults}[]
 
 include::introduction.adoc[]
-include::configuration.adoc[]
 include::cache_manager.adoc[]
 include::cache_api.adoc[]
 include::eviction.adoc[]
@@ -18,9 +18,11 @@ include::clustering.adoc[]
 include::marshalling.adoc[]
 include::transactions.adoc[]
 include::locking.adoc[]
-include::streams.adoc[]
-include::distributed_executor.adoc[]
+include::execute_grid.adoc[]
 include::query.adoc[]
+include::counters.adoc[]
+include::clustered_lock.adoc[]
+include::multimapcache.adoc[]
 include::cdi.adoc[]
 include::jcache.adoc[]
 include::management.adoc[]

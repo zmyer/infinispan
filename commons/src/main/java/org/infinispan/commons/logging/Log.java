@@ -6,6 +6,10 @@ import static org.jboss.logging.Logger.Level.WARN;
 import java.io.IOException;
 
 import org.infinispan.commons.CacheConfigurationException;
+import org.infinispan.commons.CacheException;
+import org.infinispan.commons.dataconversion.EncodingException;
+import org.infinispan.counter.exception.CounterException;
+import org.infinispan.counter.exception.CounterOutOfBoundsException;
 import org.jboss.logging.BasicLogger;
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.LogMessage;
@@ -63,7 +67,7 @@ public interface Log extends BasicLogger {
    CacheConfigurationException sslInitializationException(@Cause Throwable e);
 
    @LogMessage(level = ERROR)
-   @Message(value = "Unable to load %s from any of the following classloaders: %s", id=905)
+   @Message(value = "Unable to load %s from any of the following classloaders: %s", id = 905)
    void unableToLoadClass(String classname, String classloaders, @Cause Throwable cause);
 
    @LogMessage(level = WARN)
@@ -110,5 +114,79 @@ public interface Log extends BasicLogger {
 
    @Message(value = "Multiple errors encountered while validating configuration", id = 919)
    CacheConfigurationException multipleConfigurationValidationErrors();
+
+   @Message(value = "Unable to load file using scheme %s", id = 920)
+   UnsupportedOperationException unableToLoadFileUsingScheme(String scheme);
+
+   @Message(value = "The alias '%s' does not exist in the key store '%s'", id = 921)
+   SecurityException noSuchAliasInKeyStore(String keyAlias, String keyStoreFileName);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Exception during rollback", id = 922)
+   void errorRollingBack(@Cause Throwable e);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Error enlisting resource", id = 923)
+   void errorEnlistingResource(@Cause Throwable e);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "beforeCompletion() failed for %s", id = 924)
+   void beforeCompletionFailed(String synchronization, @Cause Throwable t);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Unexpected error from resource manager!", id = 925)
+   void unexpectedErrorFromResourceManager(@Cause Throwable t);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "afterCompletion() failed for %s", id = 926)
+   void afterCompletionFailed(String synchronization, @Cause Throwable t);
+
+   @LogMessage(level = WARN)
+   @Message(value = "exception while committing", id = 927)
+   void errorCommittingTx(@Cause Throwable e);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "end() failed for %s", id = 928)
+   void xaResourceEndFailed(String xaResource, @Cause Throwable t);
+
+   @Message(value = "MediaType cannot be empty or null!", id = 929)
+   EncodingException missingMediaType();
+
+   @Message(value = "MediaType must contain a type and a subtype separated by '/'", id = 930)
+   EncodingException invalidMediaTypeSubtype();
+
+   @Message(value = "Failed to parse MediaType: Invalid param description '%s'", id = 931)
+   EncodingException invalidMediaTypeParam(String param);
+
+   @Message(value = "Unclosed param value quote", id = 932)
+   EncodingException unquotedMediaTypeParam();
+
+   @Message(value = "Invalid character '%s' found in token '%s'", id = 933)
+   EncodingException invalidCharMediaType(char character, String token);
+
+   @Message(value = "Unsupported content '%s'", id = 934)
+   EncodingException unsupportedContent(Object content);
+
+   @Message(value = "Invalid Weight '%s'. Supported values are between 0 and 1.0", id = 935)
+   EncodingException invalidWeight(Object weight);
+
+   //----- counters exceptions ------
+
+   @Message(value = CounterOutOfBoundsException.FORMAT_MESSAGE, id = 28001)
+   CounterOutOfBoundsException counterOurOfBounds(String bound);
+
+   @Message(value = "Invalid counter type. Expected=%s but got %s", id = 28014)
+   CounterException invalidCounterType(String expected, String actual);
+
+   @Message(value = "Counter '%s' is not defined.", id = 28016)
+   CounterException undefinedCounter(String name);
+
+   @Message(value = "WEAK and BOUNDED encoded flag isn't supported!", id = 28022)
+   CounterException invalidCounterTypeEncoded();
+
+   //----- counters exceptions ------
+
+   @Message(value = "Class '%s' blocked by deserialization white list. Adjust the client configuration serialization white list regular expression to include this class.", id = 28023)
+   CacheException classNotInWhitelist(String className);
 
 }

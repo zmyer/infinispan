@@ -7,13 +7,12 @@ import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.HashSet;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
-import org.infinispan.commands.tx.CommitCommand;
+import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
@@ -22,7 +21,7 @@ import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.transaction.impl.TransactionTable;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.mocks.ControlledCommandFactory;
 import org.testng.annotations.Test;
 
@@ -46,7 +45,7 @@ public class LockCleanupStateTransferTest extends MultipleCacheManagersTest {
    @Override
    protected void createCacheManagers() throws Throwable {
       dcc = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
-      dcc.transaction().transactionManagerLookup(new DummyTransactionManagerLookup());
+      dcc.transaction().transactionManagerLookup(new EmbeddedTransactionManagerLookup());
       dcc.clustering().hash().numOwners(1);
       dcc.clustering().stateTransfer().fetchInMemoryState(true);
       createCluster(dcc, 2);
@@ -54,7 +53,7 @@ public class LockCleanupStateTransferTest extends MultipleCacheManagersTest {
    }
 
    public void testBelatedCommit() throws Throwable {
-      testLockReleasedCorrectly(CommitCommand.class);
+      testLockReleasedCorrectly(VersionedCommitCommand.class);
    }
 
    public void testBelatedTxCompletionNotificationCommand() throws Throwable {
@@ -66,31 +65,22 @@ public class LockCleanupStateTransferTest extends MultipleCacheManagersTest {
       final ControlledCommandFactory ccf = ControlledCommandFactory.registerControlledCommandFactory(advancedCache(1), toBlock);
       ccf.gate.close();
 
-      final Set<Object> keys = new HashSet<Object>(KEY_SET_SIZE);
+      final Set<Object> keys = new HashSet<>(KEY_SET_SIZE);
 
       //fork it into another test as this is going to block in commit
-      Future<Object> future = fork(new Callable<Object>() {
-         @Override
-         public Object call() throws Exception {
-            tm(0).begin();
-            for (int i = 0; i < KEY_SET_SIZE; i++) {
-               Object k = getKeyForCache(1);
-               keys.add(k);
-               cache(0).put(k, k);
-            }
-            tm(0).commit();
-            return null;
+      Future<Object> future = fork(() -> {
+         tm(0).begin();
+         for (int i = 0; i < KEY_SET_SIZE; i++) {
+            Object k = getKeyForCache(1);
+            keys.add(k);
+            cache(0).put(k, k);
          }
+         tm(0).commit();
+         return null;
       });
 
       //now wait for all the commits to block
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            log.tracef("receivedCommands == %s", ccf.blockTypeCommandsReceived.get());
-            return ccf.blockTypeCommandsReceived.get() == 1;
-         }
-      });
+      eventuallyEquals(1, ccf.blockTypeCommandsReceived::get);
 
       if (toBlock == TxCompletionNotificationCommand.class) {
          //at this stage everything should be committed locally
@@ -108,9 +98,9 @@ public class LockCleanupStateTransferTest extends MultipleCacheManagersTest {
       waitForClusterToForm();
       log.trace("After state transfer");
 
-      final Set<Object> migratedKeys = new HashSet<Object>(KEY_SET_SIZE);
+      final Set<Object> migratedKeys = new HashSet<>(KEY_SET_SIZE);
       for (Object key : keys) {
-         if (keyMapsToNode(key, 2)) {
+         if (keyMapsToNode(key)) {
             migratedKeys.add(key);
          }
       }
@@ -118,14 +108,7 @@ public class LockCleanupStateTransferTest extends MultipleCacheManagersTest {
       log.tracef("Number of migrated keys is %s", migratedKeys.size());
       if (migratedKeys.size() == 0) return;
 
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            int remoteTxCount = TestingUtil.getTransactionTable(cache(2)).getRemoteTxCount();
-            log.tracef("remoteTxCount=%s", remoteTxCount);
-            return remoteTxCount == 1;
-         }
-      });
+      eventuallyEquals(1, () -> TestingUtil.getTransactionTable(cache(2)).getRemoteTxCount());
 
       log.trace("Releasing the gate");
       ccf.gate.open();
@@ -139,18 +122,15 @@ public class LockCleanupStateTransferTest extends MultipleCacheManagersTest {
       }
 
       // the tx completion is async, so we need to wait a little more
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            boolean success = true;
-            for (int i = 0; i < 3; i++) {
-               TransactionTable tt = TestingUtil.getTransactionTable(cache(i));
-               int remoteTxCount = tt.getRemoteTxCount();
-               log.tracef("For cache %s, remoteTxCount==%d", cache(i), remoteTxCount);
-               success &= remoteTxCount == 0;
-            }
-            return success;
+      eventually(() -> {
+         boolean success = true;
+         for (int i = 0; i < 3; i++) {
+            TransactionTable tt = TestingUtil.getTransactionTable(cache(i));
+            int remoteTxCount = tt.getRemoteTxCount();
+            log.tracef("For cache %s, remoteTxCount==%d", cache(i), remoteTxCount);
+            success &= remoteTxCount == 0;
          }
+         return success;
       });
 
       for (Object key : keys) {
@@ -165,13 +145,13 @@ public class LockCleanupStateTransferTest extends MultipleCacheManagersTest {
       }
    }
 
-   private boolean keyMapsToNode(Object key, int nodeIndex) {
+   private boolean keyMapsToNode(Object key) {
       Address owner = owner(key);
-      return owner.equals(address(nodeIndex));
+      return owner.equals(address(2));
    }
 
    private Address owner(Object key) {
-      return advancedCache(0).getDistributionManager().getConsistentHash().locateOwners(key).get(0);
+      return advancedCache(0).getDistributionManager().getCacheTopology().getDistribution(key).primary();
    }
 
 }

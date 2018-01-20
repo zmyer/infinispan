@@ -3,23 +3,20 @@ package org.infinispan.server.hotrod;
 import static org.infinispan.server.hotrod.ResponseWriting.writeResponse;
 
 import java.security.PrivilegedActionException;
-import java.security.PrivilegedExceptionAction;
 import java.util.BitSet;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
-
-import javax.security.auth.Subject;
+import java.util.function.Consumer;
 
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
-import org.infinispan.security.Security;
 import org.infinispan.server.core.transport.NettyTransport;
 import org.infinispan.server.hotrod.iteration.IterableIterationResult;
 import org.infinispan.server.hotrod.logging.Log;
-import org.infinispan.server.hotrod.util.BulkUtil;
+import org.infinispan.server.hotrod.multimap.MultimapCacheDecodeContext;
 import org.infinispan.tasks.TaskContext;
 import org.infinispan.tasks.TaskManager;
 import org.infinispan.util.KeyValuePair;
@@ -41,25 +38,25 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
    private final HotRodServer server;
    private final NettyTransport transport;
    private final Executor executor;
+   private final TaskManager taskManager;
 
    public ContextHandler(HotRodServer server, NettyTransport transport, Executor executor) {
       this.server = server;
       this.transport = transport;
       this.executor = executor;
+      this.taskManager = SecurityActions.getGlobalComponentRegistry(server.getCacheManager()).getComponent(TaskManager.class);
    }
 
    @Override
    protected void channelRead0(ChannelHandlerContext ctx, CacheDecodeContext msg) throws Exception {
       executor.execute(() -> {
          try {
-            Subject subject = msg.subject;
-            if (subject == null)
+            if (msg.header.op.isMultimap()) {
+               new MultimapCacheDecodeContext(msg.cache, msg).read(ctx);
+            } else {
                realRead(ctx, msg);
-            else Security.doAs(subject, (PrivilegedExceptionAction<Void>) () -> {
-               realRead(ctx, msg);
-               return null;
-            });
-         } catch (PrivilegedActionException e) {
+            }
+         } catch (PrivilegedActionException|ExecutionException e) {
             ctx.fireExceptionCaught(e.getCause());
          } catch (Exception e) {
             ctx.fireExceptionCaught(e);
@@ -67,7 +64,7 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
       });
    }
 
-   protected void realRead(ChannelHandlerContext ctx, CacheDecodeContext msg) throws Exception {
+   private void realRead(ChannelHandlerContext ctx, CacheDecodeContext msg) throws Exception {
       HotRodHeader h = msg.header;
       switch (h.op) {
          case PUT:
@@ -115,15 +112,18 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
             break;
          case EXEC:
             ExecRequestContext execContext = (ExecRequestContext) msg.operationDecodeContext;
-            TaskManager taskManager = SecurityActions.getCacheGlobalComponentRegistry(msg.cache).getComponent(TaskManager.class);
             Marshaller marshaller;
             if (server.getMarshaller() != null) {
                marshaller = server.getMarshaller();
             } else {
                marshaller = new GenericJBossMarshaller();
             }
-            byte[] result = (byte[]) taskManager.runTask(execContext.getName(),
-                  new TaskContext().marshaller(marshaller).cache(msg.cache).parameters(execContext.getParams())).get();
+            TaskContext taskContext = new TaskContext()
+                  .marshaller(marshaller)
+                  .cache(msg.cache)
+                  .parameters(execContext.getParams())
+                  .subject(msg.subject);
+            byte[] result = (byte[]) taskManager.runTask(execContext.getName(), taskContext).get();
             writeResponse(msg, ctx.channel(),
                   new ExecResponse(h.version, h.messageId, h.cacheName, h.clientIntel, h.topologyId,
                         result == null ? new byte[]{} : result));
@@ -142,7 +142,7 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
                log.tracef("About to create bulk get keys response scope = %d", scope);
             }
             writeResponse(msg, ctx.channel(), new BulkGetKeysResponse(h.version, h.messageId, h.cacheName, h.clientIntel,
-                  h.topologyId, scope, BulkUtil.getAllKeys(msg.cache, scope)));
+                  h.topologyId, scope, msg.cache.keySet().iterator()));
             break;
          case QUERY:
             byte[] queryResult = server.query(msg.cache, (byte[]) msg.operationDecodeContext);
@@ -172,7 +172,7 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
             } else {
                optionBitSet = Optional.empty();
             }
-            String iterationId = server.getIterationManager().start(msg.cache.getName(), optionBitSet,
+            String iterationId = server.getIterationManager().start(msg.cache, optionBitSet,
                   iterationStart.getFactory(), iterationStart.getBatch(), iterationStart.isMetadata());
             writeResponse(msg, ctx.channel(), new IterationStartResponse(h.version, h.messageId, h.cacheName,
                   h.clientIntel, h.topologyId, iterationId));
@@ -191,11 +191,11 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
                   removed ? OperationStatus.Success : OperationStatus.InvalidIteration, h.topologyId));
             break;
          case PUT_ALL:
-            msg.cache.putAll((Map<byte[], byte[]>) msg.operationDecodeContext, msg.buildMetadata());
+            msg.cache.putAll(msg.operationContext(), msg.buildMetadata());
             writeResponse(msg, ctx.channel(), msg.decoder.createSuccessResponse(h, null));
             break;
          case GET_ALL:
-            Map<byte[], byte[]> map = msg.cache.getAll((Set<byte[]>) msg.operationDecodeContext);
+            Map<byte[], byte[]> map = msg.cache.getAll(msg.operationContext());
             writeResponse(msg, ctx.channel(), new GetAllResponse(h.version, h.messageId, h.cacheName,
                   h.clientIntel, h.topologyId, map));
             break;
@@ -217,6 +217,48 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
                buf.release();
             }
             break;
+         case ROLLBACK_TX:
+            writeResponse(msg, ctx.channel(), msg.rollbackTransaction());
+            break;
+         case PREPARE_TX:
+            writeResponse(msg, ctx.channel(), msg.prepareTransaction());
+            break;
+         case COMMIT_TX:
+            writeResponse(msg, ctx.channel(), msg.commitTransaction());
+            break;
+         case COUNTER_CREATE:
+            msg.createCounter(createResponseHandler(ctx, msg));
+            break;
+         case COUNTER_GET_CONFIGURATION:
+            msg.getCounterConfiguration(createResponseHandler(ctx, msg));
+            break;
+         case COUNTER_IS_DEFINED:
+            msg.isCounterDefined(createResponseHandler(ctx, msg));
+            break;
+         case COUNTER_ADD_AND_GET:
+            msg.counterAddAndGet(createResponseHandler(ctx, msg));
+            break;
+         case COUNTER_RESET:
+            msg.counterReset(createResponseHandler(ctx, msg));
+            break;
+         case COUNTER_GET:
+            msg.counterGet(createResponseHandler(ctx, msg));
+            break;
+         case COUNTER_CAS:
+            msg.counterCompareAndSwap(createResponseHandler(ctx, msg));
+            break;
+         case COUNTER_REMOVE:
+            writeResponse(msg, ctx.channel(), msg.counterRemove());
+            break;
+         case COUNTER_GET_NAMES:
+            writeResponse(msg, ctx.channel(), msg.getCounterNames());
+            break;
+         case COUNTER_REMOVE_LISTENER:
+            writeResponse(msg, ctx.channel(), msg.removeCounterListener(server));
+            break;
+         case COUNTER_ADD_LISTENER:
+            writeResponse(msg, ctx.channel(), msg.addCounterListener(server, ctx.channel()));
+            break;
          default:
             throw new IllegalArgumentException("Unsupported operation invoked: " + msg.header.op);
       }
@@ -227,6 +269,7 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
       super.channelActive(ctx);
       log.tracef("Channel %s became active", ctx.channel());
       server.getClientListenerRegistry().findAndWriteEvents(ctx.channel());
+      server.getClientCounterNotificationManager().channelActive(ctx.channel());
    }
 
    @Override
@@ -234,11 +277,16 @@ public class ContextHandler extends SimpleChannelInboundHandler<CacheDecodeConte
       super.channelWritabilityChanged(ctx);
       log.tracef("Channel %s writability changed", ctx.channel());
       server.getClientListenerRegistry().findAndWriteEvents(ctx.channel());
+      server.getClientCounterNotificationManager().channelActive(ctx.channel());
    }
 
    @Override
    public boolean acceptInboundMessage(Object msg) throws Exception {
       // Faster than netty matcher
       return msg.getClass() == CacheDecodeContext.class;
+   }
+
+   private static Consumer<Response> createResponseHandler(ChannelHandlerContext ctx, CacheDecodeContext msg) {
+      return response -> writeResponse(msg, ctx.channel(), response);
    }
 }

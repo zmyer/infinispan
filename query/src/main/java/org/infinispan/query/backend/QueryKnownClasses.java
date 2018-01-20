@@ -1,6 +1,7 @@
 package org.infinispan.query.backend;
 
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -26,7 +27,7 @@ import org.infinispan.util.logging.LogFactory;
 
 import net.jcip.annotations.ThreadSafe;
 
-// TODO [anistor] This class should be removed in 9.0. Its purpose can be served by a simple Set after we remove autodetection.
+// TODO [anistor] This class must be removed in 10.0 after we remove autodetection.
 
 /**
  * Stores all entity classes known to query module in a replicated cache. The entry value is a boolean which indicates
@@ -41,7 +42,7 @@ import net.jcip.annotations.ThreadSafe;
  *
  * @author Sanne Grinovero (C) 2013 Red Hat Inc.
  * @author anistor@redhat.com
- * @deprecated To be removed in Infinispan 9.0
+ * @deprecated To be removed in Infinispan 10.0
  */
 @ThreadSafe
 @Deprecated
@@ -89,7 +90,7 @@ public final class QueryKnownClasses {
    /**
     * Constructor used only in autodetect mode.
     *
-    * @deprecated will be removed in Infinispan 9.0
+    * @deprecated will be removed in Infinispan 10.0
     */
    @Deprecated
    QueryKnownClasses(String cacheName, EmbeddedCacheManager cacheManager, InternalCacheRegistry internalCacheRegistry) {
@@ -205,7 +206,7 @@ public final class QueryKnownClasses {
       if (knownClassesCache == null) {
          synchronized (this) {
             if (knownClassesCache == null) {
-               internalCacheRegistry.registerInternalCache(QUERY_KNOWN_CLASSES_CACHE_NAME, getInternalCacheConfig());
+               internalCacheRegistry.registerInternalCache(QUERY_KNOWN_CLASSES_CACHE_NAME, getInternalCacheConfig(), EnumSet.of(InternalCacheRegistry.Flag.PERSISTENT));
                Cache<KeyValuePair<String, Class<?>>, Boolean> knownClassesCache = SecurityActions.getCache(cacheManager, QUERY_KNOWN_CLASSES_CACHE_NAME);
                this.knownClassesCache = knownClassesCache.getAdvancedCache().withFlags(Flag.IGNORE_RETURN_VALUES);
                transactionHelper = new TransactionHelper(this.knownClassesCache.getTransactionManager());

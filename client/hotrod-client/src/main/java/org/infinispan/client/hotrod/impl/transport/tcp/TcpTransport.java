@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.nio.channels.SocketChannel;
@@ -58,21 +59,29 @@ public class TcpTransport extends AbstractTransport {
 
    private SaslClient saslClient;
 
-   public TcpTransport(SocketAddress serverAddress, TransportFactory transportFactory) {
+   public TcpTransport(SocketAddress originalServerAddress, TransportFactory transportFactory) {
       super(transportFactory);
-      this.serverAddress = serverAddress;
+      InetSocketAddress inetSocketAddress = (InetSocketAddress) originalServerAddress;
+      this.serverAddress = originalServerAddress;
       try {
+         if (inetSocketAddress.isUnresolved())
+            inetSocketAddress = new InetSocketAddress(inetSocketAddress.getHostString(), inetSocketAddress.getPort());
+
+         IoSupplier<Socket> socketF;
          if (transportFactory.getSSLContext() != null) {
             socketChannel = null; // We don't use a SocketChannel in the SSL case
             SSLContext sslContext = transportFactory.getSSLContext();
             SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
-            socket = sslSocketFactory.createSocket();
-            setSniHostName(transportFactory.getSniHostName());
+            socketF = () -> {
+               Socket socket = sslSocketFactory.createSocket();
+               setSniHostName(socket, transportFactory.getSniHostName());
+               return socket;
+            };
          } else {
             socketChannel = SocketChannel.open();
-            socket = socketChannel.socket();
+            socketF = socketChannel::socket;
          }
-         socket.connect(serverAddress, transportFactory.getConnectTimeout());
+         socket = connectSocket(socketF, transportFactory, inetSocketAddress);
          socket.setTcpNoDelay(transportFactory.isTcpNoDelay());
          socket.setKeepAlive(transportFactory.isTcpKeepAlive());
          socket.setSoTimeout(transportFactory.getSoTimeout());
@@ -86,9 +95,29 @@ public class TcpTransport extends AbstractTransport {
       }
    }
 
-   private void setSniHostName(String sniHostName) {
+   public Socket connectSocket(IoSupplier<Socket> socketF,
+         TransportFactory transportFactory,
+         InetSocketAddress inetSocketAddress) throws IOException {
+      int port;
+      int localport;
+      Socket socket;
+      do {
+         socket = socketF.get();
+         socket.connect(inetSocketAddress, transportFactory.getConnectTimeout());
+         port = socket.getPort();
+         localport = socket.getLocalPort();
+         if (port == localport) {
+            log.debugf("Socket port(%d) and localport(%d) same, disconnect and try again", port, localport);
+            socket.close();
+         }
+      } while (port == localport);
+
+      return socket;
+   }
+
+   private void setSniHostName(Socket socket, String sniHostName) {
       if(sniHostName != null) {
-         SSLSocket sslSocket = (SSLSocket) this.socket;
+         SSLSocket sslSocket = (SSLSocket) socket;
          SSLParameters sslParameters = sslSocket.getSSLParameters();
          sslParameters.setServerNames(Arrays.asList(new SNIHostName(sniHostName)));
          sslSocket.setSSLParameters(sslParameters);
@@ -158,24 +187,17 @@ public class TcpTransport extends AbstractTransport {
 
    @Override
    protected void writeBytes(byte[] toAppend) {
-      try {
-         socketOutputStream.write(toAppend);
-         if (trace) {
-            log.tracef("Wrote %d bytes", toAppend.length);
-         }
-      } catch (IOException e) {
-         invalid = true;
-         throw new TransportException(
-               "Problems writing data to stream", e, serverAddress);
-      }
+      writeBytes(toAppend, 0, toAppend.length);
    }
 
    @Override
    protected void writeBytes(byte[] toAppend, int offset, int count) {
       try {
-         socketOutputStream.write(toAppend, offset, count);
+         for (int o = offset; o < offset + count; o += SOCKET_STREAM_BUFFER) {
+            socketOutputStream.write(toAppend, o, Math.min(offset + count - o, SOCKET_STREAM_BUFFER));
+         }
          if (trace) {
-            log.tracef("Wrote %d bytes", toAppend.length);
+            log.tracef("Wrote %d bytes", count);
          }
       } catch (IOException e) {
          invalid = true;
@@ -242,7 +264,7 @@ public class TcpTransport extends AbstractTransport {
       do {
          int read;
          try {
-            int len = size - offset;
+            int len = Math.min(size - offset, SOCKET_STREAM_BUFFER);
             if (trace) {
                log.tracef("Offset: %d, len=%d, size=%d", offset, len, size);
             }
@@ -367,12 +389,16 @@ public class TcpTransport extends AbstractTransport {
 
    @Override
    public SocketAddress getRemoteSocketAddress() {
-      return socket.getRemoteSocketAddress();
+      return socket.isClosed() ? null : serverAddress;
    }
 
    @Override
    public void invalidate() {
       invalid = true;
+   }
+
+   private interface IoSupplier<T> {
+      T get() throws IOException;
    }
 
 }

@@ -1,5 +1,7 @@
 package org.infinispan.persistence.remote;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
@@ -16,9 +18,11 @@ import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
 import org.infinispan.commons.persistence.Store;
+import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.commons.util.Util;
 import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.versioning.NumericVersion;
+import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.metadata.EmbeddedMetadata;
@@ -26,12 +30,15 @@ import org.infinispan.metadata.InternalMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.persistence.TaskContextImpl;
+import org.infinispan.persistence.remote.configuration.AuthenticationConfiguration;
 import org.infinispan.persistence.remote.configuration.ConnectionPoolConfiguration;
 import org.infinispan.persistence.remote.configuration.RemoteServerConfiguration;
 import org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration;
+import org.infinispan.persistence.remote.configuration.SslConfiguration;
 import org.infinispan.persistence.remote.logging.Log;
 import org.infinispan.persistence.remote.wrapper.HotRodEntryMarshaller;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
+import org.infinispan.persistence.spi.FlagAffectedStore;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.util.logging.LogFactory;
@@ -56,7 +63,7 @@ import net.jcip.annotations.ThreadSafe;
 @Store(shared = true)
 @ThreadSafe
 @ConfiguredBy(RemoteStoreConfiguration.class)
-public class RemoteStore implements AdvancedLoadWriteStore {
+public class RemoteStore<K, V> implements AdvancedLoadWriteStore<K, V>, FlagAffectedStore<K, V> {
 
    private static final Log log = LogFactory.getLog(RemoteStore.class, Log.class);
    private static final boolean trace = log.isTraceEnabled();
@@ -189,21 +196,41 @@ public class RemoteStore implements AdvancedLoadWriteStore {
       InternalMetadata metadata = entry.getMetadata();
       long lifespan = metadata != null ? metadata.lifespan() : -1;
       long maxIdle = metadata != null ? metadata.maxIdle() : -1;
-      Object key = entry.getKey();
-      if (key instanceof WrappedByteArray) {
-         key = ((WrappedByteArray) key).getBytes();
-      }
-      Object value;
-      if (configuration.rawValues()) {
-         value = entry.getValue();
-         if (value instanceof WrappedByteArray) {
-            value = ((WrappedByteArray) value).getBytes();
-         }
-      } else {
-         value = entry;
-      }
+      Object key = getKey(entry);
+      Object value = getValue(entry);
+
       remoteCache.put(key, value, toSeconds(lifespan, entry.getKey(), LIFESPAN), TimeUnit.SECONDS,
             toSeconds(maxIdle, entry.getKey(), MAXIDLE), TimeUnit.SECONDS);
+   }
+
+   private Object getKey(MarshalledEntry entry) {
+      Object key = entry.getKey();
+      if (key instanceof WrappedByteArray)
+         return ((WrappedByteArray) key).getBytes();
+      return key;
+   }
+
+   private Object getValue(MarshalledEntry entry) {
+      if (configuration.rawValues()) {
+         Object value = entry.getValue();
+         return value instanceof  WrappedByteArray ? ((WrappedByteArray) value).getBytes() : value;
+      }
+      return entry;
+   }
+
+   @Override
+   public void writeBatch(Iterable<MarshalledEntry<? extends K, ? extends V>> marshalledEntries) {
+      Map<Object, Object> batch = new HashMap<>();
+      for (MarshalledEntry entry : marshalledEntries) {
+         batch.put(getKey(entry), getValue(entry));
+         if (batch.size() == configuration.maxBatchSize()) {
+            remoteCache.putAll(batch);
+            batch.clear();
+         }
+      }
+
+      if (!batch.isEmpty())
+         remoteCache.putAll(batch);
    }
 
    @Override
@@ -282,11 +309,46 @@ public class RemoteStore implements AdvancedLoadWriteStore {
          builder.version(ProtocolVersion.DEFAULT_PROTOCOL_VERSION);
       if (configuration.transportFactory() != null)
          builder.transportFactory(configuration.transportFactory());
+      SslConfiguration ssl = configuration.security().ssl();
+      if (ssl.enabled()) {
+         builder.security().ssl()
+               .enable()
+               .keyStoreType(ssl.keyStoreType())
+               .keyAlias(ssl.keyAlias())
+               .keyStoreFileName(ssl.keyStoreFileName())
+               .keyStorePassword(ssl.keyStorePassword())
+               .keyStoreCertificatePassword(ssl.keyStoreCertificatePassword())
+               .trustStoreFileName(ssl.trustStoreFileName())
+               .trustStorePassword(ssl.trustStorePassword())
+               .trustStoreType(ssl.trustStoreType())
+               .protocol(ssl.protocol())
+               .sniHostName(ssl.sniHostName());
+      }
+      AuthenticationConfiguration auth = configuration.security().authentication();
+      if (auth.enabled()) {
+         builder.security().authentication()
+               .enable()
+               .callbackHandler(auth.callbackHandler())
+               .clientSubject(auth.clientSubject())
+               .saslMechanism(auth.saslMechanism())
+               .serverName(auth.serverName())
+               .saslProperties(auth.saslProperties())
+               .username(auth.username())
+               .password(auth.password())
+               .realm(auth.realm())
+         ;
+      }
 
+      builder.withProperties(configuration.properties());
       return builder;
    }
 
    public RemoteStoreConfiguration getConfiguration() {
       return configuration;
+   }
+
+   @Override
+   public boolean shouldWrite(long commandFlags) {
+      return !EnumUtil.containsAny(FlagBitSets.ROLLING_UPGRADE, commandFlags);
    }
 }

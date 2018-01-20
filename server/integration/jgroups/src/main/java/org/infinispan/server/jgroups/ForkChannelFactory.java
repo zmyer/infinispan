@@ -23,7 +23,6 @@ package org.infinispan.server.jgroups;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -55,10 +54,6 @@ public class ForkChannelFactory implements ChannelFactory {
         this.channel = channel;
         this.parentFactory = parentFactory;
         this.protocols = protocols;
-    }
-
-    public ForkChannelFactory(JChannel channel, ChannelFactory parentFactory, ProtocolConfiguration... protocols) {
-        this(channel, parentFactory, Arrays.asList(protocols));
     }
 
     @Override

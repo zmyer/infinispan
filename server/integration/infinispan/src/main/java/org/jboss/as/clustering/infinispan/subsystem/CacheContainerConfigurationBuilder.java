@@ -21,12 +21,16 @@
  */
 package org.jboss.as.clustering.infinispan.subsystem;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.ServiceLoader;
+import java.util.Set;
+import java.util.concurrent.Executors;
 
 import javax.management.MBeanServer;
 
+import org.infinispan.commons.util.AggregatedClassLoader;
 import org.infinispan.configuration.global.GlobalAuthorizationConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
@@ -34,6 +38,8 @@ import org.infinispan.configuration.global.GlobalRoleConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalStateConfigurationBuilder;
 import org.infinispan.configuration.global.ShutdownHookBehavior;
 import org.infinispan.configuration.global.ThreadPoolConfiguration;
+import org.infinispan.configuration.internal.PrivateGlobalConfigurationBuilder;
+import org.infinispan.globalstate.LocalConfigurationStorage;
 import org.infinispan.marshall.core.Ids;
 import org.infinispan.security.AuditLogger;
 import org.infinispan.security.PrincipalRoleMapper;
@@ -53,10 +59,13 @@ import org.jboss.as.clustering.infinispan.io.SimpleExternalizer;
 import org.jboss.as.clustering.infinispan.subsystem.EmbeddedCacheManagerConfigurationService.AuthorizationConfiguration;
 import org.jboss.as.clustering.infinispan.subsystem.EmbeddedCacheManagerConfigurationService.GlobalStateLocationConfiguration;
 import org.jboss.as.clustering.infinispan.subsystem.EmbeddedCacheManagerConfigurationService.TransportConfiguration;
+import org.jboss.as.controller.ModelController;
+import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.services.path.PathManager;
 import org.jboss.as.controller.services.path.PathManagerService;
 import org.jboss.as.jmx.MBeanServerService;
 import org.jboss.as.server.Services;
+import org.jboss.as.server.moduleservice.ServiceModuleLoader;
 import org.jboss.marshalling.ModularClassResolver;
 import org.jboss.modules.ModuleIdentifier;
 import org.jboss.modules.ModuleLoadException;
@@ -79,6 +88,7 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
     private final String name;
     private boolean statisticsEnabled;
     private ModuleIdentifier module;
+    private List<ModuleIdentifier> modules;
     private AuthorizationConfigurationBuilder authorization = null;
     private ValueDependency<TransportConfiguration> transport = null;
     private GlobalStateLocationConfigurationBuilder globalStateLocation = null;
@@ -91,6 +101,7 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
     private final InjectedValue<ThreadPoolConfiguration> transportThreadPool = new InjectedValue<>();
     private final InjectedValue<ThreadPoolConfiguration> replicationQueueThreadPool = new InjectedValue<>();
     private final InjectedValue<PathManager> pathManager = new InjectedValue<>();
+    private final InjectedValue<ModelController> modelController = new InjectedValue<>();
 
     public CacheContainerConfigurationBuilder(String name) {
         this.name = name;
@@ -104,6 +115,7 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
     @Override
     public ServiceBuilder<GlobalConfiguration> build(ServiceTarget target) {
         ServiceBuilder<GlobalConfiguration> builder = target.addService(this.getServiceName(), new ValueService<>(this))
+                .addDependency(Services.JBOSS_SERVER_CONTROLLER, ModelController.class, this.modelController)
                 .addDependency(Services.JBOSS_SERVICE_MODULE_LOADER, ModuleLoader.class, this.loader)
                 .addDependency(MBeanServerService.SERVICE_NAME, MBeanServer.class, this.server)
                 .addDependency(ThreadPoolResource.ASYNC_OPERATIONS.getServiceName(this.name), ThreadPoolConfiguration.class, this.asyncOperationsThreadPool)
@@ -115,6 +127,18 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
                 .addDependency(ScheduledThreadPoolResource.EXPIRATION.getServiceName(this.name), ThreadPoolConfiguration.class, this.expirationThreadPool)
                 .addDependency(ScheduledThreadPoolResource.REPLICATION_QUEUE.getServiceName(this.name), ThreadPoolConfiguration.class, this.replicationQueueThreadPool)
         ;
+        if (module != null) {
+            if (!module.getName().equals("org.infinispan.extension")) {
+                // todo [anistor] only works for dynamic modules (see https://issues.jboss.org/browse/ISPN-8441)
+                builder.addDependency(ServiceModuleLoader.moduleServiceName(module));
+            }
+        }
+        if (modules != null) {
+            for (ModuleIdentifier moduleIdentifier : modules) {
+                // todo [anistor] only works for dynamic modules (see https://issues.jboss.org/browse/ISPN-8441)
+                builder.addDependency(ServiceModuleLoader.moduleServiceName(moduleIdentifier));
+            }
+        }
         if (this.transport != null) {
             this.transport.register(builder);
         }
@@ -130,9 +154,9 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
         GlobalConfigurationBuilder builder = new GlobalConfigurationBuilder();
         ModuleLoader moduleLoader = this.loader.getValue();
         builder.serialization().classResolver(ModularClassResolver.getInstance(moduleLoader));
-        ClassLoader loader = null;
+        ClassLoader loader;
         try {
-            loader = (this.module != null) ? moduleLoader.loadModule(this.module).getClassLoader() : CacheContainerConfiguration.class.getClassLoader();
+            loader = makeGlobalClassLoader(moduleLoader, module, modules);
             builder.classLoader(loader);
             int id = Ids.MAX_ID;
             for (SimpleExternalizer<?> externalizer: ServiceLoader.load(SimpleExternalizer.class, loader)) {
@@ -206,8 +230,26 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
             GlobalStateConfigurationBuilder statePersistenceBuilder = builder.globalState().enable();
             String persistentLocation = pathManager.getValue().resolveRelativePathEntry(statePersistence.getPersistencePath(), statePersistence.getPersistenceRelativeTo());
             statePersistenceBuilder.persistentLocation(persistentLocation);
-            String temporaryLocation = pathManager.getValue().resolveRelativePathEntry(statePersistence.getPersistencePath(), statePersistence.getPersistenceRelativeTo());
+            String sharedPersistentLocation = pathManager.getValue().resolveRelativePathEntry(statePersistence.getSharedPersistencePath(), statePersistence.getSharedPersistenceRelativeTo());
+            statePersistenceBuilder.sharedPersistentLocation(sharedPersistentLocation);
+            String temporaryLocation = pathManager.getValue().resolveRelativePathEntry(statePersistence.getTemporaryPath(), statePersistence.getTemporaryRelativeTo());
             statePersistenceBuilder.temporaryLocation(temporaryLocation);
+            statePersistenceBuilder.configurationStorage(statePersistence.getConfigurationStorage());
+            // If the LocalConfigurationStorage is server-aware, apply some context
+            String configurationStorageClass = statePersistence.getConfigurationStorageClass();
+            if (configurationStorageClass != null) {
+                try {
+                    LocalConfigurationStorage localConfigurationStorage = Class.forName(configurationStorageClass, true, loader).asSubclass(LocalConfigurationStorage.class).newInstance();
+                    if (localConfigurationStorage != null && localConfigurationStorage instanceof ServerLocalConfigurationStorage) {
+                        ServerLocalConfigurationStorage serverLocalConfigurationManager = (ServerLocalConfigurationStorage)localConfigurationStorage;
+                        serverLocalConfigurationManager.setRootPath(PathAddress.pathAddress(InfinispanExtension.SUBSYSTEM_PATH).append("cache-container", name));
+                        serverLocalConfigurationManager.setModelControllerClient(modelController.getValue().createClient(Executors.newCachedThreadPool()));
+                    }
+                    statePersistenceBuilder.configurationStorageSupplier(() -> localConfigurationStorage);
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            }
         }
 
         builder.asyncThreadPool().read(this.asyncOperationsThreadPool.getValue());
@@ -221,14 +263,51 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
                 .enabled(this.statisticsEnabled)
                 .cacheManagerName(this.name)
                 .mBeanServerLookup(new MBeanServerProvider(this.server.getValue()))
-                .jmxDomain(CacheContainerServiceName.CACHE_CONTAINER.getServiceName(CacheServiceNameFactory.DEFAULT_CACHE).getParent().getCanonicalName())
-                .allowDuplicateDomains(true);
+                .jmxDomain(CacheContainerServiceName.CACHE_CONTAINER.getServiceName(CacheServiceNameFactory.DEFAULT_CACHE).getParent().getCanonicalName());
 
+        builder.addModule(PrivateGlobalConfigurationBuilder.class).serverMode(true);
         return builder.build();
+    }
+
+    /**
+     * Creates an aggregated ClassLoader using the loaders of the cache container module and the optional modules listed
+     * under the 'modules' element.
+     *
+     * @param moduleLoader         the ModuleLoader
+     * @param cacheContainerModule the (optional) module identifier from the 'module' attribute of the cache-container
+     * @param additionalModules    the (optional) list of module identifiers from the 'modules' element
+     * @return an aggregated ClassLoader if any of the optional 'module' or 'modules' were present, or the ClassLoader of
+     * this package otherwise
+     * @throws ModuleLoadException if any of the modules failed to load
+     */
+    private ClassLoader makeGlobalClassLoader(ModuleLoader moduleLoader, ModuleIdentifier cacheContainerModule, List<ModuleIdentifier> additionalModules) throws ModuleLoadException {
+        Set<ClassLoader> classLoaders = new LinkedHashSet<>();  // use an ordered set to deduplicate possible duplicates!
+        if (cacheContainerModule != null) {
+            classLoaders.add(moduleLoader.loadModule(cacheContainerModule).getClassLoader());
+        }
+        if (additionalModules != null) {
+            for (ModuleIdentifier additionalModule : additionalModules) {
+                classLoaders.add(moduleLoader.loadModule(additionalModule).getClassLoader());
+            }
+        }
+        switch (classLoaders.size()) {
+            case 0:
+                // default CL
+                return CacheContainerConfiguration.class.getClassLoader();
+            case 1:
+                return classLoaders.iterator().next();
+            default:
+                return new AggregatedClassLoader(classLoaders);
+        }
     }
 
     public CacheContainerConfigurationBuilder setModule(ModuleIdentifier module) {
         this.module = module;
+        return this;
+    }
+
+    public CacheContainerConfigurationBuilder setModules(List<ModuleIdentifier> modules) {
+        this.modules = modules;
         return this;
     }
 

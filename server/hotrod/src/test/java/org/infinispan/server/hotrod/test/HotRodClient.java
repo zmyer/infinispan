@@ -1,5 +1,6 @@
 package org.infinispan.server.hotrod.test;
 
+import static org.infinispan.counter.util.EncodeUtil.decodeConfiguration;
 import static org.infinispan.server.hotrod.OperationStatus.NotExecutedWithPrevious;
 import static org.infinispan.server.hotrod.OperationStatus.Success;
 import static org.infinispan.server.hotrod.OperationStatus.SuccessWithPrevious;
@@ -25,28 +26,37 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.net.ssl.SSLEngine;
 import javax.security.sasl.SaslClient;
 import javax.security.sasl.SaslException;
+import javax.transaction.xa.Xid;
 
-import org.infinispan.commons.equivalence.AnyEquivalence;
-import org.infinispan.commons.equivalence.ByteArrayEquivalence;
+import org.infinispan.commons.io.SignedNumeric;
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.util.Util;
 import org.infinispan.server.core.transport.NettyInitializer;
 import org.infinispan.server.core.transport.NettyInitializers;
+import org.infinispan.server.core.transport.VInt;
 import org.infinispan.server.hotrod.Constants;
 import org.infinispan.server.hotrod.HotRodOperation;
 import org.infinispan.server.hotrod.OperationStatus;
 import org.infinispan.server.hotrod.ProtocolFlag;
 import org.infinispan.server.hotrod.Response;
 import org.infinispan.server.hotrod.ServerAddress;
+import org.infinispan.server.hotrod.counter.impl.TestCounterNotificationManager;
+import org.infinispan.server.hotrod.counter.impl.TestCounterEventResponse;
+import org.infinispan.server.hotrod.counter.op.CounterOp;
+import org.infinispan.server.hotrod.counter.response.CounterConfigurationTestResponse;
+import org.infinispan.server.hotrod.counter.response.CounterNamesTestResponse;
+import org.infinispan.server.hotrod.counter.response.CounterValueTestResponse;
 import org.infinispan.server.hotrod.logging.Log;
 import org.infinispan.server.hotrod.transport.ExtendedByteBuf;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.fwk.TestResourceTracker;
 import org.infinispan.util.KeyValuePair;
 
 import io.netty.bootstrap.Bootstrap;
@@ -63,6 +73,8 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.handler.codec.ReplayingDecoder;
 import io.netty.handler.ssl.SslHandler;
+import io.netty.util.concurrent.DefaultThreadFactory;
+import io.netty.util.concurrent.Future;
 
 /**
  * A very simple Hot Rod client for testing purposes. It's a quick and dirty client implementation. As a result, it
@@ -76,6 +88,7 @@ import io.netty.handler.ssl.SslHandler;
  * @since 4.1
  */
 public class HotRodClient {
+   private static final Log log = LogFactory.getLog(HotRodClient.class, Log.class);
    final static AtomicLong idCounter = new AtomicLong();
 
    final String host;
@@ -85,6 +98,10 @@ public class HotRodClient {
    final byte protocolVersion;
    final SSLEngine sslEngine;
    final Channel ch;
+
+   Map<Long, Op> idToOp = new ConcurrentHashMap<>();
+   private EventLoopGroup eventLoopGroup =
+         new NioEventLoopGroup(1, new DefaultThreadFactory(TestResourceTracker.getCurrentTestShortName() + "-Client"));
 
    public HotRodClient(String host, int port, String defaultCacheName, int rspTimeoutSeconds, byte protocolVersion) {
       this(host, port, defaultCacheName, rspTimeoutSeconds, protocolVersion, null);
@@ -102,14 +119,18 @@ public class HotRodClient {
       ch = initializeChannel();
    }
 
+   public byte protocolVersion() {
+      return protocolVersion;
+   }
+
    public String defaultCacheName() {
       return defaultCacheName;
    }
 
-   Map<Long, Op> idToOp = new ConcurrentHashMap<>();
-   SaslClient saslClient = null;
-   private EventLoopGroup eventLoopGroup = new NioEventLoopGroup(1);
-   private static final Log log = LogFactory.getLog(HotRodClient.class, Log.class);
+   public TestResponse getResponse(Op op) {
+      ClientHandler handler = (ClientHandler) ch.pipeline().last();
+      return handler.getResponse(op.id);
+   }
 
    private Channel initializeChannel() {
       Bootstrap bootstrap = new Bootstrap();
@@ -126,9 +147,8 @@ public class HotRodClient {
       return ch;
    }
 
-   public ChannelFuture stop() {
-      eventLoopGroup.shutdownGracefully();
-      return ch.disconnect();
+   public Future<?> stop() {
+      return eventLoopGroup.shutdownGracefully(100, 1000, TimeUnit.MILLISECONDS);
    }
 
    public TestResponse put(byte[] k, int lifespan, int maxIdle, byte[] v) {
@@ -139,7 +159,7 @@ public class HotRodClient {
       return execute(0xA0, (byte) 0x01, defaultCacheName, k, lifespan, maxIdle, v, 0, clientIntelligence, topologyId);
    }
 
-   private boolean assertStatus(TestResponse resp, OperationStatus expected) {
+   private void assertStatus(TestResponse resp, OperationStatus expected) {
       OperationStatus status = resp.getStatus();
       boolean isSuccess = status == expected;
       if (resp instanceof TestErrorResponse) {
@@ -149,7 +169,6 @@ public class HotRodClient {
          assertTrue(String.format(
                "Status should have been '%s' but instead was: '%s'", expected, status), isSuccess);
       }
-      return isSuccess;
    }
 
    private byte[] k(Method m) {
@@ -384,19 +403,18 @@ public class HotRodClient {
    }
 
    public TestAuthResponse auth(SaslClient sc) throws SaslException {
-      saslClient = sc;
-      byte[] saslResponse = saslClient.hasInitialResponse() ? saslClient.evaluateChallenge(new byte[0]) : new byte[0];
+      byte[] saslResponse = sc.hasInitialResponse() ? sc.evaluateChallenge(new byte[0]) : new byte[0];
       ClientHandler handler = (ClientHandler) ch.pipeline().last();
-      AuthOp op = new AuthOp(0xA0, protocolVersion, (byte) 0x23, defaultCacheName, (byte) 1, 0, saslClient.getMechanismName(), saslResponse);
+      AuthOp op = new AuthOp(0xA0, protocolVersion, (byte) 0x23, defaultCacheName, (byte) 1, 0, sc.getMechanismName(), saslResponse);
       writeOp(op);
       TestAuthResponse response = (TestAuthResponse) handler.getResponse(op.id);
-      while (!saslClient.isComplete() || !response.complete) {
-         saslResponse = saslClient.evaluateChallenge(response.challenge);
+      while (!sc.isComplete() || !response.complete) {
+         saslResponse = sc.evaluateChallenge(response.challenge);
          op = new AuthOp(0xA0, protocolVersion, (byte) 0x23, defaultCacheName, (byte) 1, 0, "", saslResponse);
          writeOp(op);
          response = (TestAuthResponse) handler.getResponse(op.id);
       }
-      saslClient.dispose();
+      sc.dispose();
       return response;
    }
 
@@ -443,6 +461,28 @@ public class HotRodClient {
       return handler.getResponse(op.id);
    }
 
+   public TestResponse prepareTx(Xid xid, boolean onePhaseCommit, Collection<TxWrite> modifications) {
+      PrepareOp op = new PrepareOp(0xA0, protocolVersion, defaultCacheName, protocolVersion, 0, xid,
+            onePhaseCommit, modifications);
+      writeOp(op);
+      ClientHandler handler = (ClientHandler) ch.pipeline().last();
+      return handler.getResponse(op.id);
+   }
+
+   public TestResponse commitTx(Xid xid) {
+      CommitOrRollbackOp op = new CommitOrRollbackOp(protocolVersion, defaultCacheName, protocolVersion, xid, true);
+      writeOp(op);
+      ClientHandler handler = (ClientHandler) ch.pipeline().last();
+      return handler.getResponse(op.id);
+   }
+
+   public TestResponse rollbackTx(Xid xid) {
+      CommitOrRollbackOp op = new CommitOrRollbackOp(protocolVersion, defaultCacheName, protocolVersion, xid, false);
+      writeOp(op);
+      ClientHandler handler = (ClientHandler) ch.pipeline().last();
+      return handler.getResponse(op.id);
+   }
+
    /*public TestPutStreamResponse putStream(byte[] k, int lifespan, int maxIdle, byte[] v, long dataVersion) {
       PutStreamOp op = new PutStreamOp(0xA0, protocolVersion, defaultCacheName, (byte) 1, 0, k, lifespan, maxIdle, v, dataVersion);
       writeOp(op);
@@ -450,6 +490,11 @@ public class HotRodClient {
       ClientHandler handler = (ClientHandler) ch.pipeline().last();
       return (TestPutStreamResponse) handler.getResponse(op.id);
    }*/
+
+   public void registerCounterNotificationManager(TestCounterNotificationManager manager) {
+      ClientHandler handler = (ClientHandler) ch.pipeline().last();
+      handler.registerCounterNotificationManager(manager);
+   }
 }
 
 
@@ -486,6 +531,23 @@ class Encoder extends MessageToByteEncoder<Object> {
       this.protocolVersion = protocolVersion;
    }
 
+   private void encodePrepareOp(PrepareOp op, ByteBuf buffer) {
+      writeHeader(op, buffer);
+      VInt.write(buffer, SignedNumeric.encode(op.xid.getFormatId()));
+      writeRangedBytes(op.xid.getGlobalTransactionId(), buffer);
+      writeRangedBytes(op.xid.getBranchQualifier(), buffer);
+      buffer.writeByte(op.onePhaseCommit ? 1 : 0);
+      writeUnsignedInt(op.modifications.size(), buffer);
+      op.modifications.forEach(txWrite -> txWrite.encodeTo(buffer));
+   }
+
+   private void encodeCommitOrRollbackOp(CommitOrRollbackOp op, ByteBuf byteBuf) {
+      writeHeader(op, byteBuf);
+      VInt.write(byteBuf, SignedNumeric.encode(op.xid.getFormatId()));
+      writeRangedBytes(op.xid.getGlobalTransactionId(), byteBuf);
+      writeRangedBytes(op.xid.getBranchQualifier(), byteBuf);
+   }
+
    @Override
    protected void encode(ChannelHandlerContext ctx, Object msg, ByteBuf buffer) throws Exception {
       log.tracef("Encode %s so that it's sent to the server", msg);
@@ -508,9 +570,20 @@ class Encoder extends MessageToByteEncoder<Object> {
          RemoveClientListenerOp op = (RemoveClientListenerOp) msg;
          writeHeader(op, buffer);
          writeRangedBytes(op.listenerId, buffer);
+      } else if (msg instanceof PrepareOp) {
+         encodePrepareOp((PrepareOp) msg, buffer);
+      } else if (msg instanceof CommitOrRollbackOp) {
+         encodeCommitOrRollbackOp((CommitOrRollbackOp) msg, buffer);
+      } else if (msg instanceof CounterOp) {
+         writeHeader((Op) msg, buffer);
+         ((CounterOp) msg).writeTo(buffer);
       } else if (msg instanceof Op) {
          Op op = (Op) msg;
          writeHeader(op, buffer);
+         if (op.code == HotRodOperation.COUNTER_GET_NAMES.getRequestOpCode()) {
+            //nothing more to add
+            return;
+         }
          if (protocolVersion < 20)
             writeRangedBytes(new byte[0], buffer); // transaction id
          if (op.code != 0x13 && op.code != 0x15
@@ -810,10 +883,52 @@ class Decoder extends ReplayingDecoder<Void> {
          case ERROR:
             if (op == null)
                resp = new TestErrorResponse((byte) 10, id, "", (short) 0, status, 0,
-                     topologyChangeResponse, readString(buf));
+                     null, readString(buf));
             else
                resp = new TestErrorResponse(op.version, id, op.cacheName, op.clientIntel,
                      status, op.topologyId, topologyChangeResponse, readString(buf));
+            break;
+         case PREPARE_TX:
+         case ROLLBACK_TX:
+         case COMMIT_TX:
+            resp = new TxResponse(client.protocolVersion, id, client.defaultCacheName, op.clientIntel, opCode, status,
+                  op.topologyId, topologyChangeResponse, status == OperationStatus.Success ? buf.readInt() : 0);
+            break;
+         case COUNTER_REMOVE:
+         case COUNTER_CREATE:
+         case COUNTER_IS_DEFINED:
+         case COUNTER_RESET:
+         case COUNTER_ADD_LISTENER:
+         case COUNTER_REMOVE_LISTENER:
+            resp = new TestResponse(op.version, id, op.cacheName, op.clientIntel,
+                  opCode, status, op.topologyId, topologyChangeResponse);
+            break;
+         case COUNTER_GET_CONFIGURATION:
+            resp = status == OperationStatus.Success ?
+                   new CounterConfigurationTestResponse(op.version, id, op.cacheName, op.clientIntel,
+                         opCode, status, op.topologyId, topologyChangeResponse,
+                         decodeConfiguration(buf::readByte, buf::readLong, () -> readUnsignedInt(buf))) :
+                   new TestResponse(op.version, id, op.cacheName, op.clientIntel,
+                         opCode, status, op.topologyId, topologyChangeResponse);
+            break;
+         case COUNTER_GET:
+         case COUNTER_ADD_AND_GET:
+         case COUNTER_CAS:
+            resp = status == OperationStatus.Success ?
+                   new CounterValueTestResponse(op.version, id, op.cacheName, op.clientIntel,
+                         opCode, status, op.topologyId, topologyChangeResponse, buf.readLong()) :
+                   new TestResponse(op.version, id, op.cacheName, op.clientIntel,
+                         opCode, status, op.topologyId, topologyChangeResponse);
+            break;
+         case COUNTER_GET_NAMES:
+            resp = status == OperationStatus.Success ?
+                   new CounterNamesTestResponse(op.version, id, op.cacheName, op.clientIntel,
+                         opCode, status, op.topologyId, topologyChangeResponse, buf) :
+                   new TestResponse(op.version, id, op.cacheName, op.clientIntel,
+                         opCode, status, op.topologyId, topologyChangeResponse);
+            break;
+         case COUNTER_EVENT:
+            resp = new TestCounterEventResponse(client.protocolVersion, id, opCode, buf);
             break;
          default:
             resp = null;
@@ -936,6 +1051,11 @@ class ClientHandler extends ChannelInboundHandlerAdapter {
 
    private Map<Long, TestResponse> responses = new ConcurrentHashMap<>();
    private Map<WrappedByteArray, TestClientListener> clientListeners = new ConcurrentHashMap<>();
+   private Map<WrappedByteArray, TestCounterNotificationManager> clientCounterListeners = new ConcurrentHashMap<>();
+
+   void registerCounterNotificationManager(TestCounterNotificationManager manager) {
+      clientCounterListeners.putIfAbsent(manager.getListenerId(), manager);
+   }
 
    void addClientListener(TestClientListener listener) {
       clientListeners.put(new WrappedByteArray(listener.getId()), listener);
@@ -963,6 +1083,9 @@ class ClientHandler extends ChannelInboundHandlerAdapter {
       } else if (msg instanceof TestCustomEvent) {
          TestCustomEvent e = (TestCustomEvent) msg;
          clientListeners.get(new WrappedByteArray(e.listenerId)).onCustom(e);
+      } else if (msg instanceof TestCounterEventResponse) {
+         log.tracef("Put %s in counter events", msg);
+         clientCounterListeners.get(((TestCounterEventResponse) msg).getListenerId()).accept((TestCounterEventResponse) msg);
       } else if (msg instanceof TestResponse) {
          TestResponse resp = (TestResponse) msg;
          log.tracef("Put %s in responses", resp);
@@ -975,7 +1098,7 @@ class ClientHandler extends ChannelInboundHandlerAdapter {
    TestResponse getResponse(long messageId) {
       // Very TODO very primitive way of waiting for a response. Convert to a Future
       int i = 0;
-      TestResponse v = null;
+      TestResponse v;
       do {
          v = responses.get(messageId);
          if (v == null) {
@@ -1108,6 +1231,37 @@ class PutStreamOp extends Op {
    }
 }
 
+abstract class TxOp extends AbstractOp {
+
+   final Xid xid;
+
+   TxOp(int magic, byte version, byte code, String cacheName, byte clientIntel, int topologyId, Xid xid) {
+      super(magic, version, code, cacheName, clientIntel, topologyId);
+      this.xid = xid;
+   }
+}
+
+class PrepareOp extends TxOp {
+
+   final boolean onePhaseCommit;
+   final List<TxWrite> modifications;
+
+   PrepareOp(int magic, byte version, String cacheName, byte clientIntel, int topologyId, Xid xid,
+         boolean onePhaseCommit, Collection<TxWrite> modifications) {
+      super(magic, version, (byte) 0x3B, cacheName, clientIntel, topologyId, xid);
+      this.onePhaseCommit = onePhaseCommit;
+      this.modifications = new ArrayList<>(modifications);
+   }
+}
+
+class CommitOrRollbackOp extends TxOp {
+
+   CommitOrRollbackOp(byte version, String cacheName, byte clientIntel, Xid xid,
+         boolean commit) {
+      super(0xA0, version, (byte) (commit ? 0x3D : 0x3F), cacheName, clientIntel, 0, xid);
+   }
+}
+
 class ServerNode {
    final String host;
    final int port;
@@ -1115,59 +1269,5 @@ class ServerNode {
    ServerNode(String host, int port) {
       this.host = host;
       this.port = port;
-   }
-}
-
-class TestTopologyAwareResponse extends AbstractTestTopologyAwareResponse {
-   protected TestTopologyAwareResponse(int topologyId, Collection<ServerAddress> members) {
-      super(topologyId, members);
-   }
-}
-
-class TestHashDistAware10Response extends AbstractTestTopologyAwareResponse {
-
-   final Map<ServerAddress, List<Integer>> hashIds;
-   final int numOwners;
-   final byte hashFunction;
-   final int hashSpace;
-
-   protected TestHashDistAware10Response(int topologyId, Collection<ServerAddress> members, Map<ServerAddress,
-         List<Integer>> hashIds, int numOwners, byte hashFunction, int hashSpace) {
-      super(topologyId, members);
-      this.hashIds = hashIds;
-      this.numOwners = numOwners;
-      this.hashFunction = hashFunction;
-      this.hashSpace = hashSpace;
-   }
-}
-
-class TestHashDistAware11Response extends AbstractTestTopologyAwareResponse {
-
-   final Map<ServerAddress, Integer> membersToHash;
-   final int numOwners;
-   final byte hashFunction;
-   final int hashSpace;
-   final int numVirtualNodes;
-
-   protected TestHashDistAware11Response(int topologyId, Map<ServerAddress, Integer> membersToHash, int numOwners,
-                                         byte hashFunction, int hashSpace, int numVirtualNodes) {
-      super(topologyId, membersToHash.keySet());
-      this.membersToHash = membersToHash;
-      this.numOwners = numOwners;
-      this.hashFunction = hashFunction;
-      this.hashSpace = hashSpace;
-      this.numVirtualNodes = numVirtualNodes;
-   }
-}
-
-class TestHashDistAware20Response extends AbstractTestTopologyAwareResponse {
-   final List<Iterable<ServerAddress>> segments;
-   final byte hashFunction;
-
-   protected TestHashDistAware20Response(int topologyId, Collection<ServerAddress> members,
-                                         List<Iterable<ServerAddress>> segments, byte hashFunction) {
-      super(topologyId, members);
-      this.segments = segments;
-      this.hashFunction = hashFunction;
    }
 }

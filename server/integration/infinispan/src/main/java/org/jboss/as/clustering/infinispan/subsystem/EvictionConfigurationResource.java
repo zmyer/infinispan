@@ -24,6 +24,7 @@ package org.jboss.as.clustering.infinispan.subsystem;
 
 import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.eviction.EvictionType;
+import org.infinispan.server.infinispan.spi.service.CacheServiceName;
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathElement;
@@ -42,6 +43,7 @@ import org.jboss.dmr.ModelType;
  * @author Tristan Tarrant
  * @deprecated Replaced by {@link MemoryObjectConfigurationResource}
  */
+@Deprecated
 public class EvictionConfigurationResource extends CacheConfigurationChildResource {
 
     public static final PathElement PATH = PathElement.pathElement(ModelKeys.EVICTION, ModelKeys.EVICTION_NAME);
@@ -81,8 +83,8 @@ public class EvictionConfigurationResource extends CacheConfigurationChildResour
 
     @Override
     public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        final OperationStepHandler restartCacheWriteHandler = new RestartCacheWriteAttributeHandler(
-                resource.getPathElement().getKey(), resource.getServiceInstaller(), attributes);
+        final OperationStepHandler restartCacheWriteHandler = new RestartServiceWriteAttributeHandler(
+                resource.getPathElement().getKey(), resource.getServiceInstaller(), CacheServiceName.CONFIGURATION, attributes);
 
         resourceRegistration.registerReadWriteAttribute(EVICTION_STRATEGY, CacheReadAttributeHandler.INSTANCE, restartCacheWriteHandler);
         resourceRegistration.registerReadWriteAttribute(TYPE, CacheReadAttributeHandler.INSTANCE, restartCacheWriteHandler);

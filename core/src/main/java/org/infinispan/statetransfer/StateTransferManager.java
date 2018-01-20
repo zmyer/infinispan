@@ -43,6 +43,7 @@ public interface StateTransferManager {
     */
    boolean isStateTransferInProgressForKey(Object key);
 
+   @Deprecated
    CacheTopology getCacheTopology();
 
    void start() throws Exception;
@@ -54,8 +55,6 @@ public interface StateTransferManager {
     * command to the nodes that are new owners of the data, in order to assure consistency.
     */
    Map<Address, Response> forwardCommandIfNeeded(TopologyAffectedCommand command, Set<Object> affectedKeys, Address origin);
-
-   void notifyEndOfRebalance(int topologyId, int rebalanceId);
 
    /**
     * @return  true if this node has already received the first rebalance start

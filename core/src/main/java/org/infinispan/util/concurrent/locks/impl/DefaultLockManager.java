@@ -52,19 +52,10 @@ public class DefaultLockManager implements LockManager {
    private static final AtomicReferenceFieldUpdater<CompositeLockPromise, LockState> UPDATER =
          newUpdater(CompositeLockPromise.class, LockState.class, "lockState");
 
-
-   protected LockContainer lockContainer;
-   protected Configuration configuration;
-   protected ScheduledExecutorService scheduler;
-
-   @Inject
-   public void inject(LockContainer container, Configuration configuration,
-                      @ComponentName(KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR) ScheduledExecutorService executorService) {
-      this.lockContainer = container;
-      this.configuration = configuration;
-      this.scheduler = executorService;
-   }
-
+   @Inject private LockContainer lockContainer;
+   @Inject private Configuration configuration;
+   @Inject @ComponentName(KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR)
+   private ScheduledExecutorService scheduler;
 
    @Override
    public KeyAwareLockPromise lock(Object key, Object lockOwner, long time, TimeUnit unit) {
@@ -74,6 +65,16 @@ public class DefaultLockManager implements LockManager {
 
       if (trace) {
          log.tracef("Lock key=%s for owner=%s. timeout=%s (%s)", toStr(key), lockOwner, time, unit);
+      }
+
+      if (key == lockOwner) {
+         // If the lock is already owned by this lock owner there is no reason to attempt the lock needlessly
+         InfinispanLock lock = lockContainer.getLock(key);
+         if (lock != null && lock.getLockOwner() == key) {
+            if (trace)
+               log.tracef("Not locking key=%s as it is already held by the same lock owner", key);
+            return KeyAwareLockPromise.NO_OP;
+         }
       }
 
       ExtendedLockPromise promise = lockContainer.acquire(key, lockOwner, time, unit);
@@ -146,7 +147,14 @@ public class DefaultLockManager implements LockManager {
          return;
       }
       for (Object key : keys) {
-         lockContainer.release(key, lockOwner);
+         // If the key is the lock owner that means it was explicitly locked, which can only be unlocked via the single
+         // argument unlock method. This is used by a cache that has the lock owner specifically overridden
+         if (key == lockOwner) {
+            if (trace)
+               log.tracef("Ignoring key %s as it matches lock owner", key);
+         } else {
+            lockContainer.release(key, lockOwner);
+         }
       }
    }
 
@@ -270,6 +278,7 @@ public class DefaultLockManager implements LockManager {
 
       private final List<KeyAwareExtendedLockPromise> lockPromiseList;
       private final CompletableFuture<LockState> notifier;
+      @SuppressWarnings("CanBeFinal")
       volatile LockState lockState = LockState.ACQUIRED;
       private final AtomicInteger countersLeft = new AtomicInteger();
 

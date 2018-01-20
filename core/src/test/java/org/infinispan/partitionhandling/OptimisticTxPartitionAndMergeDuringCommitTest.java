@@ -3,8 +3,8 @@ package org.infinispan.partitionhandling;
 import org.infinispan.Cache;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.TransactionBoundaryCommand;
-import org.infinispan.transaction.tm.DummyTransaction;
-import org.infinispan.transaction.tm.DummyTransactionManager;
+import org.infinispan.transaction.tm.EmbeddedTransaction;
+import org.infinispan.transaction.tm.EmbeddedTransactionManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.AssertJUnit;
@@ -29,10 +29,12 @@ public class OptimisticTxPartitionAndMergeDuringCommitTest extends BaseOptimisti
       doTest(SplitMode.BOTH_DEGRADED, false, false);
    }
 
+   @Test(groups = "unstable", description = "https://issues.jboss.org/browse/ISPN-8232")
    public void testOriginatorIsolatedPartitionWithDiscard() throws Exception {
       doTest(SplitMode.ORIGINATOR_ISOLATED, false, true);
    }
 
+   @Test(groups = "unstable", description = "https://issues.jboss.org/browse/ISPN-8232")
    public void testOriginatorIsolatedPartition() throws Exception {
       doTest(SplitMode.ORIGINATOR_ISOLATED, false, false);
    }
@@ -51,9 +53,9 @@ public class OptimisticTxPartitionAndMergeDuringCommitTest extends BaseOptimisti
       final KeyInfo keyInfo = createKeys(OPTIMISTIC_TX_CACHE_NAME);
       final Cache<Object, String> originator = cache(0, OPTIMISTIC_TX_CACHE_NAME);
 
-      final DummyTransactionManager transactionManager = (DummyTransactionManager) originator.getAdvancedCache().getTransactionManager();
+      final EmbeddedTransactionManager transactionManager = (EmbeddedTransactionManager) originator.getAdvancedCache().getTransactionManager();
       transactionManager.begin();
-      final DummyTransaction transaction = transactionManager.getTransaction();
+      final EmbeddedTransaction transaction = transactionManager.getTransaction();
       keyInfo.putFinalValue(originator);
       AssertJUnit.assertTrue(transaction.runPrepare());
       transactionManager.suspend();
@@ -72,9 +74,20 @@ public class OptimisticTxPartitionAndMergeDuringCommitTest extends BaseOptimisti
 
    @Override
    protected void checkLocksDuringPartition(SplitMode splitMode, KeyInfo keyInfo, boolean discard) {
-      //on both caches, the key is locked and it is unlocked after the merge
-      assertLocked(cache(1, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey1());
-      assertLocked(cache(2, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey2());
+      if (splitMode == SplitMode.PRIMARY_OWNER_ISOLATED) {
+         //the majority partition, all the nodes involved commit the transaction
+         //the locks should be released (async) in all the nodes
+         assertEventuallyNotLocked(cache(0, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey1());
+         assertEventuallyNotLocked(cache(0, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey2());
+         assertEventuallyNotLocked(cache(1, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey1());
+         assertEventuallyNotLocked(cache(1, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey2());
+         assertEventuallyNotLocked(cache(3, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey1());
+         assertEventuallyNotLocked(cache(3, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey2());
+      } else {
+         //on both caches, the key is locked and it is unlocked after the merge
+         assertLocked(cache(1, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey1());
+         assertLocked(cache(2, OPTIMISTIC_TX_CACHE_NAME), keyInfo.getKey2());
+      }
    }
 
    @Override

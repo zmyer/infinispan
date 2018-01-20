@@ -1,6 +1,6 @@
 package org.infinispan.tx;
 
-import static org.infinispan.test.TestingUtil.waitForRehashToComplete;
+import static org.infinispan.test.TestingUtil.waitForNoRebalance;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertTrue;
 
@@ -18,7 +18,7 @@ import org.infinispan.interceptors.BaseCustomAsyncInterceptor;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.transaction.LockingMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.jgroups.View;
 import org.testng.annotations.Test;
@@ -65,7 +65,7 @@ public class InfinispanNodeFailureTest extends MultipleCacheManagersTest {
    public void killedNodeDoesNotBreakReplaceCommand() throws Exception {
       defineConfigurationOnAllManagers(TEST_CACHE, new ConfigurationBuilder().read(manager(0).getDefaultCacheConfiguration()));
       waitForClusterToForm(TEST_CACHE);
-      waitForRehashToComplete(caches(TEST_CACHE));
+      waitForNoRebalance(caches(TEST_CACHE));
 
       final Object replaceKey = new MagicKey("X", cache(0, TEST_CACHE));
       final Object putKey = new MagicKey("Z", cache(1, TEST_CACHE));
@@ -143,11 +143,9 @@ public class InfinispanNodeFailureTest extends MultipleCacheManagersTest {
             .isolationLevel(IsolationLevel.READ_COMMITTED)
             .lockAcquisitionTimeout(20000);
       configuration.transaction()
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup())
             .lockingMode(LockingMode.PESSIMISTIC)
             .useSynchronization(false)
-            .syncCommitPhase(true)
-            .syncRollbackPhase(true)
             .recovery()
             .disable();
       configuration.clustering()
@@ -173,7 +171,7 @@ public class InfinispanNodeFailureTest extends MultipleCacheManagersTest {
       }
 
       @Override
-      public void viewAccepted(View newView) {
+      public void receiveClusterView(View newView) {
          // check if this is an event of node going down, and if so wait for a signal to apply new view
          if (waitLatch != null && getMembers().size() > newView.getMembers().size()) {
             try {
@@ -182,8 +180,7 @@ public class InfinispanNodeFailureTest extends MultipleCacheManagersTest {
                Thread.currentThread().interrupt();
             }
          }
-         super.viewAccepted(newView);
+         super.receiveClusterView(newView);
       }
-
    }
 }

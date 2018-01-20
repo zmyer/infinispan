@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
@@ -29,7 +30,7 @@ import org.infinispan.commons.executors.CachedThreadPoolExecutorFactory;
 import org.infinispan.commons.executors.ScheduledThreadPoolExecutorFactory;
 import org.infinispan.commons.executors.ThreadPoolExecutorFactory;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
-import org.infinispan.commons.marshall.Marshaller;
+import org.infinispan.commons.util.GlobUtils;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.AbstractStoreConfigurationBuilder;
 import org.infinispan.configuration.cache.AsyncStoreConfigurationBuilder;
@@ -41,7 +42,9 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ClusterLoaderConfigurationBuilder;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.ContentTypeConfigurationBuilder;
 import org.infinispan.configuration.cache.CustomStoreConfigurationBuilder;
+import org.infinispan.configuration.cache.EncodingConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
 import org.infinispan.configuration.cache.InterceptorConfiguration;
 import org.infinispan.configuration.cache.InterceptorConfigurationBuilder;
@@ -49,8 +52,8 @@ import org.infinispan.configuration.cache.MemoryConfigurationBuilder;
 import org.infinispan.configuration.cache.PartitionHandlingConfigurationBuilder;
 import org.infinispan.configuration.cache.SecurityConfigurationBuilder;
 import org.infinispan.configuration.cache.SingleFileStoreConfigurationBuilder;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.configuration.cache.StoreConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.configuration.global.GlobalAuthorizationConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalRoleConfigurationBuilder;
@@ -59,26 +62,23 @@ import org.infinispan.configuration.global.ShutdownHookBehavior;
 import org.infinispan.configuration.global.ThreadPoolConfiguration;
 import org.infinispan.configuration.global.ThreadPoolConfigurationBuilder;
 import org.infinispan.configuration.global.TransportConfigurationBuilder;
-import org.infinispan.container.DataContainer;
-import org.infinispan.configuration.cache.StorageType;
-import org.infinispan.distribution.group.Grouper;
-import org.infinispan.eviction.EvictionStrategy;
-import org.infinispan.eviction.EvictionThreadPolicy;
+import org.infinispan.conflict.EntryMergePolicy;
+import org.infinispan.conflict.MergePolicy;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.factories.threads.DefaultThreadFactory;
-import org.infinispan.jmx.MBeanServerLookup;
+import org.infinispan.globalstate.ConfigurationStorage;
+import org.infinispan.globalstate.LocalConfigurationStorage;
+import org.infinispan.partitionhandling.PartitionHandling;
 import org.infinispan.persistence.cluster.ClusterLoader;
 import org.infinispan.persistence.file.SingleFileStore;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.remoting.transport.Transport;
-import org.infinispan.security.AuditLogger;
 import org.infinispan.security.PrincipalRoleMapper;
 import org.infinispan.security.impl.ClusterRoleMapper;
 import org.infinispan.security.impl.CommonNameRoleMapper;
 import org.infinispan.security.impl.IdentityRoleMapper;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionProtocol;
-import org.infinispan.transaction.lookup.TransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -93,6 +93,8 @@ import org.kohsuke.MetaInfServices;
  */
 @MetaInfServices
 @Namespaces({
+      @Namespace(uri = "urn:infinispan:config:9.2", root = "infinispan"),
+      @Namespace(uri = "urn:infinispan:config:9.1", root = "infinispan"),
       @Namespace(uri = "urn:infinispan:config:9.0", root = "infinispan"),
       @Namespace(root = "infinispan"),
 
@@ -108,9 +110,9 @@ public class Parser implements ConfigurationParser {
 
    static final Log log = LogFactory.getLog(Parser.class);
 
-   private final Map<String, DefaultThreadFactory> threadFactories = new HashMap<String, DefaultThreadFactory>();
-   private final Map<String, ThreadPoolConfigurationBuilder> threadPools = new HashMap<String, ThreadPoolConfigurationBuilder>();
-   private final Map<String, String> threadPoolToThreadFactory = new HashMap<String, String>();
+   private final Map<String, DefaultThreadFactory> threadFactories = new HashMap<>();
+   private final Map<String, ThreadPoolConfigurationBuilder> threadPools = new HashMap<>();
+   private final Map<String, String> threadPoolToThreadFactory = new HashMap<>();
 
    public Parser() {
    }
@@ -149,7 +151,7 @@ public class Parser implements ConfigurationParser {
 
          switch (attribute) {
             case MARSHALLER_CLASS: {
-               builder.serialization().marshaller(Util.<Marshaller>getInstance(value, holder.getClassLoader()));
+               builder.serialization().marshaller(Util.getInstance(value, holder.getClassLoader()));
                break;
             }
             case VERSION: {
@@ -607,6 +609,22 @@ public class Parser implements ConfigurationParser {
                parseDistributedCache(reader, holder, true);
                break;
             }
+            case SCATTERED_CACHE: {
+               if (reader.getSchema().since(9, 1)) {
+                  parseScatteredCache(reader, holder, false);
+               } else {
+                  throw ParseUtils.unexpectedElement(reader);
+               }
+               break;
+            }
+            case SCATTERED_CACHE_CONFIGURATION: {
+               if (reader.getSchema().since(9, 1)) {
+                  parseScatteredCache(reader, holder, true);
+               } else {
+                  throw ParseUtils.unexpectedElement(reader);
+               }
+               break;
+            }
             case SERIALIZATION: {
                parseSerialization(reader, holder);
                break;
@@ -666,7 +684,7 @@ public class Parser implements ConfigurationParser {
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case AUDIT_LOGGER: {
-               builder.auditLogger(Util.<AuditLogger>getInstance(value, holder.getClassLoader()));
+               builder.auditLogger(Util.getInstance(value, holder.getClassLoader()));
                break;
             }
             default: {
@@ -725,7 +743,7 @@ public class Parser implements ConfigurationParser {
    private PrincipalRoleMapper parseCustomMapper(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder) throws XMLStreamException {
       String mapperClass = ParseUtils.requireSingleAttribute(reader, Attribute.CLASS.getLocalName());
       ParseUtils.requireNoContent(reader);
-      return Util.<PrincipalRoleMapper>getInstance(mapperClass, holder.getClassLoader());
+      return Util.getInstance(mapperClass, holder.getClassLoader());
    }
 
    private void parseGlobalRole(XMLExtendedStreamReader reader, GlobalAuthorizationConfigurationBuilder builder) throws XMLStreamException {
@@ -763,7 +781,7 @@ public class Parser implements ConfigurationParser {
                break;
             }
             case MBEAN_SERVER_LOOKUP: {
-               builder.globalJmxStatistics().mBeanServerLookup(Util.<MBeanServerLookup>getInstance(value, holder.getClassLoader()));
+               builder.globalJmxStatistics().mBeanServerLookup(Util.getInstance(value, holder.getClassLoader()));
                break;
             }
             case ALLOW_DUPLICATE_DOMAINS: {
@@ -1112,6 +1130,7 @@ public class Parser implements ConfigurationParser {
    private void parseGlobalState(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder) throws XMLStreamException {
       ParseUtils.requireNoAttributes(reader);
       GlobalStateConfigurationBuilder builder = holder.getGlobalConfigurationBuilder().globalState().enable();
+      ConfigurationStorage storage = null;
       while (reader.hasNext() && (reader.nextTag() != XMLStreamConstants.END_ELEMENT)) {
          Element element = Element.forName(reader.getLocalName());
          switch (element) {
@@ -1119,14 +1138,50 @@ public class Parser implements ConfigurationParser {
                builder.persistentLocation(parseGlobalStatePath(reader));
                break;
             }
+            case SHARED_PERSISTENT_LOCATION: {
+               builder.sharedPersistentLocation(parseGlobalStatePath(reader));
+               break;
+            }
             case TEMPORARY_LOCATION: {
                builder.temporaryLocation(parseGlobalStatePath(reader));
+               break;
+            }
+            case VOLATILE_CONFIGURATION_STORAGE: {
+               if (storage != null) {
+                  throw ParseUtils.unexpectedElement(reader);
+               }
+               storage = ConfigurationStorage.VOLATILE;
+               break;
+            }
+            case OVERLAY_CONFIGURATION_STORAGE: {
+               if (storage != null) {
+                  throw ParseUtils.unexpectedElement(reader);
+               }
+               storage = ConfigurationStorage.OVERLAY;
+               break;
+            }
+            case MANAGED_CONFIGURATION_STORAGE: {
+               if (storage != null) {
+                  throw ParseUtils.unexpectedElement(reader);
+               } else {
+                  throw log.managerConfigurationStorageUnavailable();
+               }
+            }
+            case CUSTOM_CONFIGURATION_STORAGE: {
+               if (storage != null) {
+                  throw ParseUtils.unexpectedElement(reader);
+               }
+               storage = ConfigurationStorage.CUSTOM;
+               builder.configurationStorageSupplier(parseCustomConfigurationStorage(reader, holder));
                break;
             }
             default: {
                throw ParseUtils.unexpectedElement(reader);
             }
          }
+      }
+      if (storage != null) {
+         builder.configurationStorage(storage);
       }
    }
 
@@ -1152,6 +1207,12 @@ public class Parser implements ConfigurationParser {
       return path;
    }
 
+   private Supplier<? extends LocalConfigurationStorage> parseCustomConfigurationStorage(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder) throws XMLStreamException {
+      String storageClass = ParseUtils.requireSingleAttribute(reader, Attribute.CLASS.getLocalName());
+      ParseUtils.requireNoContent(reader);
+      return Util.getInstanceSupplier(storageClass, holder.getClassLoader());
+   }
+
    private ThreadPoolConfiguration createThreadPoolConfiguration(String threadPoolName, String componentName) {
       ThreadPoolConfigurationBuilder threadPool = threadPools.get(threadPoolName);
       if (threadPool == null)
@@ -1166,6 +1227,8 @@ public class Parser implements ConfigurationParser {
    private void parseLocalCache(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder, boolean template) throws XMLStreamException {
       holder.pushScope(template ? ParserScope.CACHE_TEMPLATE : ParserScope.CACHE);
       String name = reader.getAttributeValue(null, Attribute.NAME.getLocalName());
+      if (!template && GlobUtils.isGlob(name))
+         throw log.wildcardsNotAllowedInCacheNames(name);
       String configuration = reader.getAttributeValue(null, Attribute.CONFIGURATION.getLocalName());
       ConfigurationBuilder builder = getConfigurationBuilder(holder, name, template, configuration);
       builder.clustering().cacheMode(CacheMode.LOCAL);
@@ -1207,12 +1270,7 @@ public class Parser implements ConfigurationParser {
             break;
          }
          case SPIN_DURATION: {
-            long spin = Long.parseLong(value);
-            if (spin > 0)
-               builder.deadlockDetection().enable().spinDuration(spin);
-            else
-               builder.deadlockDetection().disable();
-
+            log.ignoreXmlAttribute(attribute);
             break;
          }
          case UNRELIABLE_RETURN_VALUES: {
@@ -1255,14 +1313,26 @@ public class Parser implements ConfigurationParser {
       }
    }
 
-   private void parsePartitionHandling(XMLExtendedStreamReader reader, ConfigurationBuilder builder) throws XMLStreamException {
+   private void parsePartitionHandling(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder) throws XMLStreamException {
+      ConfigurationBuilder builder = holder.getCurrentConfigurationBuilder();
       PartitionHandlingConfigurationBuilder ph = builder.clustering().partitionHandling();
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          String value = replaceProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case ENABLED: {
+               log.partitionHandlingConfigurationEnabledDeprecated();
                ph.enabled(Boolean.valueOf(value));
+               break;
+            }
+            case WHEN_SPLIT: {
+               ph.whenSplit(PartitionHandling.valueOf(value.toUpperCase()));
+               break;
+            }
+            case MERGE_POLICY: {
+               MergePolicy mp = MergePolicy.fromString(value);
+               EntryMergePolicy mergePolicy = mp == MergePolicy.CUSTOM ? Util.getInstance(value, holder.getClassLoader()) : mp;
+               ph.mergePolicy(mergePolicy);
                break;
             }
             default: {
@@ -1461,6 +1531,10 @@ public class Parser implements ConfigurationParser {
             this.parseExpiration(reader, builder);
             break;
          }
+         case ENCODING: {
+            this.parseDataType(reader, builder, holder);
+            break;
+         }
          case PERSISTENCE: {
             this.parsePersistence(reader, holder);
             break;
@@ -1510,7 +1584,7 @@ public class Parser implements ConfigurationParser {
             break;
          }
          case PARTITION_HANDLING: {
-            this.parsePartitionHandling(reader, builder);
+            this.parsePartitionHandling(reader, holder);
             break;
          }
          case SECURITY: {
@@ -1532,7 +1606,7 @@ public class Parser implements ConfigurationParser {
          switch (attribute) {
             case CLASS:
                log.dataContainerConfigurationDeprecated();
-               builder.dataContainer().dataContainer(Util.<DataContainer>getInstance(value, holder.getClassLoader()));
+               builder.dataContainer().dataContainer(Util.getInstance(value, holder.getClassLoader()));
                break;
             case KEY_EQUIVALENCE:
                builder.dataContainer().keyEquivalence(Util.<Equivalence>getInstance(value, holder.getClassLoader()));
@@ -1647,10 +1721,10 @@ public class Parser implements ConfigurationParser {
    }
 
    private void parseStoreAsBinary(final XMLExtendedStreamReader reader, final ConfigurationBuilderHolder holder) throws XMLStreamException {
+      log.elementDeprecatedUseOther(Element.STORE_AS_BINARY, Element.MEMORY);
       ConfigurationBuilder builder = holder.getCurrentConfigurationBuilder();
       Boolean binaryKeys = null;
       Boolean binaryValues = null;
-      builder.storeAsBinary().enable();
       builder.memory().storageType(StorageType.BINARY);
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
@@ -1659,11 +1733,9 @@ public class Parser implements ConfigurationParser {
          switch (attribute) {
             case STORE_KEYS_AS_BINARY:
                binaryKeys = Boolean.parseBoolean(value);
-               builder.storeAsBinary().storeKeysAsBinary(binaryKeys);
                break;
             case STORE_VALUES_AS_BINARY:
                binaryValues = Boolean.parseBoolean(value);
-               builder.storeAsBinary().storeValuesAsBinary(binaryValues);
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -1671,10 +1743,9 @@ public class Parser implements ConfigurationParser {
       }
 
       if (binaryKeys != null && !binaryKeys && binaryValues != null && !binaryValues)
-         builder.storeAsBinary().disable(); // explicitly disable
+         builder.memory().storageType(StorageType.OBJECT); // explicitly disable
 
       ParseUtils.requireNoContent(reader);
-
    }
 
    private void parseCompatibility(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder) throws XMLStreamException {
@@ -1686,7 +1757,7 @@ public class Parser implements ConfigurationParser {
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case MARSHALLER_CLASS:
-               builder.compatibility().marshaller(Util.<Marshaller>getInstance(value, holder.getClassLoader()));
+               builder.compatibility().marshaller(Util.getInstance(value, holder.getClassLoader()));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -1697,15 +1768,12 @@ public class Parser implements ConfigurationParser {
    }
 
    private void parseVersioning(final XMLExtendedStreamReader reader, final ConfigurationBuilderHolder holder) throws XMLStreamException {
-      ConfigurationBuilder builder = holder.getCurrentConfigurationBuilder();
-      builder.versioning().enable();
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case VERSIONING_SCHEME:
-               builder.versioning().scheme(VersioningScheme.valueOf(value));
+               log.ignoredAttribute("versioning", "9.0", attribute.getLocalName(), reader.getLocation().getLineNumber());
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -1784,7 +1852,7 @@ public class Parser implements ConfigurationParser {
                break;
             }
             case WRITE_SKEW_CHECK: {
-               builder.locking().writeSkewCheck(Boolean.valueOf(value));
+               log.ignoredAttribute("write skew attribute", "9.0", attribute.getLocalName(), reader.getLocation().getLineNumber());
                break;
             }
             default: {
@@ -1810,9 +1878,6 @@ public class Parser implements ConfigurationParser {
                builder.transaction().useSynchronization(!txMode.isXAEnabled() && txMode.getMode().isTransactional());
                builder.transaction().recovery().enabled(txMode.isRecoveryEnabled());
                builder.invocationBatching().enable(txMode.isBatchingEnabled());
-               if (txMode.isRecoveryEnabled()) {
-                  builder.transaction().syncCommitPhase(true).syncRollbackPhase(true);
-               }
                break;
             }
             case LOCKING: {
@@ -1820,7 +1885,7 @@ public class Parser implements ConfigurationParser {
                break;
             }
             case TRANSACTION_MANAGER_LOOKUP_CLASS: {
-               builder.transaction().transactionManagerLookup(Util.<TransactionManagerLookup>getInstance(value, holder.getClassLoader()));
+               builder.transaction().transactionManagerLookup(Util.getInstance(value, holder.getClassLoader()));
                break;
             }
             case REAPER_WAKE_UP_INTERVAL: {
@@ -1855,33 +1920,59 @@ public class Parser implements ConfigurationParser {
       ParseUtils.requireNoContent(reader);
    }
 
-   protected void parseEviction(XMLExtendedStreamReader reader, ConfigurationBuilder builder) throws XMLStreamException {
-      log.evictionDeprecated();
+   protected void parseDataType(XMLExtendedStreamReader reader, ConfigurationBuilder builder, ConfigurationBuilderHolder holder) throws XMLStreamException {
+      ParseUtils.requireNoAttributes(reader);
+      EncodingConfigurationBuilder encodingBuilder = builder.encoding();
+      while (reader.hasNext() && (reader.nextTag() != XMLStreamConstants.END_ELEMENT)) {
+         Element element = Element.forName(reader.getLocalName());
+         switch (element) {
+            case KEY_DATA_TYPE:
+               ContentTypeConfigurationBuilder keyBuilder = encodingBuilder.key();
+               parseContentType(reader, holder, keyBuilder);
+               ParseUtils.requireNoContent(reader);
+               break;
+            case VALUE_DATA_TYPE:
+               ContentTypeConfigurationBuilder valueBuilder = encodingBuilder.value();
+               parseContentType(reader, holder, valueBuilder);
+               ParseUtils.requireNoContent(reader);
+               break;
+            default:
+               throw ParseUtils.unexpectedElement(reader);
+         }
+      }
+   }
+
+   private void parseContentType(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder, ContentTypeConfigurationBuilder builder) throws XMLStreamException {
+      for (int i = 0; i < reader.getAttributeCount(); i++) {
+         ParseUtils.requireNoNamespaceAttribute(reader, i);
+         String value = replaceProperties(reader.getAttributeValue(i));
+         Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
+         switch (attribute) {
+            case MEDIA_TYPE:
+               builder.mediaType(value);
+               break;
+            default:
+               throw ParseUtils.unexpectedAttribute(reader, i);
+         }
+      }
+   }
+
+   private void parseEviction(XMLExtendedStreamReader reader, ConfigurationBuilder builder) throws XMLStreamException {
+      log.elementDeprecatedUseOther(Element.EVICTION, Element.MEMORY);
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          String value = replaceProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
-            case STRATEGY: {
-               builder.eviction().strategy(EvictionStrategy.valueOf(value));
+            case STRATEGY:
+            case THREAD_POLICY:
+            case TYPE:
+               log.ignoreXmlElement(attribute);
                break;
-            }
-            case MAX_ENTRIES: {
+            case MAX_ENTRIES:
                log.evictionMaxEntriesDeprecated();
-               builder.eviction().maxEntries(Long.parseLong(value));
+            case SIZE:
+               builder.memory().size(Long.parseLong(value));
                break;
-            }
-            case THREAD_POLICY: {
-               builder.eviction().threadPolicy(EvictionThreadPolicy.valueOf(value));
-               break;
-            }
-            case TYPE: {
-               builder.eviction().type(EvictionType.valueOf(value));
-               break;
-            }
-            case SIZE: {
-               builder.eviction().size(Long.parseLong(value));
-               break;
-            }
             default: {
                throw ParseUtils.unexpectedAttribute(reader, i);
             }
@@ -1918,6 +2009,8 @@ public class Parser implements ConfigurationParser {
    private void parseInvalidationCache(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder, boolean template) throws XMLStreamException {
       holder.pushScope(template ? ParserScope.CACHE_TEMPLATE : ParserScope.CACHE);
       String name = reader.getAttributeValue(null, Attribute.NAME.getLocalName());
+      if (!template && GlobUtils.isGlob(name))
+         throw log.wildcardsNotAllowedInCacheNames(name);
       String configuration = reader.getAttributeValue(null, Attribute.CONFIGURATION.getLocalName());
       ConfigurationBuilder builder = getConfigurationBuilder(holder, name, template, configuration);
       CacheMode baseCacheMode = configuration == null ? CacheMode.INVALIDATION_SYNC : builder.clustering().cacheMode();
@@ -1945,6 +2038,32 @@ public class Parser implements ConfigurationParser {
          }
       }
       holder.popScope();
+   }
+
+   private void parseSegmentedCacheAttribute(XMLExtendedStreamReader reader,
+                                             int index, Attribute attribute, String value, ConfigurationBuilder builder, ClassLoader classLoader, CacheMode baseCacheMode)
+      throws XMLStreamException {
+      switch (attribute) {
+         case SEGMENTS: {
+            builder.clustering().hash().numSegments(Integer.parseInt(value));
+            break;
+         }
+         case CONSISTENT_HASH_FACTORY: {
+            builder.clustering().hash().consistentHashFactory(Util.getInstance(value, classLoader));
+            break;
+         }
+         case KEY_PARTITIONER: {
+            if (reader.getSchema().since(8, 2)) {
+               builder.clustering().hash().keyPartitioner(Util.getInstance(value, classLoader));
+            } else {
+               throw ParseUtils.unexpectedAttribute(reader, index);
+            }
+            break;
+         }
+         default: {
+            this.parseClusteredCacheAttribute(reader, index, attribute, value, builder, baseCacheMode);
+         }
+      }
    }
 
    private void parseClusteredCacheAttribute(XMLExtendedStreamReader reader,
@@ -1985,6 +2104,8 @@ public class Parser implements ConfigurationParser {
    private void parseReplicatedCache(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder, boolean template) throws XMLStreamException {
       holder.pushScope(template ? ParserScope.CACHE_TEMPLATE : ParserScope.CACHE);
       String name = reader.getAttributeValue(null, Attribute.NAME.getLocalName());
+      if (!template && GlobUtils.isGlob(name))
+         throw log.wildcardsNotAllowedInCacheNames(name);
       String configuration = reader.getAttributeValue(null, Attribute.CONFIGURATION.getLocalName());
       ConfigurationBuilder builder = getConfigurationBuilder(holder, name, template, configuration);
       CacheMode baseCacheMode = configuration == null ? CacheMode.REPL_SYNC : builder.clustering().cacheMode();
@@ -1992,27 +2113,7 @@ public class Parser implements ConfigurationParser {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          String value = replaceProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
-         switch (attribute) {
-            case SEGMENTS: {
-               builder.clustering().hash().numSegments(Integer.parseInt(value));
-               break;
-            }
-            case CONSISTENT_HASH_FACTORY: {
-               builder.clustering().hash().consistentHashFactory(Util.getInstance(value, holder.getClassLoader()));
-               break;
-            }
-            case KEY_PARTITIONER: {
-               if (reader.getSchema().since(8, 2)) {
-                  builder.clustering().hash().keyPartitioner(Util.getInstance(value, holder.getClassLoader()));
-               } else {
-                  throw ParseUtils.unexpectedAttribute(reader, i);
-               }
-               break;
-            }
-            default: {
-               this.parseClusteredCacheAttribute(reader, i, attribute, value, builder, baseCacheMode);
-            }
-         }
+         parseSegmentedCacheAttribute(reader, i, attribute, value, builder, holder.getClassLoader(), baseCacheMode);
       }
 
       while (reader.hasNext() && (reader.nextTag() != XMLStreamConstants.END_ELEMENT)) {
@@ -2058,6 +2159,8 @@ public class Parser implements ConfigurationParser {
    private void parseDistributedCache(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder, boolean template) throws XMLStreamException {
       holder.pushScope(template ? ParserScope.CACHE_TEMPLATE : ParserScope.CACHE);
       String name = reader.getAttributeValue(null, Attribute.NAME.getLocalName());
+      if (!template && GlobUtils.isGlob(name))
+         throw log.wildcardsNotAllowedInCacheNames(name);
       String configuration = reader.getAttributeValue(null, Attribute.CONFIGURATION.getLocalName());
       ConfigurationBuilder builder = getConfigurationBuilder(holder, name, template, configuration);
       CacheMode baseCacheMode = configuration == null ? CacheMode.DIST_SYNC : builder.clustering().cacheMode();
@@ -2068,10 +2171,6 @@ public class Parser implements ConfigurationParser {
          switch (attribute) {
             case OWNERS: {
                builder.clustering().hash().numOwners(Integer.parseInt(value));
-               break;
-            }
-            case SEGMENTS: {
-               builder.clustering().hash().numSegments(Integer.parseInt(value));
                break;
             }
             case L1_LIFESPAN: {
@@ -2090,21 +2189,8 @@ public class Parser implements ConfigurationParser {
                builder.clustering().hash().capacityFactor(Float.parseFloat(value));
                break;
             }
-            case CONSISTENT_HASH_FACTORY: {
-               builder.clustering().hash().consistentHashFactory(
-                     Util.getInstance(value, holder.getClassLoader()));
-               break;
-            }
-            case KEY_PARTITIONER: {
-               if (reader.getSchema().since(8, 2)) {
-                  builder.clustering().hash().keyPartitioner(Util.getInstance(value, holder.getClassLoader()));
-               } else {
-                  throw ParseUtils.unexpectedAttribute(reader, i);
-               }
-               break;
-            }
             default: {
-               this.parseClusteredCacheAttribute(reader, i, attribute, value, builder, baseCacheMode);
+               this.parseSegmentedCacheAttribute(reader, i, attribute, value, builder, holder.getClassLoader(), baseCacheMode);
             }
          }
       }
@@ -2149,13 +2235,45 @@ public class Parser implements ConfigurationParser {
          switch (element) {
             case GROUPER:
                String value = ParseUtils.readStringAttributeElement(reader, "class");
-               builder.clustering().hash().groups().addGrouper(Util.<Grouper<?>>getInstance(value, holder.getClassLoader()));
+               builder.clustering().hash().groups().addGrouper(Util.getInstance(value, holder.getClassLoader()));
                break;
             default:
                throw ParseUtils.unexpectedElement(reader);
          }
       }
 
+   }
+
+   private void parseScatteredCache(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder, boolean template) throws XMLStreamException {
+      String name = reader.getAttributeValue(null, Attribute.NAME.getLocalName());
+      if (!template && GlobUtils.isGlob(name))
+         throw log.wildcardsNotAllowedInCacheNames(name);
+      String configuration = reader.getAttributeValue(null, Attribute.CONFIGURATION.getLocalName());
+      ConfigurationBuilder builder = getConfigurationBuilder(holder, name, template, configuration);
+      CacheMode baseCacheMode = configuration == null ? CacheMode.SCATTERED_SYNC : builder.clustering().cacheMode();
+      builder.clustering().cacheMode(baseCacheMode);
+      for (int i = 0; i < reader.getAttributeCount(); i++) {
+         String value = replaceProperties(reader.getAttributeValue(i));
+         Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
+         switch (attribute) {
+            case INVALIDATION_BATCH_SIZE: {
+               builder.clustering().invalidationBatchSize(Integer.parseInt(value));
+               break;
+            }
+            default: {
+               this.parseSegmentedCacheAttribute(reader, i, attribute, value, builder, holder.getClassLoader(), baseCacheMode);
+            }
+         }
+      }
+
+      while (reader.hasNext() && (reader.nextTag() != XMLStreamConstants.END_ELEMENT)) {
+         Element element = Element.forName(reader.getLocalName());
+         switch (element) {
+            default: {
+               this.parseSharedStateCacheElement(reader, element, holder);
+            }
+         }
+      }
    }
 
    private ConfigurationBuilder getConfigurationBuilder(ConfigurationBuilderHolder holder, String name, boolean template, String baseConfigurationName) {
@@ -2298,6 +2416,10 @@ public class Parser implements ConfigurationParser {
          }
          case TRANSACTIONAL: {
             storeBuilder.transactional(Boolean.parseBoolean(value));
+            break;
+         }
+         case MAX_BATCH_SIZE: {
+            storeBuilder.maxBatchSize(Integer.parseInt(value));
             break;
          }
          default: {
@@ -2584,7 +2706,7 @@ public class Parser implements ConfigurationParser {
       private final boolean recoveryEnabled;
       private final boolean batchingEnabled;
 
-      private TransactionMode(org.infinispan.transaction.TransactionMode mode, boolean xaEnabled, boolean recoveryEnabled, boolean batchingEnabled) {
+      TransactionMode(org.infinispan.transaction.TransactionMode mode, boolean xaEnabled, boolean recoveryEnabled, boolean batchingEnabled) {
          this.mode = mode;
          this.xaEnabled = xaEnabled;
          this.recoveryEnabled = recoveryEnabled;

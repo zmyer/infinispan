@@ -21,8 +21,10 @@ import org.infinispan.Cache;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.interceptors.BaseAsyncInterceptor;
@@ -31,6 +33,7 @@ import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.ReplListener;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
+import org.infinispan.test.fwk.InCacheMode;
 import org.infinispan.test.fwk.InTransactionMode;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
@@ -57,6 +60,8 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
          new PutForExternalReadTest().cacheMode(CacheMode.REPL_SYNC).transactional(true).lockingMode(LockingMode.OPTIMISTIC),
          new PutForExternalReadTest().cacheMode(CacheMode.REPL_SYNC).transactional(true).lockingMode(LockingMode.PESSIMISTIC),
          new PutForExternalReadTest().cacheMode(CacheMode.REPL_SYNC).transactional(true).totalOrder(true),
+         new PutForExternalReadTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.NEVER).transactional(false),
+         new PutForExternalReadTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.ON_WRITE).transactional(false),
       };
    }
 
@@ -68,7 +73,9 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
 
    protected ConfigurationBuilder createCacheConfigBuilder() {
       ConfigurationBuilder c = getDefaultClusteredCacheConfig(cacheMode, transactional);
-      c.clustering().hash().numOwners(100);
+      if (!cacheMode.isScattered()) {
+         c.clustering().hash().numOwners(100);
+      }
       c.clustering().hash().numSegments(4);
       if (lockingMode != null) {
          c.transaction().lockingMode(lockingMode);
@@ -76,9 +83,15 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
       if (totalOrder != null && totalOrder) {
          c.transaction().transactionProtocol(TransactionProtocol.TOTAL_ORDER);
       }
+      if (biasAcquisition != null) {
+         c.clustering().biasAcquisition(biasAcquisition);
+      }
       return c;
    }
 
+   // This test executes PFER on cache1, and expects that it will be relayed to cache2 == primary
+   // and then sent to cache1 again for backup. In scattered cache there's only one RPC.
+   @InCacheMode({CacheMode.DIST_SYNC, CacheMode.REPL_SYNC})
    public void testKeyOnlyWrittenOnceOnOriginator() throws Exception {
       final Cache<MagicKey, String> cache1 = cache(0, CACHE_NAME);
       final Cache<MagicKey, String> cache2 = cache(1, CACHE_NAME);
@@ -173,6 +186,7 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
          }
       }, CallInterceptor.class));
 
+      // if cache1 is not primary, the value gets committed on cache2
       try {
          cache1.put(key, value);
          fail("Should have barfed");
@@ -189,7 +203,9 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
       assertNull("Should have cleaned up", cache1.get(key));
       assertNull("Should have cleaned up", cache1.getAdvancedCache().getDataContainer().get(key));
       assertNull("Should have cleaned up", cache2.get(key));
-      assertNull("Should have cleaned up", cache2.getAdvancedCache().getDataContainer().get(key));
+      // scattered cache leaves tombstone
+      InternalCacheEntry<String, String> cache2Entry = cache2.getAdvancedCache().getDataContainer().get(key);
+      assertTrue("Should have cleaned up", cache2Entry == null || cache2Entry.getValue() == null);
 
       // should not barf
       cache1.putForExternalRead(key, value);
@@ -319,7 +335,9 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
 
       String k = k(m);
       cache1.getAdvancedCache().withFlags(CACHE_MODE_LOCAL).putForExternalRead(k, v(m));
-      assertFalse(cache2.containsKey(k));
+      assertTrue(cache1.getAdvancedCache().getDataContainer().containsKey(k));
+      assertFalse(cache2.getAdvancedCache().withFlags(CACHE_MODE_LOCAL).containsKey(k));
+      assertFalse(cache2.getAdvancedCache().getDataContainer().containsKey(k));
 
       if (transactional)
          tm1.commit();

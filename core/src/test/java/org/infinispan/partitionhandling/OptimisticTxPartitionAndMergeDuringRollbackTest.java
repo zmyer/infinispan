@@ -3,8 +3,8 @@ package org.infinispan.partitionhandling;
 import org.infinispan.Cache;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.tx.TransactionBoundaryCommand;
-import org.infinispan.transaction.tm.DummyTransaction;
-import org.infinispan.transaction.tm.DummyTransactionManager;
+import org.infinispan.transaction.tm.EmbeddedTransaction;
+import org.infinispan.transaction.tm.EmbeddedTransactionManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.AssertJUnit;
@@ -29,10 +29,12 @@ public class OptimisticTxPartitionAndMergeDuringRollbackTest extends BaseOptimis
       doTest(SplitMode.BOTH_DEGRADED, true, false);
    }
 
+   @Test(groups = "unstable", description = "https://issues.jboss.org/browse/ISPN-8232")
    public void testOriginatorIsolatedPartitionWithDiscard() throws Exception {
       doTest(SplitMode.ORIGINATOR_ISOLATED, true, true);
    }
 
+   @Test(groups = "unstable", description = "https://issues.jboss.org/browse/ISPN-8232")
    public void testOriginatorIsolatedPartition() throws Exception {
       doTest(SplitMode.ORIGINATOR_ISOLATED, true, false);
    }
@@ -51,9 +53,9 @@ public class OptimisticTxPartitionAndMergeDuringRollbackTest extends BaseOptimis
       final KeyInfo keyInfo = createKeys(OPTIMISTIC_TX_CACHE_NAME);
       final Cache<Object, String> originator = cache(0, OPTIMISTIC_TX_CACHE_NAME);
 
-      final DummyTransactionManager transactionManager = (DummyTransactionManager) originator.getAdvancedCache().getTransactionManager();
+      final EmbeddedTransactionManager transactionManager = (EmbeddedTransactionManager) originator.getAdvancedCache().getTransactionManager();
       transactionManager.begin();
-      final DummyTransaction transaction = transactionManager.getTransaction();
+      final EmbeddedTransaction transaction = transactionManager.getTransaction();
       keyInfo.putFinalValue(originator);
       AssertJUnit.assertTrue(transaction.runPrepare());
       transactionManager.suspend();

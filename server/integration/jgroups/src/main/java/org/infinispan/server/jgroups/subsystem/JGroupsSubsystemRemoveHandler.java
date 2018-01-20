@@ -24,7 +24,6 @@ package org.infinispan.server.jgroups.subsystem;
 import org.jboss.as.controller.AbstractRemoveStepHandler;
 import org.jboss.as.controller.OperationContext;
 import org.jboss.as.controller.OperationFailedException;
-import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.operations.common.Util;
 import org.jboss.dmr.ModelNode;
@@ -67,12 +66,7 @@ public class JGroupsSubsystemRemoveHandler extends AbstractRemoveStepHandler {
             }
         }
 
-        context.addStep(operation, new OperationStepHandler() {
-            @Override
-            public void execute(OperationContext context, ModelNode operation) throws OperationFailedException {
-                JGroupsSubsystemRemoveHandler.super.performRemove(context, operation, model);
-            }
-        }, OperationContext.Stage.MODEL);
+        context.addStep(operation, (context1, operation1) -> super.performRemove(context, operation, model), OperationContext.Stage.MODEL);
     }
 
     @Override

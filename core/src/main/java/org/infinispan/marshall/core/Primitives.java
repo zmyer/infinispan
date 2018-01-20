@@ -1,5 +1,6 @@
 package org.infinispan.marshall.core;
 
+import java.io.EOFException;
 import java.io.IOException;
 
 import org.jboss.marshalling.util.IdentityIntMap;
@@ -86,7 +87,7 @@ final class Primitives {
             out.writeByte((byte) obj);
             break;
          case ID_CHAR_OBJ:
-            out.writeChar((int) obj);
+            out.writeChar((char) obj);
             break;
          case ID_DOUBLE_OBJ:
             out.writeDouble((double) obj);
@@ -398,7 +399,7 @@ final class Primitives {
       return new boolean[len];
    }
 
-   private static boolean[] readBooleans(boolean[] arr, BytesObjectInput in) {
+   private static boolean[] readBooleans(boolean[] arr, BytesObjectInput in) throws EOFException {
       final int len = arr.length;
       int v;
       int bc = len & ~7;

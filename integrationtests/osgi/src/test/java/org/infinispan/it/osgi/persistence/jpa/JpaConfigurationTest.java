@@ -5,16 +5,16 @@ import static org.ops4j.pax.exam.CoreOptions.options;
 
 import java.io.IOException;
 
+import org.infinispan.it.osgi.util.CustomPaxExamRunner;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 import org.ops4j.pax.exam.Configuration;
 import org.ops4j.pax.exam.Option;
-import org.ops4j.pax.exam.junit.PaxExam;
 import org.ops4j.pax.exam.spi.reactors.ExamReactorStrategy;
 import org.ops4j.pax.exam.spi.reactors.PerSuite;
 
-@RunWith(PaxExam.class)
+@RunWith(CustomPaxExamRunner.class)
 @ExamReactorStrategy(PerSuite.class)
 @Category(PerSuite.class)
 public class JpaConfigurationTest extends org.infinispan.persistence.jpa.configuration.JpaConfigurationTest {

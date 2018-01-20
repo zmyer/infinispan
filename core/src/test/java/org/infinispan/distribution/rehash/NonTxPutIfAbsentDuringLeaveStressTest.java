@@ -10,12 +10,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
-import org.infinispan.transaction.TransactionMode;
 import org.testng.annotations.Test;
 
 /**
@@ -33,8 +33,17 @@ public class NonTxPutIfAbsentDuringLeaveStressTest extends MultipleCacheManagers
    private static final int NUM_KEYS = 100;
 
    @Override
+   public Object[] factory() {
+      return new Object[] {
+            new NonTxPutIfAbsentDuringLeaveStressTest().cacheMode(CacheMode.DIST_SYNC),
+            new NonTxPutIfAbsentDuringLeaveStressTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.NEVER),
+            new NonTxPutIfAbsentDuringLeaveStressTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.ON_WRITE),
+      };
+   }
+
+   @Override
    protected void createCacheManagers() throws Throwable {
-      ConfigurationBuilder c = getConfigurationBuilder();
+      ConfigurationBuilder c = getDefaultClusteredCacheConfig(cacheMode, false);
 
       addClusterEnabledCacheManager(c);
       addClusterEnabledCacheManager(c);
@@ -44,13 +53,7 @@ public class NonTxPutIfAbsentDuringLeaveStressTest extends MultipleCacheManagers
       waitForClusterToForm();
    }
 
-   private ConfigurationBuilder getConfigurationBuilder() {
-      ConfigurationBuilder c = new ConfigurationBuilder();
-      c.clustering().cacheMode(CacheMode.DIST_SYNC);
-      c.transaction().transactionMode(TransactionMode.NON_TRANSACTIONAL);
-      return c;
-   }
-
+   @Test(groups = "unstable", description = "ISPN-7682")
    public void testNodeLeavingDuringPutIfAbsent() throws Exception {
       ConcurrentMap<String, String> insertedValues = CollectionFactory.makeConcurrentMap();
       AtomicBoolean stop = new AtomicBoolean(false);
@@ -96,10 +99,10 @@ public class NonTxPutIfAbsentDuringLeaveStressTest extends MultipleCacheManagers
       }
 
       killMember(4);
-      TestingUtil.waitForRehashToComplete(caches());
+      TestingUtil.waitForNoRebalance(caches());
 
       killMember(3);
-      TestingUtil.waitForRehashToComplete(caches());
+      TestingUtil.waitForNoRebalance(caches());
 
       stop.set(true);
 

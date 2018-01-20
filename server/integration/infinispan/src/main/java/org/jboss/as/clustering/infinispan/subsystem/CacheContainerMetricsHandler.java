@@ -39,6 +39,7 @@ import org.infinispan.remoting.transport.Address;
 import org.infinispan.server.infinispan.SecurityActions;
 import org.infinispan.server.infinispan.spi.service.CacheContainerServiceName;
 import org.infinispan.stats.CacheContainerStats;
+import org.infinispan.stats.ClusterContainerStats;
 import org.infinispan.xsite.GlobalXSiteAdminOperations;
 import org.infinispan.xsite.status.SiteStatus;
 import org.jboss.as.clustering.infinispan.DefaultCacheContainer;
@@ -58,7 +59,7 @@ import org.jboss.msc.service.ServiceController;
 public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
     public static final CacheContainerMetricsHandler INSTANCE = new CacheContainerMetricsHandler();
 
-    public enum CacheManagerMetrics {
+    private enum CacheManagerMetrics {
         CACHE_MANAGER_STATUS(MetricKeys.CACHE_MANAGER_STATUS, ModelType.STRING, true),
         CLUSTER_NAME(MetricKeys.CLUSTER_NAME, ModelType.STRING, true, true),
         CLUSTER_AVAILABILITY(MetricKeys.CLUSTER_AVAILABILITY, ModelType.STRING, true, true),
@@ -88,12 +89,22 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
         HITS(MetricKeys.HITS, ModelType.LONG, true),
         MISSES(MetricKeys.MISSES, ModelType.LONG, true),
         NUMBER_OF_ENTRIES(MetricKeys.NUMBER_OF_ENTRIES, ModelType.INT, true),
+        NUMBER_OF_ENTRIES_IN_MEMORY(MetricKeys.NUMBER_OF_ENTRIES_IN_MEMORY, ModelType.INT, true),
         OFF_HEAP_MEMORY_USED(MetricKeys.OFF_HEAP_MEMORY_USED, ModelType.LONG, true),
+        MINIMUM_REQUIRED_NODES(MetricKeys.MINIMUM_REQUIRED_NODES, ModelType.INT, true),
         READ_WRITE_RATIO(MetricKeys.READ_WRITE_RATIO, ModelType.DOUBLE, true),
         REMOVE_HITS(MetricKeys.REMOVE_HITS, ModelType.LONG, true),
         REMOVE_MISSES(MetricKeys.REMOVE_MISSES, ModelType.LONG, true),
         STORES(MetricKeys.STORES, ModelType.LONG, true),
-        TIME_SINCE_RESET(MetricKeys.TIME_SINCE_RESET, ModelType.LONG, true);
+        TIME_SINCE_RESET(MetricKeys.TIME_SINCE_RESET, ModelType.LONG, true),
+
+        // See org.infinispan.stats.ClusterContainerStats
+        MEMORY_AVAILABLE(ClusterWideMetricKeys.MEMORY_AVAILABLE, ModelType.LONG, true),
+        MEMORY_MAX(ClusterWideMetricKeys.MEMORY_MAX, ModelType.LONG, true),
+        MEMORY_TOTAL(ClusterWideMetricKeys.MEMORY_TOTAL, ModelType.LONG, true),
+        MEMORY_USED(ClusterWideMetricKeys.MEMORY_USED, ModelType.LONG, true),
+
+        STALE_STATS_THRESHOLD(ClusterWideMetricKeys.STALE_STATS_THRESHOLD, ModelType.LONG, true);
 
         private static final Map<String, CacheManagerMetrics> MAP = new HashMap<String, CacheManagerMetrics>();
 
@@ -106,20 +117,20 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
         final AttributeDefinition definition;
         final boolean clustered;
 
-        private CacheManagerMetrics(final AttributeDefinition definition, final boolean clustered) {
+        CacheManagerMetrics(final AttributeDefinition definition, final boolean clustered) {
             this.definition = definition;
             this.clustered = clustered;
         }
 
-        private CacheManagerMetrics(String attributeName, ModelType type, boolean allowNull) {
+        CacheManagerMetrics(String attributeName, ModelType type, boolean allowNull) {
             this(attributeName, type, allowNull, false);
         }
 
-        private CacheManagerMetrics(String attributeName, ModelType type, boolean allowNull, boolean clustered) {
+        CacheManagerMetrics(String attributeName, ModelType type, boolean allowNull, boolean clustered) {
             this(new SimpleAttributeDefinitionBuilder(attributeName, type, allowNull).setStorageRuntime().build(), clustered);
         }
 
-        private CacheManagerMetrics(String attributeName, ModelType outerType, ModelType innerType, boolean allowNull) {
+        CacheManagerMetrics(String attributeName, ModelType outerType, ModelType innerType, boolean allowNull) {
             if (outerType != ModelType.LIST) {
                 throw new IllegalArgumentException();
             }
@@ -166,6 +177,7 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
             context.getFailureDescription().set(String.format("Unavailable cache container %s", attrName));
         } else {
             CacheContainerStats stats = cacheManager.getStats();
+            ClusterContainerStats clusterContainerStats = cacheManager.getGlobalComponentRegistry().getComponent(ClusterContainerStats.class);
             switch (metric) {
                 case CACHE_MANAGER_STATUS:
                     result.set(SecurityActions.getCacheManagerStatus(cacheManager).toString());
@@ -239,14 +251,20 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
                 case NUMBER_OF_ENTRIES:
                    result.set(stats.getCurrentNumberOfEntries());
                    break;
+                case NUMBER_OF_ENTRIES_IN_MEMORY:
+                    result.set(stats.getCurrentNumberOfEntriesInMemory());
+                    break;
                 case OFF_HEAP_MEMORY_USED:
                     result.set(stats.getOffHeapMemoryUsed());
+                    break;
+                case MINIMUM_REQUIRED_NODES:
+                    result.set(stats.getRequiredMinimumNumberOfNodes());
                     break;
                 case READ_WRITE_RATIO:
                    result.set(stats.getReadWriteRatio());
                    break;
                 case REMOVE_HITS:
-                   result.set(stats.getHits());
+                   result.set(stats.getRemoveHits());
                    break;
                 case REMOVE_MISSES:
                    result.set(stats.getRemoveMisses());
@@ -255,7 +273,7 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
                    result.set(stats.getStores());
                    break;
                 case TIME_SINCE_RESET:
-                   result.set(stats.getTimeSinceStart());
+                   result.set(stats.getTimeSinceReset());
                    break;
                 case ONLINE_SITES:
                 case OFFLINE_SITES:
@@ -272,6 +290,21 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
                 case SITES_VIEW:
                     Set<String> sitesView = SecurityActions.getSitesView(cacheManager);
                     result.set(sitesView != null ? sitesView.toString() : "N/A");
+                    break;
+                case MEMORY_AVAILABLE:
+                    result.set(clusterContainerStats.getMemoryAvailable());
+                    break;
+                case MEMORY_MAX:
+                    result.set(clusterContainerStats.getMemoryMax());
+                    break;
+                case MEMORY_TOTAL:
+                    result.set(clusterContainerStats.getMemoryTotal());
+                    break;
+                case MEMORY_USED:
+                    result.set(clusterContainerStats.getMemoryUsed());
+                    break;
+                case STALE_STATS_THRESHOLD:
+                    result.set(clusterContainerStats.getStaleStatsThreshold());
                     break;
                 default:
                     context.getFailureDescription().set(String.format("Unknown metric %s", metric));

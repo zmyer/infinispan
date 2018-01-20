@@ -95,8 +95,8 @@ public class GlobalMarshaller implements StreamingMarshaller {
 
    private final MarshallableTypeHints marshallableTypeHints = new MarshallableTypeHints();
 
-   private GlobalComponentRegistry gcr;
-   private RemoteCommandsFactory cmdFactory;
+   @Inject private GlobalComponentRegistry gcr;
+   @Inject private RemoteCommandsFactory cmdFactory;
 
    private ClassToExternalizerMap internalExts;
    private IdToExternalizerMap reverseInternalExts;
@@ -113,17 +113,11 @@ public class GlobalMarshaller implements StreamingMarshaller {
       this.external = external;
    }
 
-   @Inject
-   public void inject(GlobalComponentRegistry gcr, RemoteCommandsFactory cmdFactory) {
-      this.gcr = gcr;
-      this.cmdFactory = cmdFactory;
-   }
-
    @Override
    @Start(priority = 8) // Should start after the externalizer table and before transport
    public void start() {
       internalExts = InternalExternalizers.load(this, gcr, cmdFactory);
-      reverseInternalExts = internalExts.reverseMap(128);
+      reverseInternalExts = internalExts.reverseMap(Ids.MAX_ID);
       if (trace) {
          log.tracef("Internal class to externalizer ids: %s", internalExts);
          log.tracef("Internal reverse externalizers: %s", reverseInternalExts);

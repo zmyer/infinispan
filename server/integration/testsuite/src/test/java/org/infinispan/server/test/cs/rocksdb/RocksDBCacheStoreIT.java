@@ -5,7 +5,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
-import java.io.IOException;
 
 import org.apache.commons.codec.binary.Hex;
 import org.infinispan.arquillian.core.InfinispanResource;
@@ -26,6 +25,8 @@ import org.infinispan.server.test.util.ITestUtils;
 import org.jboss.arquillian.container.test.api.ContainerController;
 import org.jboss.arquillian.junit.Arquillian;
 import org.jboss.arquillian.test.api.ArquillianResource;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -37,7 +38,6 @@ import org.rocksdb.RocksIterator;
  * Tests RocksDB cache store.
  *
  * @author Michal Linhard (mlinhard@redhat.com)
- *
  */
 @RunWith(Arquillian.class)
 @Category(CacheStore.class)
@@ -58,18 +58,15 @@ public class RocksDBCacheStoreIT {
 
     private final TestMarshaller clientMarshaller = new TestMarshaller();
 
-    private void removeDataFilesIfExists() {
-        if (dataDir.exists()) {
-            Util.recursiveFileRemove(dataDir);
-        }
-        if (expiredDir.exists()) {
-            Util.recursiveFileRemove(expiredDir);
-        }
+    @Before
+    @After
+    public void removeDataFilesIfExists() {
+        Util.recursiveFileRemove(dataDir);
+        Util.recursiveFileRemove(expiredDir);
     }
 
     @Test
-    public void testDataSurvivesRestart() throws Exception {
-        removeDataFilesIfExists();
+    public void testDataSurvivesRestart() {
         controller.start(CONTAINER);
         RemoteInfinispanCacheManager managerJmx = server.getCacheManager("local");
         RemoteInfinispanCache cacheJmx = managerJmx.getCache("testcache");
@@ -97,7 +94,6 @@ public class RocksDBCacheStoreIT {
 
     @Test
     public void testDataRetrievableViaRocksDbApi() throws Exception {
-        removeDataFilesIfExists();
         controller.start(CONTAINER);
         RemoteInfinispanCacheManager managerJmx = server.getCacheManager("local");
         RemoteInfinispanCache cacheJmx = managerJmx.getCache("testcache");
@@ -129,19 +125,19 @@ public class RocksDBCacheStoreIT {
     private static class TestMarshaller extends AbstractMarshaller {
 
         @Override
-        public Object objectFromByteBuffer(byte[] buf, int offset, int length) throws IOException, ClassNotFoundException {
+        public Object objectFromByteBuffer(byte[] buf, int offset, int length) {
             byte[] bytes = new byte[length];
             System.arraycopy(buf, offset, bytes, 0, length);
             return new String(bytes);
         }
 
         @Override
-        public boolean isMarshallable(Object o) throws Exception {
-            return (o instanceof String);
+        public boolean isMarshallable(Object o) {
+            return o instanceof String;
         }
 
         @Override
-        protected ByteBuffer objectToBuffer(Object o, int estimatedSize) throws IOException, InterruptedException {
+        protected ByteBuffer objectToBuffer(Object o, int estimatedSize) {
             if (o instanceof String) {
                 String str = (String) o;
                 byte[] bytes = str.getBytes();
@@ -154,9 +150,8 @@ public class RocksDBCacheStoreIT {
 
     private RemoteCacheManager createManager() {
         ConfigurationBuilder cfgBuild = ITestUtils.createConfigBuilder(server.getHotrodEndpoint().getInetAddress().getHostName(),
-                server.getHotrodEndpoint().getPort());
-       cfgBuild.marshaller(clientMarshaller);
-       return new RemoteCacheManager(cfgBuild.build());
+              server.getHotrodEndpoint().getPort());
+        cfgBuild.marshaller(clientMarshaller);
+        return new RemoteCacheManager(cfgBuild.build());
     }
-
 }

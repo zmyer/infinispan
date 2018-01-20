@@ -8,8 +8,9 @@ import java.util.Map;
 import org.infinispan.commons.configuration.attributes.Attribute;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.commons.configuration.attributes.Matchable;
 
-public class Configuration {
+public class Configuration implements Matchable<Configuration> {
    public static final AttributeDefinition<Boolean> SIMPLE_CACHE = AttributeDefinition.builder("simpleCache", false).immutable().build();
 
    public static AttributeSet attributeDefinitionSet() {
@@ -22,6 +23,7 @@ public class Configuration {
    private final DataContainerConfiguration dataContainerConfiguration;
    private final MemoryConfiguration memoryConfiguration;
    private final DeadlockDetectionConfiguration deadlockDetectionConfiguration;
+   private final EncodingConfiguration encodingConfiguration;
    private final EvictionConfiguration evictionConfiguration;
    private final ExpirationConfiguration expirationConfiguration;
    private final IndexingConfiguration indexingConfiguration;
@@ -45,6 +47,7 @@ public class Configuration {
                  CustomInterceptorsConfiguration customInterceptorsConfiguration,
                  DataContainerConfiguration dataContainerConfiguration, DeadlockDetectionConfiguration deadlockDetectionConfiguration,
                  EvictionConfiguration evictionConfiguration, ExpirationConfiguration expirationConfiguration,
+                 EncodingConfiguration encodingConfiguration,
                  IndexingConfiguration indexingConfiguration, InvocationBatchingConfiguration invocationBatchingConfiguration,
                  JMXStatisticsConfiguration jmxStatisticsConfiguration,
                  PersistenceConfiguration persistenceConfiguration,
@@ -64,6 +67,7 @@ public class Configuration {
       this.customInterceptorsConfiguration = customInterceptorsConfiguration;
       this.dataContainerConfiguration = dataContainerConfiguration;
       this.deadlockDetectionConfiguration = deadlockDetectionConfiguration;
+      this.encodingConfiguration = encodingConfiguration;
       this.evictionConfiguration = evictionConfiguration;
       this.expirationConfiguration = expirationConfiguration;
       this.indexingConfiguration = indexingConfiguration;
@@ -79,7 +83,7 @@ public class Configuration {
       this.sitesConfiguration = sitesConfiguration;
       this.compatibilityConfiguration = compatibilityConfiguration;
       this.memoryConfiguration = memoryConfiguration;
-      Map<Class<?>, Object> modulesMap = new HashMap<Class<?>, Object>();
+      Map<Class<?>, Object> modulesMap = new HashMap<>();
       for(Object module : modules) {
          modulesMap.put(module.getClass(), module);
       }
@@ -106,15 +110,22 @@ public class Configuration {
       return dataContainerConfiguration;
    }
 
+   /**
+    * @deprecated Since 9.0, will be ignored.
+    */
+   @Deprecated
    public DeadlockDetectionConfiguration deadlockDetection() {
       return deadlockDetectionConfiguration;
    }
 
+   public EncodingConfiguration encoding() {
+      return encodingConfiguration;
+   }
+
    /**
-    *
-    * @return
     * @deprecated please use {@link Configuration#memory()}
     */
+   @Deprecated
    public EvictionConfiguration eviction() {
       return evictionConfiguration;
    }
@@ -154,6 +165,10 @@ public class Configuration {
       return moduleConfiguration;
    }
 
+   /**
+    * @deprecated please use {@link Configuration#memory()}
+    */
+   @Deprecated
    public StoreAsBinaryConfiguration storeAsBinary() {
       return storeAsBinaryConfiguration;
    }
@@ -174,6 +189,10 @@ public class Configuration {
       return sitesConfiguration;
    }
 
+   /**
+    * @deprecated since 9.0. Infinispan automatically enables versioning when needed.
+    */
+   @Deprecated
    public VersioningConfiguration versioning() {
       return versioningConfiguration;
    }
@@ -194,6 +213,7 @@ public class Configuration {
             ", customInterceptors=" + customInterceptorsConfiguration +
             ", dataContainer=" + dataContainerConfiguration +
             ", deadlockDetection=" + deadlockDetectionConfiguration +
+            ", encodingConfiguration= " + encodingConfiguration +
             ", eviction=" + evictionConfiguration +
             ", expiration=" + expirationConfiguration +
             ", indexing=" + indexingConfiguration +
@@ -227,6 +247,7 @@ public class Configuration {
       result = prime * result
             + ((deadlockDetectionConfiguration == null) ? 0 : deadlockDetectionConfiguration.hashCode());
       result = prime * result + ((evictionConfiguration == null) ? 0 : evictionConfiguration.hashCode());
+      result = prime * result + ((encodingConfiguration == null) ? 0 : encodingConfiguration.hashCode());
       result = prime * result + ((expirationConfiguration == null) ? 0 : expirationConfiguration.hashCode());
       result = prime * result + ((indexingConfiguration == null) ? 0 : indexingConfiguration.hashCode());
       result = prime * result
@@ -314,6 +335,11 @@ public class Configuration {
             return false;
       } else if (!lockingConfiguration.equals(other.lockingConfiguration))
          return false;
+      if (memoryConfiguration == null) {
+         if (other.memoryConfiguration != null)
+            return false;
+      } else if (!memoryConfiguration.equals(other.memoryConfiguration))
+         return false;
       if (moduleConfiguration == null) {
          if (other.moduleConfiguration != null)
             return false;
@@ -355,5 +381,60 @@ public class Configuration {
       } else if (!versioningConfiguration.equals(other.versioningConfiguration))
          return false;
       return true;
+   }
+
+   @Override
+   public boolean matches(Configuration other) {
+      if (!simpleCache.get().equals(other.simpleCache.get()))
+         return false;
+      if (!clusteringConfiguration.matches(other.clusteringConfiguration))
+         return false;
+      if (!compatibilityConfiguration.matches(other.compatibilityConfiguration))
+         return false;
+      if (!customInterceptorsConfiguration.matches(other.customInterceptorsConfiguration))
+         return false;
+      if (!dataContainerConfiguration.matches(other.dataContainerConfiguration))
+         return false;
+      if (!deadlockDetectionConfiguration.matches(other.deadlockDetectionConfiguration))
+         return false;
+      if (!evictionConfiguration.matches(other.evictionConfiguration))
+         return false;
+      if (!expirationConfiguration.matches(other.expirationConfiguration))
+         return false;
+      if (!indexingConfiguration.matches(other.indexingConfiguration))
+         return false;
+      if (!invocationBatchingConfiguration.matches(other.invocationBatchingConfiguration))
+         return false;
+      if (!jmxStatisticsConfiguration.matches(other.jmxStatisticsConfiguration))
+         return false;
+      if (!lockingConfiguration.matches(other.lockingConfiguration))
+         return false;
+      if (!memoryConfiguration.matches(other.memoryConfiguration))
+         return false;
+      if (!persistenceConfiguration.matches(other.persistenceConfiguration))
+         return false;
+      if (!securityConfiguration.matches(other.securityConfiguration))
+         return false;
+      if (!sitesConfiguration.matches(other.sitesConfiguration))
+         return false;
+      if (!storeAsBinaryConfiguration.matches(other.storeAsBinaryConfiguration))
+         return false;
+      if (!transactionConfiguration.matches(other.transactionConfiguration))
+         return false;
+      if (!unsafeConfiguration.matches(other.unsafeConfiguration))
+         return false;
+      if (!versioningConfiguration.matches(other.versioningConfiguration))
+         return false;
+      for(Map.Entry<Class<?>, ?> module : moduleConfiguration.entrySet()) {
+         if (!other.moduleConfiguration.containsKey(module.getKey()))
+            return false;
+         Object thisModule = module.getValue();
+         Object thatModule = other.moduleConfiguration.get(module.getKey());
+         if (thisModule instanceof Matchable && (!((Matchable)thisModule).matches(thatModule)))
+            return false;
+         if (!thisModule.equals(thatModule))
+            return false;
+      }
+      return attributes.matches(other.attributes);
    }
 }

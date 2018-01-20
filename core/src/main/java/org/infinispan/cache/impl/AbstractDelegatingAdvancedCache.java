@@ -6,21 +6,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
+import javax.security.auth.Subject;
 import javax.transaction.TransactionManager;
 import javax.transaction.xa.XAResource;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.CacheSet;
+import org.infinispan.LockedStream;
 import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.dataconversion.Encoder;
+import org.infinispan.commons.dataconversion.Wrapper;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.encoding.DataConversion;
 import org.infinispan.eviction.EvictionManager;
 import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
@@ -51,12 +58,7 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    private final AdvancedCacheWrapper<K, V> wrapper;
 
    public AbstractDelegatingAdvancedCache(final AdvancedCache<K, V> cache) {
-      this(cache, new AdvancedCacheWrapper<K, V>() {
-         @Override
-         public AdvancedCache<K, V> wrap(AdvancedCache<K, V> cache) {
-            return new AbstractDelegatingAdvancedCache<K, V>(cache);
-         }
-      });
+      this(cache, AbstractDelegatingAdvancedCache::new);
    }
 
    protected AbstractDelegatingAdvancedCache(AdvancedCache<K, V> cache, AdvancedCacheWrapper<K, V> wrapper) {
@@ -130,6 +132,16 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    @Override
    public AuthorizationManager getAuthorizationManager() {
       return cache.getAuthorizationManager();
+   }
+
+   @Override
+   public AdvancedCache<K, V> lockAs(Object lockOwner) {
+      AdvancedCache<K, V> lockCache = this.cache.lockAs(lockOwner);
+      if (lockCache != cache) {
+         return this.wrapper.wrap(lockCache);
+      } else {
+         return this;
+      }
    }
 
    @Override
@@ -232,6 +244,11 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    }
 
    @Override
+   public AdvancedCache<K, V> withSubject(Subject subject) {
+      return this.wrapper.wrap(cache.withSubject(subject));
+   }
+
+   @Override
    public boolean lock(K... key) {
       return cache.lock(key);
    }
@@ -242,13 +259,13 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    }
 
    @Override
-   public void applyDelta(K deltaAwareValueKey, Delta delta, Object... locksToAcquire){
+   public void applyDelta(K deltaAwareValueKey, Delta delta, Object... locksToAcquire) {
       cache.applyDelta(deltaAwareValueKey, delta, locksToAcquire);
    }
 
    @Override
    public Stats getStats() {
-       return cache.getStats();
+      return cache.getStats();
    }
 
    @Override
@@ -279,6 +296,11 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    @Override
    public Map<K, CacheEntry<K, V>> getAllCacheEntries(Set<?> keys) {
       return cache.getAllCacheEntries(keys);
+   }
+
+   @Override
+   public Map<K, V> getAndPutAll(Map<? extends K, ? extends V> map) {
+      return cache.getAndPutAll(map);
    }
 
    @Override
@@ -322,6 +344,26 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    }
 
    @Override
+   public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return cache.compute(key, remappingFunction, metadata);
+   }
+
+   @Override
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return cache.computeIfPresent(key, remappingFunction, metadata);
+   }
+
+   @Override
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata) {
+      return cache.computeIfAbsent(key, mappingFunction, metadata);
+   }
+
+   @Override
+   public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return cache.merge(key, value, remappingFunction, metadata);
+   }
+
+   @Override
    public void putAll(Map<? extends K, ? extends V> map, Metadata metadata) {
       cache.putAll(map, metadata);
    }
@@ -332,8 +374,103 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    }
 
    @Override
+   public LockedStream<K, V> lockedStream() {
+      return cache.lockedStream();
+   }
+
+   @Override
    public void removeExpired(K key, V value, Long lifespan) {
       cache.removeExpired(key, value, lifespan);
+   }
+
+   @Override
+   public AdvancedCache<K, V> withEncoding(Class<? extends Encoder> encoder) {
+      AdvancedCache encoderCache = this.cache.withEncoding(encoder);
+      if (encoderCache != cache) {
+         return this.wrapper.wrap(encoderCache);
+      } else {
+         return this;
+      }
+   }
+
+   @Override
+   public AdvancedCache<K, V> withEncoding(Class<? extends Encoder> keyEncoder, Class<? extends Encoder> valueEncoder) {
+      AdvancedCache encoderCache = this.cache.withEncoding(keyEncoder, valueEncoder);
+      if (encoderCache != cache) {
+         return this.wrapper.wrap(encoderCache);
+      } else {
+         return this;
+      }
+   }
+
+   public AdvancedCache<K, V> withKeyEncoding(Class<? extends Encoder> encoder) {
+      AdvancedCache encoderCache = this.cache.withKeyEncoding(encoder);
+      if (encoderCache != cache) {
+         return this.wrapper.wrap(encoderCache);
+      } else {
+         return this;
+      }
+   }
+
+
+   @Override
+   public AdvancedCache<K, V> withWrapping(Class<? extends Wrapper> wrapper) {
+      AdvancedCache encoderCache = this.cache.withWrapping(wrapper);
+      if (encoderCache != cache) {
+         return this.wrapper.wrap(encoderCache);
+      } else {
+         return this;
+      }
+   }
+
+   @Override
+   public AdvancedCache<K, V> withMediaType(String keyMediaType, String valueMediaType) {
+      AdvancedCache encoderCache = this.cache.withMediaType(keyMediaType, valueMediaType);
+      if (encoderCache != cache) {
+         return this.wrapper.wrap(encoderCache);
+      } else {
+         return this;
+      }
+   }
+
+   @Override
+   public AdvancedCache<K, V> withWrapping(Class<? extends Wrapper> keyWrapper, Class<? extends Wrapper> valueWrapper) {
+      AdvancedCache encoderCache = this.cache.withWrapping(keyWrapper, valueWrapper);
+      if (encoderCache != cache) {
+         return this.wrapper.wrap(encoderCache);
+      } else {
+         return this;
+      }
+   }
+
+   @Override
+   public Encoder getKeyEncoder() {
+      return cache.getKeyEncoder();
+   }
+
+   @Override
+   public Encoder getValueEncoder() {
+      return cache.getValueEncoder();
+   }
+
+   @Override
+   public Wrapper getKeyWrapper() {
+      return cache.getKeyWrapper();
+   }
+
+   @Override
+   public Wrapper getValueWrapper() {
+      return cache.getValueWrapper();
+   }
+
+   @Override
+   public DataConversion getKeyDataConversion() {
+      return cache.getKeyDataConversion();
+   }
+
+   @Override
+   public DataConversion getValueDataConversion() {
+      return cache.getValueDataConversion();
    }
 
    protected final void putForExternalRead(K key, V value, EnumSet<Flag> flags, ClassLoader classLoader) {

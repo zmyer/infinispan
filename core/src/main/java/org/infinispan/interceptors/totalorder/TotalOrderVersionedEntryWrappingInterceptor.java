@@ -3,20 +3,21 @@ package org.infinispan.interceptors.totalorder;
 import java.util.ArrayList;
 
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.container.entries.ClusteredRepeatableReadEntry;
+import org.infinispan.container.entries.VersionedRepeatableReadEntry;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.container.versioning.EntryVersionsMap;
 import org.infinispan.container.versioning.IncrementableEntryVersion;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.interceptors.impl.VersionedEntryWrappingInterceptor;
 import org.infinispan.metadata.EmbeddedMetadata;
-import org.infinispan.metadata.Metadata;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -32,6 +33,9 @@ public class TotalOrderVersionedEntryWrappingInterceptor extends VersionedEntryW
    private static final boolean trace = log.isTraceEnabled();
    private static final EntryVersionsMap EMPTY_VERSION_MAP = new EntryVersionsMap();
 
+   private final InvocationSuccessFunction prepareHandler = this::prepareHandler;
+   private final InvocationSuccessFunction afterPrepareHandler = this::afterPrepareHandler;
+
    @Override
    public final Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       if (ctx.isOriginLocal()) {
@@ -40,46 +44,48 @@ public class TotalOrderVersionedEntryWrappingInterceptor extends VersionedEntryW
          ctx.getCacheTransaction().setUpdatedEntryVersions(EMPTY_VERSION_MAP);
          return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
             if (shouldCommitDuringPrepare((PrepareCommand) rCommand, ctx)) {
-               commitContextEntries(ctx, null, null);
+               commitContextEntries(ctx, null);
             }
          });
       }
 
       //Remote context, delivered in total order
+      return wrapEntriesForPrepareAndApply(ctx, command, prepareHandler);
+   }
 
-      wrapEntriesForPrepare(ctx, command);
+   private Object prepareHandler(InvocationContext ctx, VisitableCommand command, Object rv) {
+      return invokeNextThenApply(ctx, command, afterPrepareHandler);
+   }
 
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         TxInvocationContext txInvocationContext = (TxInvocationContext) rCtx;
-         VersionedPrepareCommand prepareCommand = (VersionedPrepareCommand) rCommand;
-         EntryVersionsMap versionsMap =
-               cdl.createNewVersionsAndCheckForWriteSkews(versionGenerator, txInvocationContext,
-                     prepareCommand);
+   private Object afterPrepareHandler(InvocationContext ctx, VisitableCommand command, Object rv) {
+      TxInvocationContext txInvocationContext = (TxInvocationContext) ctx;
+      VersionedPrepareCommand prepareCommand = (VersionedPrepareCommand) command;
+      EntryVersionsMap versionsMap =
+            cdl.createNewVersionsAndCheckForWriteSkews(versionGenerator, txInvocationContext,
+                  prepareCommand);
 
-         if (prepareCommand.isOnePhaseCommit()) {
-            commitContextEntries(txInvocationContext, null, null);
-         } else {
-            if (trace)
-               log.tracef("Transaction %s will be committed in the 2nd phase",
-                     txInvocationContext.getGlobalTransaction().globalId());
-         }
+      if (prepareCommand.isOnePhaseCommit()) {
+         commitContextEntries(txInvocationContext, null);
+      } else {
+         if (trace)
+            log.tracef("Transaction %s will be committed in the 2nd phase",
+                  txInvocationContext.getGlobalTransaction().globalId());
+      }
 
-         return versionsMap == null ? rv : new ArrayList<Object>(versionsMap.keySet());
-      });
+      return versionsMap == null ? rv : new ArrayList<>(versionsMap.keySet());
    }
 
    @Override
    public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
-      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> commitContextEntries(rCtx, null, null));
+      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> commitContextEntries(rCtx, null));
    }
 
    @Override
    protected void commitContextEntry(CacheEntry entry, InvocationContext ctx, FlagAffectedCommand command,
-                                     Metadata metadata, Flag stateTransferFlag, boolean l1Invalidation) {
+                                     Flag stateTransferFlag, boolean l1Invalidation) {
       if (ctx.isInTxScope() && stateTransferFlag == null) {
-         Metadata commitMetadata;
          // If user provided version, use it, otherwise generate/increment accordingly
-         ClusteredRepeatableReadEntry clusterMvccEntry = (ClusteredRepeatableReadEntry) entry;
+         VersionedRepeatableReadEntry clusterMvccEntry = (VersionedRepeatableReadEntry) entry;
          EntryVersion existingVersion = clusterMvccEntry.getMetadata().version();
          EntryVersion newVersion;
          if (existingVersion == null) {
@@ -88,15 +94,11 @@ public class TotalOrderVersionedEntryWrappingInterceptor extends VersionedEntryW
             newVersion = versionGenerator.increment((IncrementableEntryVersion) existingVersion);
          }
 
-         if (metadata == null)
-            commitMetadata = new EmbeddedMetadata.Builder().version(newVersion).build();
-         else
-            commitMetadata = metadata.builder().version(newVersion).build();
-
-         cdl.commitEntry(entry, commitMetadata, command, ctx, null, l1Invalidation);
+         entry.setMetadata(new EmbeddedMetadata.Builder().version(newVersion).build());
+         cdl.commitEntry(entry, command, ctx, null, l1Invalidation);
       } else {
          // This could be a state transfer call!
-         cdl.commitEntry(entry, entry.getMetadata(), command, ctx, stateTransferFlag, l1Invalidation);
+         cdl.commitEntry(entry, command, ctx, stateTransferFlag, l1Invalidation);
       }
    }
 }

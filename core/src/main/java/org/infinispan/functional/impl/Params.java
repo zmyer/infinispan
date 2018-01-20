@@ -5,15 +5,13 @@ import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.function.Supplier;
 
-import org.infinispan.commons.api.functional.Param;
-import org.infinispan.commons.api.functional.Param.FutureMode;
-import org.infinispan.commons.api.functional.Param.PersistenceMode;
-import org.infinispan.commons.marshall.MarshallUtil;
+import org.infinispan.functional.Param;
+import org.infinispan.functional.Param.ExecutionMode;
+import org.infinispan.functional.Param.LockingMode;
+import org.infinispan.functional.Param.PersistenceMode;
 import org.infinispan.commons.util.Experimental;
+import org.infinispan.context.impl.FlagBitSets;
 
 /**
  * Internal class that encapsulates collection of parameters used to tweak
@@ -32,8 +30,7 @@ import org.infinispan.commons.util.Experimental;
 public final class Params {
 
    private static final Param<?>[] DEFAULTS = new Param<?>[]{
-      FutureMode.defaultValue(),
-      PersistenceMode.defaultValue(),
+      PersistenceMode.defaultValue(), LockingMode.defaultValue(), ExecutionMode.defaultValue()
    };
    // TODO: as Params are immutable and there's only limited number of them,
    // there could be a table with all the possible combinations and we
@@ -67,6 +64,19 @@ public final class Params {
       return new Params(paramsAll);
    }
 
+   public Params addAll(Params ps) {
+      if (ps == DEFAULT_INSTANCE) {
+         return this;
+      }
+      Param<?>[] paramsAll = Arrays.copyOf(params, params.length);
+      for (int i = 0; i < this.params.length; ++i) {
+         if (!ps.params[i].equals(DEFAULTS[i])) {
+            paramsAll[i] = ps.params[i];
+         }
+      }
+      return new Params(paramsAll);
+   }
+
    /**
     * Retrieve a param given its identifier. Callers are expected to know the
     * exact type of parameter that will be returned. Such assumption is
@@ -84,6 +94,37 @@ public final class Params {
       return "Params=" + Arrays.toString(params);
    }
 
+   /**
+    * Bridging method between flags and params, provided for efficient checks.
+    */
+   public long toFlagsBitSet() {
+      PersistenceMode persistenceMode = (PersistenceMode) params[PersistenceMode.ID].get();
+      LockingMode lockingMode = (LockingMode) params[LockingMode.ID].get();
+      ExecutionMode executionMode = (ExecutionMode) params[ExecutionMode.ID].get();
+      long flagsBitSet = 0;
+      if (persistenceMode == PersistenceMode.SKIP) flagsBitSet |= FlagBitSets.SKIP_CACHE_LOAD | FlagBitSets.SKIP_CACHE_STORE;
+      if (lockingMode == LockingMode.SKIP) flagsBitSet |= FlagBitSets.SKIP_LOCKING;
+      if (executionMode == ExecutionMode.LOCAL) flagsBitSet |= FlagBitSets.CACHE_MODE_LOCAL;
+      else if (executionMode == ExecutionMode.LOCAL_SITE) flagsBitSet |= FlagBitSets.SKIP_XSITE_BACKUP;
+      return flagsBitSet;
+   }
+
+   public static Params fromFlagsBitSet(long flagsBitSet) {
+      Params params = create();
+      if ((flagsBitSet & (FlagBitSets.SKIP_CACHE_LOAD | FlagBitSets.SKIP_CACHE_STORE)) != 0) {
+         params = params.addAll(PersistenceMode.SKIP);
+      }
+      if ((flagsBitSet & FlagBitSets.SKIP_LOCKING) != 0) {
+         params = params.addAll(LockingMode.SKIP);
+      }
+      if ((flagsBitSet & FlagBitSets.CACHE_MODE_LOCAL) != 0) {
+         params = params.addAll(ExecutionMode.LOCAL);
+      } else if ((flagsBitSet & FlagBitSets.SKIP_XSITE_BACKUP) != 0) {
+         params = params.addAll(ExecutionMode.LOCAL_SITE);
+      }
+      return params;
+   }
+
    public static Params create() {
       return DEFAULT_INSTANCE;
    }
@@ -99,35 +140,37 @@ public final class Params {
       return new Params(paramsAll);
    }
 
-   static <T> CompletableFuture<T> withFuture(Param<FutureMode> futureParam,
-         ExecutorService asyncExec, Supplier<T> s) {
-      switch (futureParam.get()) {
-         case COMPLETED:
-            // If completed, complete the future directly with the result.
-            // No separate thread or executor is instantiated.
-            return CompletableFuture.completedFuture(s.get());
-         case ASYNC:
-            // If async, execute the supply function asynchronously,
-            // and return a future that's completed when the supply
-            // function returns.
-            return CompletableFuture.supplyAsync(s, asyncExec);
-         default:
-            throw new IllegalStateException();
-      }
+   static {
+      // make sure that bit-set marshalling will work
+      if (PersistenceMode.values().length > 2) throw new IllegalStateException();
+      if (LockingMode.values().length > 2) throw new IllegalStateException();
+      if (ExecutionMode.values().length > 4) throw new IllegalStateException();
    }
 
    public static void writeObject(ObjectOutput output, Params params) throws IOException {
-      // There's no point in sending FutureMode over wire
-      MarshallUtil.marshallEnum((PersistenceMode) params.get(PersistenceMode.ID).get(), output);
+      PersistenceMode persistenceMode = (PersistenceMode) params.get(PersistenceMode.ID).get();
+      LockingMode lockingMode = (LockingMode) params.get(LockingMode.ID).get();
+      ExecutionMode executionMode = (ExecutionMode) params.get(ExecutionMode.ID).get();
+      int paramBits = persistenceMode.ordinal()
+            | (lockingMode.ordinal() << 1)
+            | (executionMode.ordinal() << 2);
+      output.writeByte(paramBits);
    }
 
    public static Params readObject(ObjectInput input) throws IOException, ClassNotFoundException {
-      PersistenceMode persistenceMode = MarshallUtil.unmarshallEnum(input, PersistenceMode::valueOf);
-      if (persistenceMode == PersistenceMode.defaultValue()) {
+      int paramBits = input.readByte();
+      PersistenceMode persistenceMode = PersistenceMode.valueOf(paramBits & 1);
+      LockingMode lockingMode = LockingMode.valueOf((paramBits >>> 1) & 1);
+      ExecutionMode executionMode = ExecutionMode.valueOf((paramBits >>> 2) & 3);
+      if (persistenceMode == PersistenceMode.defaultValue()
+            && lockingMode == LockingMode.defaultValue()
+            && executionMode == ExecutionMode.defaultValue()) {
          return DEFAULT_INSTANCE;
       } else {
          Param[] params = Arrays.copyOf(DEFAULTS, DEFAULTS.length);
          params[PersistenceMode.ID] = persistenceMode;
+         params[LockingMode.ID] = lockingMode;
+         params[ExecutionMode.ID] = executionMode;
          return new Params(params);
       }
    }

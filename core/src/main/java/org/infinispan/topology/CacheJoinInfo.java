@@ -9,6 +9,8 @@ import java.util.Set;
 
 import org.infinispan.commons.hash.Hash;
 import org.infinispan.commons.marshall.AbstractExternalizer;
+import org.infinispan.commons.marshall.MarshallUtil;
+import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.distribution.ch.ConsistentHashFactory;
 import org.infinispan.marshall.core.Ids;
 
@@ -26,7 +28,7 @@ public class CacheJoinInfo {
    private final int numOwners;
    private final long timeout;
    private final boolean totalOrder;
-   private final boolean distributed;
+   private final CacheMode cacheMode;
 
    // Per-node configuration
    private final float capacityFactor;
@@ -36,7 +38,7 @@ public class CacheJoinInfo {
    private final Optional<Integer> persistentStateChecksum;
 
    public CacheJoinInfo(ConsistentHashFactory consistentHashFactory, Hash hashFunction, int numSegments,
-                        int numOwners, long timeout, boolean totalOrder, boolean distributed, float capacityFactor,
+                        int numOwners, long timeout, boolean totalOrder, CacheMode cacheMode, float capacityFactor,
                         PersistentUUID persistentUUID,
                         Optional<Integer> persistentStateChecksum) {
       this.consistentHashFactory = consistentHashFactory;
@@ -45,7 +47,7 @@ public class CacheJoinInfo {
       this.numOwners = numOwners;
       this.timeout = timeout;
       this.totalOrder = totalOrder;
-      this.distributed = distributed;
+      this.cacheMode = cacheMode;
       this.capacityFactor = capacityFactor;
       this.persistentUUID = persistentUUID;
       this.persistentStateChecksum = persistentStateChecksum;
@@ -75,8 +77,8 @@ public class CacheJoinInfo {
       return totalOrder;
    }
 
-   public boolean isDistributed() {
-      return distributed;
+   public CacheMode getCacheMode() {
+      return cacheMode;
    }
 
    public float getCapacityFactor() {
@@ -97,7 +99,7 @@ public class CacheJoinInfo {
       int result = 1;
       result = prime * result + Float.floatToIntBits(capacityFactor);
       result = prime * result + ((consistentHashFactory == null) ? 0 : consistentHashFactory.hashCode());
-      result = prime * result + (distributed ? 1231 : 1237);
+      result = prime * result + cacheMode.hashCode();
       result = prime * result + ((hashFunction == null) ? 0 : hashFunction.hashCode());
       result = prime * result + numOwners;
       result = prime * result + numSegments;
@@ -124,7 +126,7 @@ public class CacheJoinInfo {
             return false;
       } else if (!consistentHashFactory.equals(other.consistentHashFactory))
          return false;
-      if (distributed != other.distributed)
+      if (cacheMode != other.cacheMode)
          return false;
       if (hashFunction == null) {
          if (other.hashFunction != null)
@@ -161,7 +163,7 @@ public class CacheJoinInfo {
             ", numOwners=" + numOwners +
             ", timeout=" + timeout +
             ", totalOrder=" + totalOrder +
-            ", distributed=" + distributed +
+            ", cacheMode=" + cacheMode +
             ", persistentUUID=" + persistentUUID +
             ", persistentStateChecksum=" + persistentStateChecksum +
             '}';
@@ -176,7 +178,7 @@ public class CacheJoinInfo {
          output.writeInt(cacheJoinInfo.numOwners);
          output.writeLong(cacheJoinInfo.timeout);
          output.writeBoolean(cacheJoinInfo.totalOrder);
-         output.writeBoolean(cacheJoinInfo.distributed);
+         MarshallUtil.marshallEnum(cacheJoinInfo.cacheMode, output);
          output.writeFloat(cacheJoinInfo.capacityFactor);
          output.writeObject(cacheJoinInfo.persistentUUID);
          output.writeObject(cacheJoinInfo.persistentStateChecksum);
@@ -190,12 +192,12 @@ public class CacheJoinInfo {
          int numOwners = unmarshaller.readInt();
          long timeout = unmarshaller.readLong();
          boolean totalOrder = unmarshaller.readBoolean();
-         boolean distributed = unmarshaller.readBoolean();
+         CacheMode cacheMode = MarshallUtil.unmarshallEnum(unmarshaller, CacheMode::valueOf);
          float capacityFactor = unmarshaller.readFloat();
          PersistentUUID persistentUUID = (PersistentUUID) unmarshaller.readObject();
          Optional<Integer> persistentStateChecksum = (Optional<Integer>) unmarshaller.readObject();
          return new CacheJoinInfo(consistentHashFactory, hashFunction, numSegments, numOwners, timeout,
-               totalOrder, distributed, capacityFactor, persistentUUID, persistentStateChecksum);
+               totalOrder, cacheMode, capacityFactor, persistentUUID, persistentStateChecksum);
       }
 
       @Override

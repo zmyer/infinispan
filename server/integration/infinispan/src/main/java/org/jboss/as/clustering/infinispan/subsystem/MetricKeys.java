@@ -60,7 +60,9 @@ public class MetricKeys {
     public static final String HITS = "hits";
     public static final String MISSES = "misses";
     public static final String NUMBER_OF_ENTRIES = "number-of-entries";
+    public static final String NUMBER_OF_ENTRIES_IN_MEMORY = "number-of-entries-in-memory";
     public static final String OFF_HEAP_MEMORY_USED = "off-heap-memory-used";
+    public static final String MINIMUM_REQUIRED_NODES = "minimum-required-nodes";
     public static final String READ_WRITE_RATIO = "read-write-ratio";
     public static final String REMOVE_HITS = "remove-hits";
     public static final String REMOVE_MISSES = "remove-misses";
@@ -100,4 +102,9 @@ public class MetricKeys {
     public static final String NUMBER_OF_NODES = "number-of-nodes";
     public static final String CACHE_HEALTH = "cache-health";
     public static final String LOG_TAIL = "log-tail";
+
+    // Counter
+    public static final String VALUE="value";
+    public static final String NUM_OF_OWNERS = "num-owners";
+    public static final String RELIABILITY = "reliability";
 }

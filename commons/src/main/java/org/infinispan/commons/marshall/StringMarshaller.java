@@ -6,7 +6,7 @@ import java.nio.charset.Charset;
 import org.infinispan.commons.io.ByteBuffer;
 import org.infinispan.commons.io.ByteBufferImpl;
 
-public final class StringMarshaller extends AbstractMarshaller {
+public class StringMarshaller extends AbstractMarshaller {
 
    final Charset charset;
 
@@ -16,7 +16,7 @@ public final class StringMarshaller extends AbstractMarshaller {
 
    @Override
    protected ByteBuffer objectToBuffer(Object o, int estimatedSize) throws IOException, InterruptedException {
-      byte[] bytes = ((String) o).getBytes(charset);
+      byte[] bytes = o instanceof byte[] ? (byte[]) o : (o.toString()).getBytes(charset);
       return new ByteBufferImpl(bytes, 0, bytes.length);
    }
 

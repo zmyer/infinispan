@@ -131,6 +131,41 @@ public class AttributeTest {
       assertTrue("Attribute listener was not invoked", listenerInvoked.get());
    }
 
+   @Test
+   public void testAttributeSetMatches() {
+      AttributeDefinition<String> local = AttributeDefinition.builder("local", "").global(false).build();
+      AttributeDefinition<String> global = AttributeDefinition.builder("global", "").build();
+      AttributeSet setA = new AttributeSet(getClass(), local, global);
+      AttributeSet setB = new AttributeSet(getClass(), local, global);
+      setA.attribute("local").set("A");
+      setA.attribute("global").set("A");
+      setB.attribute("local").set("B");
+      setB.attribute("global").set("A");
+      assertTrue(setA.matches(setB));
+      assertFalse(setA.equals(setB));
+      setB.attribute("global").set("B");
+      assertFalse(setA.matches(setB));
+      assertFalse(setA.equals(setB));
+
+      setA = new AttributeSet(getClass(), local);
+      setB = new AttributeSet(getClass(), local, global);
+      setA.attribute("local").set("A");
+      setB.attribute("local").set("A");
+      setB.attribute("global").set("A");
+      assertFalse(setA.matches(setB));
+      assertFalse(setA.equals(setB));
+
+      AttributeDefinition<String> global2 = AttributeDefinition.builder("global2", "").build();
+      setA = new AttributeSet(getClass(), local, global);
+      setB = new AttributeSet(getClass(), local, global2);
+      setA.attribute("local").set("A");
+      setA.attribute("global").set("A");
+      setB.attribute("local").set("A");
+      setB.attribute("global2").set("A");
+      assertFalse(setA.matches(setB));
+      assertFalse(setA.equals(setB));
+   }
+
    static class Holder<T> {
       T object;
 

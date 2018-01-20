@@ -1,6 +1,7 @@
 package org.infinispan.statetransfer;
 
 import java.util.Collection;
+import java.util.concurrent.CompletableFuture;
 
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
@@ -25,13 +26,13 @@ public interface StateConsumer {
    /**
     * Receive notification of topology changes. StateRequestCommands are issued for segments that are new to this member
     * and the segments that are no longer owned are discarded.
-    *
     * @param cacheTopology
     * @param isRebalance
+    * @return future that is completed when the state transfer has finished
     */
-   void onTopologyUpdate(CacheTopology cacheTopology, boolean isRebalance);
+   CompletableFuture<Void> onTopologyUpdate(CacheTopology cacheTopology, boolean isRebalance);
 
-   void applyState(Address sender, int topologyId, Collection<StateChunk> stateChunks);
+   void applyState(Address sender, int topologyId, boolean pushTransfer, Collection<StateChunk> stateChunks);
 
    /**
     * Cancels all incoming state transfers. The already received data is not discarded.
@@ -42,8 +43,9 @@ public interface StateConsumer {
    /**
     * Stops applying incoming state. Also stops tracking updated keys. Should be called at the end of state transfer or
     * when a ClearCommand is committed during state transfer.
+    * @param topologyId
     */
-   void stopApplyingState();
+   void stopApplyingState(int topologyId);
 
    /**
     * @return  true if this node has already received the first rebalance command

@@ -41,7 +41,7 @@ public class MultipleEntitiesTest extends SingleCacheManagerTest {
       cfg.indexing().index(Index.ALL)
             .addIndexedEntity(Bond.class)
             .addIndexedEntity(Debenture.class)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("error_handler", "org.infinispan.query.helper.StaticTestingErrorHandler")
             .addProperty("lucene_version", "LUCENE_CURRENT");
       return TestCacheManagerFactory.createCacheManager(cfg);
@@ -71,7 +71,8 @@ public class MultipleEntitiesTest extends SingleCacheManagerTest {
    }
 
    private void assertEfficientIndexingUsed(SearchIntegrator searchIntegrator, Class<?> clazz) {
-      DirectoryBasedIndexManager im = (DirectoryBasedIndexManager) searchIntegrator.getIndexBinding(clazz).getIndexManagers()[0];
+      DirectoryBasedIndexManager im = (DirectoryBasedIndexManager) searchIntegrator.getIndexBindings().get(clazz)
+            .getIndexManagerSelector().all().iterator().next();
       WorkspaceHolder workspaceHolder = im.getWorkspaceHolder();
       LuceneBackendResources indexResources = workspaceHolder.getIndexResources();
       IndexWorkVisitor<Void, LuceneWorkExecutor> visitor = indexResources.getWorkVisitor();

@@ -105,7 +105,7 @@ public class CacheContainerResource extends SimpleResourceDefinition {
                     .setXmlName(Attribute.START.getLocalName())
                     .setAllowExpression(true)
                     .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
-                    .setValidator(new EnumValidator<StartMode>(StartMode.class, true, false))
+                    .setValidator(new EnumValidator<>(StartMode.class, true, false))
                     .setDefaultValue(new ModelNode().set(StartMode.LAZY.name()))
                     .build();
 
@@ -229,12 +229,12 @@ public class CacheContainerResource extends SimpleResourceDefinition {
 
    static final SimpleAttributeDefinition CATEGORY = SimpleAttributeDefinitionBuilder.create("category", ModelType.STRING, true)
            .setAllowExpression(true)
-           .setValidator(new EnumValidator<EventLogCategory>(EventLogCategory.class, true, true))
+           .setValidator(new EnumValidator<>(EventLogCategory.class, true, true))
            .build();
 
    static final SimpleAttributeDefinition LEVEL = SimpleAttributeDefinitionBuilder.create("level", ModelType.STRING, true)
            .setAllowExpression(true)
-           .setValidator(new EnumValidator<EventLogLevel>(EventLogLevel.class, true, true))
+           .setValidator(new EnumValidator<>(EventLogLevel.class, true, true))
            .build();
 
    static final OperationDefinition READ_EVENT_LOG =
@@ -386,10 +386,11 @@ public class CacheContainerResource extends SimpleResourceDefinition {
         super.registerChildren(resourceRegistration);
 
         // child resources
-        resourceRegistration.registerSubModel(new HealthResource(pathManager));
+        resourceRegistration.registerSubModel(new HealthResource(pathManager, runtimeRegistration));
 
         resourceRegistration.registerSubModel(new TransportResource());
         resourceRegistration.registerSubModel(new CacheContainerSecurityResource());
+        resourceRegistration.registerSubModel(new CacheContainerModulesResource());
         resourceRegistration.registerSubModel(new GlobalStateResource());
         for(ResourceDefinition resource : ThreadPoolResource.values()) {
             resourceRegistration.registerSubModel(resource);
@@ -402,5 +403,6 @@ public class CacheContainerResource extends SimpleResourceDefinition {
         resourceRegistration.registerSubModel(new InvalidationCacheResource(resolvePathHandler, runtimeRegistration));
         resourceRegistration.registerSubModel(new ReplicatedCacheResource(resolvePathHandler, runtimeRegistration));
         resourceRegistration.registerSubModel(new DistributedCacheResource(resolvePathHandler, runtimeRegistration));
+        resourceRegistration.registerSubModel(new CacheContainerCountersResource(resolvePathHandler, runtimeRegistration));
     }
 }

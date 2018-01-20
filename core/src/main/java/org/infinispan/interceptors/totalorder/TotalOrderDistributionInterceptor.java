@@ -1,13 +1,16 @@
 package org.infinispan.interceptors.totalorder;
 
 import java.util.Collection;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
+import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.distribution.LocalizedCacheTopology;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.distribution.TxDistributionInterceptor;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.util.concurrent.CompletableFutures;
@@ -26,9 +29,8 @@ public class TotalOrderDistributionInterceptor extends TxDistributionInterceptor
    private static final boolean trace = log.isTraceEnabled();
    private boolean onePhaseTotalOrderCommit;
 
-   @Override
+   @Start
    public void start() {
-      super.start();
       onePhaseTotalOrderCommit = Configurations.isOnePhaseTotalOrderCommit(cacheConfiguration);
    }
 
@@ -52,7 +54,7 @@ public class TotalOrderDistributionInterceptor extends TxDistributionInterceptor
    }
 
    @Override
-   protected CompletableFuture<Object> prepareOnAffectedNodes(TxInvocationContext<?> ctx, PrepareCommand command, Collection<Address> recipients) {
+   protected CompletionStage<Object> prepareOnAffectedNodes(TxInvocationContext<?> ctx, PrepareCommand command, Collection<Address> recipients) {
       if (trace) {
          log.tracef("Total Order Anycast transaction %s with Total Order", command.getGlobalTransaction().globalId());
       }
@@ -65,7 +67,19 @@ public class TotalOrderDistributionInterceptor extends TxDistributionInterceptor
          throw new IllegalStateException("Expected a local context while TO-Anycast prepare command");
       }
 
-      return totalOrderPrepare(ctx, command, recipients, isSyncCommitPhase() ? null : getSelfDeliverFilter());
+      return totalOrderPrepare(ctx, command, recipients);
+   }
+
+   @Override
+   protected LocalizedCacheTopology checkTopologyId(TopologyAffectedCommand command) {
+      // TODO Remove this and catch OutdatedTopologyException in TotalOrderStateTransferInterceptor
+      LocalizedCacheTopology cacheTopology = dm.getCacheTopology();
+      int currentTopologyId = cacheTopology.getTopologyId();
+      int cmdTopology = command.getTopologyId();
+      if (trace) {
+         log.tracef("Current topology %d, command topology %d", currentTopologyId, cmdTopology);
+      }
+      return cacheTopology;
    }
 
    @Override

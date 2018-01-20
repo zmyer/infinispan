@@ -1,7 +1,8 @@
 package org.infinispan.spring.support.embedded;
 
+import java.lang.invoke.MethodHandles;
+
 import org.infinispan.Cache;
-import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.util.logging.Log;
@@ -128,7 +129,7 @@ public class InfinispanNamedEmbeddedCacheFactoryBean<K, V> implements FactoryBea
       NAMED
    }
 
-   private final Log logger = LogFactory.getLog(getClass());
+   private static final Log logger = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
    private EmbeddedCacheManager infinispanEmbeddedCacheManager;
 
@@ -172,12 +173,6 @@ public class InfinispanNamedEmbeddedCacheFactoryBean<K, V> implements FactoryBea
             break;
          case NAMED:
             this.logger.debug("ConfigurationTemplateMode is NAMED: using a named Configuration [" + cacheName + "]");
-            Configuration cacheConfiguration = infinispanEmbeddedCacheManager.getCacheConfiguration(cacheName);
-            if (cacheConfiguration != null) {
-               builder = new ConfigurationBuilder();
-               builder.read(cacheConfiguration);
-               this.infinispanEmbeddedCacheManager.defineConfiguration(cacheName, builder.build());
-            }
             break;
          case DEFAULT:
             this.logger.debug("ConfigurationTemplateMode is DEFAULT.");

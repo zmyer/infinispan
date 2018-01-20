@@ -2,7 +2,7 @@
 <!-- See src/resources/configuration/ReadMe.txt for how the configuration assembly works -->
 <config default-supplement="default">
     <extension-module>org.jgroups.extension</extension-module>
-    <subsystem xmlns="urn:infinispan:server:jgroups:9.0">
+    <subsystem xmlns="urn:infinispan:server:jgroups:9.2">
         <channels default="cluster">
             <channel name="cluster" />
             <?CHANNELS?>
@@ -44,6 +44,7 @@
                 <protocol type="pbcast.STABLE" />
                 <protocol type="pbcast.GMS" />
                 <protocol type="MFC" />
+                <protocol type="FRAG3" />
             </stack>
             <stack name="s3-presigned">
                 <?TCP-TRANSPORT?>
@@ -62,6 +63,7 @@
                 <protocol type="pbcast.STABLE" />
                 <protocol type="pbcast.GMS" />
                 <protocol type="MFC" />
+                <protocol type="FRAG3" />
             </stack>
             <stack name="s3-public">
                 <?TCP-TRANSPORT?>
@@ -79,6 +81,7 @@
                 <protocol type="pbcast.STABLE" />
                 <protocol type="pbcast.GMS" />
                 <protocol type="MFC" />
+                <protocol type="FRAG3" />
             </stack>
             <stack name="google">
                 <?TCP-TRANSPORT?>
@@ -98,9 +101,12 @@
                 <protocol type="pbcast.STABLE" />
                 <protocol type="pbcast.GMS" />
                 <protocol type="MFC" />
+                <protocol type="FRAG3" />
             </stack>
             <stack name="kubernetes">
-                <?TCP-TRANSPORT?>
+                <transport type="TCP" socket-binding="jgroups-tcp" >
+                    <property name="logical_addr_cache_expiration">360000</property>
+                </transport>
                 <protocol type="kubernetes.KUBE_PING" />
                 <protocol type="MERGE3" />
                 <protocol type="FD_SOCK" socket-binding="jgroups-tcp-fd" />
@@ -113,6 +119,7 @@
                 <protocol type="pbcast.STABLE" />
                 <protocol type="pbcast.GMS" />
                 <protocol type="MFC" />
+                <protocol type="FRAG3" />
             </stack>
         </stacks>
     </subsystem>

@@ -1,5 +1,7 @@
 package org.infinispan.remoting.inboundhandler;
 
+import org.infinispan.remoting.responses.Response;
+
 /**
  * Interface responsible to send back the return value to the sender.
  *
@@ -8,10 +10,12 @@ package org.infinispan.remoting.inboundhandler;
  */
 public interface Reply {
 
+   Reply NO_OP = returnValue -> {};
+
    /**
     * Sends back the return value to the sender.
     *
-    * @param returnValue the return value
+    * @param response the return value
     */
-   void reply(Object returnValue);
+   void reply(Response response);
 }

@@ -7,13 +7,12 @@ import java.io.File;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -45,11 +44,11 @@ public class ReplStateTransferCacheLoaderTest extends MultipleCacheManagersTest 
       // reproduce the MODE-1754 config as closely as possible
       builder = getDefaultClusteredCacheConfig(CacheMode.REPL_SYNC, true, true);
       builder.transaction().transactionMode(TransactionMode.TRANSACTIONAL).lockingMode(LockingMode.PESSIMISTIC)
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
-            .eviction().maxEntries(1000).strategy(EvictionStrategy.LIRS)
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup())
+            .memory().size(1000)
             .locking().lockAcquisitionTimeout(20000)
             .concurrencyLevel(5000) // lowering this to 50 makes the test pass also on 5.2 but it's just a temporary workaround
-            .useLockStriping(false).writeSkewCheck(false).isolationLevel(IsolationLevel.READ_COMMITTED)
+            .useLockStriping(false).isolationLevel(IsolationLevel.READ_COMMITTED)
             .dataContainer().storeAsBinary()
             .clustering().remoteTimeout(20000)
             .stateTransfer().timeout(240000).fetchInMemoryState(false).chunkSize(10000)

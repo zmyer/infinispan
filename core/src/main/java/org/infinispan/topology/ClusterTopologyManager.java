@@ -30,7 +30,7 @@ public interface ClusterTopologyManager {
    /**
     * Marks the rebalance as complete on the sender.
     */
-   void handleRebalanceCompleted(String cacheName, Address node, int topologyId, Throwable throwable, int viewId) throws Exception;
+   void handleRebalancePhaseConfirm(String cacheName, Address node, int topologyId, Throwable throwable, int viewId) throws Exception;
 
    void broadcastRebalanceStart(String cacheName, CacheTopology cacheTopology, boolean totalOrder, boolean distributed);
 
@@ -68,4 +68,9 @@ public interface ClusterTopologyManager {
 
    void broadcastShutdownCache(String cacheName, CacheTopology currentTopology, boolean totalOrder, boolean distributed) throws Exception;
 
+   /**
+    * Sets the id of the initial topology in given cache. This is necessary when using entry versions
+    * that contain topology id; had we started with topology id 1, newer versions would not be recognized properly.
+    */
+   void setInitialCacheTopologyId(String cacheName, int topologyId);
 }

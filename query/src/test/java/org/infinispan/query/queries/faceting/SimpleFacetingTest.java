@@ -24,7 +24,7 @@ import org.testng.annotations.Test;
  * @author Sanne Grinovero <sanne@hibernate.org> (C) 2011 Red Hat Inc.
  * @author Hardy Ferentschik
  */
-@Test(groups = {"functional", "smoke"}, testName = "query.queries.faceting.SimpleFacetingTest")
+@Test(groups = {"functional"}, testName = "query.queries.faceting.SimpleFacetingTest")
 public class SimpleFacetingTest extends SingleCacheManagerTest {
 
    private static final String indexFieldName = "cubicCapacity";
@@ -38,7 +38,7 @@ public class SimpleFacetingTest extends SingleCacheManagerTest {
          .indexing()
             .index(Index.ALL)
             .addIndexedEntity(Car.class)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT");
       return TestCacheManagerFactory.createCacheManager(cfg);
    }

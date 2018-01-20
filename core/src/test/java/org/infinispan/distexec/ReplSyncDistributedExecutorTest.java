@@ -8,7 +8,7 @@ import org.testng.annotations.Test;
  *
  * @author Vladimir Blagojevic
  */
-@Test(groups = {"functional", "smoke"}, testName = "distexec.ReplSyncDistributedExecutorTest")
+@Test(groups = {"functional"}, testName = "distexec.ReplSyncDistributedExecutorTest")
 public class ReplSyncDistributedExecutorTest extends DistributedExecutorTest {
 
    public ReplSyncDistributedExecutorTest() {
@@ -21,11 +21,5 @@ public class ReplSyncDistributedExecutorTest extends DistributedExecutorTest {
 
    protected CacheMode getCacheMode() {
       return CacheMode.REPL_SYNC;
-   }
-
-   @Test(groups = "unstable")
-   @Override
-   public void testBasicTargetRemoteDistributedCallableWithHighFutureAndLowTaskTimeout() throws Exception {
-      super.testBasicTargetRemoteDistributedCallableWithHighFutureAndLowTaskTimeout();
    }
 }

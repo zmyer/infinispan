@@ -34,18 +34,13 @@ public class CacheContainerStatsImpl implements CacheContainerStats, JmxStatisti
    private EmbeddedCacheManager cm;
    private final AtomicLong resetNanoseconds = new AtomicLong(0);
    private boolean statisticsEnabled = false;
-   private TimeService timeService;
+   @Inject private TimeService timeService;
 
    public CacheContainerStatsImpl(EmbeddedCacheManager cm) {
       this.cm = cm;
       cm.getGlobalComponentRegistry().registerComponent(this, CacheContainerStats.class);
       boolean globalJmxStatsEnabled = cm.getCacheManagerConfiguration().globalJmxStatistics().enabled();
       setStatisticsEnabled(globalJmxStatsEnabled);
-   }
-
-   @Inject
-   public void setDependencies(TimeService timeService) {
-      this.timeService = timeService;
    }
 
    @Override
@@ -79,9 +74,9 @@ public class CacheContainerStatsImpl implements CacheContainerStats, JmxStatisti
       return getStatisticsEnabled();
    }
 
-   @ManagedAttribute(description = "Cache container total average number of milliseconds for all read operation in this cache container",
+   @ManagedAttribute(description = "Cache container total average number of nanoseconds for all read operation in this cache container",
          displayName = "Cache container total average read time",
-         units = Units.MILLISECONDS,
+         units = Units.NANOSECONDS,
          displayType = DisplayType.SUMMARY)
    @Override
    public long getAverageReadTime() {
@@ -108,15 +103,24 @@ public class CacheContainerStatsImpl implements CacheContainerStats, JmxStatisti
       return totalAverageReadTime;
    }
 
-   @ManagedAttribute(description = "Cache container total average number of milliseconds for all remove operation in this cache container",
+   @ManagedAttribute(description = "Cache container total average number of nanoseconds for all remove operation in this cache container",
          displayName = "Cache container total average remove time",
-         units = Units.MILLISECONDS,
+         units = Units.NANOSECONDS,
          displayType = DisplayType.SUMMARY)
    @Override
    public long getAverageRemoveTime() {
       long result = -1;
       if (getStatisticsEnabled()) {
          result = calculateAverageRemoveTime();
+      }
+      return result;
+   }
+
+   @Override
+   public int getRequiredMinimumNumberOfNodes() {
+      int result = -1;
+      for (Stats stats : getStats()) {
+         result = Math.max(result, stats.getRequiredMinimumNumberOfNodes());
       }
       return result;
    }
@@ -137,9 +141,9 @@ public class CacheContainerStatsImpl implements CacheContainerStats, JmxStatisti
       return totalAverageRemoveTime;
    }
 
-   @ManagedAttribute(description = "Cache container average number of milliseconds for all write operation in this cache container",
+   @ManagedAttribute(description = "Cache container average number of nanoseconds for all write operation in this cache container",
          displayName = "Cache container average write time",
-         units = Units.MILLISECONDS,
+         units = Units.NANOSECONDS,
          displayType = DisplayType.SUMMARY)
    @Override
    public long getAverageWriteTime() {
@@ -281,22 +285,34 @@ public class CacheContainerStatsImpl implements CacheContainerStats, JmxStatisti
          displayType = DisplayType.SUMMARY
    )
    public int getNumberOfEntries() {
-      int result = -1;
-      if (getStatisticsEnabled()) {
-         result = calculateNumberOfEntries();
+      int result = statisticsEnabled ? 0 : -1;
+      if (statisticsEnabled) {
+         for (Stats stats : getEnabledStats()) {
+            int numOfEntries = stats.getCurrentNumberOfEntries();
+            if (numOfEntries > 0) {
+               result += numOfEntries;
+            }
+         }
       }
       return result;
    }
 
-   protected int calculateNumberOfEntries() {
-      int totalNumberOfEntries = 0;
-      for (Stats stats : getEnabledStats()) {
-         int numOfEntries = stats.getCurrentNumberOfEntries();
-         if (numOfEntries > 0) {
-            totalNumberOfEntries += numOfEntries;
+   @ManagedAttribute(
+         description = "Cache container total number of entries currently in-memory for all caches in this cache container",
+         displayName = "Cache container total number of in-memory cache entries",
+         displayType = DisplayType.SUMMARY
+   )
+   public int getCurrentNumberOfEntriesInMemory() {
+      int result = statisticsEnabled ? 0 : -1;
+      if (statisticsEnabled) {
+         for (Stats stats : getEnabledStats()) {
+            int numOfEntries = stats.getCurrentNumberOfEntriesInMemory();
+            if (numOfEntries > 0) {
+               result += numOfEntries;
+            }
          }
       }
-      return totalNumberOfEntries;
+      return result;
    }
 
    @ManagedAttribute(
@@ -483,6 +499,17 @@ public class CacheContainerStatsImpl implements CacheContainerStats, JmxStatisti
    @Override
    public void reset() {
       resetStatistics();
+   }
+
+   private Set<Stats> getStats() {
+      Set<Stats> stats = new HashSet<Stats>();
+      for (String cn : cm.getCacheNames()) {
+         if (cm.cacheExists(cn)) {
+            AdvancedCache cache = cm.getCache(cn).getAdvancedCache();
+            stats.add(cache.getStats());
+         }
+      }
+      return stats;
    }
 
    private Set<Stats> getEnabledStats() {

@@ -1,8 +1,6 @@
 package org.infinispan.container.offheap;
 
 import static org.testng.AssertJUnit.assertEquals;
-import static org.testng.AssertJUnit.assertNull;
-import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.Iterator;
 import java.util.Map;
@@ -24,11 +22,11 @@ import org.infinispan.filter.KeyFilter;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.testng.annotations.Test;
 
-@Test(groups = "stress", testName = "commands.OffHeapMultiNodeTest")
+@Test(groups = "stress", testName = "commands.OffHeapMultiNodeTest", timeOut = 15 * 60 * 1000)
 public class OffHeapMultiNodeStressTest extends MultipleCacheManagersTest {
    @Override
    protected void createCacheManagers() throws Throwable {
-      ConfigurationBuilder dcc = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
+      ConfigurationBuilder dcc = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, false);
       dcc.memory().storageType(StorageType.OFF_HEAP);
       createCluster(dcc, 4);
       waitForClusterToForm();
@@ -44,9 +42,9 @@ public class OffHeapMultiNodeStressTest extends MultipleCacheManagersTest {
       final int INSERTIONCOUNT = 2048;
       final int REMOVECOUNT = 1;
 
-      ExecutorService execService = Executors.newFixedThreadPool(WRITE_THREADS + REMOVE_THREADS);
-      ExecutorCompletionService<Void> service = new ExecutorCompletionService<>(
-            execService);
+      ExecutorService execService = Executors.newFixedThreadPool(WRITE_THREADS + REMOVE_THREADS,
+                                                                 getTestThreadFactory("Worker"));
+      ExecutorCompletionService<Void> service = new ExecutorCompletionService<>(execService);
 
       try {
          final Map<byte[], byte[]> map = cache(0);
@@ -94,9 +92,9 @@ public class OffHeapMultiNodeStressTest extends MultipleCacheManagersTest {
       final int REMOVECOUNT = 1;
       final int EXECUTECOUNT = 2;
 
-      ExecutorService execService = Executors.newFixedThreadPool(WRITE_THREADS + REMOVE_THREADS + EXECUTE_THREADS);
-      ExecutorCompletionService<Void> service = new ExecutorCompletionService<>(
-            execService);
+      ExecutorService execService = Executors.newFixedThreadPool(WRITE_THREADS + REMOVE_THREADS + EXECUTE_THREADS,
+                                                                 getTestThreadFactory("Worker"));
+      ExecutorCompletionService<Void> service = new ExecutorCompletionService<>(execService);
 
       try {
          final Cache<byte[], byte[]> bchm = cache(0);

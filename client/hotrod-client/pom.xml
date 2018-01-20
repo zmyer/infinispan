@@ -4,8 +4,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-client-hotrod</artifactId>
@@ -14,13 +14,22 @@
    <description>Infinispan Hot Rod Client</description>
 
    <properties>
-      <infinispan.test.parallel.threads>5</infinispan.test.parallel.threads>
+      <ca.dname>CN=CA,OU=Infinispan,O=JBoss,L=Red Hat</ca.dname>
+      <ca.alias>infinispan-ca</ca.alias>
+      <ca.keystore>${project.build.testOutputDirectory}/ca.jks</ca.keystore>
+      <client.dname>CN=HotRodClient1,OU=Infinispan,O=JBoss,L=Red Hat</client.dname>
+      <client.alias>client1</client.alias>
+      <server.dname>CN=HotRodServer,OU=Infinispan,O=JBoss,L=Red Hat</server.dname>
+      <server.alias>hotrod</server.alias>
+      <client.keystore>${project.build.testOutputDirectory}/keystore_client.jks</client.keystore>
+      <server.keystore>${project.build.testOutputDirectory}/keystore_server.jks</server.keystore>
+      <default.password>secret</default.password>
+      <alt.password>changeme</alt.password>
    </properties>
-
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons</artifactId>
       </dependency>
 
@@ -35,19 +44,19 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-query</artifactId>
          <version>${project.version}</version>
          <type>test-jar</type>
@@ -55,58 +64,52 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote-query-server</artifactId>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-scripting</artifactId>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-scripting</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
 
       <dependency>
-         <groupId>org.scala-lang</groupId>
-         <artifactId>scala-library</artifactId>
-         <scope>test</scope>
-      </dependency>
-
-      <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-query-dsl</artifactId>
          <optional>true</optional>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote-query-client</artifactId>
          <optional>true</optional>
       </dependency>
@@ -117,7 +120,7 @@
          <scope>test</scope>
       </dependency>
 
-      <dependency>
+       <dependency>
          <groupId>org.jboss.sasl</groupId>
          <artifactId>jboss-sasl</artifactId>
          <scope>test</scope>
@@ -131,8 +134,15 @@
 
       <dependency>
          <groupId>org.mockito</groupId>
-         <artifactId>mockito-all</artifactId>
+         <artifactId>mockito-core</artifactId>
          <scope>test</scope>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.karaf.features</groupId>
+        <artifactId>framework</artifactId>
+        <type>kar</type>
+        <scope>provided</scope>
       </dependency>
 
    </dependencies>
@@ -148,6 +158,317 @@
          </resource>
       </resources>
       <plugins>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+               <systemPropertyVariables combine.self="append">
+                  <io.netty.eventLoopThreads>3</io.netty.eventLoopThreads>
+                  <infinispan.server.hotrod.workerThreads>3</infinispan.server.hotrod.workerThreads>
+               </systemPropertyVariables>
+            </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>create-certificates</id>
+                  <phase>process-test-resources</phase>
+                  <goals>
+                     <goal>run</goal>
+                  </goals>
+                  <configuration>
+                     <target>
+                        <macrodef name="keytool">
+                           <attribute name="command"/>
+                           <element name="args"/>
+                           <sequential>
+                              <condition property="keytool.classname" value="com.ibm.crypto.tools.KeyTool">
+                                 <available classname="com.ibm.crypto.tools.KeyTool"/>
+                              </condition>
+                              <condition property="keytool.classname" value="sun.security.tools.keytool.Main">
+                                 <available classname="sun.security.tools.keytool.Main"/>
+                              </condition>
+                              <java classname="${keytool.classname}" failonerror="true">
+                                 <arg value="@{command}"/>
+                                 <!-- common arguments -->
+                                 <arg value="-validity"/>
+                                 <arg value="365"/>
+                                 <arg value="-keyalg"/>
+                                 <arg value="RSA"/>
+                                 <arg value="-keysize"/>
+                                 <arg value="2048"/>
+                                 <arg value="-noprompt"/>
+                                 <arg value="-storepass"/>
+                                 <arg value="${default.password}"/>
+                                 <!-- additional arguments -->
+                                 <args/>
+                              </java>
+                           </sequential>
+                        </macrodef>
+                        <delete quiet="true">
+                           <fileset dir="${project.build.testOutputDirectory}" includes="*.jks,*.csr,*.cer"/>
+                        </delete>
+                        <echo message="Generate the CA certificate"/>
+                        <keytool command="-genkeypair">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-dname"/>
+                              <arg value="${ca.dname}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${ca.keystore}"/>
+                              <arg value="-ext"/>
+                              <arg value="bc:c"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <keytool command="-exportcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${ca.keystore}"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/ca.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Import the CA certificate to the server truststore"/>
+                        <keytool command="-importcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${project.build.testOutputDirectory}/truststore_server.jks"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/ca.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Import the CA certificate to the client truststore"/>
+                        <keytool command="-importcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${project.build.testOutputDirectory}/truststore_client.jks"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/ca.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Generate the client certificate"/>
+                        <keytool command="-genkeypair">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${client.alias}"/>
+                              <arg value="-dname"/>
+                              <arg value="${client.dname}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${client.keystore}"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Sign the client certificate with the CA"/>
+                        <keytool command="-certreq">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${client.alias}"/>
+                              <arg value="-dname"/>
+                              <arg value="${client.dname}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${client.keystore}"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/client1.csr"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <keytool command="-gencert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${ca.keystore}"/>
+                              <arg value="-infile"/>
+                              <arg value="${project.build.testOutputDirectory}/client1.csr"/>
+                              <arg value="-outfile"/>
+                              <arg value="${project.build.testOutputDirectory}/client1.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Import the CA certificate to the client keystore"/>
+                        <keytool command="-importcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${client.keystore}"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/ca.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Import the client certificate to the client keystore"/>
+                        <keytool command="-importcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${client.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${client.keystore}"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/client1.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <!-- Server -->
+                        <echo message="Generate the server certificate"/>
+                        <keytool command="-genkeypair">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${server.alias}"/>
+                              <arg value="-dname"/>
+                              <arg value="${server.dname}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${server.keystore}"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Sign the server certificate with the CA"/>
+                        <keytool command="-certreq">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${server.alias}"/>
+                              <arg value="-dname"/>
+                              <arg value="${server.dname}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${server.keystore}"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/server.csr"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <keytool command="-gencert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${ca.keystore}"/>
+                              <arg value="-infile"/>
+                              <arg value="${project.build.testOutputDirectory}/server.csr"/>
+                              <arg value="-outfile"/>
+                              <arg value="${project.build.testOutputDirectory}/server.cer"/>
+                               <arg value="-keypass"/>
+                               <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Import the CA certificate to the server keystore"/>
+                        <keytool command="-importcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${server.keystore}"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/ca.cer"/>
+                               <arg value="-keypass"/>
+                               <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <echo message="Import the server certificate to the server keystore"/>
+                        <keytool command="-importcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${server.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${server.keystore}"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/server.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${default.password}"/>
+                           </args>
+                        </keytool>
+                        <!-- Alternate password client certificate -->
+                        <echo message="Clone the client keystore with an alternate key password"/>
+                        <keytool command="-importkeystore">
+                           <args>
+                              <arg value="-srcalias"/>
+                              <arg value="${client.alias}"/>
+                              <arg value="-srckeystore"/>
+                              <arg value="${client.keystore}"/>
+                              <arg value="-srcstorepass"/>
+                              <arg value="${default.password}"/>
+                              <arg value="-srckeypass"/>
+                              <arg value="${default.password}"/>
+                              <arg value="-destkeystore"/>
+                              <arg value="${project.build.testOutputDirectory}/keystore_client_alt_cert_password.jks"/>
+                              <arg value="-deststorepass"/>
+                              <arg value="${default.password}"/>
+                              <arg value="-destkeypass"/>
+                              <arg value="${alt.password}"/>
+                           </args>
+                        </keytool>
+                        <keytool command="-importcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${project.build.testOutputDirectory}/keystore_client_alt_cert_password.jks"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/ca.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${alt.password}"/>
+                           </args>
+                        </keytool>
+                        <!-- Alternate password server certificate -->
+                        <echo message="Clone the server keystore with an alternate key password"/>
+                        <keytool command="-importkeystore">
+                           <args>
+                              <arg value="-srcalias"/>
+                              <arg value="${server.alias}"/>
+                              <arg value="-srckeystore"/>
+                              <arg value="${server.keystore}"/>
+                              <arg value="-srcstorepass"/>
+                              <arg value="${default.password}"/>
+                              <arg value="-srckeypass"/>
+                              <arg value="${default.password}"/>
+                              <arg value="-destkeystore"/>
+                              <arg value="${project.build.testOutputDirectory}/keystore_server_alt_cert_password.jks"/>
+                              <arg value="-deststorepass"/>
+                              <arg value="${default.password}"/>
+                              <arg value="-destkeypass"/>
+                              <arg value="${alt.password}"/>
+                           </args>
+                        </keytool>
+                        <keytool command="-importcert">
+                           <args>
+                              <arg value="-alias"/>
+                              <arg value="${ca.alias}"/>
+                              <arg value="-keystore"/>
+                              <arg value="${project.build.testOutputDirectory}/keystore_server_alt_cert_password.jks"/>
+                              <arg value="-file"/>
+                              <arg value="${project.build.testOutputDirectory}/ca.cer"/>
+                              <arg value="-keypass"/>
+                              <arg value="${alt.password}"/>
+                           </args>
+                        </keytool>
+                     </target>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
          <plugin>
             <groupId>org.apache.felix</groupId>
             <artifactId>maven-bundle-plugin</artifactId>
@@ -186,4 +507,33 @@
          </plugin>
       </plugins>
    </build>
+
+   <profiles>
+      <profile>
+         <id>smoke</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <configuration>
+                     <excludes>
+                        <exclude>**/*QueryDslConditions*.java</exclude>
+                        <exclude>**/*QueryString*.java</exclude>
+                     </excludes>
+                  </configuration>
+               </plugin>
+               <plugin>
+                  <groupId>org.apache.karaf.tooling</groupId>
+                  <artifactId>karaf-maven-plugin</artifactId>
+                  <configuration>
+                     <features>
+                        <feature>infinispan-client-hotrod,infinispan-client-hotrod-with-query,hotrod-client,hotrod-client-with-query</feature>
+                     </features>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

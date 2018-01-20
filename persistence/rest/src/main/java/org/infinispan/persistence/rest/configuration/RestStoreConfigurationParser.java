@@ -27,6 +27,8 @@ import org.kohsuke.MetaInfServices;
 @MetaInfServices
 @Namespaces({
    @Namespace(root = "rest-store"),
+   @Namespace(uri = "urn:infinispan:config:store:rest:9.2", root = "rest-store"),
+   @Namespace(uri = "urn:infinispan:config:store:rest:9.1", root = "rest-store"),
    @Namespace(uri = "urn:infinispan:config:store:rest:9.0", root = "rest-store"),
    @Namespace(uri = "urn:infinispan:config:store:rest:8.0", root = "rest-store"),
    @Namespace(uri = "urn:infinispan:config:store:rest:7.2", root = "rest-store"),
@@ -164,6 +166,10 @@ public class RestStoreConfigurationParser implements ConfigurationParser {
             }
             case RAW_VALUES: {
                builder.rawValues(Boolean.parseBoolean(value));
+               break;
+            }
+            case MAX_CONTENT_LENGTH: {
+               builder.maxContentLength(Integer.parseInt(value));
                break;
             }
             default: {

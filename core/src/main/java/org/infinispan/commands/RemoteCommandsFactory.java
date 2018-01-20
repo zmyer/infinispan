@@ -23,6 +23,8 @@ import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.remote.ClusteredGetAllCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
+import org.infinispan.commands.remote.RenewBiasCommand;
+import org.infinispan.commands.remote.RevokeBiasCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTransactionsCommand;
@@ -38,17 +40,14 @@ import org.infinispan.commands.tx.totalorder.TotalOrderNonVersionedPrepareComman
 import org.infinispan.commands.tx.totalorder.TotalOrderRollbackCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedCommitCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
-import org.infinispan.commands.write.BackupAckCommand;
-import org.infinispan.commands.write.BackupMultiKeyAckCommand;
-import org.infinispan.commands.write.BackupPutMapRcpCommand;
-import org.infinispan.commands.write.BackupWriteRcpCommand;
+import org.infinispan.commands.write.BackupPutMapRpcCommand;
+import org.infinispan.commands.write.BackupWriteRpcCommand;
 import org.infinispan.commands.write.ClearCommand;
-import org.infinispan.commands.write.ExceptionAckCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
-import org.infinispan.commands.write.PrimaryAckCommand;
-import org.infinispan.commands.write.PrimaryMultiKeyAckCommand;
+import org.infinispan.commands.write.InvalidateVersionsCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -65,6 +64,9 @@ import org.infinispan.manager.impl.ReplicableCommandManagerFunction;
 import org.infinispan.manager.impl.ReplicableCommandRunnable;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
+import org.infinispan.stream.impl.StreamIteratorCloseCommand;
+import org.infinispan.stream.impl.StreamIteratorNextCommand;
+import org.infinispan.stream.impl.StreamIteratorRequestCommand;
 import org.infinispan.stream.impl.StreamRequestCommand;
 import org.infinispan.stream.impl.StreamResponseCommand;
 import org.infinispan.stream.impl.StreamSegmentResponseCommand;
@@ -90,15 +92,9 @@ import org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand;
  */
 @Scope(Scopes.GLOBAL)
 public class RemoteCommandsFactory {
-   private EmbeddedCacheManager cacheManager;
+   @Inject private EmbeddedCacheManager cacheManager;
+   @Inject @ComponentName(KnownComponentNames.MODULE_COMMAND_FACTORIES)
    private Map<Byte,ModuleCommandFactory> commandFactories;
-
-   @Inject
-   public void inject(EmbeddedCacheManager cacheManager,
-                      @ComponentName(KnownComponentNames.MODULE_COMMAND_FACTORIES) Map<Byte, ModuleCommandFactory> commandFactories) {
-      this.cacheManager = cacheManager;
-      this.commandFactories = commandFactories;
-   }
 
    /**
     * Creates an un-initialized command.  Un-initialized in the sense that parameters will be set, but any components
@@ -128,6 +124,12 @@ public class RemoteCommandsFactory {
             case ReplaceCommand.COMMAND_ID:
                command = new ReplaceCommand();
                break;
+            case ComputeCommand.COMMAND_ID:
+               command = new ComputeCommand();
+               break;
+            case ComputeIfAbsentCommand.COMMAND_ID:
+               command = new ComputeIfAbsentCommand();
+               break;
             case GetKeyValueCommand.COMMAND_ID:
                command = new GetKeyValueCommand();
                break;
@@ -139,9 +141,6 @@ public class RemoteCommandsFactory {
                break;
             case InvalidateL1Command.COMMAND_ID:
                command = new InvalidateL1Command();
-               break;
-            case ApplyDeltaCommand.COMMAND_ID:
-               command = new ApplyDeltaCommand();
                break;
             case CacheTopologyControlCommand.COMMAND_ID:
                command = new CacheTopologyControlCommand();
@@ -315,26 +314,29 @@ public class RemoteCommandsFactory {
             case StreamResponseCommand.COMMAND_ID:
                command = new StreamResponseCommand(cacheName);
                break;
-            case BackupAckCommand.COMMAND_ID:
-               command = new BackupAckCommand(cacheName);
+            case StreamIteratorRequestCommand.COMMAND_ID:
+               command = new StreamIteratorRequestCommand<>(cacheName);
                break;
-            case PrimaryAckCommand.COMMAND_ID:
-               command = new PrimaryAckCommand(cacheName);
+            case StreamIteratorNextCommand.COMMAND_ID:
+               command = new StreamIteratorNextCommand(cacheName);
                break;
-            case BackupMultiKeyAckCommand.COMMAND_ID:
-               command = new BackupMultiKeyAckCommand(cacheName);
+            case StreamIteratorCloseCommand.COMMAND_ID:
+               command = new StreamIteratorCloseCommand(cacheName);
                break;
-            case PrimaryMultiKeyAckCommand.COMMAND_ID:
-               command = new PrimaryMultiKeyAckCommand(cacheName);
+            case BackupWriteRpcCommand.COMMAND_ID:
+               command = new BackupWriteRpcCommand(cacheName);
                break;
-            case ExceptionAckCommand.COMMAND_ID:
-               command = new ExceptionAckCommand(cacheName);
+            case BackupPutMapRpcCommand.COMMAND_ID:
+               command = new BackupPutMapRpcCommand(cacheName);
                break;
-            case BackupWriteRcpCommand.COMMAND_ID:
-               command = new BackupWriteRcpCommand(cacheName);
+            case InvalidateVersionsCommand.COMMAND_ID:
+               command = new InvalidateVersionsCommand(cacheName);
                break;
-            case BackupPutMapRcpCommand.COMMAND_ID:
-               command = new BackupPutMapRcpCommand(cacheName);
+            case RevokeBiasCommand.COMMAND_ID:
+               command = new RevokeBiasCommand(cacheName);
+               break;
+            case RenewBiasCommand.COMMAND_ID:
+               command = new RenewBiasCommand(cacheName);
                break;
             default:
                throw new CacheException("Unknown command id " + id + "!");

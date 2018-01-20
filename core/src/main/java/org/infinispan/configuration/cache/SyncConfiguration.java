@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit;
 import org.infinispan.commons.configuration.attributes.Attribute;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.commons.configuration.attributes.Matchable;
 
 /**
  * If configured all communications are synchronous, in that whenever a thread sends a message sent
@@ -14,7 +15,7 @@ import org.infinispan.commons.configuration.attributes.AttributeSet;
  * @deprecated Since 9.0, the {@code replTimeout} attribute is now {@code ClusteringConfiguration.remoteTimeout}.
  */
 @Deprecated
-public class SyncConfiguration {
+public class SyncConfiguration implements Matchable<SyncConfiguration> {
 
    /**
     * @deprecated Since 9.0, replaced with {@link ClusteringConfiguration#REMOTE_TIMEOUT}
@@ -23,7 +24,7 @@ public class SyncConfiguration {
    public static final AttributeDefinition<Long> REPL_TIMEOUT = AttributeDefinition.builder("replTimeout", TimeUnit.SECONDS.toMillis(15)).build();
 
    static AttributeSet attributeDefinitionSet() {
-      return new AttributeSet(SyncConfiguration.class.getSimpleName(), ClusteringConfiguration.REMOTE_TIMEOUT);
+      return new AttributeSet(SyncConfiguration.class.getSimpleName(), REPL_TIMEOUT);
    }
 
    private final Attribute<Long> remoteTimeout;
@@ -31,14 +32,14 @@ public class SyncConfiguration {
 
    SyncConfiguration(AttributeSet attributes) {
       this.attributes = attributes.checkProtection();
-      remoteTimeout = attributes.attribute(ClusteringConfiguration.REMOTE_TIMEOUT);
+      remoteTimeout = attributes.attribute(REPL_TIMEOUT);
    }
 
    /**
     * This is the timeout used to wait for an acknowledgment when making a remote call, after which
     * the call is aborted and an exception is thrown.
     *
-    * @deprecated Since 9.0, please use {@link ClusteringConfiguration#replTimeout()} instead.
+    * @deprecated Since 9.0, please use {@link ClusteringConfiguration#remoteTimeout()} instead.
     */
    @Deprecated
    public long replTimeout() {
@@ -49,7 +50,7 @@ public class SyncConfiguration {
     * This is the timeout used to wait for an acknowledgment when making a remote call, after which
     * the call is aborted and an exception is thrown.
     *
-    * @deprecated Since 9.0, please use {@link ClusteringConfiguration#replTimeout(long)} instead.
+    * @deprecated Since 9.0, please use {@link ClusteringConfiguration#remoteTimeout(long)} instead.
     */
    @Deprecated
    public SyncConfiguration replTimeout(long l) {

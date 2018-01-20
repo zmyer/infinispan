@@ -12,6 +12,7 @@ import java.util.List;
 import javax.transaction.Transaction;
 
 import org.hibernate.search.backend.LuceneWork;
+import org.hibernate.search.exception.SearchException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.objectfilter.ParsingException;
 import org.infinispan.remoting.transport.Address;
@@ -126,10 +127,10 @@ public interface Log extends org.infinispan.util.logging.Log {
    ParsingException multivaluedPropertyCannotBeProjected(String propertyPath);
 
    @LogMessage(level = WARN)
-   @Message(value = "Detected an undeclared indexed entity class in cache %s: %s. Autodetection support will be removed in Infinispan 9.0.", id = 14028)
+   @Message(value = "Autodetected a new indexed entity type in cache %s: %s. Autodetection support will be removed in Infinispan 10.0.", id = 14028)
    void detectedUnknownIndexedEntity(String cacheName, String className);
 
-   //todo [anistor] This should become a CacheException in Infinispan 9.0
+   //todo [anistor] This should become a CacheException in Infinispan 10.0
    @LogMessage(level = WARN)
    @Message(value = "Found undeclared indexable types in cache %s : %s. No indexes were created for these types because autodetection is not enabled for this cache.", id = 14029)
    void detectedUnknownIndexedEntities(String cacheName, String classNames);
@@ -155,4 +156,16 @@ public interface Log extends org.infinispan.util.logging.Log {
 
    @Message(value = "Invalid boolean literal '%s'", id = 14037)
    ParsingException getInvalidBooleanLiteralException(String value);
+
+   @Message(value = "infinispan-query.jar module is in the classpath but has not been properly initialised!", id = 14038)
+   CacheException queryModuleNotInitialised();
+
+   @Message(value = "Queries containing groups or aggregations cannot be converted to an indexed query", id = 14039)
+   SearchException groupAggregationsNotSupported();
+
+   @Message(value = "Unable to define filters, please use filters in the query string instead.", id = 14040)
+   SearchException filterNotSupportedWithQueryString();
+
+   @Message(value = "Unable to define sort, please use sorting in the query string instead.", id = 14041)
+   SearchException sortNotSupportedWithQueryString();
 }

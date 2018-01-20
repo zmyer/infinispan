@@ -3,7 +3,6 @@ package org.infinispan.eviction.impl;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.PRIVATE;
-import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.SHARED;
 
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -34,20 +33,15 @@ public class ActivationManagerImpl implements ActivationManager {
    private static final Log log = LogFactory.getLog(ActivationManagerImpl.class);
 
    private final AtomicLong activations = new AtomicLong(0);
-   private PersistenceManager persistenceManager;
-   private Configuration cfg;
-   private ClusteringDependentLogic clusteringDependentLogic;
+
+   @Inject private PersistenceManager persistenceManager;
+   @Inject private Configuration cfg;
+   @Inject private ClusteringDependentLogic clusteringDependentLogic;
+
    private boolean passivation;
 
    @ManagedAttribute(description = "Enables or disables the gathering of statistics by this component", displayName = "Statistics enabled", writable = true)
    private boolean statisticsEnabled = false;
-
-   @Inject
-   public void inject(PersistenceManager clm, Configuration cfg, ClusteringDependentLogic cdl) {
-      this.persistenceManager = clm;
-      this.cfg = cfg;
-      this.clusteringDependentLogic = cdl;
-   }
 
    @Start(priority = 11) // After the cache loader manager, before the passivation manager
    public void start() {
@@ -76,7 +70,7 @@ public class ActivationManagerImpl implements ActivationManager {
          return;
       }
       //if we are the primary owner, we need to remove from the shared store,
-      final boolean primaryOwner = clusteringDependentLogic.localNodeIsPrimaryOwner(key);
+      final boolean primaryOwner = clusteringDependentLogic.getCacheTopology().getDistribution(key).isPrimary();
       try {
          if (newEntry) {
             //the entry does not exists in data container. We need to remove from private and shared stores.
@@ -88,7 +82,7 @@ public class ActivationManagerImpl implements ActivationManager {
          } else {
             //the entry already exists in data container. It may be put during the load by the CacheLoaderInterceptor
             //so it was already activate in the private stores.
-            if (primaryOwner && persistenceManager.deleteFromAllStores(key, SHARED) && statisticsEnabled) {
+            if (primaryOwner && persistenceManager.deleteFromAllStores(key, BOTH) && statisticsEnabled) {
                activations.incrementAndGet();
             }
          }

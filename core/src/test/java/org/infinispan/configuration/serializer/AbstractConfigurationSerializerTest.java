@@ -46,7 +46,7 @@ public abstract class AbstractConfigurationSerializerTest extends AbstractInfini
 
          assertEquals(globalConfigurationBefore.sites().localSite(), globalConfigurationAfter.sites().localSite());
          assertEquals(globalConfigurationBefore.security().securityCacheTimeout(), globalConfigurationAfter.security().securityCacheTimeout());
-         compareAttributeSets("Global", globalConfigurationBefore.globalState().attributes(), globalConfigurationAfter.globalState().attributes());
+         compareAttributeSets("Global", globalConfigurationBefore.globalState().attributes(), globalConfigurationAfter.globalState().attributes(), "localConfigurationStorage");
          compareAttributeSets("Global", globalConfigurationBefore.globalJmxStatistics().attributes(), globalConfigurationAfter.globalJmxStatistics().attributes(), "mBeanServerLookup");
          compareAttributeSets("Global", globalConfigurationBefore.security().authorization().attributes(), globalConfigurationAfter.security().authorization().attributes());
          compareAttributeSets("Global", globalConfigurationBefore.serialization().attributes(), globalConfigurationAfter.serialization().attributes(), "marshaller", "classResolver");
@@ -59,16 +59,14 @@ public abstract class AbstractConfigurationSerializerTest extends AbstractInfini
 
             compareAttributeSets(name, configurationBefore.clustering().attributes(), configurationAfter.clustering().attributes());
             compareAttributeSets(name, configurationBefore.compatibility().attributes(), configurationAfter.compatibility().attributes(), "marshaller");
-            compareAttributeSets(name, configurationBefore.eviction().attributes(), configurationAfter.eviction().attributes());
+            compareAttributeSets(name, configurationBefore.memory().attributes(), configurationAfter.memory().attributes());
             compareAttributeSets(name, configurationBefore.expiration().attributes(), configurationAfter.expiration().attributes());
             compareAttributeSets(name, configurationBefore.indexing().attributes(), configurationAfter.indexing().attributes());
             compareAttributeSets(name, configurationBefore.locking().attributes(), configurationAfter.locking().attributes());
             compareAttributeSets(name, configurationBefore.persistence().attributes(), configurationAfter.persistence().attributes());
             compareStores(name, configurationBefore.persistence().stores(), configurationAfter.persistence().stores());
             compareAttributeSets(name, configurationBefore.security().authorization().attributes(), configurationAfter.security().authorization().attributes());
-            compareAttributeSets(name, configurationBefore.storeAsBinary().attributes(), configurationAfter.storeAsBinary().attributes());
             compareAttributeSets(name, configurationBefore.transaction().attributes(), configurationAfter.transaction().attributes(), "transaction-manager-lookup");
-            compareAttributeSets(name, configurationBefore.versioning().attributes(), configurationAfter.versioning().attributes());
 
             compareExtraConfiguration(name, configurationBefore, configurationAfter);
          }
@@ -87,8 +85,8 @@ public abstract class AbstractConfigurationSerializerTest extends AbstractInfini
    }
 
    private void compareStores(String name, List<StoreConfiguration> beforeStores, List<StoreConfiguration> afterStores) {
-      assertEquals("Configuration "+ name + " stores count mismatch", beforeStores.size(), afterStores.size());
-      for(int i = 0; i < beforeStores.size(); i++) {
+      assertEquals("Configuration " + name + " stores count mismatch", beforeStores.size(), afterStores.size());
+      for (int i = 0; i < beforeStores.size(); i++) {
          StoreConfiguration beforeStore = beforeStores.get(i);
          StoreConfiguration afterStore = afterStores.get(i);
          assertEquals("Configuration " + name + " stores class mismatch", beforeStore.getClass(), afterStore.getClass());
@@ -104,15 +102,16 @@ public abstract class AbstractConfigurationSerializerTest extends AbstractInfini
          compareAttributeSets(name, beforeASC.singletonStore().attributes(), afterASC.singletonStore().attributes());
          compareAttributeSets(name, beforeASC.async().attributes(), afterASC.async().attributes());
       } else {
-         throw new IllegalArgumentException("Cannot compare stores of type: "+beforeStore.getClass().getName());
+         throw new IllegalArgumentException("Cannot compare stores of type: " + beforeStore.getClass().getName());
       }
    }
 
    protected void compareAttributeSets(String name, AttributeSet before, AttributeSet after, String... exclude) {
       List<String> exclusions = exclude != null ? Arrays.asList(exclude) : Collections.emptyList();
-      for(Attribute<?> attribute : before.attributes()) {
-         if (!exclusions.contains(attribute.name()))
-            assertEquals("Configuration "+name, attribute, after.attribute(attribute.name()));
+      for (Attribute<?> attribute : before.attributes()) {
+         if (!exclusions.contains(attribute.name())) {
+            assertEquals("Configuration " + name, attribute, after.attribute(attribute.name()));
+         }
       }
    }
 }

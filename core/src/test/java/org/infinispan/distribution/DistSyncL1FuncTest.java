@@ -5,7 +5,6 @@ import static org.testng.AssertJUnit.assertNull;
 
 import java.util.List;
 import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -13,7 +12,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import org.infinispan.Cache;
-import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.ReplaceCommand;
@@ -67,13 +65,6 @@ public class DistSyncL1FuncTest extends BaseDistSyncL1Test {
 
          // Now wait for the put/replace to return and block it for now
          barrier.await(5, TimeUnit.SECONDS);
-
-         //we need to wait for the command to complete everywhere.
-         CommandAckCollector collector = TestingUtil.extractComponent(nonOwnerCache, CommandAckCollector.class);
-         List<CommandInvocationId> pendingIds = collector.getPendingCommands();
-         assertEquals(1, pendingIds.size());
-         CompletableFuture<?> cFuture = collector.getCollectorCompletableFuture(pendingIds.get(0));
-         cFuture.get(30, TimeUnit.SECONDS);
 
          // Stop blocking new commands as we check that a put returns the correct previous value
          blockingInterceptor.suspend(true);
@@ -335,7 +326,7 @@ public class DistSyncL1FuncTest extends BaseDistSyncL1Test {
          ownerPutBarrier.await(10, TimeUnit.SECONDS);
 
          CommandAckCollector collector = TestingUtil.extractComponent(nonOwnerCache, CommandAckCollector.class);
-         List<CommandInvocationId> pendingIds = collector.getPendingCommands();
+         List<Long> pendingIds = collector.getPendingCommands();
          assertEquals(1, pendingIds.size());
          eventually(() -> !collector.hasPendingBackupAcks(pendingIds.get(0)));
 

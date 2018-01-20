@@ -5,8 +5,8 @@
     <parent>
        <groupId>org.infinispan</groupId>
        <artifactId>infinispan-parent</artifactId>
-       <version>9.0.0-SNAPSHOT</version>
-       <relativePath>../../parent/pom.xml</relativePath>
+       <version>9.2.0-SNAPSHOT</version>
+       <relativePath>../../pom.xml</relativePath>
    </parent>
 
     <artifactId>infinispan-spring-boot-it</artifactId>
@@ -14,9 +14,9 @@
     <description>Integration tests for Infinispan and Spring Boot</description>
 
     <properties>
-        <!-- Most or our tests require JUnit 4.11 for Aruquillian, however Spring needs 4.12 -->
-        <!-- FIXME: https://issues.jboss.org/browse/ISPN-7034 -->
-        <overriden.version.junit>4.12</overriden.version.junit>
+        <overridden.version.junit>${version.junit}</overridden.version.junit>
+        <!-- Spring Boot needs the MockUtil constructor to be public, so it can't use mockito-core 2+ -->
+        <overridden.version.mockito>1.10.19</overridden.version.mockito>
     </properties>
 
     <dependencyManagement>
@@ -54,22 +54,27 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-spring4-embedded</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-spring4-remote</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-core</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-commons-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-client-hotrod</artifactId>
             <scope>test</scope>
         </dependency>
@@ -81,7 +86,7 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-server-hotrod</artifactId>
             <scope>test</scope>
         </dependency>
@@ -89,7 +94,13 @@
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <scope>test</scope>
-            <version>${overriden.version.junit}</version>
+            <version>${overridden.version.junit}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+            <version>${overridden.version.mockito}</version>
         </dependency>
     </dependencies>
 
@@ -119,17 +130,19 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration combine.self="override">
-                    <excludedGroups>${suite.exclude.groups}</excludedGroups>
+                    <groups combine.self="override">${defaultJUnitGroups}</groups>
+                    <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
                     <systemPropertyVariables>
                         <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
                         <build.directory>${project.build.directory}</build.directory>
                     </systemPropertyVariables>
                     <trimStackTrace>false</trimStackTrace>
+                    <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
                 </configuration>
                 <dependencies>
                     <dependency>
                         <groupId>org.apache.maven.surefire</groupId>
-                        <artifactId>surefire-junit4</artifactId>
+                        <artifactId>surefire-junit47</artifactId>
                         <version>${version.maven.surefire}</version>
                     </dependency>
                 </dependencies>

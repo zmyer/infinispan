@@ -4,8 +4,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-javadoc-embedded</artifactId>
    <name>Infinispan JavaDoc Embedded</name>
@@ -30,53 +30,68 @@
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-query</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-query-dsl</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote-query-client</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote-query-server</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-objectfilter</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-jdbc</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-jpa</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-remote</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-rest</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-cachestore-rocksdb</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-persistence-soft-index</artifactId>
       </dependency>
 
       <dependency>
@@ -85,53 +100,67 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-clustered-counter</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-clustered-lock</artifactId>
+      </dependency>
+
+       <dependency>
+           <groupId>org.infinispan</groupId>
+           <artifactId>infinispan-multimap</artifactId>
+       </dependency>
+
+       <dependency>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-core</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-memcached</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-rest</artifactId>
-         <classifier>classes</classifier>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-websocket</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-spring4-common</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-spring4-embedded</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-spring4-remote</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-tree</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-extended-statistics</artifactId>
          <version>${project.version}</version>
       </dependency>
@@ -142,6 +171,7 @@
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.0.0-M1</version>
             <executions>
                <execution>
                   <id>javadoc</id>
@@ -156,7 +186,7 @@
                         <artifactId>infinispan-tools</artifactId>
                         <version>${project.version}</version>
                      </docletArtifact>
-                     <doctitle>Infinispan ${project.version} API</doctitle>
+                     <doctitle>Infinispan ${project.version} Embedded API</doctitle>
 
                      <docfilessubdirs>true</docfilessubdirs>
                      <detectLinks>false</detectLinks>
@@ -172,15 +202,27 @@
                         </group>
                         <group>
                            <title>Query API</title>
-                           <packages>org.infinispan.query*</packages>
+                           <packages>org.infinispan.query*:org.infinispan.objectfilter*</packages>
                         </group>
                         <group>
-                           <title>Distributed Executors and Map/Reduce API</title>
+                           <title>Clustered Counter API</title>
+                           <packages>org.infinispan.counter*</packages>
+                        </group>
+                         <group>
+                             <title>Multimap API</title>
+                             <packages>org.infinispan.multimap*</packages>
+                         </group>
+                        <group>
+                           <title>Clustered Lock API</title>
+                           <packages>org.infinispan.lock*</packages>
+                        </group>
+                        <group>
+                           <title>Distributed Executors (deprecated)</title>
                            <packages>org.infinispan.distexec*</packages>
                         </group>
                         <group>
                            <title>Server Connectors API</title>
-                           <packages>org.infinispan.server*</packages>
+                           <packages>org.infinispan.server*:org.infinispan.rest*</packages>
                         </group>
                         <group>
                            <title>Tree API</title>
@@ -192,16 +234,19 @@
                      <dependencySourceIncludes>
                         <dependencySourceInclude>org.infinispan:*</dependencySourceInclude>
                      </dependencySourceIncludes>
+                     <dependencySourceExcludes>
+                        <dependencySourceExclude>org.infinispan:infinispan-license</dependencySourceExclude>
+                     </dependencySourceExcludes>
                      <javadocDirectory>${basedir}/src/main/javadoc</javadocDirectory>
                      <links>
-                        <link>http://docs.oracle.com/javase/7/docs/api/</link>
-                        <link>http://docs.oracle.com/javaee/5/api/</link>
+                        <link>http://docs.oracle.com/javase/8/docs/api/</link>
+                        <link>http://docs.oracle.com/javaee/7/api/</link>
                         <link>http://docs.jboss.org/jbossmarshalling/1.3/</link>
                         <link>http://docs.jboss.org/jbosslogging/latest/</link>
                         <link>http://www.osgi.org/javadoc/r4v43/core/</link>
                         <link>http://jgroups.org/javadoc/</link>
-                        <link>http://lucene.apache.org/core/4_0_0/core/</link>
-                        <link>http://docs.jboss.org/hibernate/search/4.5/api/</link>
+                        <link>http://lucene.apache.org/core/5_5_4/core/</link>
+                        <link>http://docs.jboss.org/hibernate/search/5.8/api/</link>
                      </links>
                      <quiet>true</quiet>
                      <stylesheetfile>${basedir}/src/main/javadoc/stylesheet.css</stylesheetfile>
@@ -212,44 +257,44 @@
                         <additionalDependency>
                            <groupId>javax.enterprise</groupId>
                            <artifactId>cdi-api</artifactId>
-                           <version>1.0-SP4</version>
+                           <version>${version.cdi}</version>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>javax.cache</groupId>
                            <artifactId>cache-api</artifactId>
-                           <version>1.0.0</version>
+                           <version>${version.javax.cache}</version>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>javax.servlet</groupId>
                            <artifactId>servlet-api</artifactId>
-                           <version>2.5</version>
+                           <version>${version.javax.servlet}</version>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>org.kohsuke.metainf-services</groupId>
                            <artifactId>metainf-services</artifactId>
-                           <version>1.5</version>
+                           <version>${version.metainf-services}</version>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>org.osgi</groupId>
                            <artifactId>org.osgi.core</artifactId>
-                           <version>4.3.1</version>
                            <scope>provided</scope>
+                           <version>${version.osgi}</version>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>org.osgi</groupId>
                            <artifactId>org.osgi.compendium</artifactId>
-                           <version>4.3.1</version>
                            <scope>provided</scope>
+                           <version>${version.osgi}</version>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>org.hibernate</groupId>
                            <artifactId>hibernate-core</artifactId>
-                           <version>4.3.8.Final</version>
+                           <version>${version.hibernate.core}</version>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>com.mchange</groupId>
                            <artifactId>c3p0</artifactId>
-                           <version>0.9.5-pre8</version>
+                           <version>${version.c3p0}</version>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>com.zaxxer</groupId>
@@ -260,6 +305,19 @@
                   </configuration>
                </execution>
             </executions>
+            <dependencies>
+               <dependency>
+                  <groupId>org.infinispan</groupId>
+                  <artifactId>infinispan-tools</artifactId>
+                  <version>${project.version}</version>
+               </dependency>
+            </dependencies>
+         </plugin>
+         <plugin>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+               <skip>true</skip>
+            </configuration>
          </plugin>
       </plugins>
    </build>

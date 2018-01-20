@@ -2,7 +2,6 @@ package org.infinispan.persistence.jdbc.stringbased;
 
 import static org.infinispan.persistence.PersistenceUtil.getExpiryTime;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Connection;
@@ -253,6 +252,72 @@ public class JdbcStringBasedStore<K,V> implements AdvancedLoadWriteStore<K,V>, T
          ps.executeUpdate();
       } finally {
          JdbcUtil.safeClose(ps);
+      }
+   }
+
+   @Override
+   public void writeBatch(Iterable<MarshalledEntry<? extends K, ? extends V>> marshalledEntries) {
+      // If upsert is not supported, then we must execute the legacy write for each entry; i.e. read then update/insert
+      if (!tableManager.isUpsertSupported()) {
+         marshalledEntries.forEach(this::write);
+         return;
+      }
+
+      Connection connection = null;
+      try {
+         connection = connectionFactory.getConnection();
+         try (PreparedStatement upsertBatch = connection.prepareStatement(tableManager.getUpsertRowSql())) {
+            int batchSize = 0;
+            for (MarshalledEntry entry : marshalledEntries) {
+               String keyStr = key2Str(entry.getKey());
+               prepareUpdateStatement(entry, keyStr, upsertBatch);
+               upsertBatch.addBatch();
+               batchSize++;
+
+               if (batchSize == configuration.maxBatchSize()) {
+                  batchSize = 0;
+                  upsertBatch.executeBatch();
+                  upsertBatch.clearBatch();
+               }
+            }
+
+            if (batchSize != 0)
+               upsertBatch.executeBatch();
+         }
+      } catch (SQLException | InterruptedException e) {
+         throw log.sqlFailureWritingBatch(e);
+      } finally {
+         connectionFactory.releaseConnection(connection);
+      }
+   }
+
+   @Override
+   public void deleteBatch(Iterable<Object> keys) {
+      Connection connection = null;
+      try {
+         connection = connectionFactory.getConnection();
+         try (PreparedStatement deleteBatch = connection.prepareStatement(tableManager.getDeleteRowSql())) {
+            int batchSize = 0;
+            for (Object key : keys) {
+               String keyStr = key2Str(key);
+               deleteBatch.setString(1, keyStr);
+               deleteBatch.addBatch();
+               batchSize++;
+
+               if (batchSize == configuration.maxBatchSize()) {
+                  batchSize = 0;
+                  deleteBatch.executeBatch();
+                  deleteBatch.clearBatch();
+               }
+            }
+
+            if (batchSize != 0)
+               deleteBatch.executeBatch();
+         }
+      } catch (SQLException e) {
+         throw log.sqlFailureDeletingBatch(keys, e);
+      } finally {
+         connectionFactory.releaseConnection(connection);
       }
    }
 
@@ -549,9 +614,8 @@ public class JdbcStringBasedStore<K,V> implements AdvancedLoadWriteStore<K,V>, T
 
    private void prepareUpdateStatement(MarshalledEntry entry, String key, PreparedStatement ps) throws InterruptedException, SQLException {
       ByteBuffer byteBuffer = marshall(new KeyValuePair(entry.getValueBytes(), entry.getMetadataBytes()));
-      ps.setBinaryStream(1, new ByteArrayInputStream(byteBuffer.getBuf(), byteBuffer.getOffset(), byteBuffer.getLength()), byteBuffer.getLength());
-      ps.setLong(2, getExpiryTime(entry.getMetadata()));
-      ps.setString(3, key);
+      long expiryTime = getExpiryTime(entry.getMetadata());
+      tableManager.prepareUpdateStatement(ps, key, expiryTime, byteBuffer);
    }
 
    private String key2Str(Object key) throws PersistenceException {

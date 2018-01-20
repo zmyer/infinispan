@@ -22,6 +22,7 @@
 
 package org.jboss.as.clustering.infinispan.subsystem;
 
+import org.infinispan.globalstate.ConfigurationStorage;
 import org.jboss.as.clustering.infinispan.subsystem.CacheConfigOperationHandlers.CacheConfigAdd;
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.ObjectTypeAttributeDefinition;
@@ -32,6 +33,7 @@ import org.jboss.as.controller.ReloadRequiredWriteAttributeHandler;
 import org.jboss.as.controller.SimpleAttributeDefinition;
 import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
 import org.jboss.as.controller.SimpleResourceDefinition;
+import org.jboss.as.controller.operations.validation.EnumValidator;
 import org.jboss.as.controller.registry.AttributeAccess;
 import org.jboss.as.controller.registry.ManagementResourceRegistration;
 import org.jboss.as.server.ServerEnvironment;
@@ -60,6 +62,11 @@ public class GlobalStateResource extends SimpleResourceDefinition {
                     .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(ServerEnvironment.SERVER_DATA_DIR)).build();
 
+    static final SimpleAttributeDefinition SHARED_PERSISTENT_RELATIVE_TO = new SimpleAttributeDefinitionBuilder(ModelKeys.RELATIVE_TO,
+          ModelType.STRING, true).setXmlName(Attribute.RELATIVE_TO.getLocalName()).setAllowExpression(false)
+          .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
+          .setDefaultValue(new ModelNode().set(ServerEnvironment.SERVER_DATA_DIR)).build();
+
     static final SimpleAttributeDefinition TEMPORARY_RELATIVE_TO = new SimpleAttributeDefinitionBuilder(ModelKeys.RELATIVE_TO,
             ModelType.STRING, true).setXmlName(Attribute.RELATIVE_TO.getLocalName()).setAllowExpression(false)
                     .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
@@ -72,6 +79,13 @@ public class GlobalStateResource extends SimpleResourceDefinition {
                 .setXmlName(ModelKeys.PERSISTENT_LOCATION)
                 .build();
 
+    static final ObjectTypeAttributeDefinition SHARED_PERSISTENT_LOCATION_PATH =
+          ObjectTypeAttributeDefinition.Builder.of(ModelKeys.SHARED_PERSISTENT_LOCATION, PATH, SHARED_PERSISTENT_RELATIVE_TO)
+                .setAllowNull(true)
+                .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
+                .setXmlName(ModelKeys.PERSISTENT_LOCATION)
+                .build();
+
     static final ObjectTypeAttributeDefinition TEMPORARY_STATE_PATH =
             ObjectTypeAttributeDefinition.Builder.of(ModelKeys.TEMPORARY_LOCATION, PATH, TEMPORARY_RELATIVE_TO)
                 .setAllowNull(true)
@@ -79,7 +93,26 @@ public class GlobalStateResource extends SimpleResourceDefinition {
                 .setXmlName(ModelKeys.TEMPORARY_LOCATION)
                 .build();
 
-    static final AttributeDefinition[] ATTRIBUTES = { PERSISTENT_LOCATION_PATH, TEMPORARY_STATE_PATH };
+    static final SimpleAttributeDefinition CONFIGURATION_STORAGE =
+          new SimpleAttributeDefinitionBuilder(ModelKeys.CONFIGURATION_STORAGE, ModelType.STRING, true)
+                .setXmlName(Attribute.CONFIGURATION_STORAGE.getLocalName())
+                .setAllowExpression(true)
+                .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
+                .setValidator(new EnumValidator<>(ConfigurationStorage.class, false, true))
+                .setDefaultValue(new ModelNode().set(ConfigurationStorage.OVERLAY.toString()))
+                .build();
+
+    static final SimpleAttributeDefinition CONFIGURATION_STORAGE_CLASS =
+          new SimpleAttributeDefinitionBuilder(ModelKeys.CONFIGURATION_STORAGE_CLASS, ModelType.STRING, true)
+                .setXmlName(Attribute.CONFIGURATION_STORAGE_CLASS.getLocalName())
+                .setAllowExpression(true)
+                .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
+                .build();
+
+    static final AttributeDefinition[] ATTRIBUTES = {
+          PERSISTENT_LOCATION_PATH, SHARED_PERSISTENT_LOCATION_PATH, TEMPORARY_STATE_PATH,
+          CONFIGURATION_STORAGE,  CONFIGURATION_STORAGE_CLASS
+    };
 
     GlobalStateResource() {
         super(GLOBAL_STATE_PATH,

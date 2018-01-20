@@ -20,10 +20,11 @@ package org.infinispan.server.endpoint.subsystem;
 
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.rest.NettyRestServer;
+import org.infinispan.rest.RestServer;
 import org.infinispan.server.hotrod.HotRodServer;
 import org.infinispan.server.infinispan.spi.service.CacheContainerServiceName;
 import org.infinispan.server.infinispan.spi.service.CacheServiceName;
+import org.jboss.as.controller.OperationContext;
 import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.PathElement;
 import org.jboss.as.core.security.ServerSecurityManager;
@@ -87,16 +88,17 @@ public class EndpointUtils {
       builder.addDependency(protocolServerServiceName, HotRodServer.class, target);
    }
 
-   public static void addRestDependency(ServiceBuilder<?> builder, String protocolServerName, InjectedValue<NettyRestServer> target) {
+   public static void addRestDependency(ServiceBuilder<?> builder, String protocolServerName, InjectedValue<RestServer> target) {
       ServiceName protocolServerServiceName = DATAGRID.append("rest").append(protocolServerName);
-      builder.addDependency(protocolServerServiceName, NettyRestServer.class, target);
+      builder.addDependency(protocolServerServiceName, RestServer.class, target);
    }
 
-   public static void addSocketBindingDependency(ServiceBuilder<?> builder, String socketBindingName, InjectedValue<SocketBinding> target) {
+   public static void addSocketBindingDependency(OperationContext context, ServiceBuilder<?> builder, String socketBindingName,
+                                                              InjectedValue<SocketBinding> target) {
       // socket binding can be disabled in multi tenant router scenarios
       if(socketBindingName != null) {
-         ServiceName socketName = SocketBinding.JBOSS_BINDING_NAME.append(socketBindingName);
-         builder.addDependency(socketName, SocketBinding.class, target);
+         ServiceName serviceName = context.getCapabilityServiceName(ProtocolServerConnectorResource.SOCKET_CAPABILITY_NAME, socketBindingName, SocketBinding.class);
+         builder.addDependency(serviceName, SocketBinding.class, target);
       }
    }
 

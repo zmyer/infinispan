@@ -26,6 +26,7 @@ import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.Gender
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.MarshallerRegistration;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.NotIndexedMarshaller;
 import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Index;
@@ -73,13 +74,16 @@ public class EmbeddedCompatTest extends SingleCacheManagerTest {
    private HotRodServer hotRodServer;
    private RemoteCacheManager remoteCacheManager;
    private RemoteCache<Integer, Account> remoteCache;
+   private Cache<?, ?> embeddedCache;
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
       org.infinispan.configuration.cache.ConfigurationBuilder builder = createConfigBuilder();
 
-      cacheManager = TestCacheManagerFactory.createCacheManager(builder);
+      cacheManager = TestCacheManagerFactory.createServerModeCacheManager(builder);
       cache = cacheManager.getCache();
+
+      embeddedCache = cache.getAdvancedCache().withEncoding(IdentityEncoder.class);
 
       hotRodServer = HotRodClientTestingUtil.startHotRodServer(cacheManager);
 
@@ -98,7 +102,7 @@ public class EmbeddedCompatTest extends SingleCacheManagerTest {
 
       //initialize server-side serialization context
       ProtobufMetadataManager protobufMetadataManager = cacheManager.getGlobalComponentRegistry().getComponent(ProtobufMetadataManager.class);
-      protobufMetadataManager.registerProtofile("sample_bank_account/bank.proto", Util.read(Util.getResourceAsStream("/sample_bank_account/bank.proto", getClass().getClassLoader())));
+      protobufMetadataManager.registerProtofile("sample_bank_account/bank.proto", Util.getResourceAsString("/sample_bank_account/bank.proto", getClass().getClassLoader()));
       protobufMetadataManager.registerProtofile("not_indexed.proto", NOT_INDEXED_PROTO_SCHEMA);
       assertNull(protobufMetadataManager.getFileErrors("sample_bank_account/bank.proto"));
       assertNull(protobufMetadataManager.getFileErrors("not_indexed.proto"));
@@ -117,7 +121,7 @@ public class EmbeddedCompatTest extends SingleCacheManagerTest {
       org.infinispan.configuration.cache.ConfigurationBuilder builder = hotRodCacheConfiguration();
       builder.compatibility().enable().marshaller(new CompatibilityProtoStreamMarshaller());
       builder.indexing().index(Index.ALL)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT");
       return builder;
    }
@@ -134,9 +138,9 @@ public class EmbeddedCompatTest extends SingleCacheManagerTest {
       remoteCache.put(1, account);
 
       // try to get the object through the local cache interface and check it's the same object we put
-      assertEquals(1, cache.keySet().size());
-      Object key = cache.keySet().iterator().next();
-      Object localObject = cache.get(key);
+      assertEquals(1, embeddedCache.keySet().size());
+      Object key = embeddedCache.keySet().iterator().next();
+      Object localObject = embeddedCache.get(key);
       assertAccount((Account) localObject, AccountHS.class);
 
       // get the object through the remote cache interface and check it's the same object we put
@@ -151,14 +155,13 @@ public class EmbeddedCompatTest extends SingleCacheManagerTest {
       account.setCreationDate(new Date(42));
       cache.put(1, account);
 
-      // try to get the object through the local cache interface and check it's the same object we put
+      // try to get the object through the remote cache interface and check it's the same object we put
       assertEquals(1, remoteCache.keySet().size());
-      Object key = remoteCache.keySet().iterator().next();
-      Object remoteObject = remoteCache.get(key);
-      assertAccount((Account) remoteObject, AccountPB.class);
+      Map.Entry<Integer, Account> entry = remoteCache.entrySet().iterator().next();
+      assertAccount(entry.getValue(), AccountPB.class);
 
       // get the object through the embedded cache interface and check it's the same object we put
-      Account fromEmbeddedCache = (Account) cache.get(1);
+      Account fromEmbeddedCache = (Account) embeddedCache.get(1);
       assertAccount(fromEmbeddedCache, AccountHS.class);
    }
 
@@ -310,7 +313,7 @@ public class EmbeddedCompatTest extends SingleCacheManagerTest {
       remoteCache.put(1, account);
 
       // get account back from local cache via query and check its attributes
-      SearchManager searchManager = org.infinispan.query.Search.getSearchManager(cache);
+      SearchManager searchManager = org.infinispan.query.Search.getSearchManager(embeddedCache);
       org.apache.lucene.search.Query query = searchManager
             .buildQueryBuilderForClass(AccountHS.class).get()
             .keyword().wildcard().onField("description").matching("*test*").createQuery();
@@ -424,7 +427,8 @@ public class EmbeddedCompatTest extends SingleCacheManagerTest {
       });
 
       // Embedded  iteration
-      Cache<Integer, AccountHS> ourCache = cache();
+      Cache<Integer, AccountHS> ourCache = (Cache<Integer, AccountHS>) embeddedCache;
+
       Iterator<Map.Entry<Integer, AccountHS>> localUnfilteredIterator = ourCache.entrySet().stream().iterator();
       localUnfilteredIterator.forEachRemaining(e -> {
          Integer key = e.getKey();

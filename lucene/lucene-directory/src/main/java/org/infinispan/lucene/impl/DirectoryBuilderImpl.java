@@ -7,6 +7,7 @@ import org.apache.lucene.store.LockFactory;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.Configurations;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.lucene.directory.BuildContext;
 import org.infinispan.lucene.logging.Log;
 import org.infinispan.lucene.readlocks.DistributedSegmentReadLocker;
@@ -116,16 +117,13 @@ public class DirectoryBuilderImpl implements BuildContext {
       return new DistributedSegmentReadLocker((Cache<Object, Integer>) distLocksCache, chunksCache, metadataCache, indexName, affinitySegmentId);
    }
 
-   private static <T> T checkNotNull(final T v,final String objectname) {
+   private static <T> T checkNotNull(final T v, final String objectname) {
       if (v == null)
          throw log.requiredParameterWasPassedNull(objectname);
       return v;
    }
 
    private static Cache<?, ?> checkValidConfiguration(final Cache<?, ?> cache, String indexName) {
-      if (cache == null) {
-         return null;
-      }
       Configuration configuration = cache.getCacheConfiguration();
       if (configuration.expiration().maxIdle() != -1) {
          throw log.luceneStorageHavingIdleTimeSet(indexName, cache.getName());
@@ -133,7 +131,7 @@ public class DirectoryBuilderImpl implements BuildContext {
       if (configuration.expiration().lifespan() != -1) {
          throw log.luceneStorageHavingLifespanSet(indexName, cache.getName());
       }
-      if (configuration.storeAsBinary().enabled()) {
+      if (configuration.memory().storageType() == StorageType.BINARY) {
          throw log.luceneStorageAsBinaryEnabled(indexName, cache.getName());
       }
       if (!Configurations.noDataLossOnJoiner(configuration)) {
@@ -148,7 +146,7 @@ public class DirectoryBuilderImpl implements BuildContext {
 
    private static void validateMetadataCache(Cache<?, ?> cache, String indexName) {
       Configuration configuration = cache.getCacheConfiguration();
-      if (configuration.eviction().strategy().isEnabled()) {
+      if (configuration.memory().isEvictionEnabled()) {
          throw log.evictionNotAllowedInMetadataCache(indexName, cache.getName());
       }
       if (configuration.persistence().usingStores() && !configuration.persistence().preload()) {

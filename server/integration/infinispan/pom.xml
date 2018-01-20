@@ -5,7 +5,7 @@
     <parent>
        <groupId>org.infinispan.server</groupId>
        <artifactId>infinispan-server-versions</artifactId>
-       <version>9.0.0-SNAPSHOT</version>
+       <version>9.2.0-SNAPSHOT</version>
        <relativePath>../versions/pom.xml</relativePath>
     </parent>
 
@@ -13,14 +13,15 @@
     <packaging>jar</packaging>
 
     <name>Infinispan Server - Infinispan Subsystem</name>
+    <description>Infinispan Server - Infinispan Subsystem</description>
 
     <dependencies>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-jgroups</artifactId>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-event-logger</artifactId>
         </dependency>
         <dependency>
@@ -33,11 +34,19 @@
         </dependency>
         <dependency>
             <groupId>org.wildfly.core</groupId>
+            <artifactId>wildfly-controller</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.wildfly.core</groupId>
             <artifactId>wildfly-controller-client</artifactId>
         </dependency>
         <dependency>
             <groupId>org.wildfly</groupId>
             <artifactId>wildfly-transactions</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss</groupId>
+            <artifactId>jboss-transaction-spi</artifactId>
         </dependency>
         <dependency>
             <groupId>org.infinispan</groupId>
@@ -95,12 +104,18 @@
             <artifactId>infinispan-cli-interpreter</artifactId>
         </dependency>
         <dependency>
-            <groupId>net.jcip</groupId>
-            <artifactId>jcip-annotations</artifactId>
-        </dependency>
-        <dependency>
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-clustered-counter</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-multimap</artifactId>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>org.jboss.byteman</groupId>
@@ -120,7 +135,7 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-jgroups</artifactId>
             <type>test-jar</type>
             <scope>test</scope>
@@ -143,7 +158,7 @@
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>
-            <artifactId>mockito-all</artifactId>
+            <artifactId>mockito-core</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -185,7 +200,7 @@
                             <mainClass>org.infinispan.factories.components.ComponentMetadataPersister</mainClass>
                             <arguments>
                                 <argument>${project.build.outputDirectory}</argument>
-                                <argument>${basedir}/src/main/resources/${project.artifactId}-component-metadata.dat</argument>
+                                <argument>${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat</argument>
                             </arguments>
                             <systemProperties>
                                 <systemProperty>
@@ -216,58 +231,25 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-antrun-plugin</artifactId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration combine.self="override">
+                    <groups combine.self="override">${defaultJUnitGroups}</groups>
+                    <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
+                    <systemPropertyVariables>
+                        <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
+                        <build.directory>${project.build.directory}</build.directory>
+                    </systemPropertyVariables>
+                    <trimStackTrace>false</trimStackTrace>
+                    <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
+                </configuration>
                 <dependencies>
                     <dependency>
-                        <groupId>org.apache.ant</groupId>
-                        <artifactId>ant</artifactId>
-                        <version>1.9.4</version>
+                        <groupId>org.apache.maven.surefire</groupId>
+                        <artifactId>surefire-junit47</artifactId>
+                        <version>${version.maven.surefire}</version>
                     </dependency>
                 </dependencies>
-                <executions>
-                    <execution>
-                        <id>copy_serialized_metadata</id>
-                        <phase>process-test-resources</phase>
-                        <goals>
-                            <goal>run</goal>
-                        </goals>
-                        <configuration>
-                            <target>
-                                <copy file="${basedir}/src/main/resources/${project.artifactId}-component-metadata.dat" todir="${project.build.outputDirectory}" />
-                            </target>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <configuration>
-                    <redirectTestOutputToFile>true</redirectTestOutputToFile>
-                    <useManifestOnlyJar>false</useManifestOnlyJar>
-                    <parallel>none</parallel>
-                </configuration>
             </plugin>
         </plugins>
     </build>
-    <description>Infinispan Server - Infinispan Subsystem</description>
-
-    <profiles>
-       <profile>
-          <id>smoke</id>
-          <build>
-             <plugins>
-                <plugin>
-                   <groupId>org.apache.maven.plugins</groupId>
-                   <artifactId>maven-surefire-plugin</artifactId>
-                   <executions>
-                      <execution>
-                         <id>default-test</id>
-                         <phase>none</phase>
-                      </execution>
-                   </executions>
-                </plugin>
-             </plugins>
-          </build>
-       </profile>
-    </profiles>
 </project>

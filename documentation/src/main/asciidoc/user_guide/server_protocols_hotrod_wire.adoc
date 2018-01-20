@@ -13,6 +13,7 @@ the custom TCP client/server Hot Rod protocol.
 * link:#hot_rod_protocol_2_4[Hot Rod Protocol 2.4]
 * link:#hot_rod_protocol_2_5[Hot Rod Protocol 2.5]
 * link:#hot_rod_protocol_2_6[Hot Rod Protocol 2.6]
+* link:#hot_rod_protocol_2_7[Hot Rod Protocol 2.7]
 
 ==== Hot Rod Protocol 1.0
 
@@ -182,7 +183,7 @@ for which the response is sent.
 +0x34+ = iterationNext (since 2.3) +
 +0x36+ = iterationEnd (since 2.3) +
 +0x38+ = getStream (since 2.6) +
-+0x40+ = putStream (since 2.6) +
++0x3A+ = putStream (since 2.6) +
 +0x50+ = error (since 1.0) +
 | Status                 | 1 byte     | Status of the response, possible values: +
 +0x00+ = No error +
@@ -1414,7 +1415,7 @@ Request (0x2B):
 |==============================================================================
 | Field Name          | Size       | Value
 | Header | variable | Request header
-| Script | string | Name of the script to execute
+| Script | string | Name of the task to execute
 | Parameter Count | vInt | The number of parameters
 | Parameter 1 Name | string | The name of the first parameter
 | Parameter 1 Length | vInt | The length of the first parameter
@@ -1454,6 +1455,7 @@ Event Header:
 +0x60+ = cache entry created event +
 +0x61+ = cache entry modified event +
 +0x62+ = cache entry removed event +
++0x66+ = counter event +
 +0x50+ = error +
 | Status                 | 1 byte     | Status of the response, possible values: +
 +0x00+ = No error +
@@ -2013,6 +2015,635 @@ Here are the current values for each flag: +
 |==============================================================================
 
 
+==== Hot Rod Protocol 2.7
+
+.Infinispan versions
+TIP: This version of the protocol is implemented since Infinispan 9.2
+
+This Hot Rod protocol version adds support for transaction operations.
+It includes 3 new operations:
+
+* Prepare, with the transaction write set (i.e. modified keys), it tries to prepare and validate the transaction in the server.
+* Commit, commits a prepared transaction.
+* Rollback, rollbacks a prepared transaction.
+
+.Prepare Request
+
+Request (0x3B):
+
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Xid
+|XID
+|The transaction ID (XID)
+
+|OnePhaseCommit
+|byte
+|When it is set to `1`, the server will use one-phase-commit if available (XA only)
+
+|Number of keys
+|vInt
+|The number of keys
+
+3+^|For each key (keys must be distinct)
+
+| Key Length
+| vInt
+| Length of key.
+Note that the size of a vInt can be up to 5 bytes which in theory can produce bigger numbers than `Integer.MAX_VALUE`.
+However, Java cannot create a single array that’s bigger than `Integer.MAX_VALUE`, hence the protocol is limiting vInt array lengths to `Integer.MAX_VALUE`.
+
+|Key
+|byte array
+|Byte array containing the key
+
+|Control Byte
+|Byte
+|A bit set with the following meaning: +
++0x01+ = `NOT_READ` +
++0x02+ = `NON_EXISTING` +
++0x04+ = `REMOVE_OPERATION` +
+Note that `NOT_READ` and `NON_EXISTING` can't be set at the same time.
+
+|Version Read
+|long
+|The version read. Only sent when `NOT_READ` and `NON_EXISTING` aren't present.
+
+| TimeUnits
+| Byte
+| Time units of lifespan (first 4 bits) and maxIdle (last 4 bits).
+Special units `DEFAULT` and `INFINITE` can be used for default server expiration and no expiration respectively.
+Possible values: +
++0x00+ = `SECONDS` +
++0x01+ = `MILLISECONDS` +
++0x02+ = `NANOSECONDS` +
++0x03+ = `MICROSECONDS` +
++0x04+ = `MINUTES` +
++0x05+ = `HOURS` +
++0x06+ = `DAYS` +
++0x07+ = `DEFAULT` +
++0x08+ = `INFINITE` +
+Only sent when `REMOVE_OPERATION` isn't set.
+
+| Lifespan
+| vLong
+| Duration which the entry is allowed to life.
+Only sent when time unit is not `DEFAULT` or `INFINITE` and `REMOVE_OPERATION` isn't set.
+
+| Max Idle
+| vLong
+| Duration that each entry can be idle before it's evicted from the cache.
+Only sent when time unit is not `DEFAULT` or `INFINITE` and `REMOVE_OPERATION` isn't set.
+
+|Value Length
+|vInt
+|Length of value.
+Only sent if `REMOVE_OPERATION` isn't set.
+
+|Value
+|byte-array
+|Value to be stored.
+Only sent if `REMOVE_OPERATION` isn't set.
+
+|===
+
+.Commit and Rollback Request
+
+Request. Commit (0x3D) and Rollback (0x3F):
+
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Xid
+|XID
+|The transaction ID (XID)
+
+|===
+
+.Response from prepare, commit and rollback request.
+
+Response. Prepare (0x3C), Commit (0x3E) and Rollback (0x40)
+
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|XA return code
+|vInt
+|The XA code representing the prepare response. +
+Can be `XA_OK(0)`, `XA_RDONLY(3)` or any of the error codes (see `XaException`). +
+This field isn't present if the response state is different from `Successful`.
+
+|===
+
+
+.XID Format
+
+The XID in the requests has the following format:
+
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Format ID
+|long
+| The XID format.
+
+|Length of Global Transaction id
+|byte
+|The length of global transaction id byte array. It max value is `64`.
+
+|Global Transaction Id
+|byte array
+|The global transaction id.
+
+|Length of Branch Qualifier
+|byte
+|The length of branch qualifier byte array. It max value is `64`.
+
+|Branch Qualifier
+|byte array
+|The branch qualifier.
+
+|===
+
+[#counter-config-encode]
+.Counter Configuration encoding format
+
+The `CounterConfiguration` class encoding format is the following:
+
+NOTE: In counter related operation, the `Cache Name` field in Request Header can be empty.
+
+
+NOTE: Summary of `Status` value in the Response Header: +
+* `0x00`: Operation successful. +
+* `0x01`: Operation failed. +
+* `0x02`: The counter isn't defined. +
+* `0x04`: The counter reached a boundary. Only possible for `STRONG` counters.
+
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Flags
+|byte
+|The `CounterType` and `Storage` encoded. Only the less significant bits are used as following: +
+1st bit: `1` for `WEAK` counter and `0` for `STRONG` counter. +
+2nd bit: `1` for `BOUNDED` counter and `0` for `UNBOUNDED` counter +
+3rd bit: `1` for `PERSISTENT` storage and `0` for `VOLATILE` storage.
+
+|Concurrency Level
+|vInt
+|(Optional) the counter's concurrency-level.
+Only present if the counter is `WEAK`.
+
+|Lower bound
+|long
+|(Optional) the lower bound of a bounded counter.
+Only present if the counter is `BOUNDED`.
+
+|Upper bound
+|long
+|(Optional) the upper bound of a bounded counter.
+Only present if the counter is `BOUNDED`.
+
+|Initial value
+|long
+|The counter's initial value.
+
+|===
+
+.Counter create operation
+
+Creates a counter if it doesn't exist.
+
+.Request (0x4B)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name
+
+|Counter Configuration
+|variable
+|The counter's configuration.
+See <<counter-config-encode,CounterConfiguration encode>>.
+
+|===
+
+.Response (0x4C)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|===
+
+Response Header `Status` possible values:
+
+* `0x00`: Operation successful.
+* `0x01`: Operation failed. Counter is already defined.
+* See the <<Response Header>> for error codes.
+
+.Counter get configuration operation
+
+Returns the counter's configuration.
+
+.Request (0x4D)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name.
+
+|===
+
+.Response (0x4E)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|Counter Configuration
+|variable
+|(Optional) The counter's configuration.
+Only present if `Status==0x00`.
+See <<counter-config-encode,CounterConfiguration encode>>.
+
+|===
+
+Response Header `Status` possible values:
+
+* `0x00`: Operation successful.
+* `0x02`: Counter doesn't exist.
+* See the <<Response Header>> for error codes.
+
+.Counter is defined operation
+
+Checks if the counter is defined.
+
+.Request (0x4F)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name
+
+|===
+
+.Response (0x51)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|===
+
+Response Header `Status` possible values:
+
+* `0x00`: Counter is defined.
+* `0x01`: Counter isn't defined.
+* See the <<Response Header>> for error codes.
+
+.Counter add-and-get operation
+
+Adds a value to the counter and returns the new value.
+
+.Request (0x52)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name
+
+|Value
+|long
+|The value to add
+
+|===
+
+.Response (0x53)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|Value
+|long
+|(Optional) the counter's new value.
+Only present if `Status==0x00`.
+
+|===
+
+NOTE: Since the `WeakCounter` doesn't have access to the new value, the `value` is zero.
+
+Response Header `Status` possible values:
+
+* `0x00`: Operation successful.
+* `0x02`: The counter isn't defined.
+* `0x04`: The counter reached its boundary. Only possible for `STRONG` counters.
+* See the <<Response Header>> for error codes.
+
+.Counter reset operation
+
+Resets the counter's value.
+
+.Request (0x54)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name
+
+|===
+
+.Response (0x55)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|===
+
+Response Header `Status` possible values:
+
+* `0x00`: Operation successful.
+* `0x02`: Counter isn't defined.
+* See the <<Response Header>> for error codes.
+
+.Counter get operation
+
+Returns the counter's value.
+
+.Request (0x56)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name
+
+|===
+
+.Response (0x57)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|Value
+|long
+|(Optional) the counter's value.
+Only present if `Status==0x00`.
+
+|===
+
+Response Header `Status` possible values:
+
+* `0x00`: Operation successful.
+* `0x02`: Counter isn't defined.
+* See the <<Response Header>> for error codes.
+
+.Counter compare-and-swap operation
+
+Compares and only updates the counter value if the current value is the expected.
+
+.Request (0x58)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name
+
+|Expect
+|long
+|The counter's expected value.
+
+|Update
+|long
+|The counter's value to set.
+
+|===
+
+.Response (0x59)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|Value
+|long
+|(Optional) the counter's value.
+Only present if `Status==0x00`.
+
+|===
+
+Response Header `Status` possible values:
+
+* `0x00`: Operation successful.
+* `0x02`: The counter isn't defined.
+* `0x04`: The counter reached its boundary. Only possible for `STRONG` counters.
+* See the <<Response Header>> for error codes.
+
+.Counter add and remove listener
+
+Adds/Removes a listener for a counter
+
+.Request ADD (0x5A) / REMOVE (0x5C)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name
+
+|Listener-id
+|byte array
+|The listener's id
+
+|===
+
+
+.Response: ADD (0x5B) / REMOVE (0x5D)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|===
+
+
+Response Header `Status` possible values:
+
+* `0x00`: Operation successful and the connection used in the request will be used to send event (add) or the connection can be removed (remove).
+* `0x01`: Operation successful and the current connection is still in use.
+* `0x02`: The counter isn't defined.
+* See the <<Response Header>> for error codes.
+
+.Counter Event (0x66)
+
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Event header with operation code `0x66`
+
+|Name
+|string
+|The counter's name
+
+|Listener-id
+|byte array
+|The listener's id
+
+|Encoded Counter State
+|byte
+|Encoded old and new counter state. Bit set: +
+`------00`: Valid old state +
+`------01`: Lower bound reached old state +
+`------10`: Upper bound reached old state +
+`----00--`: Valid new state +
+`----01--`: Lower bound reached new state +
+`----10--`: Upper bound reached new state +
+
+|Old value
+|long
+|Counter's old value
+
+|New value
+|long
+|Counter's new value
+|===
+
+NOTE: All counters under a `CounterManager` implementation can use the same `listener-id`.
+
+NOTE: A connection is dedicated to a single `listener-id` and can receive events from different counters.
+
+.Counter remove operation
+
+Removes the counter from the cluster.
+
+NOTE: The counter is re-created if it is accessed again.
+
+.Request (0x5E)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Request header
+
+|Name
+|string
+|The counter's name
+
+|===
+
+.Response (0x5F)
+[cols="3,^2,10",options="header"]
+|===
+|Field Name |Size |Value
+
+|Header
+|variable
+|Response header
+
+|===
+
+Response Header `Status` possible values:
+
+* `0x00`: Operation successful.
+* `0x02`: The counter isn't defined.
+* See the <<Response Header>> for error codes.
+
 ==== Hot Rod Hash Functions
 Infinispan makes use of a consistent hash function to place nodes on a hash
 wheel, and to place keys of entries on the same wheel to determine where
@@ -2058,3 +2689,47 @@ The function is still based on
 link:http://code.google.com/p/smhasher/wiki/MurmurHash3[wiki],
 but is also aware of the hash segments used in the server's
 link:https://github.com/infinispan/infinispan/blob/master/core/src/main/java/org/infinispan/distribution/ch/ConsistentHash.java[ConsistentHash].
+
+==== Hot Rod Admin Tasks
+Admin operations are handled by the Exec operation with a set of well known tasks. Admin tasks are named according to the following rules:
+
+`@@context@name`
+
+All parameters are UTF-8 encoded strings.
+Parameters are specific to each task, with the exception of the *flags* parameter which is common to all commands.
+The *flags* parameter contains zero or more space-separated values which may affect the behaviour of the command.
+The following table lists all currently available flags
+
+.FLAGS
+[cols="3,10",options="header"]
+|==============================================================================
+| Flag | Description
+| permanent | Requests that the command's effect be made permanent into the server's configuration. If the server cannot comply with the request, the entire operation will fail with an error
+|==============================================================================
+
+===== Admin tasks
+
+.@@cache@create
+[cols="3,10,2",options="header"]
+|==============================================================================
+| Parameter       | Description | Required
+| name  | The name of the cache to create. | Yes
+| template | The name of the cache configuration template to use for the new cache.|No
+| flags | See the flags table above. |No
+|==============================================================================
+
+.@@cache@remove
+[cols="3,10,2",options="header"]
+|==============================================================================
+| Parameter       | Description | Required
+| name  | The name of the cache to remove. | Yes
+| flags | See the flags table above. |No
+|==============================================================================
+
+.@@cache@reindex
+[cols="3,10,2",options="header"]
+|==============================================================================
+| Parameter       | Description | Required
+| name  | The name of the cache to reindex. | Yes
+| flags | See the flags table above. |No, all flags will be ignored
+|==============================================================================

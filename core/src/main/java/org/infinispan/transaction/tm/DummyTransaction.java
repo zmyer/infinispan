@@ -28,7 +28,9 @@ import org.infinispan.util.logging.LogFactory;
 /**
  * @author bela
  * @since 4.0
+ * @deprecated use {@link EmbeddedTransaction}
  */
+@Deprecated
 public class DummyTransaction implements Transaction {
    /*
     * Developer notes:
@@ -257,7 +259,7 @@ public class DummyTransaction implements Transaction {
    }
 
    public Collection<XAResource> getEnlistedResources() {
-      return Collections.unmodifiableList(resources.stream().map(e -> e.getKey()).collect(Collectors.toList()));
+      return Collections.unmodifiableList(resources.stream().map(Map.Entry::getKey).collect(Collectors.toList()));
    }
 
    public boolean runPrepare() {

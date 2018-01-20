@@ -35,7 +35,6 @@ import org.infinispan.notifications.cachelistener.annotation.CacheEntryRemoved;
 import org.infinispan.security.Security;
 import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * Functionality common to both {@link org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifierImpl} and
@@ -46,9 +45,6 @@ import org.infinispan.util.logging.LogFactory;
  * @author William Burns
  */
 public abstract class AbstractListenerImpl<T, L extends ListenerInvocation<T>> {
-
-   private static final Log log = LogFactory.getLog(AbstractListenerImpl.class);
-   private static final boolean trace = log.isTraceEnabled();
 
    protected final Map<Class<? extends Annotation>, List<L>> listenersMap = new HashMap<>(16, 0.99f);
 
@@ -116,13 +112,8 @@ public abstract class AbstractListenerImpl<T, L extends ListenerInvocation<T>> {
 
    // two separate executor services, one for sync and one for async listeners
    protected ExecutorService syncProcessor;
+   @Inject @ComponentName(KnownComponentNames.ASYNC_NOTIFICATION_EXECUTOR)
    protected ExecutorService asyncProcessor;
-
-   @Inject
-   @SuppressWarnings("unused")
-   void injectExecutor(@ComponentName(KnownComponentNames.ASYNC_NOTIFICATION_EXECUTOR) ExecutorService executor) {
-      this.asyncProcessor = executor;
-   }
 
    @Start(priority = 9)
    public void start() {
@@ -216,8 +207,7 @@ public abstract class AbstractListenerImpl<T, L extends ListenerInvocation<T>> {
                   builder.setAnnotation(annotationClass);
                   L invocation = builder.build();
 
-                  if (trace)
-                     log.tracef("Add listener invocation %s for %s", invocation, annotationClass);
+                  getLog().tracef("Add listener invocation %s for %s", invocation, annotationClass);
 
                   getListenerCollectionForAnnotation(annotationClass).add(invocation);
                   foundMethods = true;
@@ -262,8 +252,7 @@ public abstract class AbstractListenerImpl<T, L extends ListenerInvocation<T>> {
                   builder.setMethod(m);
                   builder.setAnnotation(annotationClass);
                   L invocation = builder.build();
-                  if (trace)
-                     log.tracef("Add listener invocation %s for %s", invocation, annotationClass);
+                  getLog().tracef("Add listener invocation %s for %s", invocation, annotationClass);
 
                   getListenerCollectionForAnnotation(annotationClass).add(invocation);
                   foundMethods = true;
@@ -357,61 +346,57 @@ public abstract class AbstractListenerImpl<T, L extends ListenerInvocation<T>> {
          this.target = target;
          this.method = method;
          this.sync = sync;
-         this.classLoader = new WeakReference<ClassLoader>(classLoader);
+         this.classLoader = new WeakReference<>(classLoader);
          this.subject = subject;
       }
 
       @Override
       public void invoke(final A event) {
-         Runnable r = new Runnable() {
-
-            @Override
-            public void run() {
-               ClassLoader contextClassLoader = null;
-               Transaction transaction = suspendIfNeeded();
-               if (classLoader.get() != null) {
-                  contextClassLoader = SecurityActions.setContextClassLoader(classLoader.get());
-               }
-               try {
-                  if (subject != null) {
-                     try {
-                        Security.doAs(subject, new PrivilegedExceptionAction<Void>() {
-                           @Override
-                           public Void run() throws Exception {
-                              method.invoke(target, event);
-                              return null;
-                           }
-                        });
-                     } catch (PrivilegedActionException e) {
-                        Throwable cause = e.getCause();
-                        if (cause instanceof InvocationTargetException) {
-                           throw (InvocationTargetException)cause;
-                        } else if (cause instanceof IllegalAccessException) {
-                           throw (IllegalAccessException)cause;
-                        } else {
-                           throw new InvocationTargetException(cause);
-                        }
+         Runnable r = () -> {
+            ClassLoader contextClassLoader = null;
+            Transaction transaction = suspendIfNeeded();
+            if (classLoader.get() != null) {
+               contextClassLoader = SecurityActions.setContextClassLoader(classLoader.get());
+            }
+            try {
+               if (subject != null) {
+                  try {
+                     Security.doAs(subject, (PrivilegedExceptionAction<Void>) () -> {
+                        // Don't want to print out Subject as it could have sensitive information
+                        getLog().tracef("Invoking listener: %s passing event %s using subject", target, event);
+                        method.invoke(target, event);
+                        return null;
+                     });
+                  } catch (PrivilegedActionException e) {
+                     Throwable cause = e.getCause();
+                     if (cause instanceof InvocationTargetException) {
+                        throw (InvocationTargetException)cause;
+                     } else if (cause instanceof IllegalAccessException) {
+                        throw (IllegalAccessException)cause;
+                     } else {
+                        throw new InvocationTargetException(cause);
                      }
-                  } else {
-                     method.invoke(target, event);
                   }
-               } catch (InvocationTargetException exception) {
-                  Throwable cause = getRealException(exception);
-                  if (sync) {
-                     throw getLog().exceptionInvokingListener(
-                           cause.getClass().getName(), method, target, cause);
-                  } else {
-                     getLog().unableToInvokeListenerMethod(method, target, cause);
-                  }
-               } catch (IllegalAccessException exception) {
-                  getLog().unableToInvokeListenerMethodAndRemoveListener(method, target, exception);
-                  removeListener(target);
-               } finally {
-                  if (classLoader.get() != null) {
-                     SecurityActions.setContextClassLoader(contextClassLoader);
-                  }
-                  resumeIfNeeded(transaction);
+               } else {
+                  getLog().tracef("Invoking listener: %s passing event %s", target, event);
+                  method.invoke(target, event);
                }
+            } catch (InvocationTargetException exception) {
+               Throwable cause = getRealException(exception);
+               if (sync) {
+                  throw getLog().exceptionInvokingListener(
+                        cause.getClass().getName(), method, target, cause);
+               } else {
+                  getLog().unableToInvokeListenerMethod(method, target, cause);
+               }
+            } catch (IllegalAccessException exception) {
+               getLog().unableToInvokeListenerMethodAndRemoveListener(method, target, exception);
+               removeListener(target);
+            } finally {
+               if (classLoader.get() != null) {
+                  SecurityActions.setContextClassLoader(contextClassLoader);
+               }
+               resumeIfNeeded(transaction);
             }
          };
 

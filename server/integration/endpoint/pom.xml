@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan.server</groupId>
       <artifactId>infinispan-server-versions</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
+      <version>9.2.0-SNAPSHOT</version>
       <relativePath>../versions/pom.xml</relativePath>
    </parent>
 
@@ -106,6 +106,27 @@
                </execution>
             </executions>
          </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration combine.self="override">
+               <groups combine.self="override">${defaultJUnitGroups}</groups>
+               <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
+               <systemPropertyVariables>
+                  <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
+                  <build.directory>${project.build.directory}</build.directory>
+               </systemPropertyVariables>
+               <trimStackTrace>false</trimStackTrace>
+               <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
+            </configuration>
+            <dependencies>
+               <dependency>
+                  <groupId>org.apache.maven.surefire</groupId>
+                  <artifactId>surefire-junit47</artifactId>
+                  <version>${version.maven.surefire}</version>
+               </dependency>
+            </dependencies>
+         </plugin>
       </plugins>
    </build>
 
@@ -156,7 +177,6 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-rest</artifactId>
-         <classifier>classes</classifier>
       </dependency>
       
       <dependency>
@@ -196,7 +216,7 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan.server</groupId>
          <artifactId>infinispan-server-infinispan</artifactId>
          <type>test-jar</type>
          <scope>test</scope>

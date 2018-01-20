@@ -12,6 +12,8 @@ import java.util.Map.Entry;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.BiConsumer;
 
@@ -69,14 +71,15 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
 
    private final ConcurrentMap<K, InternalCacheEntry<K, V>> entries;
    private final Cache<K, InternalCacheEntry<K, V>> evictionCache;
-   protected InternalEntryFactory entryFactory;
-   private EvictionManager evictionManager;
-   private PassivationManager passivator;
-   private ActivationManager activator;
-   private PersistenceManager pm;
-   private TimeService timeService;
-   private CacheNotifier cacheNotifier;
-   private ExpirationManager<K, V> expirationManager;
+
+   @Inject protected InternalEntryFactory entryFactory;
+   @Inject private EvictionManager evictionManager;
+   @Inject private PassivationManager passivator;
+   @Inject private ActivationManager activator;
+   @Inject private PersistenceManager pm;
+   @Inject private TimeService timeService;
+   @Inject private CacheNotifier cacheNotifier;
+   @Inject private ExpirationManager<K, V> expirationManager;
 
    public DefaultDataContainer(int concurrencyLevel) {
       // If no comparing implementations passed, could fallback on JDK CHM
@@ -137,37 +140,31 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
    }
 
    /**
-    * Method invoked when memory policy is used
+    * Method invoked when memory policy is used. This calculator only calculates the given key and value.
     * @param concurrencyLevel
     * @param thresholdSize
     * @param sizeCalculator
     */
    protected DefaultDataContainer(int concurrencyLevel, long thresholdSize,
                                   EntrySizeCalculator<? super K, ? super V> sizeCalculator) {
+      this(thresholdSize, new CacheEntrySizeCalculator<>(sizeCalculator));
+   }
+
+   /**
+    * Constructor that allows user to provide a size calculator that also handles the cache entry and metadata.
+    * @param thresholdSize
+    * @param sizeCalculator
+    */
+   protected DefaultDataContainer(long thresholdSize,
+         EntrySizeCalculator<? super K, ? super InternalCacheEntry<K, V>> sizeCalculator) {
       DefaultEvictionListener evictionListener = new DefaultEvictionListener();
 
-      EntrySizeCalculator<K, InternalCacheEntry<K, V>> calc = new CacheEntrySizeCalculator<>(sizeCalculator);
-
       evictionCache = applyListener(Caffeine.newBuilder()
-            .weigher((K k, InternalCacheEntry<K, V> v) -> (int) calc.calculateSize(k, v))
+            .weigher((K k, InternalCacheEntry<K, V> v) -> (int) sizeCalculator.calculateSize(k, v))
             .maximumWeight(thresholdSize), evictionListener)
             .build();
 
       entries = evictionCache.asMap();
-   }
-
-   @Inject
-   public void initialize(EvictionManager evictionManager, PassivationManager passivator,
-                          InternalEntryFactory entryFactory, ActivationManager activator, PersistenceManager clm,
-                          TimeService timeService, CacheNotifier cacheNotifier, ExpirationManager<K, V> expirationManager) {
-      this.evictionManager = evictionManager;
-      this.passivator = passivator;
-      this.entryFactory = entryFactory;
-      this.activator = activator;
-      this.pm = clm;
-      this.timeService = timeService;
-      this.cacheNotifier = cacheNotifier;
-      this.expirationManager = expirationManager;
    }
 
    public static <K, V> DefaultDataContainer<K, V> boundedDataContainer(int concurrencyLevel, long maxEntries,
@@ -241,9 +238,12 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
    @Override
    public boolean containsKey(Object k) {
       InternalCacheEntry<K, V> ice = peek(k);
-      if (ice != null && ice.canExpire() && ice.isExpired(timeService.wallClockTime())) {
-         entries.remove(k);
-         ice = null;
+      if (ice != null && ice.canExpire()) {
+         long currentTimeMillis = timeService.wallClockTime();
+         if (ice.isExpired(currentTimeMillis)) {
+            expirationManager.handleInMemoryExpiration(ice, currentTimeMillis);
+            ice = null;
+         }
       }
       return ice != null;
    }
@@ -357,6 +357,12 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
       return new EntryIterator(entries.values().iterator(), true);
    }
 
+   @Override
+   public long evictionSize() {
+      Policy.Eviction<K, InternalCacheEntry<K, V>> evict = eviction();
+      return evict.weightedSize().orElse(entries.size());
+   }
+
    private final class DefaultEvictionListener implements EvictionListener<K, InternalCacheEntry<K, V>> {
 
       @Override
@@ -408,6 +414,7 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
          while (it.hasNext()) {
             InternalCacheEntry<K, V> entry = it.next();
             if (includeExpired || !entry.canExpire()) {
+               log.tracef("Return next entry %s", entry);
                return entry;
             } else {
                if (!initializedTime) {
@@ -415,10 +422,14 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
                   initializedTime = true;
                }
                if (!entry.isExpired(now)) {
+                  log.tracef("Return next entry %s", entry);
                   return entry;
+               } else {
+                  log.tracef("%s is expired", entry);
                }
             }
          }
+         log.tracef("Return next null");
          return null;
       }
 
@@ -484,6 +495,11 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
       public String toString() {
          return entries.toString();
       }
+
+      @Override
+      public Spliterator<InternalCacheEntry<K, V>> spliterator() {
+         return Spliterators.spliterator(this, Spliterator.DISTINCT | Spliterator.CONCURRENT);
+      }
    }
 
    /**
@@ -499,6 +515,11 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
       @Override
       public int size() {
          return entries.size();
+      }
+
+      @Override
+      public Spliterator<V> spliterator() {
+         return Spliterators.spliterator(this, Spliterator.CONCURRENT);
       }
    }
 
@@ -533,8 +554,9 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
       if (action == null)
          throw new IllegalArgumentException("No action specified");
 
+      long now = timeService.wallClockTime();
       entries.forEach((K key, InternalCacheEntry<K, V> value) -> {
-         if (filter.accept(key)) {
+         if (filter.accept(key) && !value.isExpired(now)) {
             action.accept(key, value);
          }
       });
@@ -552,8 +574,9 @@ public class DefaultDataContainer<K, V> implements DataContainer<K, V> {
       if (action == null)
          throw new IllegalArgumentException("No action specified");
 
+      long now = timeService.wallClockTime();
       entries.forEach((K key, InternalCacheEntry<K, V> value) -> {
-         if (filter.accept(key, value.getValue(), value.getMetadata())) {
+         if (filter.accept(key, value.getValue(), value.getMetadata()) && !value.isExpired(now)) {
             action.accept(key, value);
          }
       });

@@ -4,9 +4,13 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.IntFunction;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 import org.infinispan.Cache;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
@@ -15,28 +19,29 @@ import org.infinispan.notifications.cachelistener.annotation.PartitionStatusChan
 import org.infinispan.notifications.cachelistener.event.PartitionStatusChangedEvent;
 import org.infinispan.partitionhandling.AvailabilityException;
 import org.infinispan.partitionhandling.AvailabilityMode;
+import org.infinispan.partitionhandling.PartitionHandling;
+import org.infinispan.remoting.transport.Address;
+import org.infinispan.stream.impl.intops.IntermediateOperation;
 
 /**
  * Cluster stream manager that also pays attention to partition status and properly closes iterators and throws
  * exceptions when the availability mode changes.
  */
 public class PartitionAwareClusterStreamManager<K> extends ClusterStreamManagerImpl<K> {
-   protected final PartitionListener listener;
-   protected Cache<?, ?> cache;
-
-   public PartitionAwareClusterStreamManager() {
-      this.listener = new PartitionListener();
-   }
+   protected final PartitionListener listener = new PartitionListener();
+   @Inject protected Cache<?, ?> cache;
+   @Inject protected Configuration configuration;
+   private PartitionHandling partitionHandling;
 
    @Listener
-   protected class PartitionListener {
-      protected volatile AvailabilityMode currentMode = AvailabilityMode.AVAILABLE;
+   private class PartitionListener {
+      volatile AvailabilityMode currentMode = AvailabilityMode.AVAILABLE;
 
       @PartitionStatusChanged
       public void onPartitionChange(PartitionStatusChangedEvent<K, ?> event) {
          if (!event.isPre()) {
             currentMode = event.getAvailabilityMode();
-            if (currentMode != AvailabilityMode.AVAILABLE) {
+            if (isPartitionDegraded()) {
                // We just mark the iterator - relying on the fact that callers must call forget properly
                currentlyRunning.values().forEach(t ->
                        markTrackerWithException(t, null, new AvailabilityException(), null));
@@ -45,14 +50,10 @@ public class PartitionAwareClusterStreamManager<K> extends ClusterStreamManagerI
       }
    }
 
-   @Inject
-   public void inject(Cache<?, ?> cache) {
-      this.cache = cache;
-   }
-
    @Start
    public void start() {
       super.start();
+      partitionHandling = configuration.clustering().partitionHandling().whenSplit();
       cache.addListener(listener);
    }
 
@@ -100,9 +101,21 @@ public class PartitionAwareClusterStreamManager<K> extends ClusterStreamManagerI
               keysToExclude, includeLoader, operation, callback);
    }
 
+   @Override
+   public <E> RemoteIteratorPublisher<E> remoteIterationPublisher(boolean parallelStream,
+         Supplier<Map.Entry<Address, IntSet>> targets, Set<K> keysToInclude, IntFunction<Set<K>> keysToExclude,
+         boolean includeLoader, Iterable<IntermediateOperation> intermediateOperations) {
+      checkPartitionStatus();
+      return super.remoteIterationPublisher(parallelStream, targets, keysToInclude, keysToExclude, includeLoader, intermediateOperations);
+   }
+
    private void checkPartitionStatus() {
-      if (listener.currentMode != AvailabilityMode.AVAILABLE) {
+      if (isPartitionDegraded()) {
          throw log.partitionDegraded();
       }
+   }
+
+   private boolean isPartitionDegraded() {
+      return listener.currentMode != AvailabilityMode.AVAILABLE && partitionHandling == PartitionHandling.DENY_READ_WRITES;
    }
 }

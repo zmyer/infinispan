@@ -17,11 +17,11 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -34,13 +34,13 @@ import javax.transaction.TransactionManager;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.api.Lifecycle;
 import org.infinispan.commons.io.ByteBufferFactory;
 import org.infinispan.commons.marshall.StreamingMarshaller;
+import org.infinispan.commons.util.ByRef;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.configuration.cache.EvictionConfigurationBuilder;
-import org.infinispan.configuration.cache.Index;
 import org.infinispan.configuration.cache.StoreConfiguration;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
@@ -72,6 +72,7 @@ import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.persistence.spi.AdvancedCacheWriter;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.CacheWriter;
+import org.infinispan.persistence.spi.FlagAffectedStore;
 import org.infinispan.persistence.spi.LocalOnlyCacheLoader;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.spi.TransactionalCacheWriter;
@@ -90,57 +91,37 @@ public class PersistenceManagerImpl implements PersistenceManager {
    private static final Log log = LogFactory.getLog(PersistenceManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   Configuration configuration;
-   AdvancedCache<Object, Object> cache;
-   StreamingMarshaller m;
+   @Inject private Configuration configuration;
+   @Inject private AdvancedCache<Object, Object> cache;
+   @Inject private StreamingMarshaller m;
+   @Inject private TransactionManager transactionManager;
+   @Inject private TimeService timeService;
+   @Inject @ComponentName(PERSISTENCE_EXECUTOR)
+   private Executor persistenceExecutor;
+   @Inject private ByteBufferFactory byteBufferFactory;
+   @Inject private MarshalledEntryFactory marshalledEntryFactory;
+   @Inject private CacheStoreFactoryRegistry cacheStoreFactoryRegistry;
+   @Inject private ExpirationManager expirationManager;
 
-   TransactionManager transactionManager;
-   private TimeService timeService;
    private final List<CacheLoader> loaders = new ArrayList<>();
    private final List<CacheWriter> nonTxWriters = new ArrayList<>();
    private final List<TransactionalCacheWriter> txWriters = new ArrayList<>();
-
    private final ReadWriteLock storesMutex = new ReentrantReadWriteLock();
    private final Map<Object, StoreConfiguration> configMap = new HashMap<>();
-
-   private CacheStoreFactoryRegistry cacheStoreFactoryRegistry;
-   private ExpirationManager expirationManager;
-
    private AdvancedPurgeListener advancedListener;
-
 
    /**
     * making it volatile as it might change after @Start, so it needs the visibility.
     */
    volatile boolean enabled;
-   private Executor persistenceExecutor;
-   private ByteBufferFactory byteBufferFactory;
-   private MarshalledEntryFactory marshalledEntryFactory;
    private volatile boolean clearOnStop;
-
-   @Inject
-   public void inject(AdvancedCache<Object, Object> cache, StreamingMarshaller marshaller,
-                      Configuration configuration, TransactionManager transactionManager,
-                      TimeService timeService, @ComponentName(PERSISTENCE_EXECUTOR) ExecutorService persistenceExecutor,
-                      ByteBufferFactory byteBufferFactory, MarshalledEntryFactory marshalledEntryFactory,
-                      CacheStoreFactoryRegistry cacheStoreFactoryRegistry, ExpirationManager expirationManager) {
-      this.cache = cache;
-      this.m = marshaller;
-      this.configuration = configuration;
-      this.transactionManager = transactionManager;
-      this.timeService = timeService;
-      this.persistenceExecutor = persistenceExecutor;
-      this.byteBufferFactory = byteBufferFactory;
-      this.marshalledEntryFactory = marshalledEntryFactory;
-      this.cacheStoreFactoryRegistry = cacheStoreFactoryRegistry;
-      this.expirationManager = expirationManager;
-
-      this.advancedListener = new AdvancedPurgeListener(expirationManager);
-   }
+   private boolean preloaded;
 
    @Override
    @Start(priority = 10)
    public void start() {
+      advancedListener = new AdvancedPurgeListener(expirationManager);
+      preloaded = false;
       enabled = configuration.persistence().usingStores();
       if (!enabled)
          return;
@@ -213,7 +194,9 @@ public class PersistenceManagerImpl implements PersistenceManager {
          }
       };
       nonTxWriters.forEach(stopWriters);
+      nonTxWriters.clear();
       txWriters.forEach(stopWriters);
+      txWriters.clear();
 
       for (CacheLoader l : loaders) {
          if (!undelegated.contains(l))
@@ -225,7 +208,13 @@ public class PersistenceManagerImpl implements PersistenceManager {
             }
          }
       }
+      loaders.clear();
+      preloaded = false;
+   }
 
+   @Override
+   public boolean isPreloaded() {
+      return preloaded;
    }
 
    @Override
@@ -256,19 +245,20 @@ public class PersistenceManagerImpl implements PersistenceManager {
       final long maxEntries = getMaxEntries();
       final AtomicInteger loadedEntries = new AtomicInteger(0);
       final AdvancedCache<Object, Object> flaggedCache = getCacheForStateInsertion();
-      preloadCl.process(null, new AdvancedCacheLoader.CacheLoaderTask() {
-         @Override
-         public void processEntry(MarshalledEntry me, AdvancedCacheLoader.TaskContext taskContext) throws InterruptedException {
-            if (loadedEntries.getAndIncrement() >= maxEntries) {
-               taskContext.stop();
-               return;
-            }
-            Metadata metadata = me.getMetadata() != null ? ((InternalMetadataImpl)me.getMetadata()).actual() : null; //the downcast will go away with ISPN-3460
-            preloadKey(flaggedCache, me.getKey(), me.getValue(), metadata);
+      ByRef.Boolean preloaded = new ByRef.Boolean(true);
+      preloadCl.process(null, (me, taskContext) -> {
+         if (loadedEntries.getAndIncrement() >= maxEntries) {
+            taskContext.stop();
+            preloaded.set(false);
+            return;
          }
+         Metadata metadata = me.getMetadata() != null ? ((InternalMetadataImpl) me.getMetadata()).actual() :
+               null; //the downcast will go away with ISPN-3460
+         preloadKey(flaggedCache, me.getKey(), me.getValue(), metadata);
       }, new WithinThreadExecutor(), true, true);
+      this.preloaded = preloaded.get();
 
-      log.debugf("Preloaded %s keys in %s", loadedEntries, Util.prettyPrintTime(timeService.timeDuration(start, MILLISECONDS)));
+      log.debugf("Preloaded %d keys in %s", loadedEntries.get(), Util.prettyPrintTime(timeService.timeDuration(start, MILLISECONDS)));
    }
 
    @Override
@@ -311,7 +301,7 @@ public class PersistenceManagerImpl implements PersistenceManager {
    public <T> Set<T> getStores(Class<T> storeClass) {
       storesMutex.readLock().lock();
       try {
-         Set<T> result = new HashSet<T>();
+         Set<T> result = new HashSet<>();
          for (CacheLoader l : loaders) {
             CacheLoader real = undelegate(l);
             if (storeClass.isInstance(real)) {
@@ -337,7 +327,7 @@ public class PersistenceManagerImpl implements PersistenceManager {
    public Collection<String> getStoresAsString() {
       storesMutex.readLock().lock();
       try {
-         Set<String> loaderTypes = new HashSet<String>(loaders.size());
+         Set<String> loaderTypes = new HashSet<>(loaders.size());
          for (CacheLoader loader : loaders)
             loaderTypes.add(undelegate(loader).getClass().getName());
          for (CacheWriter writer : nonTxWriters)
@@ -505,11 +495,42 @@ public class PersistenceManagerImpl implements PersistenceManager {
 
    @Override
    public void writeToAllNonTxStores(MarshalledEntry marshalledEntry, AccessMode accessMode) {
+      writeToAllNonTxStores(marshalledEntry, accessMode, 0L);
+   }
+
+   @Override
+   public void writeToAllNonTxStores(MarshalledEntry marshalledEntry, AccessMode accessMode, long flags) {
+      storesMutex.readLock().lock();
+      try {
+         nonTxWriters.stream()
+               .filter(writer -> !(writer instanceof FlagAffectedStore) || FlagAffectedStore.class.cast(writer).shouldWrite(flags))
+               .filter(writer -> accessMode.canPerform(configMap.get(writer)))
+               .forEach(writer -> writer.write(marshalledEntry));
+      } finally {
+         storesMutex.readLock().unlock();
+      }
+   }
+
+   @Override
+   public void writeBatchToAllNonTxStores(Iterable<MarshalledEntry> entries, AccessMode accessMode, long flags) {
+      storesMutex.readLock().lock();
+      try {
+         nonTxWriters.stream()
+               .filter(writer -> !(writer instanceof FlagAffectedStore) || FlagAffectedStore.class.cast(writer).shouldWrite(flags))
+               .filter(writer -> accessMode.canPerform(configMap.get(writer)))
+               .forEach(writer -> writer.writeBatch(entries));
+      } finally {
+         storesMutex.readLock().unlock();
+      }
+   }
+
+   @Override
+   public void deleteBatchFromAllNonTxStores(Iterable<Object> keys, AccessMode accessMode, long flags) {
       storesMutex.readLock().lock();
       try {
          nonTxWriters.stream()
                .filter(writer -> accessMode.canPerform(configMap.get(writer)))
-               .forEach(writer -> writer.write(marshalledEntry));
+               .forEach(writer -> writer.deleteBatch(keys));
       } finally {
          storesMutex.readLock().unlock();
       }
@@ -726,19 +747,14 @@ public class PersistenceManagerImpl implements PersistenceManager {
             .withFlags(flags.toArray(new Flag[flags.size()]));
    }
 
-   private boolean localIndexingEnabled() {
-      return configuration.indexing().index() == Index.LOCAL;
-   }
-
    private boolean indexShareable() {
       return configuration.indexing().indexShareable();
    }
 
    private long getMaxEntries() {
-      long ne = EvictionConfigurationBuilder.EVICTION_MAX_SIZE;
-      if (configuration.eviction().strategy().isEnabled() && configuration.eviction().type() == EvictionType.COUNT)
-         ne = configuration.eviction().maxEntries();
-      return ne;
+      if (configuration.memory().isEvictionEnabled()&& configuration.memory().evictionType() == EvictionType.COUNT)
+         return configuration.memory().size();
+      return Long.MAX_VALUE;
    }
 
    private void preloadKey(AdvancedCache<Object, Object> cache, Object key, Object value, Metadata metadata) {
@@ -815,11 +831,27 @@ public class PersistenceManagerImpl implements PersistenceManager {
    }
 
    private void removeCacheLoader(String storeType, Collection<CacheLoader> collection) {
-      collection.removeIf(cacheLoader -> undelegate(cacheLoader).getClass().getName().equals(storeType));
+      for (Iterator<CacheLoader> it = collection.iterator(); it.hasNext(); ) {
+         CacheLoader loader = it.next();
+         doRemove(it, storeType, loader, undelegate(loader));
+      }
    }
 
    private void removeCacheWriter(String storeType, Collection<? extends CacheWriter> collection) {
-      collection.removeIf(cacheWriter -> undelegate(cacheWriter).getClass().getName().equals(storeType));
+      for (Iterator<? extends CacheWriter> it = collection.iterator(); it.hasNext(); ) {
+         CacheWriter writer = it.next();
+         doRemove(it, storeType, writer, undelegate(writer));
+      }
+   }
+
+   private void doRemove(Iterator<? extends Lifecycle> it, String storeType, Lifecycle wrapper, Lifecycle actual) {
+      if (actual.getClass().getName().equals(storeType)) {
+         wrapper.stop();
+         if (actual != wrapper) {
+            actual.stop();
+         }
+         it.remove();
+      }
    }
 
    private void performOnAllTxStores(AccessMode accessMode, Consumer<TransactionalCacheWriter> action) {

@@ -7,7 +7,9 @@ import java.util.TreeSet;
 
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.CommandsFactory;
+import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -15,7 +17,7 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.commons.CacheException;
+import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
@@ -23,12 +25,15 @@ import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.BaseCustomAsyncInterceptor;
+import org.infinispan.metadata.EmbeddedMetadata;
+import org.infinispan.metadata.Metadata;
 import org.infinispan.protostream.DescriptorParserException;
 import org.infinispan.protostream.FileDescriptorSource;
 import org.infinispan.protostream.SerializationContext;
 import org.infinispan.protostream.descriptors.FileDescriptor;
 import org.infinispan.query.remote.ProtobufMetadataManager;
 import org.infinispan.query.remote.client.ProtobufMetadataManagerConstants;
+import org.infinispan.query.remote.impl.logging.Log;
 
 
 /**
@@ -38,6 +43,10 @@ import org.infinispan.query.remote.client.ProtobufMetadataManagerConstants;
  * @since 7.0
  */
 final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncInterceptor implements ProtobufMetadataManagerConstants {
+
+   private static final Log log = LogFactory.getLog(ProtobufMetadataManagerInterceptor.class, Log.class);
+
+   private static final Metadata DEFAULT_METADATA = new EmbeddedMetadata.Builder().build();
 
    private CommandsFactory commandsFactory;
 
@@ -49,13 +58,6 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
     * A no-op callback.
     */
    private static final FileDescriptorSource.ProgressCallback EMPTY_CALLBACK = new FileDescriptorSource.ProgressCallback() {
-      @Override
-      public void handleError(String fileName, DescriptorParserException exception) {
-      }
-
-      @Override
-      public void handleSuccess(String fileName) {
-      }
    };
 
    private final class ProgressCallback implements FileDescriptorSource.ProgressCallback {
@@ -78,15 +80,15 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
       public void handleError(String fileName, DescriptorParserException exception) {
          // handle first error per file, ignore the rest if any
          if (errorFiles.add(fileName)) {
-            VisitableCommand cmd = commandsFactory.buildPutKeyValueCommand(fileName + ERRORS_KEY_SUFFIX, exception.getMessage(), null, flagsBitSet);
-            invoker.invoke(ctx.clone(), cmd);
+            VisitableCommand cmd = commandsFactory.buildPutKeyValueCommand(fileName + ERRORS_KEY_SUFFIX, exception.getMessage(), DEFAULT_METADATA, flagsBitSet);
+            invoker.invoke(ctx, cmd);
          }
       }
 
       @Override
       public void handleSuccess(String fileName) {
          VisitableCommand cmd = commandsFactory.buildRemoveCommand(fileName + ERRORS_KEY_SUFFIX, null, flagsBitSet);
-         invoker.invoke(ctx.clone(), cmd);
+         invoker.invoke(ctx, cmd);
       }
    }
 
@@ -105,7 +107,7 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
             try {
                serializationContext.registerProtoFiles(source);
             } catch (IOException | DescriptorParserException e) {
-               throw new CacheException("Failed to parse proto file : " + key, e);
+               throw log.failedToParseProtoFile(key, e);
             }
          }
          return null;
@@ -124,7 +126,7 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
          try {
             serializationContext.registerProtoFiles(source);
          } catch (IOException | DescriptorParserException e) {
-            throw new CacheException(e);
+            throw log.failedToParseProtoFile(e);
          }
          return null;
       }
@@ -139,7 +141,7 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
             try {
                serializationContext.registerProtoFiles(source);
             } catch (IOException | DescriptorParserException e) {
-               throw new CacheException("Failed to parse proto file : " + key, e);
+               throw log.failedToParseProtoFile(key, e);
             }
          }
          return null;
@@ -191,20 +193,20 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
 
       if (ctx.isOriginLocal()) {
          if (!(key instanceof String)) {
-            throw new CacheException("The key must be a string");
+            throw log.keyMustBeString(key.getClass());
          }
          if (!(value instanceof String)) {
-            throw new CacheException("The value must be a string");
+            throw log.valueMustBeString(value.getClass());
          }
          if (shouldIntercept(key)) {
-            if (!command.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER) && !command.hasAnyFlag(FlagBitSets.SKIP_LOCKING)) {
+            if (!command.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER | FlagBitSets.SKIP_LOCKING)) {
                if (!((String) key).endsWith(PROTO_KEY_SUFFIX)) {
-                  throw new CacheException("The key must end with \".proto\" : " + key);
+                  throw log.keyMustBeStringEndingWithProto(key);
                }
 
                // lock .errors key
-               VisitableCommand cmd = commandsFactory.buildLockControlCommand(ERRORS_KEY_SUFFIX, EnumUtil.EMPTY_BIT_SET, null);
-               invoker.invoke(ctx.clone(), cmd);
+               LockControlCommand cmd = commandsFactory.buildLockControlCommand(ERRORS_KEY_SUFFIX, command.getFlagsBitSet(), null);
+               invoker.invoke(ctx, cmd);
             }
          } else {
             return invokeNext(ctx, command);
@@ -214,12 +216,13 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
       return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
          PutKeyValueCommand putKeyValueCommand = (PutKeyValueCommand) rCommand;
          if (putKeyValueCommand.isSuccessful()) {
-            FileDescriptorSource source =
-                  new FileDescriptorSource().addProtoFile((String) key, (String) value);
+            FileDescriptorSource source = new FileDescriptorSource()
+                  .addProtoFile((String) key, (String) value);
 
+            long flagsBitSet = copyFlags(putKeyValueCommand);
             ProgressCallback progressCallback = null;
             if (rCtx.isOriginLocal() && !putKeyValueCommand.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER)) {
-               progressCallback = new ProgressCallback(rCtx, command.getFlagsBitSet());
+               progressCallback = new ProgressCallback(rCtx, flagsBitSet);
                source.withProgressCallback(progressCallback);
             } else {
                source.withProgressCallback(EMPTY_CALLBACK);
@@ -228,14 +231,22 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
             try {
                serializationContext.registerProtoFiles(source);
             } catch (IOException | DescriptorParserException e) {
-               throw new CacheException("Failed to parse proto file : " + key, e);
+               throw log.failedToParseProtoFile((String) key, e);
             }
 
             if (progressCallback != null) {
-               updateGlobalErrors(rCtx, progressCallback.getErrorFiles(), command.getFlagsBitSet());
+               updateGlobalErrors(rCtx, progressCallback.getErrorFiles(), flagsBitSet);
             }
          }
       });
+   }
+
+   /**
+    * For preload, we need to copy the CACHE_MODE_LOCAL flag from the put command.
+    * But we also need to remove the SKIP_CACHE_STORE flag, so that existing .errors keys are updated.
+    */
+   private long copyFlags(FlagAffectedCommand command) {
+      return EnumUtil.diffBitSets(command.getFlagsBitSet(), FlagBitSets.SKIP_CACHE_STORE);
    }
 
    @Override
@@ -246,27 +257,28 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
       for (Object key : map.keySet()) {
          final Object value = map.get(key);
          if (!(key instanceof String)) {
-            throw new CacheException("The key must be a string");
+            throw log.keyMustBeString(key.getClass());
          }
          if (!(value instanceof String)) {
-            throw new CacheException("The value must be a string");
+            throw log.valueMustBeString(value.getClass());
          }
          if (shouldIntercept(key)) {
             if (!((String) key).endsWith(PROTO_KEY_SUFFIX)) {
-               throw new CacheException("The key must end with \".proto\" : " + key);
+               throw log.keyMustBeStringEndingWithProto(key);
             }
             source.addProtoFile((String) key, (String) value);
          }
       }
 
       // lock .errors key
-      VisitableCommand cmd = commandsFactory.buildLockControlCommand(ERRORS_KEY_SUFFIX, EnumUtil.EMPTY_BIT_SET, null);
-      invoker.invoke(ctx.clone(), cmd);
+      VisitableCommand cmd = commandsFactory.buildLockControlCommand(ERRORS_KEY_SUFFIX, command.getFlagsBitSet(), null);
+      invoker.invoke(ctx, cmd);
 
       return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
+         long flagsBitSet = copyFlags(((PutMapCommand) rCommand));
          ProgressCallback progressCallback = null;
          if (rCtx.isOriginLocal()) {
-            progressCallback = new ProgressCallback(rCtx, command.getFlagsBitSet());
+            progressCallback = new ProgressCallback(rCtx, flagsBitSet);
             source.withProgressCallback(progressCallback);
          } else {
             source.withProgressCallback(EMPTY_CALLBACK);
@@ -275,11 +287,11 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
          try {
             serializationContext.registerProtoFiles(source);
          } catch (IOException | DescriptorParserException e) {
-            throw new CacheException(e);
+            throw log.failedToParseProtoFile(e);
          }
 
          if (progressCallback != null) {
-            updateGlobalErrors(rCtx, progressCallback.getErrorFiles(), command.getFlagsBitSet());
+            updateGlobalErrors(rCtx, progressCallback.getErrorFiles(), flagsBitSet);
          }
       });
    }
@@ -288,16 +300,17 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
       if (ctx.isOriginLocal()) {
          if (!(command.getKey() instanceof String)) {
-            throw new CacheException("The key must be a string");
+            throw log.keyMustBeString(command.getKey().getClass());
          }
          String key = (String) command.getKey();
          if (shouldIntercept(key)) {
             // lock .errors key
-            VisitableCommand cmd = commandsFactory.buildLockControlCommand(ERRORS_KEY_SUFFIX, EnumUtil.EMPTY_BIT_SET, null);
-            invoker.invoke(ctx.clone(), cmd);
+            long flagsBitSet = copyFlags(command);
+            LockControlCommand lockCommand = commandsFactory.buildLockControlCommand(ERRORS_KEY_SUFFIX, flagsBitSet, null);
+            invoker.invoke(ctx, lockCommand);
 
-            cmd = commandsFactory.buildRemoveCommand(key + ERRORS_KEY_SUFFIX, null, EnumUtil.EMPTY_BIT_SET);
-            invoker.invoke(ctx.clone(), cmd);
+            WriteCommand writeCommand = commandsFactory.buildRemoveCommand(key + ERRORS_KEY_SUFFIX, null, flagsBitSet);
+            invoker.invoke(ctx, writeCommand);
 
             if (serializationContext.getFileDescriptors().containsKey(key)) {
                serializationContext.unregisterProtoFile(key);
@@ -306,26 +319,27 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
             // put error key for all unresolved files and remove error key for all resolved files
             StringBuilder sb = new StringBuilder();
             for (FileDescriptor fd : serializationContext.getFileDescriptors().values()) {
+               String errorFileName = fd.getName() + ERRORS_KEY_SUFFIX;
                if (fd.isResolved()) {
-                  cmd = commandsFactory.buildRemoveCommand(fd.getName() + ERRORS_KEY_SUFFIX, null, EnumUtil.EMPTY_BIT_SET);
-                  invoker.invoke(ctx.clone(), cmd);
+                  writeCommand = commandsFactory.buildRemoveCommand(errorFileName, null, flagsBitSet);
+                  invoker.invoke(ctx, writeCommand);
                } else {
                   if (sb.length() > 0) {
                      sb.append('\n');
                   }
                   sb.append(fd.getName());
-                  PutKeyValueCommand put = commandsFactory.buildPutKeyValueCommand(fd.getName() + ERRORS_KEY_SUFFIX, "One of the imported files is missing or has errors", null, EnumUtil.EMPTY_BIT_SET);
+                  PutKeyValueCommand put = commandsFactory.buildPutKeyValueCommand(errorFileName, "One of the imported files is missing or has errors", DEFAULT_METADATA, flagsBitSet);
                   put.setPutIfAbsent(true);
-                  invoker.invoke(ctx.clone(), put);
+                  invoker.invoke(ctx, put);
                }
             }
 
             if (sb.length() > 0) {
-               cmd = commandsFactory.buildPutKeyValueCommand(ERRORS_KEY_SUFFIX, sb.toString(), null, EnumUtil.EMPTY_BIT_SET);
+               writeCommand = commandsFactory.buildPutKeyValueCommand(ERRORS_KEY_SUFFIX, sb.toString(), DEFAULT_METADATA, flagsBitSet);
             } else {
-               cmd = commandsFactory.buildRemoveCommand(ERRORS_KEY_SUFFIX, null, EnumUtil.EMPTY_BIT_SET);
+               writeCommand = commandsFactory.buildRemoveCommand(ERRORS_KEY_SUFFIX, null, flagsBitSet);
             }
-            invoker.invoke(ctx.clone(), cmd);
+            invoker.invoke(ctx, writeCommand);
          }
       }
 
@@ -341,31 +355,31 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
          return invokeNext(ctx, command);
       }
       if (!(key instanceof String)) {
-         throw new CacheException("The key must be a string");
+         throw log.keyMustBeString(key.getClass());
       }
       if (!(value instanceof String)) {
-         throw new CacheException("The value must be a string");
+         throw log.valueMustBeString(value.getClass());
       }
       if (!shouldIntercept(key)) {
          return invokeNext(ctx, command);
       }
       if (!((String) key).endsWith(PROTO_KEY_SUFFIX)) {
-         throw new CacheException("The key must end with \".proto\" : " + key);
+         throw log.keyMustBeStringEndingWithProto(key);
       }
 
       // lock .errors key
-      VisitableCommand cmd =
-            commandsFactory.buildLockControlCommand(ERRORS_KEY_SUFFIX, EnumUtil.EMPTY_BIT_SET, null);
-      invoker.invoke(ctx.clone(), cmd);
+      LockControlCommand cmd = commandsFactory.buildLockControlCommand(ERRORS_KEY_SUFFIX, command.getFlagsBitSet(), null);
+      invoker.invoke(ctx, cmd);
 
       return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-         if (((WriteCommand) rCommand).isSuccessful()) {
-            FileDescriptorSource source =
-                  new FileDescriptorSource().addProtoFile((String) key, (String) value);
+         if (rCommand.isSuccessful()) {
+            FileDescriptorSource source = new FileDescriptorSource()
+                        .addProtoFile((String) key, (String) value);
 
+            long flagsBitSet = copyFlags(((WriteCommand) rCommand));
             ProgressCallback progressCallback = null;
             if (rCtx.isOriginLocal()) {
-               progressCallback = new ProgressCallback(rCtx, command.getFlagsBitSet());
+               progressCallback = new ProgressCallback(rCtx, flagsBitSet);
                source.withProgressCallback(progressCallback);
             } else {
                source.withProgressCallback(EMPTY_CALLBACK);
@@ -374,11 +388,11 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
             try {
                serializationContext.registerProtoFiles(source);
             } catch (IOException | DescriptorParserException e) {
-               throw new CacheException("Failed to parse proto file : " + key, e);
+               throw log.failedToParseProtoFile((String) key, e);
             }
 
             if (progressCallback != null) {
-               updateGlobalErrors(rCtx, progressCallback.getErrorFiles(), command.getFlagsBitSet());
+               updateGlobalErrors(rCtx, progressCallback.getErrorFiles(), flagsBitSet);
             }
          }
       });
@@ -410,8 +424,8 @@ final class ProtobufMetadataManagerInterceptor extends BaseCustomAsyncIntercepto
             }
             sb.append(fileName);
          }
-         cmd = commandsFactory.buildPutKeyValueCommand(ERRORS_KEY_SUFFIX, sb.toString(), null, flagsBitSet);
+         cmd = commandsFactory.buildPutKeyValueCommand(ERRORS_KEY_SUFFIX, sb.toString(), DEFAULT_METADATA, flagsBitSet);
       }
-      invoker.invoke(ctx.clone(), cmd);
+      invoker.invoke(ctx, cmd);
    }
 }

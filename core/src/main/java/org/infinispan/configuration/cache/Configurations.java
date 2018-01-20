@@ -1,6 +1,9 @@
 package org.infinispan.configuration.cache;
 
+import org.infinispan.configuration.global.GlobalConfiguration;
+import org.infinispan.configuration.internal.PrivateGlobalConfiguration;
 import org.infinispan.transaction.LockingMode;
+import org.infinispan.util.concurrent.IsolationLevel;
 
 /**
  * Helper configuration methods.
@@ -15,25 +18,34 @@ public class Configurations {
    private Configurations() {
    }
 
-   public static boolean isSecondPhaseAsync(Configuration cfg) {
-      ClusteringConfiguration clusteringCfg = cfg.clustering();
-      return !cfg.transaction().syncCommitPhase()
-            || !clusteringCfg.cacheMode().isSynchronous();
+   public static boolean isExceptionBasedEviction(Configuration cfg) {
+      return cfg.memory().size() > 0 && cfg.memory().evictionType().isExceptionBased();
    }
 
    public static boolean isOnePhaseCommit(Configuration cfg) {
+      // Otherwise pessimistic transactions will be one phase commit
+      if (isExceptionBasedEviction(cfg)) {
+         return false;
+      }
       return !cfg.clustering().cacheMode().isSynchronous() ||
             cfg.transaction().lockingMode() == LockingMode.PESSIMISTIC;
    }
 
    public static boolean isOnePhaseTotalOrderCommit(Configuration cfg) {
-      return cfg.transaction().transactionProtocol().isTotalOrder() && !isVersioningEnabled(cfg);
+      // Even total order needs 2 phase commit with this
+      if (isExceptionBasedEviction(cfg)) {
+         return false;
+      }
+      return cfg.transaction().transactionMode().isTransactional() &&
+            cfg.transaction().transactionProtocol().isTotalOrder() &&
+            !isTxVersioned(cfg);
    }
 
-   public static boolean isVersioningEnabled(Configuration cfg) {
-      return cfg.locking().writeSkewCheck() &&
+   public static boolean isTxVersioned(Configuration cfg) {
+      return cfg.transaction().transactionMode().isTransactional() &&
             cfg.transaction().lockingMode() == LockingMode.OPTIMISTIC &&
-            cfg.versioning().enabled();
+            cfg.locking().isolationLevel() == IsolationLevel.REPEATABLE_READ &&
+            !cfg.clustering().cacheMode().isInvalidation(); //invalidation can't use versions
    }
 
    public static boolean noDataLossOnJoiner(Configuration configuration) {
@@ -64,5 +76,14 @@ public class Configurations {
          }
       }
       return false;
+   }
+
+   public static boolean isEmbeddedMode(GlobalConfiguration globalConfiguration) {
+      PrivateGlobalConfiguration config = globalConfiguration.module(PrivateGlobalConfiguration.class);
+      return config == null || !config.isServerMode();
+   }
+
+   public static boolean isClustered(GlobalConfiguration globalConfiguration) {
+      return globalConfiguration.transport().transport() != null;
    }
 }

@@ -1,25 +1,24 @@
-        <subsystem xmlns="urn:infinispan:server:core:9.0">
+        <subsystem xmlns="urn:infinispan:server:core:9.2">
              <cache-container name="local" default-cache="none">
                  <local-cache name="none" >
                      <memory>
                          <object/>
                      </memory>
                  </local-cache>
-                 <local-cache name="unordered" >
+                 <local-cache name="binary" >
+                     <memory>
+                         <binary size="3"/>
+                     </memory>
+                 </local-cache>
+                 <local-cache name="object" >
                      <memory>
                          <object size="3"/>
                      </memory>
                  </local-cache>
-                 <local-cache name="lirs" >
+                 <local-cache name="off-heap" >
                      <memory>
-                         <object size="5"/>
+                         <off-heap size="3"/>
                      </memory>
                  </local-cache>
-                 <local-cache name="lru" >
-                     <memory>
-                         <object size="3"/>
-                     </memory>
-                 </local-cache>
-                 <local-cache name="memcachedCache"/>
              </cache-container>
         </subsystem>

@@ -25,9 +25,15 @@ import org.infinispan.persistence.support.BatchModification;
 public interface PersistenceManager extends Lifecycle {
 
    /**
+    * @return true if all entries from the store have been inserted to the cache. If the persistence/preload
+    * is disabled or eviction limit was reached when preloading, returns false.
+    */
+   boolean isPreloaded();
+
+   /**
     * Loads the data from the external store into memory during cache startup.
     */
-   public void preload();
+   void preload();
 
    /**
     * Marks the given storage as disabled.
@@ -67,7 +73,7 @@ public interface PersistenceManager extends Lifecycle {
 
    int size();
 
-   public static enum AccessMode {
+   enum AccessMode {
       /**
        * The operation is performed in all {@link org.infinispan.persistence.spi.CacheWriter} or {@link
        * org.infinispan.persistence.spi.CacheLoader}
@@ -121,9 +127,16 @@ public interface PersistenceManager extends Lifecycle {
     * </ul></p>
     *
     * @param marshalledEntry the entry to be written to all non-tx stores.
-    * @param accessMode the type of access to the underlying store.
+    * @param modes           the type of access to the underlying store.
     */
    void writeToAllNonTxStores(MarshalledEntry marshalledEntry, AccessMode modes);
+
+   /**
+    * @see #writeToAllNonTxStores(MarshalledEntry, AccessMode)
+    *
+    * @param flags Flags used during command invocation
+    */
+   void writeToAllNonTxStores(MarshalledEntry marshalledEntry, AccessMode modes, long flags);
 
    /**
     * Perform the prepare phase of 2PC on all Tx stores.
@@ -151,4 +164,22 @@ public interface PersistenceManager extends Lifecycle {
     * @param accessMode the type of access to the underlying store.
     */
    void rollbackAllTxStores(Transaction transaction, AccessMode accessMode);
+
+   /**
+    * Write all entries to the underlying non-transactional stores as a single batch.
+    *
+    * @param entries a List of MarshalledEntry to be written to the store.
+    * @param accessMode the type of access to the underlying store.
+    * @param flags Flags used during command invocation
+    */
+   void writeBatchToAllNonTxStores(Iterable<MarshalledEntry> entries, AccessMode accessMode, long flags);
+
+   /**
+    * Remove all entries from the underlying non-transactional stores as a single batch.
+    *
+    * @param entries a List of Keys to be removed from the store.
+    * @param accessMode the type of access to the underlying store.
+    * @param flags Flags used during command invocation
+    */
+   void deleteBatchFromAllNonTxStores(Iterable<Object> keys, AccessMode accessMode, long flags);
 }

@@ -18,7 +18,6 @@ import javax.transaction.TransactionManager;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
@@ -40,19 +39,9 @@ public abstract class AbstractWriteSkewStressTest extends MultipleCacheManagersT
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder builder = TestCacheManagerFactory.getDefaultCacheConfiguration(true);
 
-      builder
-            .clustering()
-            .cacheMode(getCacheMode())
-            .versioning()
-            .enable()
-            .scheme(VersioningScheme.SIMPLE)
-            .locking()
-            .isolationLevel(IsolationLevel.REPEATABLE_READ)
-            .lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis())
-            .writeSkewCheck(true)
-            .transaction()
-            .lockingMode(LockingMode.OPTIMISTIC)
-            .syncCommitPhase(true);
+      builder.clustering().cacheMode(getCacheMode())
+            .locking().isolationLevel(IsolationLevel.REPEATABLE_READ).lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis())
+            .transaction().lockingMode(LockingMode.OPTIMISTIC);
 
       decorate(builder);
 
@@ -80,7 +69,7 @@ public abstract class AbstractWriteSkewStressTest extends MultipleCacheManagersT
 
       //this will keep the values put by both threads. any duplicate value will be detected because of the
       //return value of add() method
-      final Set<Integer> uniqueValuesIncremented = new ConcurrentSkipListSet<Integer>();
+      final Set<Integer> uniqueValuesIncremented = new ConcurrentSkipListSet<>();
 
       //create both threads (each of them incrementing the counter on one node)
       Future<Boolean> f1 = fork(new IncrementCounterTask(c1, uniqueValuesIncremented));

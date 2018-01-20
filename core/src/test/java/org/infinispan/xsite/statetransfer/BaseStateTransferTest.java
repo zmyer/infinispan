@@ -2,16 +2,22 @@ package org.infinispan.xsite.statetransfer;
 
 import static org.infinispan.test.TestingUtil.extractComponent;
 import static org.infinispan.test.TestingUtil.extractGlobalComponent;
+import static org.infinispan.test.TestingUtil.k;
 import static org.infinispan.test.TestingUtil.replaceComponent;
+import static org.infinispan.xsite.XSiteAdminOperations.SUCCESS;
+import static org.infinispan.xsite.statetransfer.XSiteStateTransferManager.STATUS_CANCELED;
+import static org.infinispan.xsite.statetransfer.XSiteStateTransferManager.STATUS_SENDING;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -20,28 +26,27 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.infinispan.Cache;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.configuration.cache.BackupConfigurationBuilder;
-import org.infinispan.context.Flag;
-import org.infinispan.distribution.DistributionManager;
+import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.container.entries.InternalCacheValue;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.manager.CacheContainer;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.ControlledTransport;
 import org.infinispan.remoting.transport.Transport;
-import org.infinispan.statetransfer.CommitManager;
 import org.infinispan.test.fwk.CheckPoint;
-import org.infinispan.xsite.AbstractTwoSitesTest;
 import org.infinispan.xsite.BackupReceiver;
 import org.infinispan.xsite.BackupReceiverDelegator;
 import org.infinispan.xsite.BackupReceiverRepository;
 import org.infinispan.xsite.BackupReceiverRepositoryDelegator;
 import org.infinispan.xsite.XSiteAdminOperations;
+import org.testng.annotations.Test;
 
 /**
  * Tests the cross-site replication with concurrent operations checking for consistency.
@@ -49,39 +54,41 @@ import org.infinispan.xsite.XSiteAdminOperations;
  * @author Pedro Ruivo
  * @since 7.0
  */
-public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
+public abstract class BaseStateTransferTest extends AbstractStateTransferTest {
 
-   protected static final String LON = "LON";
-   protected static final String NYC = "NYC";
+   private static final String VALUE = "value";
 
    public BaseStateTransferTest() {
       this.cleanup = CleanupPhase.AFTER_METHOD;
+      this.cacheMode = CacheMode.DIST_SYNC;
    }
 
+   @Test(groups = "xsite")
    public void testStateTransferNonExistingSite() {
-      XSiteAdminOperations operations = extractComponent(cache(LON, 0), XSiteAdminOperations.class);
+      XSiteAdminOperations operations = adminOperations();
       assertEquals("Unable to pushState to 'NO_SITE'. Incorrect site name: NO_SITE", operations.pushState("NO_SITE"));
       assertTrue(operations.getRunningStateTransfer().isEmpty());
-      assertNoStateTransferInSendingSite(LON);
+      assertNoStateTransferInSendingSite();
    }
 
-   public void testCancelStateTransfer() throws InterruptedException {
-      takeSiteOffline(LON, NYC);
-      assertOffline(LON, NYC);
-      assertNoStateTransferInReceivingSite(NYC);
-      assertNoStateTransferInSendingSite(LON);
+   @Test(groups = "xsite")
+   public void testCancelStateTransfer(Method method) throws InterruptedException {
+      takeSiteOffline();
+      assertOffline();
+      assertNoStateTransferInReceivingSite(null);
+      assertNoStateTransferInSendingSite();
 
       // NYC is offline... lets put some initial data in LON.
       // The primary owner is the one sending the state to the backup.
       // We add keys until we have more than one chunk on the LON coordinator.
-      DistributionManager dm0 = cache(LON, 0).getAdvancedCache().getDistributionManager();
+      LocalizedCacheTopology topology = cache(LON, 0).getAdvancedCache().getDistributionManager().getCacheTopology();
       Address coordLON = cache(LON, 0).getCacheManager().getAddress();
       Set<Object> keysOnCoordinator = new HashSet<>();
       int i = 0;
-      while (keysOnCoordinator.size() < chunkSize(LON)) {
-         Object key = key(i);
-         cache(LON, 0).put(key, value(0));
-         if (dm0.getPrimaryLocation(key).equals(coordLON)) {
+      while (keysOnCoordinator.size() < chunkSize()) {
+         Object key = k(method, i);
+         cache(LON, 0).put(key, VALUE);
+         if (topology.getDistribution(key).primary().equals(coordLON)) {
             keysOnCoordinator.add(key);
          }
          ++i;
@@ -90,185 +97,174 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       log.debugf("Coordinator %s is primary owner for %d keys: %s", coordLON, keysOnCoordinator.size(), keysOnCoordinator);
 
       //check if NYC is empty
-      assertInSite(NYC, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertTrue(cache.isEmpty());
-         }
-      });
+      assertInSite(NYC, cache -> assertTrue(cache.isEmpty()));
 
       ControlledTransport controllerTransport = replaceTransport(cache(LON, 0));
       controllerTransport.blockBefore(XSiteStatePushCommand.class);
 
-      startStateTransfer(LON, NYC);
+      startStateTransfer();
 
       controllerTransport.waitForCommandToBlock();
-      assertEquals(XSiteAdminOperations.SUCCESS, extractComponent(cache(LON, 0), XSiteAdminOperations.class).cancelPushState(NYC));
+      assertEquals(SUCCESS, adminOperations().cancelPushState(NYC));
 
       controllerTransport.stopBlocking();
 
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            return extractComponent(cache(LON, 0), XSiteAdminOperations.class).getRunningStateTransfer().isEmpty();
-         }
-      }, TimeUnit.SECONDS.toMillis(30));
+      assertEventuallyStateTransferNotRunning();
 
-      assertNoStateTransferInReceivingSite(NYC);
-      assertNoStateTransferInSendingSite(LON);
+      assertEventuallyNoStateTransferInReceivingSite(null);
+      assertEventuallyNoStateTransferInSendingSite();
 
-      assertEquals(XSiteStateTransferManager.STATUS_CANCELED, extractComponent(cache(LON, 0), XSiteAdminOperations.class).getPushStateStatus().get(NYC));
+      assertEquals(STATUS_CANCELED, adminOperations().getPushStateStatus().get(NYC));
 
       controllerTransport.blockBefore(XSiteStatePushCommand.class);
 
-      startStateTransfer(LON, NYC);
+      startStateTransfer();
 
       controllerTransport.waitForCommandToBlock();
-      assertEquals(XSiteStateTransferManager.STATUS_SENDING, extractComponent(cache(LON, 0), XSiteAdminOperations.class).getPushStateStatus().get(NYC));
+      assertEquals(STATUS_SENDING, adminOperations().getPushStateStatus().get(NYC));
       controllerTransport.stopBlocking();
 
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            return extractComponent(cache(LON, 0), XSiteAdminOperations.class).getRunningStateTransfer().isEmpty();
-         }
-      }, TimeUnit.SECONDS.toMillis(30));
+      assertEventuallyStateTransferNotRunning();
 
-      assertNoStateTransferInReceivingSite(NYC);
-      assertNoStateTransferInSendingSite(LON);
+      assertEventuallyNoStateTransferInReceivingSite(null);
+      assertEventuallyNoStateTransferInSendingSite();
 
       //check if all data is visible
-      assertInSite(NYC, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            for (int i = 0; i < numKeys; ++i) {
-               assertEquals(value(0), cache.get(key(i)));
-            }
+      assertInSite(NYC, cache -> {
+         for (int i1 = 0; i1 < numKeys; ++i1) {
+            assertEquals(VALUE, cache.get(k(method, i1)));
          }
       });
    }
 
-   public void testStateTransferWithClusterIdle() throws InterruptedException {
-      takeSiteOffline(LON, NYC);
-      assertOffline(LON, NYC);
-      assertNoStateTransferInReceivingSite(NYC);
-      assertNoStateTransferInSendingSite(LON);
+   @Test(groups = "xsite")
+   public void testStateTransferWithClusterIdle(Method method) {
+      takeSiteOffline();
+      assertOffline();
+      assertNoStateTransferInReceivingSite(null);
+      assertNoStateTransferInSendingSite();
 
       //NYC is offline... lets put some initial data in
       //we have 2 nodes in each site and the primary owner sends the state. Lets try to have more key than the chunk
       //size in order to each site to send more than one chunk.
-      final int amountOfData = chunkSize(LON) * 4;
+      final int amountOfData = chunkSize() * 4;
       for (int i = 0; i < amountOfData; ++i) {
-         cache(LON, 0).put(key(i), value(0));
+         cache(LON, 0).put(k(method, i), VALUE);
       }
 
       //check if NYC is empty
-      assertInSite(NYC, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertTrue(cache.isEmpty());
-         }
-      });
+      assertInSite(NYC, cache -> assertTrue(cache.isEmpty()));
 
-      startStateTransfer(LON, NYC);
+      startStateTransfer();
 
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            return extractComponent(cache(LON, 0), XSiteAdminOperations.class).getRunningStateTransfer().isEmpty();
-         }
-      }, TimeUnit.SECONDS.toMillis(30));
+      assertEventuallyStateTransferNotRunning();
 
       assertOnline(LON, NYC);
 
       //check if all data is visible
-      assertInSite(NYC, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            for (int i = 0; i < amountOfData; ++i) {
-               assertEquals(value(0), cache.get(key(i)));
-            }
+      assertInSite(NYC, cache -> {
+         for (int i = 0; i < amountOfData; ++i) {
+            assertEquals(VALUE, cache.get(k(method, i)));
          }
       });
 
-      assertNoStateTransferInReceivingSite(NYC);
-      assertNoStateTransferInSendingSite(LON);
+      assertEventuallyNoStateTransferInReceivingSite(null);
+      assertEventuallyNoStateTransferInSendingSite();
    }
 
-   public void testPutOperationBeforeState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.PUT, true);
+   @Test(groups = "xsite")
+   public void testPutOperationBeforeState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.PUT, true, method);
    }
 
-   public void testPutOperationAfterState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.PUT, false);
+   @Test(groups = "xsite")
+   public void testPutOperationAfterState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.PUT, false, method);
    }
 
-   public void testRemoveOperationBeforeState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.REMOVE, true);
+   @Test(groups = "xsite")
+   public void testRemoveOperationBeforeState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.REMOVE, true, method);
    }
 
-   public void testRemoveOperationAfterState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.REMOVE, false);
+   @Test(groups = "xsite")
+   public void testRemoveOperationAfterState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.REMOVE, false, method);
    }
 
-   public void testRemoveIfMatchOperationBeforeState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.REMOVE_IF_MATCH, true);
+   @Test(groups = "xsite")
+   public void testRemoveIfMatchOperationBeforeState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.REMOVE_IF_MATCH, true, method);
    }
 
-   public void testRemoveIfMatchOperationAfterState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.REMOVE_IF_MATCH, false);
+   @Test(groups = "xsite")
+   public void testRemoveIfMatchOperationAfterState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.REMOVE_IF_MATCH, false, method);
    }
 
-   public void testReplaceOperationBeforeState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.REPLACE, true);
+   @Test(groups = "xsite")
+   public void testReplaceOperationBeforeState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.REPLACE, true, method);
    }
 
-   public void testReplaceOperationAfterState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.REPLACE, false);
+   @Test(groups = "xsite")
+   public void testReplaceOperationAfterState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.REPLACE, false, method);
    }
 
-   public void testReplaceIfMatchOperationBeforeState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.REPLACE_IF_MATCH, true);
+   @Test(groups = "xsite")
+   public void testReplaceIfMatchOperationBeforeState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.REPLACE_IF_MATCH, true, method);
    }
 
-   public void testReplaceIfMatchOperationAfterState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.REPLACE_IF_MATCH, false);
+   @Test(groups = "xsite")
+   public void testReplaceIfMatchOperationAfterState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.REPLACE_IF_MATCH, false, method);
    }
 
-   public void testClearOperationBeforeState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.CLEAR, true);
+   @Test(groups = "xsite")
+   public void testClearOperationBeforeState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.CLEAR, true, method);
    }
 
-   public void testClearOperationAfterState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.CLEAR, false);
+   @Test(groups = "xsite")
+   public void testClearOperationAfterState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.CLEAR, false, method);
    }
 
-   public void testPutMapOperationBeforeState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.PUT_MAP, true);
+   @Test(groups = "xsite")
+   public void testPutMapOperationBeforeState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.PUT_MAP, true, method);
    }
 
-   public void testPutMapOperationAfterState() throws Exception {
-      testStateTransferWithConcurrentOperation(Operation.PUT_MAP, false);
+   @Test(groups = "xsite")
+   public void testPutMapOperationAfterState(Method method) throws Exception {
+      testStateTransferWithConcurrentOperation(Operation.PUT_MAP, false, method);
    }
 
-   public void testPutIfAbsentFail() throws Exception {
-      testStateTransferWithNoReplicatedOperation(Operation.PUT_IF_ABSENT_FAIL);
+   @Test(groups = "xsite")
+   public void testPutIfAbsentFail(Method method) throws Exception {
+      testStateTransferWithNoReplicatedOperation(Operation.PUT_IF_ABSENT_FAIL, method);
    }
 
-   public void testRemoveIfMatchFail() throws Exception {
-      testStateTransferWithNoReplicatedOperation(Operation.REMOVE_IF_MATCH_FAIL);
+   @Test(groups = "xsite")
+   public void testRemoveIfMatchFail(Method method) throws Exception {
+      testStateTransferWithNoReplicatedOperation(Operation.REMOVE_IF_MATCH_FAIL, method);
    }
 
-   public void testReplaceIfMatchFail() throws Exception {
-      testStateTransferWithNoReplicatedOperation(Operation.REPLACE_IF_MATCH_FAIL);
+   @Test(groups = "xsite")
+   public void testReplaceIfMatchFail(Method method) throws Exception {
+      testStateTransferWithNoReplicatedOperation(Operation.REPLACE_IF_MATCH_FAIL, method);
    }
 
-   public void testPutIfAbsent() throws Exception {
-      testConcurrentOperation(Operation.PUT_IF_ABSENT);
+   @Test(groups = "xsite")
+   public void testPutIfAbsent(Method method) throws Exception {
+      testConcurrentOperation(Operation.PUT_IF_ABSENT, method);
    }
 
-   public void testRemoveNonExisting() throws Exception {
-      testConcurrentOperation(Operation.REMOVE_NON_EXISTING);
+   @Test(groups = "xsite")
+   public void testRemoveNonExisting(Method method) throws Exception {
+      testConcurrentOperation(Operation.REMOVE_NON_EXISTING, method);
    }
 
    @Override
@@ -276,16 +272,16 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       builder.stateTransfer().chunkSize(2).timeout(2000);
    }
 
-   private void testStateTransferWithConcurrentOperation(final Operation operation, final boolean performBeforeState)
-         throws Exception {
+   private void testStateTransferWithConcurrentOperation(final Operation operation, final boolean performBeforeState,
+         final Method method) throws Exception {
       assertNotNull(operation);
       assertTrue(operation.replicates());
-      takeSiteOffline(LON, NYC);
-      assertOffline(LON, NYC);
-      assertNoStateTransferInReceivingSite(NYC);
-      assertNoStateTransferInSendingSite(LON);
+      takeSiteOffline();
+      assertOffline();
+      assertNoStateTransferInReceivingSite(null);
+      assertNoStateTransferInSendingSite();
 
-      final Object key = key(0);
+      final Object key = k(method, 0);
       final CheckPoint checkPoint = new CheckPoint();
 
       operation.init(cache(LON, 0), key);
@@ -302,7 +298,7 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
          }
 
          @Override
-         public void afterCommand(VisitableCommand command) throws Exception {
+         public void afterCommand(VisitableCommand command) {
             if (performBeforeState && isUpdatingKeyWithValue(command, key, operation.finalValue())) {
                //command was performed before state... let the state continue
                checkPoint.trigger("apply-state");
@@ -322,7 +318,7 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
          }
 
          @Override
-         public void afterState(XSiteStatePushCommand command) throws Exception {
+         public void afterState(XSiteStatePushCommand command) {
             if (!performBeforeState && containsKey(command.getChunk(), key)) {
                //state before command... let the command go...
                checkPoint.trigger("update-key");
@@ -335,7 +331,7 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       }
 
       //safe (i.e. not blocking main thread), the state transfer is async
-      startStateTransfer(LON, NYC);
+      startStateTransfer();
       assertOnline(LON, NYC);
 
       //state transfer should send old value
@@ -345,40 +341,25 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       //safe, perform is async
       operation.perform(cache(LON, 0), key).get();
 
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            return extractComponent(cache(LON, 0), XSiteAdminOperations.class).getRunningStateTransfer().isEmpty();
-         }
-      }, TimeUnit.SECONDS.toMillis(30));
+      assertEventuallyStateTransferNotRunning();
 
-      assertEventuallyNoStateTransferInReceivingSite(NYC, 30, TimeUnit.SECONDS);
-      assertEventuallyNoStateTransferInSendingSite(LON, 30, TimeUnit.SECONDS);
+      assertEventuallyNoStateTransferInReceivingSite(null);
+      assertEventuallyNoStateTransferInSendingSite();
 
       //check if all data is visible
-      assertInSite(NYC, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertEquals(operation.finalValue(), cache.get(key));
-         }
-      });
-      assertInSite(LON, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertEquals(operation.finalValue(), cache.get(key));
-         }
-      });
+      assertInSite(NYC, cache -> assertEquals(operation.finalValue(), cache.get(key)));
+      assertInSite(LON, cache -> assertEquals(operation.finalValue(), cache.get(key)));
    }
 
-   private void testConcurrentOperation(final Operation operation) throws Exception {
+   private void testConcurrentOperation(final Operation operation, final Method method) throws Exception {
       assertNotNull(operation);
       assertTrue(operation.replicates());
-      takeSiteOffline(LON, NYC);
-      assertOffline(LON, NYC);
-      assertNoStateTransferInReceivingSite(NYC);
-      assertNoStateTransferInSendingSite(LON);
+      takeSiteOffline();
+      assertOffline();
+      assertNoStateTransferInReceivingSite(null);
+      assertNoStateTransferInSendingSite();
 
-      final Object key = key(0);
+      final Object key = k(method, 0);
 
       operation.init(cache(LON, 0), key);
       assertNull(operation.initialValue());
@@ -386,12 +367,7 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       final XSiteStateProviderControl control = XSiteStateProviderControl.replaceInCache(cache(LON, 0));
 
       //safe (i.e. not blocking main thread), the state transfer is async
-      final Future<?> f = fork(new Runnable() {
-         @Override
-         public void run() {
-            startStateTransfer(LON, NYC);
-         }
-      });
+      final Future<?> f = fork((Runnable) this::startStateTransfer);
 
       //state transfer will be running (nothing to transfer however) while the operation is done.
       control.await();
@@ -403,40 +379,26 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       control.trigger();
       f.get(30, TimeUnit.SECONDS);
 
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            return extractComponent(cache(LON, 0), XSiteAdminOperations.class).getRunningStateTransfer().isEmpty();
-         }
-      }, TimeUnit.SECONDS.toMillis(30));
+      assertEventuallyStateTransferNotRunning();
 
-      assertEventuallyNoStateTransferInReceivingSite(NYC, 30, TimeUnit.SECONDS);
-      assertEventuallyNoStateTransferInSendingSite(LON, 30, TimeUnit.SECONDS);
+      assertEventuallyNoStateTransferInReceivingSite(null);
+      assertEventuallyNoStateTransferInSendingSite();
 
       //check if all data is visible
-      assertInSite(NYC, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertEquals(operation.finalValue(), cache.get(key));
-         }
-      });
-      assertInSite(LON, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertEquals(operation.finalValue(), cache.get(key));
-         }
-      });
+      assertInSite(NYC, cache -> assertEquals(operation.finalValue(), cache.get(key)));
+      assertInSite(LON, cache -> assertEquals(operation.finalValue(), cache.get(key)));
    }
 
-   private void testStateTransferWithNoReplicatedOperation(final Operation operation) throws Exception {
+   private void testStateTransferWithNoReplicatedOperation(final Operation operation, final Method method)
+         throws Exception {
       assertNotNull(operation);
       assertFalse(operation.replicates());
-      takeSiteOffline(LON, NYC);
-      assertOffline(LON, NYC);
-      assertNoStateTransferInReceivingSite(NYC);
-      assertNoStateTransferInSendingSite(LON);
+      takeSiteOffline();
+      assertOffline();
+      assertNoStateTransferInReceivingSite(null);
+      assertNoStateTransferInSendingSite();
 
-      final Object key = key(0);
+      final Object key = k(method, 0);
       final CheckPoint checkPoint = new CheckPoint();
       final AtomicBoolean commandReceived = new AtomicBoolean(false);
 
@@ -445,12 +407,12 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
 
       final BackupListener listener = new BackupListener() {
          @Override
-         public void beforeCommand(VisitableCommand command) throws Exception {
+         public void beforeCommand(VisitableCommand command) {
             commandReceived.set(true);
          }
 
          @Override
-         public void afterCommand(VisitableCommand command) throws Exception {
+         public void afterCommand(VisitableCommand command) {
             commandReceived.set(true);
          }
 
@@ -466,7 +428,7 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       }
 
       //safe (i.e. not blocking main thread), the state transfer is async
-      startStateTransfer(LON, NYC);
+      startStateTransfer();
       assertOnline(LON, NYC);
 
       //state transfer should send old value
@@ -478,29 +440,14 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       assertFalse(commandReceived.get());
       checkPoint.trigger("before-update");
 
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            return extractComponent(cache(LON, 0), XSiteAdminOperations.class).getRunningStateTransfer().isEmpty();
-         }
-      }, TimeUnit.SECONDS.toMillis(30));
+      assertEventuallyStateTransferNotRunning();
 
-      assertEventuallyNoStateTransferInReceivingSite(NYC, 30, TimeUnit.SECONDS);
-      assertEventuallyNoStateTransferInSendingSite(LON, 30, TimeUnit.SECONDS);
+      assertEventuallyNoStateTransferInReceivingSite(null);
+      assertEventuallyNoStateTransferInSendingSite();
 
       //check if all data is visible
-      assertInSite(NYC, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertEquals(operation.finalValue(), cache.get(key));
-         }
-      });
-      assertInSite(LON, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertEquals(operation.finalValue(), cache.get(key));
-         }
-      });
+      assertInSite(NYC, cache -> assertEquals(operation.finalValue(), cache.get(key)));
+      assertInSite(LON, cache -> assertEquals(operation.finalValue(), cache.get(key)));
    }
 
    private boolean isUpdatingKeyWithValue(VisitableCommand command, Object key, Object value) {
@@ -509,14 +456,11 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
                value.equals(((PutKeyValueCommand) command).getValue());
       } else if (command instanceof RemoveCommand) {
          return key.equals(((RemoveCommand) command).getKey());
-      } else if (command instanceof ReplaceCommand) {
-         return key.equals(((ReplaceCommand) command).getKey()) &&
-               value.equals(((ReplaceCommand) command).getNewValue());
       } else if (command instanceof ClearCommand) {
          return true;
-      } else if (command instanceof PutMapCommand) {
-         return ((PutMapCommand) command).getMap().containsKey(key) &&
-               ((PutMapCommand) command).getMap().get(key).equals(value);
+      } else if (command instanceof WriteOnlyManyEntriesCommand) {
+         InternalCacheValue icv = (InternalCacheValue) ((WriteOnlyManyEntriesCommand) command).getEntries().get(key);
+         return Objects.equals(icv.getValue(), value);
       } else if (command instanceof PrepareCommand) {
          for (WriteCommand writeCommand : ((PrepareCommand) command).getModifications()) {
             if (isUpdatingKeyWithValue(writeCommand, key, value)) {
@@ -539,80 +483,6 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       return false;
    }
 
-   private void startStateTransfer(String fromSite, String toSite) {
-      XSiteAdminOperations operations = extractComponent(cache(fromSite, 0), XSiteAdminOperations.class);
-      assertEquals(XSiteAdminOperations.SUCCESS, operations.pushState(toSite));
-   }
-
-   private void takeSiteOffline(String localSite, String remoteSite) {
-      XSiteAdminOperations operations = extractComponent(cache(localSite, 0), XSiteAdminOperations.class);
-      assertEquals(XSiteAdminOperations.SUCCESS, operations.takeSiteOffline(remoteSite));
-   }
-
-   private void assertOffline(String localSite, String remoteSite) {
-      XSiteAdminOperations operations = extractComponent(cache(localSite, 0), XSiteAdminOperations.class);
-      assertEquals(XSiteAdminOperations.OFFLINE, operations.siteStatus(remoteSite));
-   }
-
-   private void assertOnline(String localSite, String remoteSite) {
-      XSiteAdminOperations operations = extractComponent(cache(localSite, 0), XSiteAdminOperations.class);
-      assertEquals(XSiteAdminOperations.ONLINE, operations.siteStatus(remoteSite));
-   }
-
-   private int chunkSize(String site) {
-      return cache(site, 0).getCacheConfiguration().sites().allBackups().get(0).stateTransfer().chunkSize();
-   }
-
-   private Object key(int index) {
-      return "key-" + index;
-   }
-
-   private Object value(int index) {
-      return "value-" + index;
-   }
-
-   private void assertNoStateTransferInReceivingSite(String siteName) {
-      assertInSite(siteName, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            CommitManager commitManager = extractComponent(cache, CommitManager.class);
-            assertFalse(commitManager.isTracking(Flag.PUT_FOR_STATE_TRANSFER));
-            assertFalse(commitManager.isTracking(Flag.PUT_FOR_X_SITE_STATE_TRANSFER));
-            assertTrue(commitManager.isEmpty());
-         }
-      });
-   }
-
-   private void assertEventuallyNoStateTransferInReceivingSite(String siteName, long timeout, TimeUnit unit) {
-      assertEventuallyInSite(siteName, new EventuallyAssertCondition<Object, Object>() {
-         @Override
-         public boolean assertInCache(Cache<Object, Object> cache) {
-            CommitManager commitManager = extractComponent(cache, CommitManager.class);
-            return !commitManager.isTracking(Flag.PUT_FOR_STATE_TRANSFER) &&
-                  !commitManager.isTracking(Flag.PUT_FOR_X_SITE_STATE_TRANSFER) &&
-                  commitManager.isEmpty();
-         }
-      }, timeout, unit);
-   }
-
-   private void assertNoStateTransferInSendingSite(String siteName) {
-      assertInSite(siteName, new AssertCondition<Object, Object>() {
-         @Override
-         public void assertInCache(Cache<Object, Object> cache) {
-            assertTrue(extractComponent(cache, XSiteStateProvider.class).getCurrentStateSending().isEmpty());
-         }
-      });
-   }
-
-   private void assertEventuallyNoStateTransferInSendingSite(String siteName, long timeout, TimeUnit unit) {
-      assertEventuallyInSite(siteName, new EventuallyAssertCondition<Object, Object>() {
-         @Override
-         public boolean assertInCache(Cache<Object, Object> cache) {
-            return extractComponent(cache, XSiteStateProvider.class).getCurrentStateSending().isEmpty();
-         }
-      }, timeout, unit);
-   }
-
    private ControlledTransport replaceTransport(Cache<?, ?> cache) {
       Transport current = extractGlobalComponent(cache.getCacheManager(), Transport.class);
       ControlledTransport controlled = new ControlledTransport(current);
@@ -620,7 +490,7 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
       return controlled;
    }
 
-   private static enum Operation {
+   private enum Operation {
       PUT("v0", "v1") {
          @Override
          public <K> void init(Cache<K, Object> cache, K key) {
@@ -845,19 +715,19 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
          this.finalValue = finalValue;
       }
 
-      public abstract <K> void init(Cache<K, Object> cache, K key);
-
-      public abstract <K> Future<?> perform(Cache<K, Object> cache, K key);
-
-      public abstract boolean replicates();
-
-      public final Object initialValue() {
+      final Object initialValue() {
          return initialValue;
       }
 
-      public final Object finalValue() {
+      final Object finalValue() {
          return finalValue;
       }
+
+      protected abstract <K> void init(Cache<K, Object> cache, K key);
+
+      protected abstract <K> Future<?> perform(Cache<K, Object> cache, K key);
+
+      protected abstract boolean replicates();
    }
 
    private static class XSiteStateProviderControl extends XSiteProviderDelegator {
@@ -883,19 +753,19 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
          super.startStateTransfer(siteName, requestor, minTopologyId);
       }
 
-      public final void await() throws TimeoutException, InterruptedException {
-         checkPoint.awaitStrict("before-start", 30, TimeUnit.SECONDS);
-      }
-
-      public final void trigger() {
-         checkPoint.trigger("await-start");
-      }
-
-      public static XSiteStateProviderControl replaceInCache(Cache<?, ?> cache) {
+      static XSiteStateProviderControl replaceInCache(Cache<?, ?> cache) {
          XSiteStateProvider current = extractComponent(cache, XSiteStateProvider.class);
          XSiteStateProviderControl control = new XSiteStateProviderControl(current);
          replaceComponent(cache, XSiteStateProvider.class, control, true);
          return control;
+      }
+
+      final void await() throws TimeoutException, InterruptedException {
+         checkPoint.awaitStrict("before-start", 30, TimeUnit.SECONDS);
+      }
+
+      final void trigger() {
+         checkPoint.trigger("await-start");
       }
    }
 
@@ -903,7 +773,7 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
 
       private final BackupListener listener;
 
-      public BackupReceiverRepositoryWrapper(BackupReceiverRepository delegate, BackupListener listener) {
+      BackupReceiverRepositoryWrapper(BackupReceiverRepository delegate, BackupListener listener) {
          super(delegate);
          if (listener == null) {
             throw new NullPointerException("Listener must not be null.");
@@ -936,29 +806,28 @@ public abstract class BaseStateTransferTest extends AbstractTwoSitesTest {
          };
       }
 
-      public static BackupReceiverRepositoryWrapper replaceInCache(CacheContainer cacheContainer, BackupListener listener) {
+      static void replaceInCache(CacheContainer cacheContainer, BackupListener listener) {
          BackupReceiverRepository delegate = extractGlobalComponent(cacheContainer, BackupReceiverRepository.class);
          BackupReceiverRepositoryWrapper wrapper = new BackupReceiverRepositoryWrapper(delegate, listener);
          replaceComponent(cacheContainer, BackupReceiverRepository.class, wrapper, true);
-         return wrapper;
       }
    }
 
    private static abstract class BackupListener {
 
-      public void beforeCommand(VisitableCommand command) throws Exception {
+      void beforeCommand(VisitableCommand command) throws Exception {
          //no-op by default
       }
 
-      public void afterCommand(VisitableCommand command) throws Exception {
+      void afterCommand(VisitableCommand command) {
          //no-op by default
       }
 
-      public void beforeState(XSiteStatePushCommand command) throws Exception {
+      void beforeState(XSiteStatePushCommand command) throws Exception {
          //no-op by default
       }
 
-      public void afterState(XSiteStatePushCommand command) throws Exception {
+      void afterState(XSiteStatePushCommand command) {
          //no-op by default
       }
 

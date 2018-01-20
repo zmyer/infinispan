@@ -1,12 +1,13 @@
 package org.infinispan.interceptors.totalorder;
 
+import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.interceptors.InvocationExceptionFunction;
 import org.infinispan.interceptors.impl.BaseStateTransferInterceptor;
-import org.infinispan.remoting.RemoteException;
+import org.infinispan.statetransfer.OutdatedTopologyException;
 import org.infinispan.transaction.impl.RemoteTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -44,7 +45,7 @@ public class TotalOrderStateTransferInterceptor extends BaseStateTransferInterce
             log.debugf("Transaction %s delivered in new topology Id. Discard it because it should be retransmitted",
                        ctx.getGlobalTransaction().globalId());
          }
-         throw new RetryPrepareException();
+         throw OutdatedTopologyException.INSTANCE;
       } else if (command.getTopologyId() > topologyId) {
          throw new IllegalStateException("This should never happen");
       }
@@ -65,12 +66,13 @@ public class TotalOrderStateTransferInterceptor extends BaseStateTransferInterce
 
    private Object handleLocalPrepareReturn(InvocationContext ctx, VisitableCommand command, Throwable t)
          throws Throwable {
+      assert t != null;
       // If we receive a RetryPrepareException it was because the prepare was delivered during a state transfer.
       // Remember that the REBALANCE_START and CH_UPDATE are totally ordered with the prepares and the
       // prepares are unblocked after the rebalance has finished.
       boolean needsToPrepare = needsToRePrepare(t);
       PrepareCommand prepareCommand = (PrepareCommand) command;
-      if (log.isDebugEnabled()) {
+      if (trace) {
          log.tracef("Exception caught while preparing transaction %s (cause = %s). Needs to retransmit? %s",
                prepareCommand.getGlobalTransaction().globalId(), t.getCause(), needsToPrepare);
       }
@@ -78,14 +80,23 @@ public class TotalOrderStateTransferInterceptor extends BaseStateTransferInterce
       if (!needsToPrepare) {
          throw t;
       } else {
-         logRetry(command);
-         prepareCommand.setTopologyId(currentTopologyId());
+         int newTopologyId = currentTopologyId();
+         logRetry(newTopologyId, (TopologyAffectedCommand) command);
+         prepareCommand.setTopologyId(newTopologyId);
          return invokeNextAndExceptionally(ctx, command, handleLocalPrepareReturn);
       }
    }
 
    private boolean needsToRePrepare(Throwable throwable) {
-      return throwable instanceof RemoteException && throwable.getCause() instanceof RetryPrepareException;
+      return throwable instanceof OutdatedTopologyException;
+   }
+
+   @Override
+   protected Object handleDefault(InvocationContext ctx, VisitableCommand command) throws Throwable {
+      if (command instanceof TopologyAffectedCommand) {
+         ((TopologyAffectedCommand) command).setTopologyId(currentTopologyId());
+      }
+      return invokeNext(ctx, command);
    }
 
    @Override

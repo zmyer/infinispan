@@ -3,12 +3,12 @@ package org.infinispan.marshall;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertTrue;
 
-import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.marshall.WrappedBytes;
-import org.infinispan.compat.TypeConverter;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.encoding.DataConversion;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.TestingUtil;
@@ -35,10 +35,11 @@ public class MarshalledValuesFineGrainedTest extends AbstractInfinispanTest {
 
    public void testStoreAsBinaryOnBoth() {
       ConfigurationBuilder c = new ConfigurationBuilder();
-      c.storeAsBinary().enable().build();
+      c.memory().storageType(StorageType.BINARY).build();
       ecm = TestCacheManagerFactory.createCacheManager(c);
       ecm.getCache().put(key, value);
-      TypeConverter converter = ecm.getCache().getAdvancedCache().getComponentRegistry().getComponent(TypeConverter.class);
+      DataConversion keyDataConversion = ecm.getCache().getAdvancedCache().getKeyDataConversion();
+      DataConversion valueDataConversion = ecm.getCache().getAdvancedCache().getValueDataConversion();
 
       DataContainer<?, ?> dc = ecm.getCache().getAdvancedCache().getDataContainer();
 
@@ -47,9 +48,9 @@ public class MarshalledValuesFineGrainedTest extends AbstractInfinispanTest {
       Object value = entry.getValue();
 
       assertTrue(key instanceof WrappedBytes);
-      assertEquals(converter.unboxKey(key), this.key);
+      assertEquals(keyDataConversion.fromStorage(key), this.key);
 
       assertTrue(value instanceof WrappedBytes);
-      assertEquals(converter.unboxValue(value), this.value);
+      assertEquals(valueDataConversion.fromStorage(value), this.value);
    }
 }

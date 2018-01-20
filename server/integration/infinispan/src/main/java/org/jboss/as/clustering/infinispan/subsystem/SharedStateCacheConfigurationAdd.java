@@ -26,6 +26,11 @@ import java.util.List;
 
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.PartitionHandlingConfigurationBuilder;
+import org.infinispan.conflict.EntryMergePolicy;
+import org.infinispan.conflict.MergePolicy;
+import org.infinispan.partitionhandling.PartitionHandling;
+import org.jboss.as.clustering.infinispan.conflict.DeployedMergePolicy;
 import org.jboss.as.controller.OperationContext;
 import org.jboss.as.controller.OperationFailedException;
 import org.jboss.dmr.ModelNode;
@@ -42,7 +47,7 @@ public abstract class SharedStateCacheConfigurationAdd extends ClusteredCacheCon
 
     @Override
     void processModelNode(OperationContext context, String containerName, ModelNode cache, ConfigurationBuilder builder, List<Dependency<?>> dependencies)
-            throws OperationFailedException{
+            throws OperationFailedException {
 
         // process the basic clustered configuration
         super.processModelNode(context, containerName, cache, builder, dependencies);
@@ -65,9 +70,17 @@ public abstract class SharedStateCacheConfigurationAdd extends ClusteredCacheCon
        if (cache.hasDefined(ModelKeys.PARTITION_HANDLING) && cache.get(ModelKeys.PARTITION_HANDLING, ModelKeys.PARTITION_HANDLING_NAME).isDefined()) {
           ModelNode partitionHandling = cache.get(ModelKeys.PARTITION_HANDLING, ModelKeys.PARTITION_HANDLING_NAME);
 
-          final boolean enabled = PartitionHandlingConfigurationResource.ENABLED.resolveModelAttribute(context, partitionHandling).asBoolean();
+          PartitionHandlingConfigurationBuilder phBuilder = builder.clustering().partitionHandling();
+          phBuilder.enabled(PartitionHandlingConfigurationResource.ENABLED.resolveModelAttribute(context, partitionHandling).asBoolean());
 
-          builder.clustering().partitionHandling().enabled(enabled);
+          String phType = PartitionHandlingConfigurationResource.WHEN_SPLIT.resolveModelAttribute(context, partitionHandling).asString();
+          if (phType != null)
+            phBuilder.whenSplit(PartitionHandling.valueOf(phType));
+
+          String policyClassName = PartitionHandlingConfigurationResource.MERGE_POLICY.resolveModelAttribute(context, partitionHandling).asString();
+          MergePolicy mergePolicy = MergePolicy.fromString(policyClassName);
+          EntryMergePolicy policy = mergePolicy != MergePolicy.CUSTOM ? mergePolicy : new DeployedMergePolicy(policyClassName);
+          phBuilder.mergePolicy(policy);
        }
     }
 }

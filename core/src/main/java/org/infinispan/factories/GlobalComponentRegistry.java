@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.management.MBeanServer;
@@ -21,21 +22,25 @@ import org.infinispan.commons.util.uberjar.ManifestUberJarDuplicatedJarsWarner;
 import org.infinispan.commons.util.uberjar.UberJarDuplicatedJarsWarner;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.ShutdownHookBehavior;
+import org.infinispan.conflict.EntryMergePolicyFactoryRegistry;
 import org.infinispan.factories.annotations.SurvivesRestarts;
 import org.infinispan.factories.components.ComponentMetadataRepo;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.globalstate.GlobalConfigurationManager;
 import org.infinispan.jmx.CacheManagerJmxRegistration;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.manager.EmbeddedCacheManagerStartupException;
+import org.infinispan.marshall.core.EncoderRegistry;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifierImpl;
 import org.infinispan.persistence.factory.CacheStoreFactoryRegistry;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.registry.impl.InternalCacheRegistryImpl;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.stats.ClusterContainerStats;
 import org.infinispan.topology.ClusterTopologyManager;
 import org.infinispan.topology.LocalTopologyManager;
 import org.infinispan.util.ByteString;
@@ -84,7 +89,7 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
 
    final Collection<ModuleLifecycle> moduleLifecycles;
 
-   final ConcurrentMap<ByteString, ComponentRegistry> namedComponents = new ConcurrentHashMap<ByteString, ComponentRegistry>(4);
+   final ConcurrentMap<ByteString, ComponentRegistry> namedComponents = new ConcurrentHashMap<>(4);
 
    protected final WeakReference<ClassLoader> defaultClassLoader;
 
@@ -97,14 +102,14 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
                                   EmbeddedCacheManager cacheManager,
                                   Set<String> createdCaches) {
       ClassLoader configuredClassLoader = configuration.classLoader();
-      moduleLifecycles = moduleProperties.resolveModuleLifecycles(configuredClassLoader);
+      moduleLifecycles = ModuleProperties.resolveModuleLifecycles(configuredClassLoader);
 
       componentMetadataRepo = new ComponentMetadataRepo();
 
       // Load up the component metadata
-      componentMetadataRepo.initialize(moduleProperties.getModuleMetadataFiles(configuredClassLoader), configuredClassLoader);
+      componentMetadataRepo.initialize(ModuleProperties.getModuleMetadataFiles(configuredClassLoader), configuredClassLoader);
 
-      defaultClassLoader = new WeakReference<ClassLoader>(registerDefaultClassLoader(configuredClassLoader));
+      defaultClassLoader = new WeakReference<>(registerDefaultClassLoader(configuredClassLoader));
 
       try {
          // this order is important ...
@@ -117,6 +122,7 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
          registerComponent(new CacheManagerNotifierImpl(), CacheManagerNotifier.class);
          registerComponent(new InternalCacheRegistryImpl(), InternalCacheRegistry.class);
          registerComponent(new CacheStoreFactoryRegistry(), CacheStoreFactoryRegistry.class);
+         registerComponent(new EntryMergePolicyFactoryRegistry(), EntryMergePolicyFactoryRegistry.class);
          registerComponent(new GlobalXSiteAdminOperations(), GlobalXSiteAdminOperations.class);
 
          moduleProperties.loadModuleCommandHandlers(configuredClassLoader);
@@ -124,8 +130,7 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
          if (factories != null && !factories.isEmpty())
             registerNonVolatileComponent(factories, KnownComponentNames.MODULE_COMMAND_FACTORIES);
          else
-            registerNonVolatileComponent(
-                  Collections.<Object, Object>emptyMap(), KnownComponentNames.MODULE_COMMAND_FACTORIES);
+            registerNonVolatileComponent(Collections.emptyMap(), KnownComponentNames.MODULE_COMMAND_FACTORIES);
          this.createdCaches = createdCaches;
 
          getOrCreateComponent(EventLogManager.class);
@@ -135,7 +140,11 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
          // These two should not be necessary, but they are here as a workaround for ISPN-2371
          getOrCreateComponent(LocalTopologyManager.class);
          getOrCreateComponent(ClusterTopologyManager.class);
+         getOrCreateComponent(ClusterContainerStats.class);
+         getOrCreateComponent(EncoderRegistry.class);
+         getOrCreateComponent(GlobalConfigurationManager.class);
 
+         getOrCreateComponent(ScheduledExecutorService.class, KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR);
       } catch (Exception e) {
          throw new CacheException("Unable to construct a GlobalComponentRegistry!", e);
       }
@@ -176,17 +185,14 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
 
       if (registerShutdownHook) {
          log.tracef("Registering a shutdown hook.  Configured behavior = %s", shutdownHookBehavior);
-         shutdownHook = new Thread() {
-            @Override
-            public void run() {
-               try {
-                  invokedFromShutdownHook = true;
-                  GlobalComponentRegistry.this.stop();
-               } finally {
-                  invokedFromShutdownHook = false;
-               }
+         shutdownHook = new Thread(() -> {
+            try {
+               invokedFromShutdownHook = true;
+               GlobalComponentRegistry.this.stop();
+            } finally {
+               invokedFromShutdownHook = false;
             }
-         };
+         });
 
          Runtime.getRuntime().addShutdownHook(shutdownHook);
       } else {
@@ -224,19 +230,25 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
    }
 
    @Override
-   public synchronized void start() {
+   public void start() {
       try {
-         // Do nothing if the global components are already running
-         if (!state.startAllowed())
-            return;
+         boolean needToNotify;
+         synchronized (this) {
+            // Do nothing if the global components are already running
+            if (!state.startAllowed())
+               return;
 
-         boolean needToNotify = state != ComponentStatus.RUNNING && state != ComponentStatus.INITIALIZING;
-         if (needToNotify) {
-            for (ModuleLifecycle l : moduleLifecycles) {
-               l.cacheManagerStarting(this, globalConfiguration);
+            needToNotify = state != ComponentStatus.RUNNING && state != ComponentStatus.INITIALIZING;
+            if (needToNotify) {
+               for (ModuleLifecycle l : moduleLifecycles) {
+                  if (log.isTraceEnabled()) {
+                     log.tracef("Invoking %s.cacheManagerStarting()", l);
+                  }
+                  l.cacheManagerStarting(this, globalConfiguration);
+               }
             }
+            super.start();
          }
-         super.start();
 
          if (versionLogged.compareAndSet(false, true)) {
             log.version(Version.printVersion());
@@ -244,9 +256,16 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
 
          if (needToNotify && state == ComponentStatus.RUNNING) {
             for (ModuleLifecycle l : moduleLifecycles) {
+               if (log.isTraceEnabled()) {
+                  log.tracef("Invoking %s.cacheManagerStarted()", l);
+               }
                l.cacheManagerStarted(this);
             }
          }
+
+         // Now invoke all post start events
+         super.postStart();
+
          warnAboutUberJarDuplicates();
       } catch (RuntimeException rte) {
          EmbeddedCacheManagerStartupException exception = new EmbeddedCacheManagerStartupException(rte);
@@ -261,13 +280,13 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
       }
    }
 
-   private final void warnAboutUberJarDuplicates() {
+   private void warnAboutUberJarDuplicates() {
       UberJarDuplicatedJarsWarner scanner = new ManifestUberJarDuplicatedJarsWarner();
       scanner.isClasspathCorrectAsync()
-              .thenAcceptAsync(isClasspathCorrect -> {
-                 if(!isClasspathCorrect)
-                    log.warnAboutUberJarDuplicates();
-              });
+            .thenAcceptAsync(isClasspathCorrect -> {
+               if(!isClasspathCorrect)
+                  log.warnAboutUberJarDuplicates();
+            });
    }
 
    @Override
@@ -275,6 +294,9 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
       boolean needToNotify = state == ComponentStatus.RUNNING || state == ComponentStatus.INITIALIZING;
       if (needToNotify) {
          for (ModuleLifecycle l : moduleLifecycles) {
+            if (log.isTraceEnabled()) {
+               log.tracef("Invoking %s.cacheManagerStopping()", l);
+            }
             l.cacheManagerStopping(this);
          }
       }
@@ -283,6 +305,9 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
 
       if (state == ComponentStatus.TERMINATED && needToNotify) {
          for (ModuleLifecycle l : moduleLifecycles) {
+            if (log.isTraceEnabled()) {
+               log.tracef("Invoking %s.cacheManagerStopped()", l);
+            }
             l.cacheManagerStopped(this);
          }
       }
@@ -291,6 +316,9 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
    public void notifyCacheStarted(String cacheName) {
       ComponentRegistry cr = getNamedComponentRegistry(cacheName);
       for (ModuleLifecycle l : moduleLifecycles) {
+         if (log.isTraceEnabled()) {
+            log.tracef("Invoking %s.cacheStarted()", l);
+         }
          l.cacheStarted(cr, cacheName);
       }
    }

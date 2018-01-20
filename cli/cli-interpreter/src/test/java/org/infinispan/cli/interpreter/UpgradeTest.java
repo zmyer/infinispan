@@ -37,7 +37,6 @@ public class UpgradeTest extends AbstractInfinispanTest {
    private RemoteCacheManager sourceRemoteCacheManager;
    private RemoteCache<String, String> sourceRemoteCache;
    private RemoteCacheManager targetRemoteCacheManager;
-   private RemoteCache<String, String> targetRemoteCache;
 
    @BeforeClass
    public void setup() throws Exception {
@@ -65,7 +64,6 @@ public class UpgradeTest extends AbstractInfinispanTest {
             new org.infinispan.client.hotrod.configuration.ConfigurationBuilder()
                   .addServers("localhost:" + sourceServer.getPort()).build());
       targetRemoteCacheManager.start();
-      targetRemoteCache = targetRemoteCacheManager.getCache();
    }
 
    public void testSynchronization() throws Exception {
@@ -74,21 +72,16 @@ public class UpgradeTest extends AbstractInfinispanTest {
          String s = Character.toString(ch);
          sourceRemoteCache.put(s, s);
       }
-      Interpreter sourceInterpreter = getInterpreter(sourceContainer);
-
-      String sourceSessionId = sourceInterpreter.createSessionId(BasicCacheContainer.DEFAULT_CACHE_NAME);
-      Map<String, String> dumpKeysResult = sourceInterpreter.execute(sourceSessionId, "upgrade --dumpkeys --all;");
-      checkNoErrors(dumpKeysResult);
 
       Interpreter targetInterpreter = getInterpreter(targetContainer);
       String targetSessionId = targetInterpreter.createSessionId(BasicCacheContainer.DEFAULT_CACHE_NAME);
-      Map<String, String> synchronizeResult = targetInterpreter.execute(targetSessionId, "upgrade --synchronize=hotrod --all;");
+      Map<String, String> synchronizeResult = targetInterpreter.execute(targetSessionId, "upgrade --synchronize=hotrod;");
       checkNoErrors(synchronizeResult);
 
-      Map<String, String> disconnectResult = targetInterpreter.execute(targetSessionId, "upgrade --disconnectsource=hotrod --all;");
+      Map<String, String> disconnectResult = targetInterpreter.execute(targetSessionId, "upgrade --disconnectsource=hotrod;");
       checkNoErrors(disconnectResult);
 
-      assertEquals(sourceServerCache.size() - 1, targetServerCache.size());
+      assertEquals(sourceServerCache.size(), targetServerCache.size());
    }
 
    private Interpreter getInterpreter(EmbeddedCacheManager cm) {

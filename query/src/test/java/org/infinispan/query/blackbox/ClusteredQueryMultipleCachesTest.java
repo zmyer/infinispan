@@ -23,17 +23,17 @@ public class ClusteredQueryMultipleCachesTest extends ClusteredQueryTest {
    @Override
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder cacheCfg = getDefaultClusteredCacheConfig(getCacheMode(), false);
-      cacheCfg.indexing().index(Index.LOCAL)
+      cacheCfg.indexing().index(Index.PRIMARY_OWNER)
             .addIndexedEntity(Person.class)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("error_handler", "org.infinispan.query.helper.StaticTestingErrorHandler")
             .addProperty("lucene_version", "LUCENE_CURRENT");
-      enhanceConfig(cacheCfg);
       List<List<Cache<String, Person>>> caches = createClusteredCaches(2, cacheCfg, "cacheA", "cacheB");
       cacheAMachine1 = caches.get(0).get(0);
       cacheAMachine2 = caches.get(1).get(0);
       cacheBMachine1 = caches.get(0).get(1);
       cacheBMachine2 = caches.get(1).get(1);
+      populateCache();
    }
 
    @Override

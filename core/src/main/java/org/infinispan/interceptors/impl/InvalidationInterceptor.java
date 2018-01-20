@@ -5,19 +5,20 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.FlagAffectedCommand;
-import org.infinispan.commands.ReplicableCommand;
+import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
@@ -38,10 +39,9 @@ import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
 import org.infinispan.jmx.annotations.Parameter;
-import org.infinispan.remoting.responses.Response;
-import org.infinispan.remoting.rpc.ResponseMode;
-import org.infinispan.remoting.rpc.RpcOptions;
-import org.infinispan.remoting.transport.Address;
+import org.infinispan.remoting.inboundhandler.DeliverOrder;
+import org.infinispan.remoting.transport.impl.VoidResponseCollector;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -62,20 +62,15 @@ import org.infinispan.util.logging.LogFactory;
 @MBean(objectName = "Invalidation", description = "Component responsible for invalidating entries on remote" +
       " caches when entries are written to locally.")
 public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxStatisticsExposer {
-   private final AtomicLong invalidations = new AtomicLong(0);
-   private CommandsFactory commandsFactory;
-   private boolean statisticsEnabled;
-
    private static final Log log = LogFactory.getLog(InvalidationInterceptor.class);
+
+   private final AtomicLong invalidations = new AtomicLong(0);
+   @Inject private CommandsFactory commandsFactory;
+   private boolean statisticsEnabled;
 
    @Override
    protected Log getLog() {
       return log;
-   }
-
-   @Inject
-   public void injectDependencies(CommandsFactory commandsFactory) {
-      this.commandsFactory = commandsFactory;
    }
 
    @Start
@@ -97,6 +92,16 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
    }
 
    @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return handleInvalidate(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+      return handleInvalidate(ctx, command, command.getKey());
+   }
+
+   @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
       return handleInvalidate(ctx, command, command.getKey());
    }
@@ -108,9 +113,11 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
          if (!isLocalModeForced(clearCommand)) {
             // just broadcast the clear command - this is simplest!
             if (rCtx.isOriginLocal()) {
-               CompletableFuture<Map<Address, Response>> remoteInvocation =
-                     rpcManager.invokeRemotelyAsync(null, clearCommand, getBroadcastRpcOptions(defaultSynchronous));
-               return asyncValue(remoteInvocation.thenApply(responses -> null));
+               clearCommand.setTopologyId(rpcManager.getTopologyId());
+               CompletionStage<Void> remoteInvocation =
+                     rpcManager.invokeCommandOnAll(clearCommand, VoidResponseCollector.ignoreLeavers(),
+                                                   rpcManager.getSyncRpcOptions());
+               return asyncValue(remoteInvocation);
             }
          }
          return rv;
@@ -145,7 +152,7 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
          if (remoteKeys == null) {
             return rv;
          }
-         CompletableFuture<Map<Address, Response>> remoteInvocation =
+         CompletionStage<Void> remoteInvocation =
                invalidateAcrossCluster(defaultSynchronous, remoteKeys.toArray(), txInvocationContext);
          return asyncValue(remoteInvocation.handle((responses, t) -> {
             if (t == null) {
@@ -165,7 +172,7 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
       return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
          Set<Object> affectedKeys = ctx.getAffectedKeys();
          log.tracef("On commit, send invalidate for keys: %s", affectedKeys);
-         CompletableFuture<Map<Address, Response>> remoteInvocation = null;
+         CompletionStage<Void> remoteInvocation = null;
          try {
             remoteInvocation = invalidateAcrossCluster(defaultSynchronous, affectedKeys.toArray(), rCtx);
             return asyncValue(remoteInvocation.handle((responses, t) -> {
@@ -197,9 +204,15 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
          LockControlCommand lockControlCommand = (LockControlCommand) rCommand;
          boolean sync = !lockControlCommand.isUnlock();
          ((LocalTxInvocationContext) rCtx).remoteLocksAcquired(rpcManager.getTransport().getMembers());
-         CompletableFuture<Map<Address, Response>> remoteInvocation =
-               rpcManager.invokeRemotelyAsync(null, lockControlCommand, getBroadcastRpcOptions(sync));
-         return asyncValue(remoteInvocation.thenApply(responses -> null));
+         if (sync) {
+            CompletionStage<Void> remoteInvocation =
+                  rpcManager.invokeCommandOnAll(lockControlCommand, VoidResponseCollector.ignoreLeavers(),
+                                                rpcManager.getSyncRpcOptions());
+            return asyncValue(remoteInvocation);
+         } else {
+            rpcManager.sendToAll(lockControlCommand, DeliverOrder.PER_SENDER);
+            return null;
+         }
       });
    }
 
@@ -213,7 +226,7 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
          if (writeCommand.isSuccessful()) {
             if (keys != null && keys.length != 0) {
                if (!isLocalModeForced(writeCommand)) {
-                  CompletableFuture<Map<Address, Response>> remoteInvocation =
+                  CompletionStage<Void> remoteInvocation =
                         invalidateAcrossCluster(isSynchronous(writeCommand), keys, rCtx);
                   return asyncValue(remoteInvocation.thenApply(responses -> rv));
                }
@@ -249,7 +262,7 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
       boolean containsLocalModeFlag = false;
 
       InvalidationFilterVisitor(int maxSetSize) {
-         result = new HashSet<Object>(maxSetSize);
+         result = new HashSet<>(maxSetSize);
       }
 
       private void processCommand(FlagAffectedCommand command) {
@@ -279,15 +292,16 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
       }
    }
 
-   private CompletableFuture<Map<Address, Response>> invalidateAcrossCluster(boolean synchronous, Object[] keys,
-                                                                             InvocationContext ctx) throws Throwable {
+   private CompletionStage<Void> invalidateAcrossCluster(boolean synchronous, Object[] keys,
+                                                         InvocationContext ctx) throws Throwable {
       // increment invalidations counter if statistics maintained
       incrementInvalidations();
       final InvalidateCommand invalidateCommand = commandsFactory.buildInvalidateCommand(EnumUtil.EMPTY_BIT_SET, keys);
+      invalidateCommand.setTopologyId(rpcManager.getTopologyId());
       if (log.isDebugEnabled())
          log.debug("Cache [" + rpcManager.getAddress() + "] replicating " + invalidateCommand);
 
-      ReplicableCommand command = invalidateCommand;
+      TopologyAffectedCommand command = invalidateCommand;
       if (ctx.isInTxScope()) {
          TxInvocationContext txCtx = (TxInvocationContext) ctx;
          // A Prepare command containing the invalidation command in its 'modifications' list is sent to the remote nodes
@@ -296,13 +310,14 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
          // If the cache uses 2PC it's possible that the remotes will commit the invalidation and the originator rolls back,
          // but this does not impact consistency and the speed benefit is worth it.
          command = commandsFactory.buildPrepareCommand(txCtx.getGlobalTransaction(), Collections.singletonList(invalidateCommand), true);
+         command.setTopologyId(invalidateCommand.getTopologyId());
       }
-      return rpcManager.invokeRemotelyAsync(null, command, getBroadcastRpcOptions(synchronous));
-   }
-
-   private RpcOptions getBroadcastRpcOptions(boolean synchronous) {
-      return rpcManager.getRpcOptionsBuilder(
-            synchronous ? ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS : ResponseMode.ASYNCHRONOUS).build();
+      if (synchronous) {
+         return rpcManager.invokeCommandOnAll(command, VoidResponseCollector.ignoreLeavers(), rpcManager.getSyncRpcOptions());
+      } else {
+         rpcManager.sendToAll(command, DeliverOrder.NONE);
+         return CompletableFutures.completedNull();
+      }
    }
 
    private void incrementInvalidations() {

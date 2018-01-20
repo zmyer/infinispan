@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-server-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
+      <version>9.2.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -17,8 +17,13 @@
    <dependencies>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-core</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-codec-http</artifactId>
       </dependency>
 
       <dependency>
@@ -51,6 +56,10 @@
                   <Export-Package>
                      ${project.groupId}.server.websocket.*;version=${project.version};-split-package:=error
                   </Export-Package>
+                  <Include-Resources>
+                     {maven-resources},
+                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
+                  </Include-Resources>
                </instructions>
             </configuration>
          </plugin>

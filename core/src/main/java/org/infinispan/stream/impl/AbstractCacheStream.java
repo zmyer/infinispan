@@ -1,10 +1,17 @@
 package org.infinispan.stream.impl;
 
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.util.AbstractMap;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.PrimitiveIterator;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -22,26 +29,34 @@ import java.util.stream.Stream;
 
 import org.infinispan.CacheStream;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.equivalence.Equivalence;
-import org.infinispan.commons.equivalence.EquivalentHashSet;
+import org.infinispan.commons.marshall.AbstractExternalizer;
+import org.infinispan.commons.marshall.Ids;
+import org.infinispan.commons.util.ByRef;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.RangeSet;
+import org.infinispan.commons.util.SmallIntSet;
+import org.infinispan.commons.util.Util;
 import org.infinispan.commons.util.concurrent.ConcurrentHashSet;
-import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
-import org.infinispan.distribution.ch.impl.ReplicatedConsistentHash;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.statetransfer.StateTransferLock;
+import org.infinispan.stream.impl.intops.FlatMappingOperation;
 import org.infinispan.stream.impl.intops.IntermediateOperation;
 import org.infinispan.stream.impl.termop.SegmentRetryingOperation;
 import org.infinispan.stream.impl.termop.SingleRunOperation;
-import org.infinispan.stream.impl.termop.object.FlatMapIteratorOperation;
-import org.infinispan.stream.impl.termop.object.MapIteratorOperation;
-import org.infinispan.stream.impl.termop.object.NoMapIteratorOperation;
+import org.infinispan.topology.CacheTopology;
+import org.infinispan.util.KeyValuePair;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
+import org.jboss.marshalling.util.IdentityIntMap;
+import org.reactivestreams.Publisher;
+
+import io.reactivex.Flowable;
 
 /**
  * Abstract stream that provides all of the common functionality required for all types of Streams including the various
@@ -50,8 +65,6 @@ import org.infinispan.util.logging.LogFactory;
  * @param <S> The stream interface
  */
 public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 extends S> implements BaseStream<T, S> {
-   protected final Log log = LogFactory.getLog(getClass());
-
    protected final Queue<IntermediateOperation> intermediateOperations;
    protected final Address localAddress;
    protected final DistributionManager dm;
@@ -61,6 +74,8 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
    protected final Executor executor;
    protected final ComponentRegistry registry;
    protected final PartitionHandlingManager partition;
+   protected final KeyPartitioner keyPartitioner;
+   protected final StateTransferLock stateTransferLock;
 
    protected Runnable closeRunnable = null;
 
@@ -70,11 +85,11 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
    protected boolean rehashAware = true;
 
    protected Set<?> keysToFilter;
-   protected Set<Integer> segmentsToFilter;
+   protected IntSet segmentsToFilter;
 
    protected int distributedBatchSize;
 
-   protected CacheStream.SegmentCompletionListener segmentCompletionListener;
+   protected Consumer<Supplier<PrimitiveIterator.OfInt>> segmentCompletionListener;
 
    protected IteratorOperation iteratorOperation = IteratorOperation.NO_MAP;
 
@@ -94,6 +109,8 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       this.executor = executor;
       this.registry = registry;
       this.partition = registry.getComponent(PartitionHandlingManager.class);
+      this.keyPartitioner = registry.getComponent(KeyPartitioner.class);
+      this.stateTransferLock = registry.getComponent(StateTransferLock.class);
       intermediateOperations = new ArrayDeque<>();
    }
 
@@ -107,6 +124,8 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       this.executor = other.executor;
       this.registry = other.registry;
       this.partition = other.partition;
+      this.keyPartitioner = other.keyPartitioner;
+      this.stateTransferLock = other.stateTransferLock;
 
       this.closeRunnable = other.closeRunnable;
 
@@ -127,6 +146,8 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       this.timeout = other.timeout;
       this.timeoutUnit = other.timeoutUnit;
    }
+
+   protected abstract Log getLog();
 
    protected S2 addIntermediateOperation(IntermediateOperation<T, S, T, S> intermediateOperation) {
       intermediateOperation.handleInjection(registry);
@@ -178,7 +199,7 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       if (this.closeRunnable == null) {
          this.closeRunnable = closeHandler;
       } else {
-         this.closeRunnable = composeWithExceptions(this.closeRunnable, closeHandler);
+         this.closeRunnable = Util.composeWithExceptions(this.closeRunnable, closeHandler);
       }
       return unwrap();
    }
@@ -202,7 +223,7 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
 
    <R> R performOperation(Function<? super S2, ? extends R> function, ResultsAccumulator<R> remoteResults,
                           Predicate<? super R> earlyTerminatePredicate) {
-      ConsistentHash ch = dm.getConsistentHash();
+      ConsistentHash ch = dm.getWriteConsistentHash();
       TerminalOperation<R> op = new SingleRunOperation(intermediateOperations,
               supplierForSegments(ch, segmentsToFilter, null), function);
       Object id = csm.remoteStreamOperation(getParallelDistribution(), parallel, ch, segmentsToFilter, keysToFilter,
@@ -221,7 +242,7 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
             }
          }
 
-         log.tracef("Finished operation for id %s", id);
+         getLog().tracef("Finished operation for id %s", id);
 
          return remoteResults.currentValue;
       } finally {
@@ -231,10 +252,11 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
 
    <R> R performOperationRehashAware(Function<? super S2, ? extends R> function, boolean retryOnRehash,
                                      ResultsAccumulator<R> remoteResults, Predicate<? super R> earlyTerminatePredicate) {
-      Set<Integer> segmentsToProcess = segmentsToFilter;
+      IntSet segmentsToProcess = segmentsToFilter;
       TerminalOperation<R> op;
       do {
-         ConsistentHash ch = dm.getReadConsistentHash();
+         CacheTopology cacheTopology = dm.getCacheTopology();
+         ConsistentHash ch = cacheTopology.getReadConsistentHash();
          if (retryOnRehash) {
             op = new SegmentRetryingOperation(intermediateOperations, supplierForSegments(ch, segmentsToProcess,
                     null), function);
@@ -281,15 +303,22 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
             }
 
             if (!remoteResults.lostSegments.isEmpty()) {
-               segmentsToProcess = new HashSet<>(remoteResults.lostSegments);
+               segmentsToProcess = SmallIntSet.from(remoteResults.lostSegments);
                remoteResults.lostSegments.clear();
-               log.tracef("Found %s lost segments for identifier %s", segmentsToProcess, id);
+               getLog().tracef("Found %s lost segments for identifier %s", segmentsToProcess, id);
+               if (remoteResults.requiresNextTopology) {
+                  try {
+                     stateTransferLock.waitForTopology(cacheTopology.getTopologyId(), timeout, timeoutUnit);
+                  } catch (InterruptedException | java.util.concurrent.TimeoutException e) {
+                     throw new CacheException(e);
+                  }
+               }
             } else {
                // If we didn't lose any segments we don't need to process anymore
                if (segmentsToProcess != null) {
                   segmentsToProcess = null;
                }
-               log.tracef("Finished rehash aware operation for id %s", id);
+               getLog().tracef("Finished rehash aware operation for id %s", id);
             }
          } finally {
             csm.forgetOperation(id);
@@ -304,12 +333,13 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       final AtomicBoolean complete = new AtomicBoolean();
 
       ConsistentHash segmentInfoCH = dm.getReadConsistentHash();
-      KeyTrackingConsumer<Object, Object> results = new KeyTrackingConsumer<>(segmentInfoCH, (c) -> {},
-              c -> c, null);
-      Set<Integer> segmentsToProcess = segmentsToFilter == null ?
-              new ReplicatedConsistentHash.RangeSet(segmentInfoCH.getNumSegments()) : segmentsToFilter;
+      KeyTrackingConsumer<Object, Object> results = new KeyTrackingConsumer<>(keyPartitioner, segmentInfoCH.getNumSegments(), c -> {},
+            c -> c);
+      IntSet segmentsToProcess = segmentsToFilter == null ?
+              new RangeSet(segmentInfoCH.getNumSegments()) : segmentsToFilter;
       do {
-         ConsistentHash ch = dm.getReadConsistentHash();
+         CacheTopology cacheTopology = dm.getCacheTopology();
+         ConsistentHash ch = cacheTopology.getReadConsistentHash();
          boolean localRun = ch.getMembers().contains(localAddress);
          Set<Integer> segments;
          Set<Object> excludedKeys;
@@ -335,12 +365,12 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
                Collection<CacheEntry<Object, Object>> localValue = op.performOperationRehashAware(results);
                // TODO: we can do this more efficiently - this hampers performance during rehash
                if (dm.getReadConsistentHash().equals(ch)) {
-                  log.tracef("Found local values %s for id %s", localValue.size(), id);
+                  getLog().tracef("Found local values %s for id %s", localValue.size(), id);
                   results.onCompletion(null, segments, localValue);
                } else {
                   Set<Integer> ourSegments = ch.getPrimarySegmentsForOwner(localAddress);
                   ourSegments.retainAll(segmentsToProcess);
-                  log.tracef("CH changed - making %s segments suspect for identifier %s", ourSegments, id);
+                  getLog().tracef("CH changed - making %s segments suspect for identifier %s", ourSegments, id);
                   results.onSegmentsLost(ourSegments);
                   // We keep track of those keys so we don't fire them again
                   results.onIntermediateResult(null, localValue);
@@ -356,17 +386,29 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
                }
             }
             if (!results.lostSegments.isEmpty()) {
-               segmentsToProcess = new HashSet<>(results.lostSegments);
+               segmentsToProcess = SmallIntSet.from(results.lostSegments);
                results.lostSegments.clear();
-               log.tracef("Found %s lost segments for identifier %s", segmentsToProcess, id);
+               getLog().tracef("Found %s lost segments for identifier %s", segmentsToProcess, id);
+               if (results.requiresNextTopology) {
+                  try {
+                     stateTransferLock.waitForTopology(cacheTopology.getTopologyId() + 1, timeout, timeoutUnit);
+                     results.requiresNextTopology = false;
+                  } catch (InterruptedException | java.util.concurrent.TimeoutException e) {
+                     throw new CacheException(e);
+                  }
+               }
             } else {
-               log.tracef("Finished rehash aware operation for id %s", id);
+               getLog().tracef("Finished rehash aware operation for id %s", id);
                complete.set(true);
             }
          } finally {
             csm.forgetOperation(id);
          }
       } while (!complete.get());
+   }
+
+   protected boolean isPrimaryOwner(ConsistentHash ch, CacheEntry e) {
+      return localAddress.equals(ch.locatePrimaryOwnerForSegment(keyPartitioner.getSegment(e.getKey())));
    }
 
    static class AtomicReferenceArrayToMap<R> extends AbstractMap<Integer, R> {
@@ -419,58 +461,41 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
 
    class KeyTrackingConsumer<K, V> implements ClusterStreamManager.ResultsCallback<Collection<CacheEntry<K, Object>>>,
            KeyTrackingTerminalOperation.IntermediateCollector<Collection<CacheEntry<K, Object>>> {
-      final ConsistentHash ch;
+      final KeyPartitioner keyPartitioner;
       final Consumer<V> consumer;
       final Set<Integer> lostSegments = new ConcurrentHashSet<>();
       final Function<CacheEntry<K, Object>, V> valueFunction;
+      boolean requiresNextTopology;
 
       final AtomicReferenceArray<Set<K>> referenceArray;
 
-      final DistributedCacheStream.SegmentListenerNotifier listenerNotifier;
-
-      KeyTrackingConsumer(ConsistentHash ch, Consumer<V> consumer, Function<CacheEntry<K, Object>, V> valueFunction,
-              DistributedCacheStream.SegmentListenerNotifier completedSegments) {
-         this.ch = ch;
+      KeyTrackingConsumer(KeyPartitioner keyPartitioner, int numSegments, Consumer<V> consumer,
+                          Function<CacheEntry<K, Object>, V> valueFunction) {
+         this.keyPartitioner = keyPartitioner;
          this.consumer = consumer;
          this.valueFunction = valueFunction;
 
-         this.listenerNotifier = completedSegments;
-
-         this.referenceArray = new AtomicReferenceArray<>(ch.getNumSegments());
+         this.referenceArray = new AtomicReferenceArray<>(numSegments);
          for (int i = 0; i < referenceArray.length(); ++i) {
             // We only allow 1 request per id
-            referenceArray.set(i, new HashSet<K>());
+            referenceArray.set(i, new HashSet<>());
          }
       }
 
       @Override
       public Set<Integer> onIntermediateResult(Address address, Collection<CacheEntry<K, Object>> results) {
          if (results != null) {
-            log.tracef("Response from %s with results %s", address, results.size());
-            Set<Integer> segmentsCompleted;
-            CacheEntry<K, Object>[] lastCompleted = new CacheEntry[1];
-            if (listenerNotifier != null) {
-               segmentsCompleted = new HashSet<>();
-            } else {
-               segmentsCompleted = null;
-            }
+            getLog().tracef("Response from %s with results %s", address, results.size());
             results.forEach(e -> {
                K key = e.getKey();
-               int segment = ch.getSegment(key);
+               int segment = keyPartitioner.getSegment(key);
                Set<K> keys = referenceArray.get(segment);
                // On completion we null this out first - thus we don't need to add
                if (keys != null) {
                   keys.add(key);
-               } else if (segmentsCompleted != null) {
-                  segmentsCompleted.add(segment);
-                  lastCompleted[0] = e;
                }
                consumer.accept(valueFunction.apply(e));
             });
-            if (lastCompleted[0] != null) {
-               listenerNotifier.addSegmentsForObject(valueFunction.apply(lastCompleted[0]), segmentsCompleted);
-            }
-            return segmentsCompleted;
          }
          return null;
       }
@@ -478,25 +503,13 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       @Override
       public void onCompletion(Address address, Set<Integer> completedSegments, Collection<CacheEntry<K, Object>> results) {
          if (!completedSegments.isEmpty()) {
-            log.tracef("Completing segments %s", completedSegments);
+            getLog().tracef("Completing segments %s", completedSegments);
             // We null this out first so intermediate results don't add for no reason
             completedSegments.forEach(s -> referenceArray.set(s, null));
          } else {
-            log.tracef("No segments to complete from %s", address);
+            getLog().tracef("No segments to complete from %s", address);
          }
-         Set<Integer> valueSegments = onIntermediateResult(address, results);
-         if (valueSegments != null) {
-            // We don't want to modify the completed segments as the caller may need it
-            Set<Integer> emptyCompletedSegments = new HashSet<>(completedSegments.size());
-            completedSegments.forEach(s -> {
-               // First complete the segments that didn't have any keys - completed segments have to wait
-               // until the user retrieves them
-               if (!valueSegments.contains(s)) {
-                  emptyCompletedSegments.add(s);
-               }
-            });
-            listenerNotifier.completeSegmentsNoResults(emptyCompletedSegments);
-         }
+         onIntermediateResult(address, results);
       }
 
       @Override
@@ -505,6 +518,11 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
          for (Integer segment : segments) {
             lostSegments.add(segment);
          }
+      }
+
+      @Override
+      public void requestFutureTopology() {
+        requiresNextTopology = true;
       }
 
       @Override
@@ -517,6 +535,7 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       private final BinaryOperator<R> binaryOperator;
       private final Set<Integer> lostSegments = new ConcurrentHashSet<>();
       R currentValue;
+      boolean requiresNextTopology;
 
       ResultsAccumulator(BinaryOperator<R> binaryOperator) {
          this.binaryOperator = binaryOperator;
@@ -548,40 +567,15 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
             lostSegments.add(segment);
          }
       }
-   }
-
-   static class CollectionConsumer<R> implements ClusterStreamManager.ResultsCallback<Collection<R>>,
-           KeyTrackingTerminalOperation.IntermediateCollector<Collection<R>> {
-      private final Consumer<R> consumer;
-
-      CollectionConsumer(Consumer<R> consumer) {
-         this.consumer = consumer;
-      }
 
       @Override
-      public Set<Integer> onIntermediateResult(Address address, Collection<R> results) {
-         if (results != null) {
-            results.forEach(consumer);
-         }
-         return null;
-      }
-
-      @Override
-      public void onCompletion(Address address, Set<Integer> completedSegments, Collection<R> results) {
-         onIntermediateResult(address, results);
-      }
-
-      @Override
-      public void onSegmentsLost(Set<Integer> segments) {
-      }
-
-      @Override
-      public void sendDataResonse(Collection<R> response) {
-         onIntermediateResult(null, response);
+      public void requestFutureTopology() {
+         requiresNextTopology = true;
       }
    }
 
-   protected Supplier<Stream<CacheEntry>> supplierForSegments(ConsistentHash ch, Set<Integer> targetSegments,
+
+   protected Supplier<Stream<CacheEntry>> supplierForSegments(ConsistentHash ch, IntSet targetSegments,
                                                               Set<Object> excludedKeys) {
       return supplierForSegments(ch, targetSegments, excludedKeys, true);
    }
@@ -596,14 +590,14 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
     * @param usePrimary determines whether we should utilize the primary segments or not.
     * @return
     */
-   protected Supplier<Stream<CacheEntry>> supplierForSegments(ConsistentHash ch, Set<Integer> targetSegments,
+   protected Supplier<Stream<CacheEntry>> supplierForSegments(ConsistentHash ch, IntSet targetSegments,
                                                               Set<Object> excludedKeys, boolean usePrimary) {
       if (!ch.getMembers().contains(localAddress)) {
          return Stream::empty;
       }
-      Set<Integer> segments;
+      IntSet segments;
       if (usePrimary) {
-         segments = ch.getPrimarySegmentsForOwner(localAddress);
+         segments = SmallIntSet.from(ch.getPrimarySegmentsForOwner(localAddress));
          if (targetSegments != null) {
             segments.retainAll(targetSegments);
          }
@@ -612,7 +606,7 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       }
 
       return () -> {
-         if (segments.isEmpty()) {
+         if (segments != null && segments.isEmpty()) {
             return Stream.empty();
          }
 
@@ -620,7 +614,7 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
          if (keysToFilter != null) {
             stream = stream.filterKeys(keysToFilter);
          }
-         if (excludedKeys != null) {
+         if (excludedKeys != null && !excludedKeys.isEmpty()) {
             return stream.filter(e -> !excludedKeys.contains(e.getKey()));
          }
          // Make sure the stream is set to be parallel or not
@@ -628,72 +622,118 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
       };
    }
 
-   /**
-    * Given two Runnables, return a Runnable that executes both in sequence,
-    * even if the first throws an exception, and if both throw exceptions, add
-    * any exceptions thrown by the second as suppressed exceptions of the first.
-    */
-   static Runnable composeWithExceptions(Runnable a, Runnable b) {
-      return () -> {
-         try {
-            a.run();
-         }
-         catch (Throwable e1) {
-            try {
-               b.run();
-            }
-            catch (Throwable e2) {
-               try {
-                  e1.addSuppressed(e2);
-               } catch (Throwable ignore) {}
-            }
-            throw e1;
-         }
-         b.run();
-      };
-   }
-
    enum IteratorOperation {
       NO_MAP {
          @Override
-         public KeyTrackingTerminalOperation getOperation(Iterable<IntermediateOperation> intermediateOperations,
-                                                          Supplier<Stream<CacheEntry>> supplier, int batchSize) {
-            return new NoMapIteratorOperation<>(intermediateOperations, supplier, batchSize);
+         public Iterable<IntermediateOperation> prepareForIteration(Iterable<IntermediateOperation> intermediateOperations) {
+            return intermediateOperations;
          }
 
          @Override
-         public <K, V, R> Function<CacheEntry<K, V>, R> getFunction() {
-            return e -> (R) e;
+         public <V> Publisher<V> handlePublisher(Publisher<V> publisher, Consumer<Object> keyConsumer) {
+            // If no map operation then we have CacheEntry instances
+            return Flowable.fromPublisher(publisher).doOnNext(e -> keyConsumer.accept(((CacheEntry) e).getKey()));
          }
       },
       MAP {
-         @Override
-         public KeyTrackingTerminalOperation getOperation(Iterable<IntermediateOperation> intermediateOperations,
-                                                          Supplier<Stream<CacheEntry>> supplier, int batchSize) {
-            return new MapIteratorOperation<>(intermediateOperations, supplier, batchSize);
+         /**
+          * Function to be used to unwrap an entry. If this is null, then no wrapping is required
+          * @return a function to apply
+          */
+         public <In, Out> Function<In, Out> getFunction() {
+            // Map should be wrap entry in KVP<Key, Result(s)> so we have to unwrap those result(s)
+            return e -> ((KeyValuePair<?, Out>) e).getValue();
+         }
+
+         public Iterable<IntermediateOperation> prepareForIteration(Iterable<IntermediateOperation> intermediateOperations) {
+            return Collections.singletonList(new MapHandler<>(intermediateOperations));
          }
       },
       FLAT_MAP {
-         @Override
-         public KeyTrackingTerminalOperation getOperation(Iterable<IntermediateOperation> intermediateOperations,
-                                                          Supplier<Stream<CacheEntry>> supplier, int batchSize) {
-            return new FlatMapIteratorOperation<>(intermediateOperations, supplier, batchSize);
+
+         public Iterable<IntermediateOperation> prepareForIteration(Iterable<IntermediateOperation> intermediateOperations) {
+            return Collections.singletonList(new FlatMapHandler<>(intermediateOperations));
          }
 
-         @Override
-         public <V, V2> Consumer<V2> wrapConsumer(Consumer<V> consumer) {
-            return new CollectionDecomposerConsumer(consumer);
-         }
+         public <V> Publisher<V> handlePublisher(Publisher<V> publisher, Consumer<Object> keyConsumer) {
+            return flowableFromPublisher(publisher, keyConsumer)
+                  .flatMap(e -> Flowable.fromIterable(((KeyValuePair<?, Iterable>) e).getValue()));
+         };
       };
 
-      public abstract KeyTrackingTerminalOperation getOperation(Iterable<IntermediateOperation> intermediateOperations,
-                                                       Supplier<Stream<CacheEntry>> supplier, int batchSize);
-
-      public <K, V, R> Function<CacheEntry<K, V>, R> getFunction() {
-         return e -> (R) e.getValue();
+      public <In, Out> Function<In, Out> getFunction() {
+         // There is no unwrapping required as we just have the CacheEntry directly
+         return null;
       }
 
-      public <V, V2> Consumer<V2> wrapConsumer(Consumer<V> consumer) { return (Consumer<V2>) consumer; }
+      public abstract Iterable<IntermediateOperation> prepareForIteration(Iterable<IntermediateOperation> intermediateOperations);
+
+      public <V> Publisher<V> handlePublisher(Publisher<V> publisher, Consumer<Object> keyConsumer) {
+         return flowableFromPublisher(publisher, keyConsumer);
+      };
+
+      protected <V> Flowable<V> flowableFromPublisher(Publisher<V> publisher, Consumer<Object> keyConsumer) {
+         // Map and FlatMap both wrap in KVP<Key, Result(s)> so we have to expose the key
+         return Flowable.fromPublisher(publisher)
+               .doOnNext(e -> keyConsumer.accept(((KeyValuePair) e).getKey()));
+      }
+   }
+
+   static class MapHandler<OutputType, OutputStream extends BaseStream<OutputType, OutputStream>>
+         implements IntermediateOperation<CacheEntry, Stream<CacheEntry>, OutputType, OutputStream> {
+      final Iterable<IntermediateOperation> intermediateOperations;
+
+      MapHandler(Iterable<IntermediateOperation> intermediateOperations) {
+         this.intermediateOperations = intermediateOperations;
+      }
+
+      @Override
+      public OutputStream perform(Stream<CacheEntry> cacheEntryStream) {
+         ByRef<Object> key = new ByRef<>(null);
+         BaseStream stream = cacheEntryStream.peek(e -> key.set(e.getKey()));
+         for (IntermediateOperation intermediateOperation : intermediateOperations) {
+            stream = intermediateOperation.perform(stream);
+         }
+         // We assume the resulting stream contains objects (this is because we also box all primitives). If this
+         // changes we need to change this code to handle primitives as well (most likely add MAP_DOUBLE etc.)
+         return (OutputStream) ((Stream) stream).map(r -> new KeyValuePair<>(key.get(), r));
+      }
+   }
+
+   static class FlatMapHandler<OutputType, OutputStream extends BaseStream<OutputType, OutputStream>>
+         extends MapHandler<OutputType, OutputStream> {
+      FlatMapHandler(Iterable<IntermediateOperation> intermediateOperations) {
+         super(intermediateOperations);
+      }
+
+      @Override
+      public OutputStream perform(Stream<CacheEntry> cacheEntryStream) {
+         ByRef<Object> key = new ByRef<>(null);
+         BaseStream stream = cacheEntryStream.peek(e -> key.set(e.getKey()));
+
+         Iterator<IntermediateOperation> iter = intermediateOperations.iterator();
+         while (iter.hasNext()) {
+            IntermediateOperation intermediateOperation = iter.next();
+            if (intermediateOperation instanceof FlatMappingOperation) {
+               // We have to copy this over to list as we have to iterate upon it for every entry
+               List<IntermediateOperation> remainingOps = new ArrayList<>();
+               iter.forEachRemaining(remainingOps::add);
+               // If we ran into our first flat map operation - then we have to create a flattened stream
+               // where instead of having multiple elements in the stream we have 1 that is composed of
+               // a KeyValuePair that has the key pointing to the resulting flatMap stream
+               Stream<BaseStream> wrappedStream = ((FlatMappingOperation) intermediateOperation).map(stream);
+               stream = wrappedStream.map(s -> {
+                  for (IntermediateOperation innerIntOp : remainingOps) {
+                     s = innerIntOp.perform(s);
+                  }
+                  return new KeyValuePair<>(key.get(), ((Stream) s).collect(Collectors.toList()));
+               });
+            } else {
+               stream = intermediateOperation.perform(stream);
+            }
+         }
+         return (OutputStream) stream;
+      }
    }
 
    static class CollectionDecomposerConsumer<E> implements Consumer<Iterable<E>> {
@@ -715,15 +755,15 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
     * throw exceptions, add any exceptions thrown by the second as suppressed
     * exceptions of the first.
     */
-   protected static CacheStream.SegmentCompletionListener composeWithExceptions(CacheStream.SegmentCompletionListener a,
-           CacheStream.SegmentCompletionListener b) {
+   protected static Consumer<Supplier<PrimitiveIterator.OfInt>> composeWithExceptions(Consumer<Supplier<PrimitiveIterator.OfInt>> a,
+         Consumer<Supplier<PrimitiveIterator.OfInt>> b) {
       return (segments) -> {
          try {
-            a.segmentCompleted(segments);
+            a.accept(segments);
          }
          catch (Throwable e1) {
             try {
-               b.segmentCompleted(segments);
+               b.accept(segments);
             }
             catch (Throwable e2) {
                try {
@@ -732,7 +772,55 @@ public abstract class AbstractCacheStream<T, S extends BaseStream<T, S>, S2 exte
             }
             throw e1;
          }
-         b.segmentCompleted(segments);
+         b.accept(segments);
       };
+   }
+
+   public static class MapOpsExternalizer extends AbstractExternalizer<IntermediateOperation> {
+      static final int MAP = 0;
+      static final int FLATMAP = 1;
+      private final IdentityIntMap<Class<?>> numbers = new IdentityIntMap<>(2);
+
+      public MapOpsExternalizer() {
+         numbers.put(MapHandler.class, MAP);
+         numbers.put(FlatMapHandler.class, FLATMAP);
+      }
+
+      @Override
+      public Integer getId() {
+         return Ids.STREAM_MAP_OPS;
+      }
+
+      @Override
+      public Set<Class<? extends IntermediateOperation>> getTypeClasses() {
+         return Util.asSet(MapHandler.class, FlatMapHandler.class);
+      }
+
+      @Override
+      public void writeObject(ObjectOutput output, IntermediateOperation object) throws IOException {
+         int number = numbers.get(object.getClass(), -1);
+         output.write(number);
+         switch (number) {
+            case MAP:
+            case FLATMAP:
+               output.writeObject(((MapHandler) object).intermediateOperations);
+               break;
+            default:
+               throw new IllegalArgumentException("Unsupported number " + number + " found for class: " + object.getClass());
+         }
+      }
+
+      @Override
+      public IntermediateOperation readObject(ObjectInput input) throws IOException, ClassNotFoundException {
+         int number = input.readUnsignedByte();
+         switch (number) {
+            case MAP:
+               return new MapHandler<>((Iterable<IntermediateOperation>) input.readObject());
+            case FLATMAP:
+               return new FlatMapHandler<>((Iterable<IntermediateOperation>) input.readObject());
+            default:
+               throw new IllegalArgumentException("Unsupported number " + number + " found!");
+         }
+      }
    }
 }

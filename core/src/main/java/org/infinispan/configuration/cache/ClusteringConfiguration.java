@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit;
 import org.infinispan.commons.configuration.attributes.Attribute;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.commons.configuration.attributes.Matchable;
 
 
 /**
@@ -13,16 +14,21 @@ import org.infinispan.commons.configuration.attributes.AttributeSet;
  * @author pmuir
  *
  */
-public class ClusteringConfiguration {
+public class ClusteringConfiguration implements Matchable<ClusteringConfiguration> {
    public static final AttributeDefinition<CacheMode> CACHE_MODE = AttributeDefinition.builder("cacheMode",  CacheMode.LOCAL).immutable().build();
    public static final AttributeDefinition<Long> REMOTE_TIMEOUT =
          AttributeDefinition.builder("remoteTimeout", TimeUnit.SECONDS.toMillis(15)).build();
+   public static final AttributeDefinition<Integer> INVALIDATION_BATCH_SIZE = AttributeDefinition.builder("invalidationBatchSize",  128).immutable().build();
+   public static final AttributeDefinition<BiasAcquisition> BIAS_ACQUISITION = AttributeDefinition.builder("biasAcquisition", BiasAcquisition.ON_WRITE).immutable().build();
+   public static final AttributeDefinition<Long> BIAS_LIFESPAN = AttributeDefinition.builder("biasLifespan", TimeUnit.MINUTES.toMillis(5)).immutable().build();
 
    static AttributeSet attributeDefinitionSet() {
-      return new AttributeSet(ClusteringConfiguration.class, CACHE_MODE);
+      return new AttributeSet(ClusteringConfiguration.class, CACHE_MODE, REMOTE_TIMEOUT, INVALIDATION_BATCH_SIZE, BIAS_ACQUISITION, BIAS_LIFESPAN);
    }
 
    private final Attribute<CacheMode> cacheMode;
+   private final Attribute<Long> remoteTimeout;
+   private final Attribute<Integer> invalidationBatchSize;
    private final HashConfiguration hashConfiguration;
    private final L1Configuration l1Configuration;
    private final StateTransferConfiguration stateTransferConfiguration;
@@ -35,11 +41,19 @@ public class ClusteringConfiguration {
          PartitionHandlingConfiguration partitionHandlingStrategy) {
       this.attributes = attributes.checkProtection();
       this.cacheMode = attributes.attribute(CACHE_MODE);
+      this.remoteTimeout = attributes.attribute(REMOTE_TIMEOUT);
+      this.invalidationBatchSize = attributes.attribute(INVALIDATION_BATCH_SIZE);
       this.hashConfiguration = hashConfiguration;
       this.l1Configuration = l1Configuration;
       this.stateTransferConfiguration = stateTransferConfiguration;
       this.syncConfiguration = syncConfiguration;
       this.partitionHandlingConfiguration  = partitionHandlingStrategy;
+
+      // Expose the true value for users of attributes().attribute(REMOTE_TIMEOUT).get()
+      // and attributes().attribute(REMOTE_TIMEOUT).addListener()
+      syncConfiguration.attributes().attribute(SyncConfiguration.REPL_TIMEOUT)
+                       .addListener((attribute, oldValue) -> remoteTimeout.set(attribute.get()));
+      remoteTimeout.set(syncConfiguration.replTimeout());
    }
 
    /**
@@ -77,6 +91,27 @@ public class ClusteringConfiguration {
    }
 
    /**
+    * For scattered cache, the threshold after which batched invalidations are sent
+    */
+   public int invalidationBatchSize() {
+      return invalidationBatchSize.get();
+   }
+
+   /**
+    * For scattered cache, specifies if the nodes is allowed to cache the entry, serving reads locally.
+    */
+   public BiasAcquisition biasAcquisition() {
+      return attributes.attribute(BIAS_ACQUISITION).get();
+   }
+
+   /**
+    * For scattered cache, specifies how long is the node allowed to read the cached entry locally.
+    */
+   public long biasLifespan() {
+      return attributes.attribute(BIAS_LIFESPAN).get();
+   }
+
+   /**
     * Configure hash sub element
     */
    public HashConfiguration hash() {
@@ -109,6 +144,16 @@ public class ClusteringConfiguration {
 
    public AttributeSet attributes() {
       return attributes;
+   }
+
+   @Override
+   public boolean matches(ClusteringConfiguration other) {
+      return (attributes.matches(other.attributes) &&
+            hashConfiguration.matches(other.hashConfiguration) &&
+            l1Configuration.matches(other.l1Configuration) &&
+            partitionHandlingConfiguration.matches(other.partitionHandlingConfiguration) &&
+            stateTransferConfiguration.matches(other.stateTransferConfiguration) &&
+            syncConfiguration.matches(other.syncConfiguration));
    }
 
    @Override

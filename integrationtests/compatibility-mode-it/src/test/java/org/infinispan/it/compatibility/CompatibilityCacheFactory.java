@@ -3,6 +3,8 @@ package org.infinispan.it.compatibility;
 import static org.infinispan.client.hotrod.test.HotRodClientTestingUtil.killRemoteCacheManager;
 import static org.infinispan.client.hotrod.test.HotRodClientTestingUtil.killServers;
 import static org.infinispan.client.hotrod.test.HotRodClientTestingUtil.startHotRodServer;
+import static org.infinispan.server.core.test.ServerTestingUtil.findFreePort;
+import static org.infinispan.server.core.test.ServerTestingUtil.startProtocolServer;
 import static org.infinispan.server.memcached.test.MemcachedTestingUtil.killMemcachedClient;
 import static org.infinispan.server.memcached.test.MemcachedTestingUtil.killMemcachedServer;
 import static org.infinispan.server.memcached.test.MemcachedTestingUtil.startMemcachedTextServer;
@@ -18,15 +20,17 @@ import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
 import org.infinispan.commons.api.BasicCacheContainer;
-import org.infinispan.commons.api.Lifecycle;
-import org.infinispan.commons.equivalence.Equivalence;
+import org.infinispan.commons.dataconversion.Encoder;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.configuration.internal.PrivateGlobalConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.rest.NettyRestServer;
+import org.infinispan.marshall.core.EncoderRegistry;
+import org.infinispan.rest.RestServer;
 import org.infinispan.rest.configuration.RestServerConfigurationBuilder;
 import org.infinispan.server.hotrod.HotRodServer;
-import org.infinispan.server.hotrod.test.HotRodTestingUtil;
 import org.infinispan.server.memcached.MemcachedServer;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 
@@ -50,7 +54,7 @@ public class CompatibilityCacheFactory<K, V> {
    private EmbeddedCacheManager cacheManager;
    private HotRodServer hotrod;
    private RemoteCacheManager hotrodClient;
-   private Lifecycle rest;
+   private RestServer rest;
    private MemcachedServer memcached;
 
    private Cache<K, V> embeddedCache;
@@ -66,31 +70,38 @@ public class CompatibilityCacheFactory<K, V> {
    private final boolean l1Enable;
    private final boolean memcachedWithDecoder;
    private int restPort;
-   private Equivalence keyEquivalence = null;
-   private Equivalence valueEquivalence = null;
 
    CompatibilityCacheFactory(CacheMode cacheMode) {
       this(cacheMode, DEFAULT_NUM_OWNERS, false);
    }
 
    CompatibilityCacheFactory(CacheMode cacheMode, int numOwners, boolean l1Enable) {
-      this("", null, cacheMode, numOwners, l1Enable, null);
+      this("", null, cacheMode, numOwners, l1Enable, null, null);
+   }
+
+   CompatibilityCacheFactory(CacheMode cacheMode, int numOwners, boolean l1Enable, Encoder encoder) {
+      this("", null, cacheMode, numOwners, l1Enable, null, encoder);
    }
 
    CompatibilityCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode) {
-      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS);
+      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS, null);
    }
 
-   CompatibilityCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, int numOwners) {
-      this(cacheName, marshaller, cacheMode, numOwners, false, null);
+   CompatibilityCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, Encoder encoder) {
+      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS, false, null, encoder);
+   }
+
+
+   CompatibilityCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, int numOwners, Encoder encoder) {
+      this(cacheName, marshaller, cacheMode, numOwners, false, null, encoder);
    }
 
    public CompatibilityCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, Transcoder transcoder) {
-      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS, false, transcoder);
+      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS, false, transcoder, null);
    }
 
    CompatibilityCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, int numOwners, boolean l1Enable,
-                             Transcoder transcoder) {
+                             Transcoder transcoder, Encoder encoder) {
       this.cacheName = cacheName;
       this.marshaller = marshaller;
       this.cacheMode = cacheMode;
@@ -100,16 +111,6 @@ public class CompatibilityCacheFactory<K, V> {
       this.memcachedWithDecoder = transcoder != null;
    }
 
-   CompatibilityCacheFactory<K, V> keyEquivalence(Equivalence equivalence) {
-      this.keyEquivalence = equivalence;
-      return this;
-   }
-
-   CompatibilityCacheFactory<K, V> valueEquivalence(Equivalence equivalence) {
-      this.valueEquivalence = equivalence;
-      return this;
-   }
-
    public CompatibilityCacheFactory<K, V> setup() throws Exception {
       createEmbeddedCache();
       createHotRodCache();
@@ -117,28 +118,22 @@ public class CompatibilityCacheFactory<K, V> {
       return this;
    }
 
-   CompatibilityCacheFactory<K, V> setup(int baseHotRodPort, int portOffset) throws Exception {
-      createEmbeddedCache();
-      createHotRodCache(baseHotRodPort + portOffset);
-      createRestMemcachedCaches(portOffset);
-      return this;
-   }
-
    private void createRestMemcachedCaches() throws Exception {
-      restPort = hotrod.getPort() + 20;
-      final int memcachedPort = hotrod.getPort() + 40;
-      createRestCache(restPort);
-      createMemcachedCache(memcachedPort);
+      createRestCache();
+      createMemcachedCache();
    }
 
-   private void createRestMemcachedCaches(int portOffset) throws Exception {
-      restPort = hotrod.getPort() + 20 + portOffset;
-      final int memcachedPort = hotrod.getPort() + 40 + portOffset;
-      createRestCache(restPort);
-      createMemcachedCache(memcachedPort);
-   }
+   private void createEmbeddedCache() {
+      GlobalConfigurationBuilder globalBuilder;
 
-   void createEmbeddedCache() {
+      if (cacheMode.isClustered()) {
+         globalBuilder = new GlobalConfigurationBuilder();
+         globalBuilder.transport().defaultTransport();
+      } else {
+         globalBuilder = new GlobalConfigurationBuilder().nonClusteredDefault();
+      }
+      globalBuilder.addModule(PrivateGlobalConfigurationBuilder.class).serverMode(true);
+
       org.infinispan.configuration.cache.ConfigurationBuilder builder =
             new org.infinispan.configuration.cache.ConfigurationBuilder();
       builder.clustering().cacheMode(cacheMode)
@@ -152,17 +147,9 @@ public class CompatibilityCacheFactory<K, V> {
          builder.clustering().l1().enable();
       }
 
-      if (keyEquivalence != null) {
-         builder.dataContainer().keyEquivalence(keyEquivalence);
-      }
-
-      if (valueEquivalence != null) {
-         builder.dataContainer().valueEquivalence(valueEquivalence);
-      }
-
       cacheManager = cacheMode.isClustered()
-            ? TestCacheManagerFactory.createClusteredCacheManager(builder)
-            : TestCacheManagerFactory.createCacheManager(builder);
+            ? TestCacheManagerFactory.createClusteredCacheManager(globalBuilder, builder)
+            : TestCacheManagerFactory.createCacheManager(globalBuilder, builder);
 
       if (!cacheName.isEmpty())
          cacheManager.defineConfiguration(cacheName, builder.build());
@@ -176,15 +163,11 @@ public class CompatibilityCacheFactory<K, V> {
       createHotRodCache(startHotRodServer(cacheManager));
    }
 
-   private void createHotRodCache(int port) {
-      createHotRodCache(HotRodTestingUtil
-            .startHotRodServer(cacheManager, port));
-   }
-
    private void createHotRodCache(HotRodServer server) {
       hotrod = server;
       hotrodClient = new RemoteCacheManager(new ConfigurationBuilder()
             .addServers("localhost:" + hotrod.getPort())
+            .addJavaSerialWhiteList(".*Person.*", ".*CustomEvent.*")
             .marshaller(marshaller)
             .build());
       hotrodCache = cacheName.isEmpty()
@@ -192,16 +175,25 @@ public class CompatibilityCacheFactory<K, V> {
             : hotrodClient.getCache(cacheName);
    }
 
-   void createRestCache(int port) throws Exception {
-      RestServerConfigurationBuilder builder = new RestServerConfigurationBuilder();
-      builder.port(port);
-      rest = NettyRestServer.createServer(builder.build(), cacheManager);
-      rest.start();
+   private void createRestCache() throws Exception {
+      RestServer restServer = startProtocolServer(findFreePort(), p -> {
+         RestServerConfigurationBuilder builder = new RestServerConfigurationBuilder();
+         builder.port(p);
+         rest = new RestServer();
+         rest.start(builder.build(), cacheManager);
+         return rest;
+      });
+      restPort = restServer.getPort();
       restClient = new HttpClient();
    }
 
-   private void createMemcachedCache(int port) throws IOException {
-      memcached = memcachedWithDecoder ? startMemcachedTextServer(cacheManager, port, cacheName) : startMemcachedTextServer(cacheManager, port);
+   private void createMemcachedCache() throws IOException {
+      memcached = startProtocolServer(findFreePort(), p -> {
+         if (memcachedWithDecoder) {
+            return startMemcachedTextServer(cacheManager, p, cacheName);
+         }
+         return startMemcachedTextServer(cacheManager, p);
+      });
       memcachedClient = createMemcachedClient(60000, memcached.getPort());
    }
 
@@ -237,7 +229,7 @@ public class CompatibilityCacheFactory<K, V> {
       killCacheManagers(cacheManager);
    }
 
-   void killRestServer(Lifecycle rest) {
+   private void killRestServer(RestServer rest) {
       if (rest != null) {
          try {
             rest.stop();
@@ -252,15 +244,11 @@ public class CompatibilityCacheFactory<K, V> {
    }
 
    public Cache<K, V> getEmbeddedCache() {
-      return embeddedCache;
+      return (Cache<K, V>) embeddedCache.getAdvancedCache().withEncoding(IdentityEncoder.class);
    }
 
    public RemoteCache<K, V> getHotRodCache() {
       return hotrodCache;
-   }
-
-   int getHotRodPort() {
-      return hotrod.getPort();
    }
 
    public HttpClient getRestClient() {
@@ -284,4 +272,9 @@ public class CompatibilityCacheFactory<K, V> {
       return hotrod;
    }
 
+   public void registerEncoder(Encoder encoder) {
+      EncoderRegistry encoderRegistry = embeddedCache.getAdvancedCache().getComponentRegistry()
+            .getGlobalComponentRegistry().getComponent(EncoderRegistry.class);
+      encoderRegistry.registerEncoder(encoder);
+   }
 }

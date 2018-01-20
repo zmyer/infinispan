@@ -5,8 +5,6 @@ import org.infinispan.arquillian.core.WithRunningServer;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
-import org.infinispan.server.test.category.ClientSingleNode;
-import org.infinispan.server.test.category.RESTSingleNode;
 import org.infinispan.server.test.category.Security;
 import org.infinispan.server.test.client.rest.RESTHelper;
 import org.infinispan.server.test.util.security.SecurityConfigurationHelper;
@@ -34,15 +32,16 @@ public class MultitenancyIT {
 
    public static final String CACHE_NAME = "cache-1";
 
-   private static RemoteCache<String, String> remoteCache = null;
+   private static RemoteCache<String, Object> remoteCache = null;
    private static RemoteCacheManager remoteCacheManager = null;
+   RESTHelper rest;
 
    @After
    public void release() {
       if (remoteCacheManager != null) {
          remoteCacheManager.stop();
       }
-      RESTHelper.clearServers();
+      rest.clearServers();
    }
 
    @Before
@@ -53,7 +52,8 @@ public class MultitenancyIT {
       remoteCacheManager = new RemoteCacheManager(builder.build());
       remoteCache = remoteCacheManager.getCache(CACHE_NAME);
 
-      RESTHelper.addServer("127.0.0.1", 8080, "/rest/multi-tenancy-1");
+      rest = new RESTHelper();
+      rest.addServer("127.0.0.1", 8080, "/rest/multi-tenancy-1");
    }
 
    @Test
@@ -62,7 +62,7 @@ public class MultitenancyIT {
       remoteCache.put("hello", "Infinispan!");
 
       //then
-      RESTHelper.get(RESTHelper.fullPathKey(CACHE_NAME, "hello"), "Infinispan!");
+      rest.get(rest.fullPathKey(CACHE_NAME, "hello"), "Infinispan!", 200, true, "Accept", "text/plain");
    }
 
 }

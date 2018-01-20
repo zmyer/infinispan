@@ -4,8 +4,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-wildfly-modules</artifactId>
@@ -14,6 +14,11 @@
 
    <dependencies>
       <dependency>
+         <groupId>org.apache.ant</groupId>
+         <artifactId>ant</artifactId>
+      </dependency>
+
+      <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
       </dependency>
@@ -21,6 +26,11 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-client-hotrod</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-clustered-counter</artifactId>
       </dependency>
 
       <dependency>
@@ -94,7 +104,7 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-query-dsl</artifactId>
       </dependency>
 
@@ -104,16 +114,75 @@
       </dependency>
 
       <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-hotrod</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-memcached</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-rest</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-router</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-websocket</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan.server</groupId>
+         <artifactId>infinispan-server-infinispan</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-core</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan.server</groupId>
+         <artifactId>infinispan-server-commons</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan.server</groupId>
+         <artifactId>infinispan-server-endpoints</artifactId>
+      </dependency>
+
+       <dependency>
+           <groupId>org.infinispan.server</groupId>
+           <artifactId>infinispan-server-event-logger</artifactId>
+       </dependency>
+
+      <dependency>
+         <groupId>org.infinispan.server</groupId>
+         <artifactId>infinispan-server-jgroups</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>com.thoughtworks.xstream</groupId>
+         <artifactId>xstream</artifactId>
+      </dependency>
+
+      <dependency>
          <groupId>com.github.ben-manes.caffeine</groupId>
          <artifactId>caffeine</artifactId>
-         <version>${version.caffeine}</version>
       </dependency>
 
       <dependency>
          <groupId>org.hibernate</groupId>
          <artifactId>hibernate-search-modules</artifactId>
          <version>${version.hibernate.search}</version>
-         <classifier>wildfly-10-dist</classifier>
+         <classifier>wildfly-11-dist</classifier>
          <type>zip</type>
       </dependency>
 
@@ -121,41 +190,35 @@
          <groupId>org.jboss.marshalling</groupId>
          <artifactId>jboss-marshalling-osgi</artifactId>
       </dependency>
-
+      <!-- Deps for the lucene module, will eventually be replaced by https://github.com/hibernate/lucene-modules -->
       <dependency>
          <groupId>org.apache.lucene</groupId>
          <artifactId>lucene-queryparser</artifactId>
-         <version>${version.lucene}</version>
       </dependency>
 
       <dependency>
          <groupId>org.apache.lucene</groupId>
          <artifactId>lucene-highlighter</artifactId>
-         <version>${version.lucene}</version>
       </dependency>
 
       <dependency>
          <groupId>org.apache.lucene</groupId>
          <artifactId>lucene-grouping</artifactId>
-         <version>${version.lucene}</version>
       </dependency>
 
       <dependency>
          <groupId>org.apache.lucene</groupId>
          <artifactId>lucene-facet</artifactId>
-         <version>${version.lucene}</version>
       </dependency>
 
       <dependency>
          <groupId>org.apache.lucene</groupId>
          <artifactId>lucene-misc</artifactId>
-         <version>${version.lucene}</version>
       </dependency>
 
       <dependency>
          <groupId>org.apache.lucene</groupId>
          <artifactId>lucene-backward-codecs</artifactId>
-         <version>${version.lucene}</version>
       </dependency>
 
       <dependency>
@@ -171,15 +234,7 @@
 
       <dependency>
          <groupId>org.jgroups.kubernetes</groupId>
-         <artifactId>kubernetes</artifactId>
-      </dependency>
-      <dependency>
-         <groupId>org.jgroups.kubernetes</groupId>
-         <artifactId>common</artifactId>
-      </dependency>
-      <dependency>
-         <groupId>org.jgroups.kubernetes</groupId>
-         <artifactId>dns</artifactId>
+         <artifactId>jgroups-kubernetes</artifactId>
       </dependency>
       <dependency>
          <groupId>net.oauth.core</groupId>
@@ -191,6 +246,7 @@
    <build>
       <plugins>
          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-antrun-plugin</artifactId>
             <executions>
                <execution>

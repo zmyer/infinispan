@@ -7,7 +7,109 @@ The Infinispan community
 
 This guide walks you through the process of upgrading Infinispan.
 
+== Upgrading from 9.0 to 9.1
+
+=== Kubernetes Ping changes
+
+The latest version of Kubernetes Ping uses unified environmental variables for both Kubernetes and OpenShift.
+Some of them were shortened for example `OPENSHIFT_KUBE_PING_NAMESPACE` was changed to `KUBERNETES_NAMESPACE`.
+Please refer to link:https://github.com/jgroups-extras/jgroups-kubernetes/blob/master/README.adoc[Kubernetes Ping documentation].
+
+=== Stat Changes
+Average values for read, write and removals are now returned in Nanoseconds, opposed to Milliseconds.
+
+=== (FineGrained)AtomicMap reimplemented
+
+Infinispan now contains a new implementation of both `AtomicMap` and `FineGrainedAtomicMap`, but the semantics has been preserved. The new implementation does not use `DeltaAware` interface but the link:../user_guide/user_guide.html#functional_map_api[Functional API] instead.
+
+There are no changes needed for `AtomicMap`, but it now supports non-transactional use case as well.
+
+`FineGrainedAtomicMap` now uses the link:../user_guide/user_guide.html#grouping[Grouping API] and therefore you need to link:../user_guide/user_guide.html#how_do_i_use_the_grouping_api[enable groups in configuration]. Also it holds entries as regular cache entries, plus one cache entry for cached key set (the map itself). Therefore the cache size or iteration/streaming results may differ. Note that fine grained atomic maps are still supported on transactional caches only.
+
+=== RemoteCache keySet/entrySet/values
+
+RemoteCache now implements all of the collection backed methods from `Map` interface.
+Previously `keySet` was implemented, however it was a deep copy. This has now changed
+and it is a backing set. That is that the set retrieves the updated values on each
+invocation or updates to the backing remote cache for writes. The entrySet and values
+methods are also now supported as backing variants as well.
+
+If you wish to have a copy like was provided before it is recommended to copy the
+contents into a in memory local set such as
+
+[source,java]
+----
+Set<K> keysCopy = remoteCache.keySet().stream().collect(Collectors.toSet());
+----
+
+=== DeltaAware deprecated
+
+Interfaces `DeltaAware`, `Delta` and `CopyableDeltaAware` have been deprecated. Method `AdvancedCache.applyDelta()` has been deprecated and the implementation does not allow custom set of locked keys. `ApplyDeltaCommand` and its uses in interceptor stack are deprecated.
+
+Any partial updates to an entry should be replaced using the link:../user_guide/user_guide.html#functional_map_api[Functional API].
+
+=== Infinispan Query Configuration
+
+The configuration property `directory_provider` now accepts a new value `local-heap`.
+This value replaces the now deprecated `ram`, and as its predecessor will cause the index to be stored in a `org.apache.lucene.store.RAMDirectory`.
+
+The configuration value `ram` is still accepted and will have the same effect, but failing to replace `ram` with `local-heap` will cause a warning to be logged.
+We suggest to perform this replacement, as the `ram` value will no longer be recognised by Infinispan in a future version.
+
+This change was made as the team believes the `local-heap` name better expresses the storage model, especially as this storage method will not allow real-time replication of the index across multiple nodes.
+This index storage option is mostly useful for single node integration testing of the query functionality.
+
+=== Store Batch Size Changes
+TableManipulation::batchSize and JpaStoreConfiguration::batchSize have been deprecated and replaced by the higher level AbstractStoreConfiguration::maxBatchSize.
+
+=== Partition Handling changes
+In Infinispan 9.1 partition handling has been improved to allow for automatic
+link:../user_guide/user_guide.html#conflict-manager[conflict resolution on partition merges]. Consequently,
+PartitionHandlingConfiguration::enabled has been deprecated in favour of PartitionHandlingConfiguration::whenSplit.
+Configuring whenSplit to the DENY_READ_WRITES strategy is equivalent to setting enabled to true, whilst specifying
+ALLOW_READ_WRITES is equivalent to disabling partition handling (default).
+
+Furthermore, during a partition merge with ALLOW_READ_WRITES, the default EntryMergePolicy is
+MergePolicies.PREFERRED_ALWAYS which provides a deterministic way of tie-breaking CacheEntry conflicts.
+If you require the old behaviour, simply set the merge-policy to null.
+
 == Upgrading from 8.x to 9.0
+
+=== Default transaction mode changed
+
+The default configuration for transactional caches changed from `READ_COMMITTED` and `OPTIMISTIC` locking to `REPEATABLE_READ` and `OPTIMISTIC` locking with `write-skew` enabled.
+
+Also, using the `REPEATABLE_READ` isolation level and `OPTIMISTIC` locking without `write-skew` enabled is no longer allowed.
+To help with the upgrade, `write-skew` will be automatically enabled in this case.
+
+The following configuration has been deprecated:
+
+* `write-skew`: as said, it is automatically enabled.
+* `<versioning>` and its attributes. It is automatically enabled and configured when needed.
+
+=== Removed eagerLocking and eagerLockingSingleNode configuration settings
+Both were deprecated since version 5.1.
+`eagerLocking(true)` can be replaced with `lockingMode(LockingMode.PESSIMISTIC)`,
+and `eagerLockingSingleNode()` does not need a replacement because it was a no-op.
+
+=== Removed async transaction support
+
+Asynchronous mode is no longer supported in transactional caches and it will automatically use the synchronous cache mode.
+In addition, the second phase of a transaction commit is done synchronously.
+The following methods (and related) are deprecated:
+
+* `TransactionConfigurationBuilder.syncCommitPhase(boolean)`
+* `TransactionConfigurationBuilder.syncRollbackPhase(boolean)`
+
+=== Deprecated all the dummy related transaction classes.
+The following classes have been deprecated and they will be removed in the future:
+
+* `DummyBaseTransactionManager`: replaced by `EmbeddedBasedTransactionManager`;
+* `DummyNoXaXid` and `DummyXid`: replaced by `EmbeddedXid`;
+* `DummyTransaction`: replaced by `EmbeddedTransaction`;
+* `DummyTransactionManager`: replaced by `EmbeddedTransactionManager`;
+* `DummyTransactionManagerLookup` and `RecoveryDummyTransactionManagerLookup`: replaced by `EmbeddedTransactionManagerLookup`;
+* `DummyUserTransaction`: replaced by `EmbeddedUserTransaction`;
 
 === Clustering configuration changes
 The `mode` attribute in the XML declaration of clustered caches is no longer mandatory. It defaults to SYNC.
@@ -17,6 +119,12 @@ Up to Infinispan 8.x, the default cache always implicitly existed, even if not d
 Additionally, the default cache configuration affected all other cache configurations, acting as some kind of base template.
 Since 9.0, the default cache only exists if it has been explicitly configured. Additionally, even if it has been specified,
 it will never act as base template for other caches.
+
+=== Marshalling Enhancements and Store Compatibility
+Internally Infinispan 9.x has introduced many improvements to its marshalling codebase in order to improve performance
+and allow for greater flexibility. Consequently, data marshalled and persisted by Infinispan 8.x is no longer compatible with Infinispan 9.0.
+To aid you in migrating your existing stores to 9.0, we have provided a link:../user_guide/user_guide.html#jdbc_migrator[Store Migrator],
+however at present this only allows the migration of JDBC stores.
 
 === New Cloud module for library mode
 In Infinispan 8.x, cloud related configuration were added to `infinispan-core` module. Since 9.0 they were moved to `infinispan-cloud` module.
@@ -101,7 +209,7 @@ The JDBC Mixed and Binary stores have been removed due to the poor performance a
 Storing entries in buckets is non-optimal as each read/write to the store requires an existing bucket for a given hash to be retrieved,
 deserialised, updated, serialised and then re-inserted back into the db.  If you were previously using one of the removed
 stores, we have provided a migrator tool to assist in migrating data from an existing binary table to a JDBC string based
-store. See link:../user_guide/persistence_jdbc.adoc#JDBC_Migrator[JDBC Migrator Guide] for more details.
+store. See link:../user_guide/user_guide.html#jdbc_migrator[JDBC Migrator Guide] for more details.
 
 === @Store Annotation Introduced
 A new annotation, `@Store`, has been added for persistence stores. This allows a store's properties to be
@@ -122,6 +230,15 @@ The *ConcurrentHashMapV8 classes and their supporting classes have all been remo
 CollectionFactory#makeBoundedConcurrentMap method should be used if you desire to have a
 bounded ConcurrentMap.
 
+
+=== Store as Binary is deprecated
+Store as Binary configuration is now deprecated and will be removed in a future release. This is replaced by
+the new memory configuration.
+
+=== DataContainer collection methods are deprecated
+The keySet, entrySet and values methods on DataContainer have been deprecated. These behavior of these methods
+are very inconsistent and will be removed later. It is recommended to update references to use iterator or
+iteratorIncludingExpired methods intead.
 
 == Upgrading from 8.1 to 8.2
 === Entry Retriever is deprecated

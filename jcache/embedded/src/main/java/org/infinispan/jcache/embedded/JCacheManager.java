@@ -136,13 +136,15 @@ public class JCacheManager extends AbstractJCacheManager {
 
    @Override
    protected <K, V> void delegateRemoveCache(AbstractJCache<K, V> jcache) {
-      cm.removeCache(jcache.getName());
+      String cacheName = jcache.getName();
+      cm.administration().removeCache(cacheName);
    }
 
    @Override
    protected <K, V, C extends Configuration<K, V>> AbstractJCache<K, V> create(String cacheName, C configuration) {
+      org.infinispan.configuration.cache.Configuration baseConfig = cm.getCacheConfiguration(cacheName);
       ConfigurationAdapter<K, V> adapter = ConfigurationAdapter.create(configuration);
-      cm.defineConfiguration(cacheName, adapter.build());
+      cm.defineConfiguration(cacheName, adapter.build(baseConfig));
       AdvancedCache<K, V> ispnCache =
             cm.<K, V>getCache(cacheName).getAdvancedCache();
 

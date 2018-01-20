@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import javax.net.ssl.SSLContext;
@@ -30,7 +31,6 @@ import org.infinispan.client.hotrod.exceptions.TransportException;
 import org.infinispan.client.hotrod.impl.TopologyInfo;
 import org.infinispan.client.hotrod.impl.consistenthash.ConsistentHash;
 import org.infinispan.client.hotrod.impl.consistenthash.ConsistentHashFactory;
-import org.infinispan.client.hotrod.impl.operations.AddClientListenerOperation;
 import org.infinispan.client.hotrod.impl.protocol.Codec;
 import org.infinispan.client.hotrod.impl.protocol.HotRodConstants;
 import org.infinispan.client.hotrod.impl.transport.Transport;
@@ -57,9 +57,7 @@ public class TcpTransportFactory implements TransportFactory {
    public static final String DEFAULT_CLUSTER_NAME = "___DEFAULT-CLUSTER___";
 
    /**
-    * We need synchronization as the thread that calls {@link TransportFactory#start(org.infinispan.client.hotrod.impl.protocol.Codec,
-    * org.infinispan.client.hotrod.configuration.Configuration, java.util.concurrent.atomic.AtomicInteger,
-    * org.infinispan.client.hotrod.event.ClientListenerNotifier)}
+    * We need synchronization as the thread that calls {@link TransportFactory#start(Codec, Configuration, AtomicInteger, ClientListenerNotifier, Collection)}
     * might(and likely will) be different from the thread(s) that calls {@link TransportFactory#getTransport(Object,
     * java.util.Set, byte[])} or other methods
     */
@@ -79,6 +77,7 @@ public class TcpTransportFactory implements TransportFactory {
    private volatile SSLContext sslContext;
    private volatile String sniHostName;
    private volatile ClientListenerNotifier listenerNotifier;
+   private volatile Collection<Consumer<Set<SocketAddress>>> failedServerNotifier;
    @GuardedBy("lock")
    private volatile TopologyInfo topologyInfo;
 
@@ -90,24 +89,25 @@ public class TcpTransportFactory implements TransportFactory {
    // updates won't be allowed to apply since they refer to older views.
    private final AtomicInteger topologyAge = new AtomicInteger(0);
 
-   private final BlockingQueue<AddClientListenerOperation> disconnectedListeners =
-         new LinkedBlockingQueue<>();
+   private final BlockingQueue<Runnable> disconnectedListeners = new LinkedBlockingQueue<>();
 
    @Override
-   public void start(Codec codec, Configuration configuration, AtomicInteger defaultCacheTopologyId, ClientListenerNotifier listenerNotifier) {
+   public void start(Codec codec, Configuration configuration, AtomicInteger defaultCacheTopologyId,
+         ClientListenerNotifier listenerNotifier, Collection<Consumer<Set<SocketAddress>>> failedServerNotifier) {
       synchronized (lock) {
          this.listenerNotifier = listenerNotifier;
+         this.failedServerNotifier = failedServerNotifier;
          this.configuration = configuration;
          Collection<SocketAddress> servers = new ArrayList<>();
          initialServers = new ArrayList<>();
          for (ServerConfiguration server : configuration.servers()) {
-            servers.add(new InetSocketAddress(server.host(), server.port()));
+            servers.add(InetSocketAddress.createUnresolved(server.host(), server.port()));
          }
          initialServers.addAll(servers);
          if (!configuration.clusters().isEmpty()) {
             configuration.clusters().stream().forEach(cluster -> {
                Collection<SocketAddress> clusterAddresses = cluster.getCluster().stream()
-                       .map(server -> new InetSocketAddress(server.host(), server.port()))
+                       .map(server -> InetSocketAddress.createUnresolved(server.host(), server.port()))
                        .collect(Collectors.toList());
                ClusterInfo clusterInfo = new ClusterInfo(cluster.getClusterName(), clusterAddresses);
                log.debugf("Add secondary cluster: %s", clusterInfo);
@@ -127,9 +127,17 @@ public class TcpTransportFactory implements TransportFactory {
             if (ssl.sslContext() != null) {
                sslContext = ssl.sslContext();
             } else {
-               sslContext = SslContextFactory.getContext(ssl.keyStoreFileName(), ssl.keyStorePassword(),
-                       ssl.keyStoreCertificatePassword(), ssl.trustStoreFileName(), ssl.trustStorePassword(), ssl.protocol(),
-                       configuration.classLoader());
+               sslContext = SslContextFactory.getContext(
+                     ssl.keyStoreFileName(),
+                     ssl.keyStoreType(),
+                     ssl.keyStorePassword(),
+                     ssl.keyStoreCertificatePassword(),
+                     ssl.keyAlias(),
+                     ssl.trustStoreFileName(),
+                     ssl.trustStoreType(),
+                     ssl.trustStorePassword(),
+                     ssl.protocol(),
+                     configuration.classLoader());
             }
             sniHostName = ssl.sniHostName();
          }
@@ -385,7 +393,7 @@ public class TcpTransportFactory implements TransportFactory {
       topologyInfo.updateServers(cacheName, servers);
 
       if (!failedServers.isEmpty()) {
-         listenerNotifier.failoverClientListeners(failedServers);
+         failedServerNotifier.forEach(consumer -> consumer.accept(failedServers));
       }
 
       return servers;
@@ -423,14 +431,9 @@ public class TcpTransportFactory implements TransportFactory {
 
    private void reconnectListenersIfNeeded() {
       if (!disconnectedListeners.isEmpty()) {
-         List<AddClientListenerOperation> drained = new ArrayList<>();
+         List<Runnable> drained = new ArrayList<>(disconnectedListeners.size());
          disconnectedListeners.drainTo(drained);
-         for (AddClientListenerOperation op : drained) {
-            if (trace) {
-               log.tracef("Reconnecting client listener with id %s", Util.printArray(op.listenerId));
-            }
-            op.execute();
-         }
+         drained.forEach(Runnable::run);
       }
    }
 
@@ -488,8 +491,8 @@ public class TcpTransportFactory implements TransportFactory {
    }
 
    @Override
-   public void addDisconnectedListener(AddClientListenerOperation listener) throws InterruptedException {
-      disconnectedListeners.put(listener);
+   public void addDisconnectedListener(Runnable reconnectionRunnable) throws InterruptedException {
+      disconnectedListeners.put(reconnectionRunnable);
    }
 
    @Override

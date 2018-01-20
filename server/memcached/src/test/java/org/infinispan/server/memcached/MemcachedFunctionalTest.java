@@ -15,6 +15,9 @@ import java.io.IOException;
 import java.lang.reflect.Method;
 import java.math.BigInteger;
 import java.net.SocketAddress;
+import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +31,7 @@ import org.infinispan.Version;
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.annotation.CacheEntryRemoved;
@@ -76,6 +80,13 @@ public class MemcachedFunctionalTest extends MemcachedSingleNodeTest {
       assertTrue(f.get(timeout, TimeUnit.SECONDS));
       sleepThread(1100);
       assertNull(client.get(k(m)));
+   }
+
+   public void testSetWithUTF8Key(Method m) throws InterruptedException, ExecutionException, TimeoutException {
+      String key = "\u4f60\u597d-";
+      OperationFuture<Boolean> f = client.set(k(m, key), 0, v(m));
+      assertTrue(f.get(timeout, TimeUnit.SECONDS));
+      assertEquals(v(m), client.get(k(m, key)));
    }
 
    public void testGetMultipleKeys(Method m) throws InterruptedException, ExecutionException, TimeoutException {
@@ -516,7 +527,7 @@ public class MemcachedFunctionalTest extends MemcachedSingleNodeTest {
    public void testFlagsIsUnsigned(Method m) throws IOException {
       String k = m.getName();
       assertClientError(send("set boo1 -1 0 0\r\n"));
-      assertStored(send("set " + k + " 4294967295 0 0\r\n"));
+      assertStored(send("set " + k + " 4294967295 0 0\r\n\r\n"));
       assertClientError(send("set boo2 4294967296 0 0\r\n"));
       assertClientError(send("set boo2 18446744073709551615 0 0\r\n"));
    }
@@ -557,15 +568,15 @@ public class MemcachedFunctionalTest extends MemcachedSingleNodeTest {
 
    public void testStoreAsBinaryOverride() {
       ConfigurationBuilder builder = TestCacheManagerFactory.getDefaultCacheConfiguration(false);
-      builder.storeAsBinary().enable();
+      builder.memory().storageType(StorageType.BINARY);
       EmbeddedCacheManager cm = TestCacheManagerFactory.createCacheManager(builder);
       Configuration cfg = builder.build();
       cm.defineConfiguration(new MemcachedServerConfigurationBuilder().build().defaultCacheName(), cfg);
-      assertTrue(cfg.storeAsBinary().enabled());
+      assertEquals(StorageType.BINARY, cfg.memory().storageType());
       MemcachedServer testServer = startMemcachedTextServer(cm, server.getPort() + 33);
       try {
          Cache memcachedCache = cm.getCache(testServer.getConfiguration().defaultCacheName());
-         assertFalse(memcachedCache.getCacheConfiguration().storeAsBinary().enabled());
+         assertEquals(StorageType.BINARY, memcachedCache.getCacheConfiguration().memory().storageType());
       } finally {
          cm.stop();
          testServer.stop();
@@ -592,17 +603,16 @@ public class MemcachedFunctionalTest extends MemcachedSingleNodeTest {
          client.get(k(m));
    }
 
-//   public void testRegex {
-//      val notFoundRegex = new Regex("""\bNOT_FOUND\b""");
-//      assertEquals(notFoundRegex.findAllIn("NOT_FOUND\r\nNOT_FOUND\r\n").length, 2);
-//   }
-//
-//   private def assertExpectedResponse(resp: String, expectedResp: String, numberOfTimes: Int) {
-//      val expectedRespRegex = new Regex("""\b""" + expectedResp + """\b""");
-//      assertEquals(expectedRespRegex.findAllIn(resp).length, numberOfTimes,
-//         "Expected " + expectedResp + " to be found " + numberOfTimes
-//               + " times, but instead received response: " + resp);
-//   }
+   public void testBufferOverflowCausesUnknownException() throws Exception {
+      List<String> keys = Files.readAllLines(
+            Paths.get(getClass().getClassLoader().getResource("keys.txt").toURI()),
+            Charset.defaultCharset()
+      );
+
+      for (String key : keys) {
+         assertTrue(client.set(key, 0, "ISPN005003: UnknownOperationException").get());
+      }
+   }
 
    private void addAndGet(Method m) throws InterruptedException, ExecutionException, TimeoutException {
       OperationFuture<Boolean> f = client.add(k(m), 0, v(m));

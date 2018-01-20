@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
+import org.infinispan.globalstate.ConfigurationStorage;
 import org.infinispan.server.commons.controller.ReloadRequiredAddStepHandler;
 import org.infinispan.server.commons.dmr.ModelNodes;
 import org.infinispan.server.commons.naming.BinderServiceBuilder;
@@ -45,6 +46,7 @@ import org.infinispan.server.jgroups.spi.service.ChannelServiceName;
 import org.infinispan.server.jgroups.spi.service.ChannelServiceNameFactory;
 import org.infinispan.server.jgroups.spi.service.ProtocolStackServiceName;
 import org.infinispan.server.jgroups.subsystem.JGroupsBindingFactory;
+import org.jboss.as.clustering.infinispan.InfinispanLogger;
 import org.jboss.as.controller.AbstractAddStepHandler;
 import org.jboss.as.controller.OperationContext;
 import org.jboss.as.controller.OperationFailedException;
@@ -134,29 +136,53 @@ public class CacheContainerAddHandler extends AbstractAddStepHandler {
             if (globalState.hasDefined(ModelKeys.PERSISTENT_LOCATION)) {
                 ModelNode persistentLocation = globalState.get(ModelKeys.PERSISTENT_LOCATION);
                 final String path = ModelNodes.asString(GlobalStateResource.PATH.resolveModelAttribute(context, persistentLocation), defaultPersistentLocation);
-                final String relativeTo = ModelNodes.asString(GlobalStateResource.TEMPORARY_RELATIVE_TO.resolveModelAttribute(context, persistentLocation));
+                final String relativeTo = ModelNodes.asString(GlobalStateResource.PERSISTENT_RELATIVE_TO.resolveModelAttribute(context, persistentLocation));
                 globalStateBuilder.setPersistencePath(path).setPersistenceRelativeTo(relativeTo);
             } else {
                 globalStateBuilder.setPersistencePath(defaultPersistentLocation).setPersistenceRelativeTo(ServerEnvironment.SERVER_DATA_DIR);
             }
+            if (globalState.hasDefined(ModelKeys.SHARED_PERSISTENT_LOCATION)) {
+                ModelNode persistentLocation = globalState.get(ModelKeys.SHARED_PERSISTENT_LOCATION);
+                final String path = ModelNodes.asString(GlobalStateResource.SHARED_PERSISTENT_LOCATION_PATH.resolveModelAttribute(context, persistentLocation), defaultPersistentLocation);
+                final String relativeTo = ModelNodes.asString(GlobalStateResource.SHARED_PERSISTENT_RELATIVE_TO.resolveModelAttribute(context, persistentLocation));
+                globalStateBuilder.setSharedPersistencePath(path).setSharedPersistenceRelativeTo(relativeTo);
+            } else {
+                globalStateBuilder.setSharedPersistencePath(defaultPersistentLocation).setSharedPersistenceRelativeTo(ServerEnvironment.SERVER_DATA_DIR);
+            }
             if (globalState.hasDefined(ModelKeys.TEMPORARY_LOCATION)) {
                 ModelNode persistentLocation = globalState.get(ModelKeys.TEMPORARY_LOCATION);
-                final String path = ModelNodes.asString(GlobalStateResource.PATH.resolveModelAttribute(context, persistentLocation), defaultPersistentLocation);
+                final String path = ModelNodes.asString(GlobalStateResource.TEMPORARY_STATE_PATH.resolveModelAttribute(context, persistentLocation), defaultPersistentLocation);
                 final String relativeTo = ModelNodes.asString(GlobalStateResource.TEMPORARY_RELATIVE_TO.resolveModelAttribute(context, persistentLocation));
                 globalStateBuilder.setTemporaryPath(path).setTemporaryRelativeTo(relativeTo);
             } else {
                 globalStateBuilder.setTemporaryPath(defaultPersistentLocation).setTemporaryRelativeTo(ServerEnvironment.SERVER_TEMP_DIR);
             }
+            ConfigurationStorage configurationStorage = ConfigurationStorage.valueOf(GlobalStateResource.CONFIGURATION_STORAGE.resolveModelAttribute(context, globalState).asString());
+            globalStateBuilder.setConfigurationStorage(configurationStorage);
+            if (configurationStorage.equals(ConfigurationStorage.MANAGED)) {
+                switch (context.getProcessType()) {
+                    case STANDALONE_SERVER:
+                        globalStateBuilder.setConfigurationStorageClass(StandaloneServerLocalConfigurationStorage.class.getName());
+                        break;
+                    case DOMAIN_SERVER:
+                        InfinispanLogger.ROOT_LOGGER.managedConfigurationUnavailableInDomainMode();
+                        break;
+                    default:
+                        // No need
+                        break;
+                }
+            } else if (configurationStorage.equals(ConfigurationStorage.CUSTOM)) {
+                globalStateBuilder.setConfigurationStorageClass(GlobalStateResource.CONFIGURATION_STORAGE_CLASS.resolveModelAttribute(context, globalState).asString());
+            }
         }
 
-        AuthorizationConfigurationBuilder authorizationConfig = null;
         if (model.hasDefined(ModelKeys.SECURITY) && model.get(ModelKeys.SECURITY).hasDefined(ModelKeys.SECURITY_NAME)) {
             ModelNode securityModel = model.get(ModelKeys.SECURITY, ModelKeys.SECURITY_NAME);
 
             if (securityModel.hasDefined(ModelKeys.AUTHORIZATION) && securityModel.get(ModelKeys.AUTHORIZATION).hasDefined(ModelKeys.AUTHORIZATION_NAME)) {
                 ModelNode authzModel = securityModel.get(ModelKeys.AUTHORIZATION, ModelKeys.AUTHORIZATION_NAME);
 
-                authorizationConfig = configBuilder.setAuthorization();
+                AuthorizationConfigurationBuilder authorizationConfig = configBuilder.setAuthorization();
                 if (authzModel.hasDefined(ModelKeys.AUDIT_LOGGER)) {
                    authorizationConfig.setAuditLogger(ModelNodes.asString(CacheContainerAuthorizationResource.AUDIT_LOGGER.resolveModelAttribute(context, authzModel)));
                 }
@@ -171,8 +197,20 @@ public class CacheContainerAddHandler extends AbstractAddStepHandler {
                     }
                     authorizationConfig.getRoles().put(roleName, permissions);
                 }
-
             }
+        }
+
+        if (model.hasDefined(ModelKeys.MODULES) && model.get(ModelKeys.MODULES).hasDefined(ModelKeys.MODULES_NAME)) {
+            ModelNode modulesModel = model.get(ModelKeys.MODULES, ModelKeys.MODULES_NAME);
+            List<ModelNode> moduleListNodes = modulesModel.get(ModelKeys.MODULE).asList();
+            List<ModuleIdentifier> modules = new ArrayList<>(moduleListNodes.size());
+            for (ModelNode moduleListNode : moduleListNodes) {
+                ModelNode moduleNode = moduleListNode.get(0);
+                String moduleName = CacheContainerModuleResource.NAME.resolveModelAttribute(context, moduleNode).asString();
+                String moduleSlot = moduleNode.hasDefined(ModelKeys.SLOT) ? CacheContainerModuleResource.SLOT.resolveModelAttribute(context, moduleNode).asString() : null;
+                modules.add(ModuleIdentifier.create(moduleName, moduleSlot));
+            }
+            configBuilder.setModules(modules);
         }
 
         // Install cache container configuration service

@@ -3,6 +3,9 @@ package org.infinispan.cdi.embedded.test.distexec;
 import static org.infinispan.cdi.embedded.test.testutil.Deployments.baseDeployment;
 
 import java.io.Serializable;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 import javax.inject.Inject;
@@ -51,6 +54,14 @@ public class DistributedExecutorCDITest extends MultipleCacheManagersArquillianT
       delegate.basicInvocation(new ImpliedInputCacheCallable());
    }
 
+   public void testInvocationUsingImpliedInputCacheWithKeys() throws Exception {
+      Map<Object,Object> entries = new HashMap<>();
+      entries.put("test1", "test1");
+      entries.put("test2", "test2");
+      delegate.addEntries(entries);
+      delegate.basicInvocation(new ImpliedInputCacheWithKeysCallable(), "test1", "test2");
+   }
+
    public void testBasicInvocationRunnable() throws Exception {
       delegate.basicInvocation(new SimpleRunnable());
    }
@@ -89,8 +100,7 @@ public class DistributedExecutorCDITest extends MultipleCacheManagersArquillianT
       }
    }
 
-   static class ImpliedInputCacheCallable implements Callable<Integer>, Serializable {
-
+   static class ImpliedInputCacheCallable implements Callable<Integer>, Serializable, ExternalPojo {
 
       /** The serialVersionUID */
       private static final long serialVersionUID = 5770069398989111268L;
@@ -108,8 +118,33 @@ public class DistributedExecutorCDITest extends MultipleCacheManagersArquillianT
       }
    }
 
-   static class ImpliedInputCacheRunnable implements Runnable, Serializable {
+   static class ImpliedInputCacheWithKeysCallable implements Callable<Integer>, Serializable, ExternalPojo {
 
+      /** The serialVersionUID */
+      private static final long serialVersionUID = 5770069398989111268L;
+
+      @Input
+      @Inject
+      private Cache<String, String> cache;
+
+      @Input
+      @Inject
+      private Collection<String> keys;
+
+      @Override
+      public Integer call() throws Exception {
+         Assert.assertNotNull(cache, "Cache not injected into " + this);
+         //verify the right cache injected
+         Assert.assertTrue(cache.getName().equals("DistributedExecutorTest-DIST_SYNC"));
+
+         Assert.assertNotNull(keys, "Cache not injected into " + this);
+         //verify the right number of keys injected
+         Assert.assertTrue(keys.size() == 2);
+         return 1;
+      }
+   }
+
+   static class ImpliedInputCacheRunnable implements Runnable, Serializable, ExternalPojo {
 
       /** The serialVersionUID */
       private static final long serialVersionUID = 5770069398989111268L;

@@ -3,7 +3,6 @@ package org.infinispan.notifications.cachelistener;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
-import static org.mockito.Mockito.anyObject;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
@@ -16,6 +15,7 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BrokenBarrierException;
@@ -25,9 +25,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import org.infinispan.Cache;
 import org.infinispan.CacheStream;
-import org.infinispan.compat.TypeConverter;
+import org.infinispan.cache.impl.EncoderCache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.InternalEntryFactoryImpl;
@@ -37,7 +36,8 @@ import org.infinispan.container.entries.TransientMortalCacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.NonTxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
-import org.infinispan.interceptors.impl.WrappedByteArrayConverter;
+import org.infinispan.encoding.DataConversion;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.metadata.Metadata;
@@ -52,6 +52,9 @@ import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
 import org.infinispan.notifications.cachelistener.filter.EventType;
 import org.infinispan.test.AbstractInfinispanTest;
+import org.infinispan.test.TestingUtil;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
 import org.testng.annotations.BeforeMethod;
@@ -61,7 +64,7 @@ import org.testng.annotations.Test;
 @Test(groups = "unit", testName = "notifications.cachelistener.BaseCacheNotifierImplInitialTransferTest")
 public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractInfinispanTest {
    CacheNotifierImpl n;
-   Cache mockCache;
+   EncoderCache mockCache;
    InvocationContext ctx;
 
    protected CacheMode cacheMode;
@@ -114,19 +117,21 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
    @BeforeMethod
    public void setUp() {
       n = new CacheNotifierImpl();
-      mockCache = mock(Cache.class, RETURNS_DEEP_STUBS);
+      mockCache = mock(EncoderCache.class, RETURNS_DEEP_STUBS);
+      when(mockCache.getAdvancedCache().getKeyDataConversion()).thenReturn(DataConversion.DEFAULT_KEY);
+      when(mockCache.getAdvancedCache().getValueDataConversion()).thenReturn(DataConversion.DEFAULT_VALUE);
       Configuration config = mock(Configuration.class, RETURNS_DEEP_STUBS);
       when(config.clustering().cacheMode()).thenReturn(cacheMode);
       when(mockCache.getAdvancedCache().getStatus()).thenReturn(ComponentStatus.INITIALIZING);
 
-      Answer answer = i -> Mockito.mock((Class) i.getArguments()[0]);
+      Answer answer = i -> Mockito.mock(i.getArgument(0));
       when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class))).then(answer);
-      when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(TypeConverter.class)).thenReturn(
-            new WrappedByteArrayConverter());
       when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class), anyString())).then(answer);
-      n.injectDependencies(mockCache, new ClusteringDependentLogic.LocalLogic(), null, config,
-                           mock(DistributionManager.class), new InternalEntryFactoryImpl(),
-                           mock(ClusterEventManager.class));
+      ClusteringDependentLogic.LocalLogic cdl = new ClusteringDependentLogic.LocalLogic();
+      cdl.init(null);
+      TestingUtil.inject(n, mockCache, cdl, config,
+            mock(DistributionManager.class), new InternalEntryFactoryImpl(),
+            mock(ClusterEventManager.class), mock(ComponentRegistry.class));
       n.start();
       ctx = new NonTxInvocationContext(null);
    }
@@ -141,7 +146,7 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
    }
 
    private void testSimpleCacheStarting(final StateListener<String, String> listener) {
-      final List<CacheEntry<String, String>> initialValues = new ArrayList<CacheEntry<String, String>>(10);
+      final List<CacheEntry<String, String>> initialValues = new ArrayList<>(10);
       for (int i = 0; i < 10; i++) {
          String key = "key-" + i;
          String value = "value-" + i;
@@ -152,7 +157,7 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
 
       doReturn(initialValues.iterator()).when(mockStream).iterator();
 
-      when(mockCache.getAdvancedCache().cacheEntrySet().stream()).thenReturn(mockStream);
+      when(mockCache.getAdvancedCache().withEncoding(any(Class.class), any(Class.class)).cacheEntrySet().stream()).thenReturn(mockStream);
 
       n.addListener(listener);
       verifyEvents(isClustered(listener), listener, initialValues);
@@ -177,21 +182,21 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
 
       doReturn(initialValues.iterator()).when(mockStream).iterator();
 
-      when(mockCache.getAdvancedCache().cacheEntrySet().stream()).thenReturn(mockStream);
+      when(mockCache.getAdvancedCache().withEncoding(any(Class.class), any(Class.class)).cacheEntrySet().stream()).thenReturn(mockStream);
 
       CacheEventFilter filter = mock(CacheEventFilter.class, withSettings().serializable());
       CacheEventConverter converter = mock(CacheEventConverter.class, withSettings().serializable());
       n.addListener(listener, filter, converter);
       verifyEvents(isClustered(listener), listener, initialValues);
 
-      verify(filter, never()).accept(anyObject(), anyObject(), any(Metadata.class), anyObject(), any(Metadata.class),
-                                     any(EventType.class));
-      verify(converter, never()).convert(anyObject(), anyObject(), any(Metadata.class), anyObject(), any(Metadata.class),
-                                         any(EventType.class));
+      verify(filter, never()).accept(any(), any(), any(Metadata.class), any(), any(Metadata.class),
+            any(EventType.class));
+      verify(converter, never()).convert(any(), any(), any(Metadata.class), any(), any(Metadata.class),
+            any(EventType.class));
    }
 
    public void testMetadataAvailable() {
-      final List<CacheEntry<String, String>> initialValues = new ArrayList<CacheEntry<String, String>>(10);
+      final List<CacheEntry<String, String>> initialValues = new ArrayList<>(10);
       for (int i = 0; i < 10; i++) {
          String key = "key-" + i;
          String value = "value-" + i;
@@ -204,7 +209,7 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
 
       doReturn(initialValues.iterator()).when(mockStream).iterator();
 
-      when(mockCache.getAdvancedCache().cacheEntrySet().stream()).thenReturn(mockStream);
+      when(mockCache.getAdvancedCache().withEncoding(any(Class.class), any(Class.class)).cacheEntrySet().stream()).thenReturn(mockStream);
 
       CacheEventFilter filter = mock(CacheEventFilter.class, withSettings().serializable());
       CacheEventConverter converter = mock(CacheEventConverter.class, withSettings().serializable());
@@ -233,7 +238,7 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
          if (isClustered) {
             isPost = true;
             position = eventPosition;
-         } else  {
+         } else {
             isPost = (eventPosition & 1) == 1;
             position = eventPosition / 2;
          }
@@ -288,8 +293,8 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
     */
    private void testModificationAfterIterationBeganButNotIteratedValueYet(final StateListener<String, String> listener,
                                                                           Operation operation) throws InterruptedException,
-                                                                                  TimeoutException, BrokenBarrierException, ExecutionException {
-      final List<CacheEntry<String, String>> initialValues = new ArrayList<CacheEntry<String, String>>();
+         TimeoutException, BrokenBarrierException, ExecutionException {
+      final List<CacheEntry<String, String>> initialValues = new ArrayList<>();
       for (int i = 0; i < 10; i++) {
          String key = "key-" + i;
          String value = "value-" + i;
@@ -306,7 +311,7 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
          return initialValues.iterator();
       }).when(mockStream).iterator();
 
-      when(mockCache.getAdvancedCache().cacheEntrySet().stream()).thenReturn(mockStream);
+      when(mockCache.getAdvancedCache().withEncoding(any(Class.class), any(Class.class)).cacheEntrySet().stream()).thenReturn(mockStream);
 
       Future<Void> future = fork(() -> {
          n.addListener(listener);
@@ -374,7 +379,7 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
 //      testModificationAfterIterationBeganAndIteratedValue(new StateListenerNotClustered(), Operation.REMOVE);
 //   }
 
-   public void testRemoveAfterIterationBeganAndIteratedValueClustered()throws Exception {
+   public void testRemoveAfterIterationBeganAndIteratedValueClustered() throws Exception {
       testModificationAfterIterationBeganAndIteratedValue(new StateListenerClustered(), Operation.REMOVE);
    }
 
@@ -392,7 +397,7 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
     * This test is to verify that the modification event is sent after the creation event is done
     */
    private void testModificationAfterIterationBeganAndIteratedValue(final StateListener<String, String> listener,
-                                                                    Operation operation)throws Exception {
+                                                                    Operation operation) throws Exception {
       final List<CacheEntry<String, String>> initialValues = new ArrayList<CacheEntry<String, String>>();
       for (int i = 0; i < 10; i++) {
          String key = "key-" + i;
@@ -412,7 +417,7 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
          return null;
       }).when(mockStream).close();
 
-      when(mockCache.getAdvancedCache().cacheEntrySet().stream()).thenReturn(mockStream);
+      when(mockCache.getAdvancedCache().withEncoding(any(Class.class), any(Class.class)).cacheEntrySet().stream()).thenReturn(mockStream);
 
       Future<Void> future = fork(() -> {
          n.addListener(listener);
@@ -508,15 +513,18 @@ public abstract class BaseCacheNotifierImplInitialTransferTest extends AbstractI
    }
 
    protected static abstract class StateListener<K, V> {
-      final List<CacheEntryEvent<K, V>> events = new ArrayList<CacheEntryEvent<K, V>>();
+      final List<CacheEntryEvent<K, V>> events = new ArrayList<>();
+      private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
       @CacheEntryCreated
       @CacheEntryModified
       @CacheEntryRemoved
       public synchronized void onCacheNotification(CacheEntryEvent<K, V> event) {
+         log.tracef("Received event: %s", event);
          events.add(event);
       }
    }
+
    @Listener(includeCurrentState = true, clustered = false)
    private static class StateListenerNotClustered extends StateListener {
 

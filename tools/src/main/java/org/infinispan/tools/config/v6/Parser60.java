@@ -37,6 +37,7 @@ import org.infinispan.configuration.cache.InterceptorConfiguration.Position;
 import org.infinispan.configuration.cache.InterceptorConfigurationBuilder;
 import org.infinispan.configuration.cache.RecoveryConfigurationBuilder;
 import org.infinispan.configuration.cache.SingleFileStoreConfigurationBuilder;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.configuration.cache.StoreConfigurationBuilder;
 import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
@@ -51,8 +52,6 @@ import org.infinispan.configuration.parsing.XMLExtendedStreamReader;
 import org.infinispan.container.DataContainer;
 import org.infinispan.distribution.ch.ConsistentHashFactory;
 import org.infinispan.distribution.group.Grouper;
-import org.infinispan.eviction.EvictionStrategy;
-import org.infinispan.eviction.EvictionThreadPolicy;
 import org.infinispan.factories.threads.DefaultThreadFactory;
 import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.jmx.MBeanServerLookup;
@@ -315,9 +314,10 @@ public class Parser60 implements ConfigurationParser {
          switch (element) {
             case BACKUP: {
                parseBackup(reader, ccb);
+               break;
             }
             default: {
-               ParseUtils.unexpectedElement(reader);
+               throw ParseUtils.unexpectedElement(reader);
             }
          }
       }
@@ -400,16 +400,16 @@ public class Parser60 implements ConfigurationParser {
                builder.transaction().cacheStopTimeout(Long.parseLong(value));
                break;
             case EAGER_LOCK_SINGLE_NODE:
-               builder.transaction().eagerLockingSingleNode(Boolean.parseBoolean(value));
+               warnRemovedAttribute(Element.TRANSACTION.getLocalName(), Attribute.EAGER_LOCK_SINGLE_NODE.getLocalName());
                break;
             case LOCKING_MODE:
                builder.transaction().lockingMode(LockingMode.valueOf(value));
                break;
             case SYNC_COMMIT_PHASE:
-               builder.transaction().syncCommitPhase(Boolean.parseBoolean(value));
+               warnRemovedAttribute(Element.TRANSACTION.getLocalName(), Attribute.SYNC_COMMIT_PHASE.getLocalName());
                break;
             case SYNC_ROLLBACK_PHASE:
-               builder.transaction().syncRollbackPhase(Boolean.parseBoolean(value));
+               warnRemovedAttribute(Element.TRANSACTION.getLocalName(), Attribute.SYNC_ROLLBACK_PHASE.getLocalName());
                break;
             case TRANSACTION_MANAGER_LOOKUP_CLASS:
                builder.transaction().transactionManagerLookup(Util.<TransactionManagerLookup>getInstance(value, holder.getClassLoader()));
@@ -420,7 +420,7 @@ public class Parser60 implements ConfigurationParser {
                transactionModeSpecified = true;
                break;
             case USE_EAGER_LOCKING:
-               builder.transaction().useEagerLocking(Boolean.parseBoolean(value));
+               warnRemovedAttribute(Element.TRANSACTION.getLocalName(), Attribute.USE_EAGER_LOCKING.getLocalName());
                break;
             case USE_SYNCHRONIZAION:
                builder.transaction().useSynchronization(Boolean.parseBoolean(value));
@@ -505,26 +505,31 @@ public class Parser60 implements ConfigurationParser {
 
    private void parseStoreAsBinary(final XMLExtendedStreamReader reader, final ConfigurationBuilderHolder holder) throws XMLStreamException {
       ConfigurationBuilder builder = holder.getCurrentConfigurationBuilder();
+      Boolean binaryKeys = null;
+      Boolean binaryValues = null;
+      builder.memory().storageType(StorageType.BINARY);
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
          String value = replaceProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case ENABLED:
-               builder.storeAsBinary().enabled(Boolean.parseBoolean(value));
+               if (!Boolean.parseBoolean(value))
+                  builder.memory().storageType(StorageType.OBJECT);
                break;
             case STORE_KEYS_AS_BINARY:
-               builder.storeAsBinary().storeKeysAsBinary(Boolean.parseBoolean(value));
+               binaryKeys = Boolean.parseBoolean(value);
                break;
             case STORE_VALUES_AS_BINARY:
-               builder.storeAsBinary().storeValuesAsBinary(Boolean.parseBoolean(value));
+               binaryValues = Boolean.parseBoolean(value);
                break;
             case DEFENSIVE:
-               builder.storeAsBinary().defensive(Boolean.parseBoolean(value));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
          }
+         if (binaryKeys != null && !binaryKeys && binaryValues != null && !binaryValues)
+            builder.memory().storageType(StorageType.OBJECT); // explicitly disable
       }
 
       ParseUtils.requireNoContent(reader);
@@ -551,7 +556,7 @@ public class Parser60 implements ConfigurationParser {
                builder.locking().useLockStriping(Boolean.parseBoolean(value));
                break;
             case WRITE_SKEW_CHECK:
-               builder.locking().writeSkewCheck(Boolean.parseBoolean(value));
+               //ignored
                break;
             case SUPPORTS_CONCURRENT_UPDATES:
                builder.locking().supportsConcurrentUpdates(Boolean.parseBoolean(value));
@@ -956,14 +961,11 @@ public class Parser60 implements ConfigurationParser {
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case MAX_ENTRIES:
-               builder.eviction().maxEntries(Integer.parseInt(value));
+               builder.memory().size(Integer.parseInt(value));
                break;
             case STRATEGY:
-               builder.eviction().strategy(EvictionStrategy.valueOf(value));
-               break;
             case THREAD_POLICY:
-               builder.eviction().threadPolicy(EvictionThreadPolicy.valueOf(value));
-               break;
+               break; // ignore
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
          }
@@ -974,21 +976,12 @@ public class Parser60 implements ConfigurationParser {
    }
 
    private void parseDeadlockDetection(final XMLExtendedStreamReader reader, final ConfigurationBuilderHolder holder) throws XMLStreamException {
-      ConfigurationBuilder builder = holder.getCurrentConfigurationBuilder();
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case ENABLED:
-               if (Boolean.parseBoolean(value)) {
-                  builder.deadlockDetection().enable();
-               } else {
-                  builder.deadlockDetection().disable();
-               }
-               break;
             case SPIN_DURATION:
-               builder.deadlockDetection().spinDuration(Long.parseLong(value));
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);

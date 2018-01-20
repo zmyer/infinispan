@@ -1,15 +1,6 @@
 package org.infinispan.functional;
 
-import static org.infinispan.commons.api.functional.EntryVersion.CompareResult.EQUAL;
-import static org.infinispan.commons.marshall.MarshallableFunctions.identity;
-import static org.infinispan.commons.marshall.MarshallableFunctions.removeReturnPrevOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadOnlyFindOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadWriteFind;
-import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadWriteGet;
-import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadWriteView;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueConsumer;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueReturnPrevOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueReturnView;
+import static org.infinispan.container.versioning.InequalVersionComparisonResult.EQUAL;
 import static org.infinispan.functional.FunctionalTestUtils.assertReadOnlyViewEmpty;
 import static org.infinispan.functional.FunctionalTestUtils.assertReadOnlyViewEquals;
 import static org.infinispan.functional.FunctionalTestUtils.assertReadWriteViewEmpty;
@@ -19,6 +10,15 @@ import static org.infinispan.functional.FunctionalTestUtils.ro;
 import static org.infinispan.functional.FunctionalTestUtils.rw;
 import static org.infinispan.functional.FunctionalTestUtils.supplyIntKey;
 import static org.infinispan.functional.FunctionalTestUtils.wo;
+import static org.infinispan.marshall.core.MarshallableFunctions.identity;
+import static org.infinispan.marshall.core.MarshallableFunctions.removeReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.returnReadOnlyFindOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.returnReadWriteFind;
+import static org.infinispan.marshall.core.MarshallableFunctions.returnReadWriteGet;
+import static org.infinispan.marshall.core.MarshallableFunctions.returnReadWriteView;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueConsumer;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueReturnView;
 import static org.infinispan.test.TestingUtil.withCacheManager;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
@@ -29,7 +29,6 @@ import static org.testng.AssertJUnit.assertTrue;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -45,25 +44,27 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.infinispan.AdvancedCache;
-import org.infinispan.commons.api.functional.EntryVersion.NumericEntryVersion;
-import org.infinispan.commons.api.functional.EntryView.ReadEntryView;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
-import org.infinispan.commons.api.functional.EntryView.WriteEntryView;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadOnlyMap;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadWriteMap;
-import org.infinispan.commons.api.functional.FunctionalMap.WriteOnlyMap;
-import org.infinispan.commons.api.functional.MetaParam.MetaEntryVersion;
-import org.infinispan.commons.api.functional.MetaParam.MetaLifespan;
-import org.infinispan.commons.api.functional.Traversable;
 import org.infinispan.commons.marshall.Externalizer;
 import org.infinispan.commons.marshall.SerializeFunctionWith;
 import org.infinispan.commons.marshall.SerializeWith;
+import org.infinispan.container.versioning.NumericVersion;
+import org.infinispan.functional.EntryView.ReadEntryView;
+import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.EntryView.WriteEntryView;
+import org.infinispan.functional.FunctionalMap.ReadOnlyMap;
+import org.infinispan.functional.FunctionalMap.ReadWriteMap;
+import org.infinispan.functional.FunctionalMap.WriteOnlyMap;
+import org.infinispan.functional.MetaParam.MetaEntryVersion;
+import org.infinispan.functional.MetaParam.MetaLifespan;
 import org.infinispan.functional.impl.FunctionalMapImpl;
 import org.infinispan.functional.impl.ReadOnlyMapImpl;
 import org.infinispan.functional.impl.ReadWriteMapImpl;
 import org.infinispan.functional.impl.WriteOnlyMapImpl;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.CacheManagerCallable;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
+import org.infinispan.util.function.SerializableConsumer;
+import org.infinispan.util.function.SerializableFunction;
 import org.testng.annotations.Test;
 
 /**
@@ -212,7 +213,7 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
    /**
     * Read-write allows to retrieve an empty cache entry.
     */
-   private <K> void doReadWriteGetsEmpty(Supplier<K> keySupplier, ReadWriteMap<K, String> map) {
+   <K> void doReadWriteGetsEmpty(Supplier<K> keySupplier, ReadWriteMap<K, String> map) {
       K key = keySupplier.get();
       await(map.eval(key, returnReadWriteFind()).thenAccept(v -> assertEquals(Optional.empty(), v)));
    }
@@ -308,17 +309,17 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
     * atomicity at the level of the function that compares the version
     * information.
     */
-   private <K> void doReadWriteForConditionalParamBasedReplace(Supplier<K> keySupplier,
-         ReadWriteMap<K, String> map1, ReadWriteMap<K, String> map2) {
+   <K> void doReadWriteForConditionalParamBasedReplace(Supplier<K> keySupplier,
+                                                       ReadWriteMap<K, String> map1, ReadWriteMap<K, String> map2) {
       replaceWithVersion(keySupplier, map1, map2, 100, rw -> {
             assertEquals("uno", rw.get());
-            assertEquals(Optional.of(new MetaEntryVersion<>(new NumericEntryVersion(200))),
+            assertEquals(Optional.of(new MetaEntryVersion(new NumericVersion(200))),
                rw.findMetaParam(MetaEntryVersion.class));
          }
       );
       replaceWithVersion(keySupplier, map1, map2, 900, rw -> {
          assertEquals(Optional.of("one"), rw.find());
-         assertEquals(Optional.of(new MetaEntryVersion<>(new NumericEntryVersion(100))),
+         assertEquals(Optional.of(new MetaEntryVersion(new NumericVersion(100))),
             rw.findMetaParam(MetaEntryVersion.class));
       });
    }
@@ -343,7 +344,7 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
          implements Function<ReadWriteEntryView<K, String>, Void> {
       @Override
       public Void apply(ReadWriteEntryView<K, String> rw) {
-         rw.set("one", new MetaEntryVersion<>(new NumericEntryVersion(100)));
+         rw.set("one", new MetaEntryVersion(new NumericVersion(100)));
          return null;
       }
 
@@ -371,11 +372,10 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
 
       @Override
       public ReadWriteEntryView<K, String> apply(ReadWriteEntryView<K, String> rw) {
-         Class<MetaEntryVersion<Long>> clazz = MetaEntryVersion.type();
-         Optional<MetaEntryVersion<Long>> metaParam = rw.findMetaParam(clazz);
+         Optional<MetaEntryVersion> metaParam = rw.findMetaParam(MetaEntryVersion.class);
          metaParam.ifPresent(metaVersion -> {
-            if (metaVersion.get().compareTo(new NumericEntryVersion(version)) == EQUAL)
-               rw.set("uno", new MetaEntryVersion<>(new NumericEntryVersion(200)));
+            if (metaVersion.get().compareTo(new NumericVersion(version)) == EQUAL)
+               rw.set("uno", new MetaEntryVersion(new NumericVersion(200)));
          });
          return rw;
       }
@@ -399,21 +399,21 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
          @Override
          public void call() throws Exception {
             cm.defineConfiguration("read-only", cm.getDefaultCacheConfiguration());
-            AdvancedCache<?, ?> readOnlyCache = cm.getCache("read-only").getAdvancedCache();
+            AdvancedCache<?, ?> readOnlyCache = getAdvancedCache(cm, "read-only");
             try (ReadOnlyMap<?, ?> ro = ReadOnlyMapImpl.create(FunctionalMapImpl.create(readOnlyCache))) {
                assertNotNull(ro); // No-op, just verify that it implements AutoCloseable
             }
             assertTrue(readOnlyCache.getStatus().isTerminated());
 
             cm.defineConfiguration("write-only", cm.getDefaultCacheConfiguration());
-            AdvancedCache<?, ?> writeOnlyCache = cm.getCache("write-only").getAdvancedCache();
+            AdvancedCache<?, ?> writeOnlyCache = getAdvancedCache(cm, "write-only");
             try (WriteOnlyMap<?, ?> wo = WriteOnlyMapImpl.create(FunctionalMapImpl.create(writeOnlyCache))) {
                assertNotNull(wo); // No-op, just verify that it implements AutoCloseable
             }
             assertTrue(writeOnlyCache.getStatus().isTerminated());
 
             cm.defineConfiguration("read-write", cm.getDefaultCacheConfiguration());
-            AdvancedCache<?, ?> readWriteCache = cm.getCache("read-write").getAdvancedCache();
+            AdvancedCache<?, ?> readWriteCache = getAdvancedCache(cm, "read-write");
             try (ReadWriteMap<?, ?> rw = ReadWriteMapImpl.create(FunctionalMapImpl.create(readWriteCache))) {
                assertNotNull(rw); // No-op, just verify that it implements AutoCloseable
             }
@@ -521,8 +521,8 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
       doReadWriteToRemoveAllAndReturnPrevs(supplyKeyForCache(1, DIST), wo(fmapD1), rw(fmapD2));
    }
 
-   private <K> void doReadWriteToRemoveAllAndReturnPrevs(Supplier<K> keySupplier,
-         WriteOnlyMap<K, String> map1, ReadWriteMap<K, String> map2) {
+   <K> void doReadWriteToRemoveAllAndReturnPrevs(Supplier<K> keySupplier,
+                                                 WriteOnlyMap<K, String> map1, ReadWriteMap<K, String> map2) {
       K key1 = keySupplier.get(), key2 = keySupplier.get(), key3 = keySupplier.get();
       Map<K, String> data = new HashMap<>();
       data.put(key1, "one");
@@ -554,16 +554,16 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
       doReturnViewFromReadOnlyEval(supplyKeyForCache(1, DIST), ro(fmapD1), wo(fmapD2));
    }
 
-   private <K> void doReturnViewFromReadOnlyEval(Supplier<K> keySupplier,
-         ReadOnlyMap<K, String> ro, WriteOnlyMap<K, String> wo) {
+   <K> void doReturnViewFromReadOnlyEval(Supplier<K> keySupplier,
+                                         ReadOnlyMap<K, String> ro, WriteOnlyMap<K, String> wo) {
       K k = keySupplier.get();
       assertReadOnlyViewEmpty(k, await(ro.eval(k, identity())));
       await(wo.eval(k, setOneWriteOnly()));
       assertReadOnlyViewEquals(k, "one", await(ro.eval(k, identity())));
    }
 
-   private Consumer<WriteEntryView<String>> setOneWriteOnly() {
-      return (Consumer<WriteEntryView<String>> & Serializable) wv -> wv.set("one");
+   private SerializableConsumer<WriteEntryView<String>> setOneWriteOnly() {
+      return wv -> wv.set("one");
    }
 
    public void testLocalReturnViewFromReadWriteEval() {
@@ -586,8 +586,8 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
       doReturnViewFromReadWriteEval(supplyKeyForCache(1, DIST), rw(fmapD1), rw(fmapD2));
    }
 
-   private <K> void doReturnViewFromReadWriteEval(Supplier<K> keySupplier,
-         ReadWriteMap<K, String> readMap, ReadWriteMap<K, String> writeMap) {
+   <K> void doReturnViewFromReadWriteEval(Supplier<K> keySupplier,
+                                          ReadWriteMap<K, String> readMap, ReadWriteMap<K, String> writeMap) {
       K k = keySupplier.get();
       assertReadWriteViewEmpty(k, await(readMap.eval(k, returnReadWriteView())));
       assertReadWriteViewEquals(k, "one", await(writeMap.eval(k, setOneReadWrite())));
@@ -596,12 +596,14 @@ public class FunctionalMapTest extends AbstractFunctionalTest {
       assertReadWriteViewEquals(k, "uno", await(readMap.eval(k, returnReadWriteView())));
    }
 
-   private <K> Function<ReadWriteEntryView<K, String>, ReadWriteEntryView<K, String>> setOneReadWrite() {
-      return (Function<ReadWriteEntryView<K, String>, ReadWriteEntryView<K, String>> & Serializable)
-         rw -> {
+   private <K> SerializableFunction<ReadWriteEntryView<K, String>, ReadWriteEntryView<K, String>> setOneReadWrite() {
+      return rw -> {
             rw.set("one");
             return rw;
          };
    }
 
+   protected AdvancedCache<?, ?> getAdvancedCache(EmbeddedCacheManager cm, String cacheName) {
+      return cm.getCache(cacheName).getAdvancedCache();
+   }
 }

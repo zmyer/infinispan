@@ -1,9 +1,9 @@
 package org.infinispan.xsite;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
 
 import javax.transaction.TransactionManager;
 
@@ -12,21 +12,23 @@ import org.infinispan.Cache;
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.functional.FunctionalMap;
+import org.infinispan.functional.impl.FunctionalMapImpl;
+import org.infinispan.functional.impl.WriteOnlyMapImpl;
 import org.infinispan.lifecycle.ComponentStatus;
-import org.infinispan.metadata.Metadata;
+import org.infinispan.marshall.core.MarshallableFunctions;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.transaction.impl.TransactionTable;
@@ -81,60 +83,61 @@ public abstract class BaseBackupReceiver implements BackupReceiver {
       }
    }
 
+   // All conditional commands are unsupported
    private static final class BackupCacheUpdater extends AbstractVisitor {
 
-      private static Log log = LogFactory.getLog(BackupCacheUpdater.class);
+      private static final Log log = LogFactory.getLog(BackupCacheUpdater.class);
+      private static final boolean trace = log.isTraceEnabled();
 
       private final ConcurrentMap<GlobalTransaction, GlobalTransaction> remote2localTx;
 
       private final AdvancedCache<Object, Object> backupCache;
+      private final FunctionalMap.WriteOnlyMap<Object, Object> writeOnlyMap;
 
       BackupCacheUpdater(Cache<Object, Object> backup) {
          //ignore return values on the backup
          this.backupCache = backup.getAdvancedCache().withFlags(Flag.IGNORE_RETURN_VALUES, Flag.SKIP_XSITE_BACKUP);
+         this.writeOnlyMap = WriteOnlyMapImpl.create(FunctionalMapImpl.create(backupCache));
          this.remote2localTx = new ConcurrentHashMap<>();
       }
 
       @Override
       public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
-         log.tracef("Processing a remote put %s", command);
          if (command.isConditional()) {
-            return backupCache.putIfAbsent(command.getKey(), command.getValue(), command.getMetadata());
+            throw new UnsupportedOperationException();
          }
-         return backupCache.put(command.getKey(), command.getValue(), command.getMetadata());
+         // TODO: execute asynchronously
+         backupCache.put(command.getKey(), command.getValue(), command.getMetadata());
+         return null;
       }
 
       @Override
       public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
          if (command.isConditional()) {
-            return backupCache.remove(command.getKey(), command.getValue());
+            throw new UnsupportedOperationException();
          }
-         return backupCache.remove(command.getKey());
-      }
-
-      @Override
-      public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
-         if (command.isConditional() && command.getOldValue() != null) {
-            return backupCache.replace(command.getKey(), command.getOldValue(), command.getNewValue(),
-                                       command.getMetadata());
-         }
-         return backupCache.replace(command.getKey(), command.getNewValue(),
-                                    command.getMetadata());
-      }
-
-      @Override
-      public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
-         Metadata metadata = command.getMetadata();
-         backupCache.putAll(command.getMap(),
-                            metadata.lifespan(), TimeUnit.MILLISECONDS,
-                            metadata.maxIdle(), TimeUnit.MILLISECONDS);
+         // TODO: execute asynchronously
+         backupCache.remove(command.getKey());
          return null;
+      }
+
+      @Override
+      public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) throws Throwable {
+         CompletableFuture<Void> future = writeOnlyMap.evalMany(command.getEntries(), MarshallableFunctions.setInternalCacheValueConsumer());
+         // TODO: accept async invocation
+         return future.join();
       }
 
       @Override
       public Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
+         // TODO: execute asynchronously
          backupCache.clear();
          return null;
+      }
+
+      @Override
+      protected Object handleDefault(InvocationContext ctx, VisitableCommand command) throws Throwable {
+         throw new UnsupportedOperationException();
       }
 
       @Override
@@ -159,7 +162,9 @@ public abstract class BaseBackupReceiver implements BackupReceiver {
          if (!isTransactional()) {
             log.cannotRespondToCommit(command.getGlobalTransaction(), backupCache.getName());
          } else {
-            log.tracef("Committing remote transaction %s", command.getGlobalTransaction());
+            if (trace) {
+               log.tracef("Committing remote transaction %s", command.getGlobalTransaction());
+            }
             completeTransaction(command.getGlobalTransaction(), true);
          }
          return null;
@@ -171,7 +176,9 @@ public abstract class BaseBackupReceiver implements BackupReceiver {
          if (!isTransactional()) {
             log.cannotRespondToRollback(command.getGlobalTransaction(), backupCache.getName());
          } else {
-            log.tracef("Rolling back remote transaction %s", command.getGlobalTransaction());
+            if (trace) {
+               log.tracef("Rolling back remote transaction %s", command.getGlobalTransaction());
+            }
             completeTransaction(command.getGlobalTransaction(), false);
          }
          return null;
@@ -189,14 +196,20 @@ public abstract class BaseBackupReceiver implements BackupReceiver {
          TransactionTable txTable = txTable();
          GlobalTransaction localTxId = remote2localTx.remove(globalTransaction);
          if (localTxId == null) {
-            throw new CacheException("Couldn't find a local transaction corresponding to remote transaction " + globalTransaction);
+            throw log.unableToFindRemoteSiteTransaction(globalTransaction);
          }
          LocalTransaction localTx = txTable.getLocalTransaction(localTxId);
          if (localTx == null) {
-            throw new IllegalStateException("Local tx not found but present in the tx table!");
+            throw log.unableToFindLocalTransactionFromRemoteSiteTransaction(globalTransaction);
          }
          TransactionManager txManager = txManager();
          txManager.resume(localTx.getTransaction());
+         if (!localTx.isEnlisted()) {
+            if (trace) {
+               log.tracef("%s isn't enlisted! Removing it manually.", localTx);
+            }
+            txTable().removeLocalTransaction(localTx);
+         }
          if (commit) {
             txManager.commit();
          } else {
@@ -219,10 +232,14 @@ public abstract class BaseBackupReceiver implements BackupReceiver {
 
                if (onePhaseCommit) {
                   if (replaySuccessful) {
-                     log.tracef("Committing remotely originated tx %s as it is 1PC", command.getGlobalTransaction());
+                     if (trace) {
+                        log.tracef("Committing remotely originated tx %s as it is 1PC", command.getGlobalTransaction());
+                     }
                      tm.commit();
                   } else {
-                     log.tracef("Rolling back remotely originated tx %s", command.getGlobalTransaction());
+                     if (trace) {
+                        log.tracef("Rolling back remotely originated tx %s", command.getGlobalTransaction());
+                     }
                      tm.rollback();
                   }
                } else { // Wait for a remote commit/rollback.

@@ -15,14 +15,19 @@ public class RestServerConfigurationBuilder extends ProtocolServerConfigurationB
       Builder<RestServerConfiguration> {
 
    private final static Log logger = LogFactory.getLog(RestServerConfigurationBuilder.class, Log.class);
-   private boolean startTransport = true;
 
-   private static final int DEFAULT_PORT = 8080;
+   public static final String DEFAULT_CONTEXT_PATH = "rest";
+   public static final int DEFAULT_PORT = 8080;
+   public static final String DEFAULT_NAME = "rest";
+   public static final int DEFAULT_MAX_CONTENT_LENGTH = 10 * 1024 * 1024;
 
    private ExtendedHeaders extendedHeaders = ExtendedHeaders.ON_DEMAND;
+   private String contextPath = DEFAULT_CONTEXT_PATH;
+   private int maxContentLength = DEFAULT_MAX_CONTENT_LENGTH;
 
    public RestServerConfigurationBuilder() {
       super(DEFAULT_PORT);
+      name(DEFAULT_NAME);
    }
 
    public RestServerConfigurationBuilder extendedHeaders(ExtendedHeaders extendedHeaders) {
@@ -30,8 +35,13 @@ public class RestServerConfigurationBuilder extends ProtocolServerConfigurationB
       return this;
    }
 
-   public RestServerConfigurationBuilder startTransport(boolean startTransport) {
-      this.startTransport = startTransport;
+   public RestServerConfigurationBuilder contextPath(String contextPath) {
+      this.contextPath = contextPath;
+      return this;
+   }
+
+   public RestServerConfigurationBuilder maxContentLength(int maxContentLength) {
+      this.maxContentLength = maxContentLength;
       return this;
    }
 
@@ -42,7 +52,8 @@ public class RestServerConfigurationBuilder extends ProtocolServerConfigurationB
 
    @Override
    public RestServerConfiguration create() {
-      return new RestServerConfiguration(extendedHeaders, host, port, ignoredCaches, ssl.create(), startTransport);
+      return new RestServerConfiguration(defaultCacheName, name, extendedHeaders, host, port, ignoredCaches, ssl.create(),
+            startTransport, contextPath, adminOperationsHandler, maxContentLength);
    }
 
    @Override
@@ -50,6 +61,7 @@ public class RestServerConfigurationBuilder extends ProtocolServerConfigurationB
       this.extendedHeaders = template.extendedHeaders();
       this.host = template.host();
       this.port = template.port();
+      this.maxContentLength = template.maxContentLength();
       return this;
    }
 

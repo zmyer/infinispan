@@ -1,11 +1,10 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
-         xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>org.infinispan</groupId>
         <artifactId>infinispan-server-parent</artifactId>
-        <version>9.0.0-SNAPSHOT</version>
+        <version>9.2.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -16,37 +15,36 @@
 
     <properties>
         <module.skipComponentMetaDataProcessing>false</module.skipComponentMetaDataProcessing>
-        <suite.exclude.groups>org.infinispan.commons.test.annotations.Profiling</suite.exclude.groups>
+        <certificate.dname>CN=HotRod_1,OU=Infinispan,O=JBoss,L=Red Hat,ST=World,C=WW</certificate.dname>
     </properties>
 
     <dependencies>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-server-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-client-hotrod</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-server-hotrod</artifactId>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-server-hotrod</artifactId>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-server-rest</artifactId>
-            <classifier>classes</classifier>
         </dependency>
         <dependency>
             <groupId>io.netty</groupId>
-            <artifactId>netty-all</artifactId>
+            <artifactId>netty-codec-http</artifactId>
         </dependency>
         <dependency>
             <groupId>org.assertj</groupId>
@@ -69,8 +67,13 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>commons-httpclient</groupId>
-            <artifactId>commons-httpclient</artifactId>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>commons-logging</groupId>
+            <artifactId>commons-logging</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -79,16 +82,113 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>create-certificates</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <macrodef name="keytool">
+                                    <attribute name="command"/>
+                                    <element name="args"/>
+                                    <sequential>
+                                        <condition property="keytool.classname" value="com.ibm.crypto.tools.KeyTool">
+                                            <available classname="com.ibm.crypto.tools.KeyTool"/>
+                                        </condition>
+                                        <condition property="keytool.classname" value="sun.security.tools.keytool.Main">
+                                            <available classname="sun.security.tools.keytool.Main"/>
+                                        </condition>
+                                        <java classname="${keytool.classname}" failonerror="true">
+                                            <arg value="@{command}"/>
+                                            <!-- common arguments -->
+                                            <arg value="-validity"/>
+                                            <arg value="365"/>
+                                            <arg value="-keyalg"/>
+                                            <arg value="RSA"/>
+                                            <arg value="-keysize"/>
+                                            <arg value="2048"/>
+                                            <arg value="-noprompt"/>
+                                            <arg value="-storepass"/>
+                                            <arg value="secret"/>
+                                            <arg value="-keypass"/>
+                                            <arg value="secret"/>
+                                            <!-- additional arguments -->
+                                            <args/>
+                                        </java>
+                                    </sequential>
+                                </macrodef>
+                                <delete quiet="true">
+                                    <fileset dir="${project.build.testOutputDirectory}" includes="*.jks,*.csr,*.cer"/>
+                                </delete>
+                                <echo message="Generate the default certificate"/>
+                                <keytool command="-genkeypair">
+                                    <args>
+                                        <arg value="-alias"/>
+                                        <arg value="default"/>
+                                        <arg value="-dname"/>
+                                        <arg value="${certificate.dname}"/>
+                                        <arg value="-keystore"/>
+                                        <arg value="${project.build.testOutputDirectory}/default_server_keystore.jks"/>
+                                    </args>
+                                </keytool>
+                                <echo message="Generate the SNI certificate"/>
+                                <keytool command="-genkeypair">
+                                    <args>
+                                        <arg value="-alias"/>
+                                        <arg value="default"/>
+                                        <arg value="-dname"/>
+                                        <arg value="${certificate.dname}"/>
+                                        <arg value="-keystore"/>
+                                        <arg value="${project.build.testOutputDirectory}/sni_server_keystore.jks"/>
+                                    </args>
+                                </keytool>
+                                <keytool command="-importkeystore">
+                                    <args>
+                                        <arg value="-srckeystore"/>
+                                        <arg value="${project.build.testOutputDirectory}/default_server_keystore.jks"/>
+                                        <arg value="-srcstorepass"/>
+                                        <arg value="secret"/>
+                                        <arg value="-destkeystore"/>
+                                        <arg value="${project.build.testOutputDirectory}/default_client_truststore.jks"/>
+                                        <arg value="-deststorepass"/>
+                                        <arg value="secret"/>
+                                    </args>
+                                </keytool>
+                                <keytool command="-importkeystore">
+                                    <args>
+                                        <arg value="-srckeystore"/>
+                                        <arg value="${project.build.testOutputDirectory}/sni_server_keystore.jks"/>
+                                        <arg value="-srcstorepass"/>
+                                        <arg value="secret"/>
+                                        <arg value="-destkeystore"/>
+                                        <arg value="${project.build.testOutputDirectory}/sni_client_truststore.jks"/>
+                                        <arg value="-deststorepass"/>
+                                        <arg value="secret"/>
+                                    </args>
+                                </keytool>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration combine.self="override">
                     <trimStackTrace>false</trimStackTrace>
                     <parallel>suitesAndClasses</parallel>
                     <threadCount>${infinispan.test.parallel.threads}</threadCount>
-                    <excludedGroups>${suite.exclude.groups}</excludedGroups>
+                    <groups combine.self="override">${defaultJUnitGroups}</groups>
+                    <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
                     <systemPropertyVariables>
                         <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
                         <build.directory>${project.build.directory}</build.directory>
                     </systemPropertyVariables>
+                    <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
                 </configuration>
                 <dependencies>
                     <dependency>
@@ -106,9 +206,34 @@
                         <Export-Package>
                             ${project.groupId}.server.router.*;version=${project.version};-split-package:=error
                         </Export-Package>
+                        <Include-Resources>
+                            {maven-resources},
+                            ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
+                        </Include-Resources>
                     </instructions>
                 </configuration>
             </plugin>
+
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>smoke</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>default-test</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

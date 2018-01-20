@@ -14,6 +14,7 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.CacheContainer;
+import org.infinispan.partitionhandling.PartitionHandling;
 import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -36,7 +37,7 @@ public class CacheAvailabilityJmxTest extends MultipleCacheManagersTest {
       ConfigurationBuilder cb = new ConfigurationBuilder();
       cb.clustering().cacheMode(CacheMode.DIST_SYNC)
             .stateTransfer().awaitInitialTransfer(false)
-            .partitionHandling().enabled(true);
+            .partitionHandling().whenSplit(PartitionHandling.DENY_READ_WRITES);
       return cb;
    }
 
@@ -105,6 +106,6 @@ public class CacheAvailabilityJmxTest extends MultipleCacheManagersTest {
       });
 
       // Check that the cache now has 4 nodes, and the CH is balanced
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1), cache(2), cache(3));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1), cache(2), cache(3));
    }
 }

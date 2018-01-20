@@ -29,10 +29,10 @@ import org.testng.annotations.Test;
  * @author wburns
  * @since 7.2
  */
-@Test(groups = "stress", testName = "commands.GetAllCommandStressTest")
+@Test(groups = "stress", testName = "commands.GetAllCommandStressTest", timeOut = 15*60*1000)
 @InCacheMode({ CacheMode.DIST_SYNC })
 public class GetAllCommandStressTest extends StressTest {
-   protected final String CACHE_NAME = getClass().getName();
+   protected final String CACHE_NAME = "testCache";
    protected final static int CACHE_COUNT = 6;
    protected final static int THREAD_MULTIPLIER = 4;
    protected final static int CACHE_ENTRY_COUNT = 50000;
@@ -88,16 +88,22 @@ public class GetAllCommandStressTest extends StressTest {
       List<Future<Void>> futures = forkWorkerThreads(CACHE_NAME, THREAD_MULTIPLIER, CACHE_COUNT, keys, this::workerLogic);
 
       // Then spawn a thread that just constantly kills the last cache and recreates over and over again
-      futures.add(forkRestartingThread());
+      futures.add(forkRestartingThread(CACHE_COUNT));
 
       waitAndFinish(futures, 1, TimeUnit.MINUTES);
    }
 
    protected void workerLogic(Cache<Integer, Integer> cache, Set<Integer> threadKeys, int iteration) {
       Map<Integer, Integer> results = cache.getAdvancedCache().getAll(threadKeys);
-      assertEquals("Keys: " + threadKeys + "\nResults: " + results, threadKeys.size(), results.size());
+      assertEquals("Missing: " + diff(threadKeys, results.keySet()), threadKeys.size(), results.size());
       for (Integer key : threadKeys) {
          assertEquals(key, results.get(key));
       }
+   }
+
+   private Set<Integer> diff(Set<Integer> superset, Set<Integer> subset) {
+      Set<Integer> diff = new HashSet<>(superset);
+      diff.removeAll(subset);
+      return diff;
    }
 }

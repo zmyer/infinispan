@@ -2,12 +2,11 @@ package org.infinispan.statetransfer;
 
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.annotations.Test;
 
@@ -27,13 +26,11 @@ public class ReplStateTransferOnJoinConsistencyTest extends DistStateTransferOnJ
    protected ConfigurationBuilder createConfigurationBuilder(boolean isOptimistic) {
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.REPL_SYNC, true, true);
       builder.transaction().transactionMode(TransactionMode.TRANSACTIONAL)
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
-            .syncCommitPhase(true).syncRollbackPhase(true);
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup());
 
       if (isOptimistic) {
          builder.transaction().lockingMode(LockingMode.OPTIMISTIC)
-               .locking().writeSkewCheck(true).isolationLevel(IsolationLevel.REPEATABLE_READ)
-               .versioning().enable().scheme(VersioningScheme.SIMPLE);
+               .locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
       } else {
          builder.transaction().lockingMode(LockingMode.PESSIMISTIC);
       }

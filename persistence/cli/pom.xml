@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-persistence-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
+      <version>9.2.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-persistence-cli</artifactId>
@@ -14,7 +14,7 @@
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cli-client</artifactId>
       </dependency>
       <dependency>
@@ -22,7 +22,7 @@
          <artifactId>jackson-mapper-asl</artifactId>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cli-interpreter</artifactId>
          <scope>test</scope>
       </dependency>
@@ -38,7 +38,7 @@
       </dependency>
       <dependency>
          <groupId>org.mockito</groupId>
-         <artifactId>mockito-all</artifactId>
+         <artifactId>mockito-core</artifactId>
          <scope>test</scope>
       </dependency>
    </dependencies>
@@ -94,18 +94,23 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration>
+               <!-- Remote JMX properties will only be properly applied when
+               passed via argLine. If passed via systemPropertyVariables,
+               they're applied too late for them to have an effect on the JVM
+               -->
                <argLine>
                   -Dcom.sun.management.jmxremote=true
                   -Djava.rmi.server.hostname=localhost
                   -Dcom.sun.management.jmxremote.port=2626
                   -Dcom.sun.management.jmxremote.authenticate=false
                   -Dcom.sun.management.jmxremote.ssl=false
+                  ${forkJvmArgs} ${jigsawForkJvmArgs}
                </argLine>
                <forkMode>once</forkMode>
             </configuration>
          </plugin>
          <plugin>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-defaults-maven-plugin</artifactId>
             <version>${project.version}</version>
             <executions>

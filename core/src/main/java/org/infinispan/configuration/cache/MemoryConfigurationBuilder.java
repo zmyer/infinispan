@@ -5,11 +5,14 @@ import static org.infinispan.configuration.cache.MemoryConfiguration.EVICTION_TY
 import static org.infinispan.configuration.cache.MemoryConfiguration.SIZE;
 import static org.infinispan.configuration.cache.MemoryConfiguration.STORAGE_TYPE;
 
-import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.configuration.global.GlobalConfiguration;
+import org.infinispan.container.offheap.OffHeapDataContainer;
+import org.infinispan.container.offheap.UnpooledOffHeapMemoryAllocator;
 import org.infinispan.eviction.EvictionType;
+import org.infinispan.util.logging.Log;
 
 /**
  * Controls the data container for the cache.
@@ -17,6 +20,8 @@ import org.infinispan.eviction.EvictionType;
  * @author William Burns
  */
 public class MemoryConfigurationBuilder extends AbstractConfigurationChildBuilder implements Builder<MemoryConfiguration> {
+
+   private static final Log log = LogFactory.getLog(MemoryConfigurationBuilder.class, Log.class);
 
    private AttributeSet attributes;
 
@@ -36,6 +41,14 @@ public class MemoryConfigurationBuilder extends AbstractConfigurationChildBuilde
    }
 
    /**
+    * The underlying storage type for this configuration
+    * @return the configured storage type
+    */
+   public StorageType storageType() {
+      return attributes.attribute(STORAGE_TYPE).get();
+   }
+
+   /**
     * Defines the maximum size before eviction occurs. See {@link #evictionType(EvictionType)}
     * for more details on the size is interpreted.
     *
@@ -44,6 +57,14 @@ public class MemoryConfigurationBuilder extends AbstractConfigurationChildBuilde
    public MemoryConfigurationBuilder size(long size) {
       attributes.attribute(SIZE).set(size);
       return this;
+   }
+
+   /**
+    * The configured eviction size, please see {@link MemoryConfigurationBuilder#size(long)}.
+    * @return the configured evicted size
+    */
+   public long size() {
+      return attributes.attribute(SIZE).get();
    }
 
    /**
@@ -65,10 +86,19 @@ public class MemoryConfigurationBuilder extends AbstractConfigurationChildBuilde
    }
 
    /**
+    * The configured eviction type, please see {@link MemoryConfigurationBuilder#evictionType(EvictionType)}.
+    * @return the configured eviction type
+    */
+   public EvictionType evictionType() {
+      return attributes.attribute(EVICTION_TYPE).get();
+   }
+
+   /**
     * Configuration setting when using off-heap that defines how many address pointers there are.
     * This number will be rounded up to the next power of two.  This helps performance in that the
     * more address pointers there are the less collisions there will be which improve performance of
-    * both read and write operations.
+    * both read and write operations. This is only used when OFF_HEAP storage type is configured
+    * {@link MemoryConfigurationBuilder#storageType(StorageType)}.
     * @param addressCount
     * @return this
     */
@@ -77,17 +107,47 @@ public class MemoryConfigurationBuilder extends AbstractConfigurationChildBuilde
       return this;
    }
 
+   /**
+    * How many address pointers are configured for the off heap storage. See
+    * {@link MemoryConfigurationBuilder#addressCount(int)} for more information.
+    * @return the configured amount of address pointers
+    */
+   public int addressCount() {
+      return attributes.attribute(ADDRESS_COUNT).get();
+   }
+
    @Override
    public void validate() {
       StorageType type = attributes.attribute(STORAGE_TYPE).get();
       if (type != StorageType.OBJECT && getBuilder().compatibility().isEnabled()) {
-         throw new CacheConfigurationException("Compatibility mode requires OBJECT storage type but was: " + type);
+         throw log.compatibilityModeOnlyCompatibleWithObjectStorage(type);
       }
       long size = attributes.attribute(SIZE).get();
       if (size > 0) {
          EvictionType evictionType = attributes.attribute(EVICTION_TYPE).get();
-         if (evictionType == EvictionType.MEMORY && type != StorageType.BINARY) {
-            throw new CacheConfigurationException("MEMORY based eviction requires binary but was : " + type);
+         if (evictionType.isExceptionBased()) {
+            TransactionConfigurationBuilder transactionConfiguration = getBuilder().transaction();
+            org.infinispan.transaction.TransactionMode transactionMode = transactionConfiguration.transactionMode();
+            if (transactionMode == null || !transactionMode.isTransactional() ||
+                  transactionConfiguration.useSynchronization() ||
+                  transactionConfiguration.use1PcForAutoCommitTransactions()) {
+               throw new UnsupportedOperationException();
+               // TODO: need to add log
+//               throw log.exceptionBasedEvictionOnlySupportedInTransactionalCaches();
+            }
+         } else if (evictionType.isMemoryBased()) {
+            switch (type) {
+               case OBJECT:
+                  throw log.offHeapMemoryEvictionNotSupportedWithObject();
+               case OFF_HEAP:
+                  int addressCount = attributes.attribute(ADDRESS_COUNT).get();
+                  // Note this is cast to long as we have to multiply by 8 below which could overflow
+                  long actualAddressCount = OffHeapDataContainer.getActualAddressCount(addressCount << 3);
+                  actualAddressCount = UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(actualAddressCount);
+                  if (size < actualAddressCount) {
+                     throw log.offHeapMemoryEvictionSizeNotLargeEnoughForAddresses(size, actualAddressCount, addressCount);
+                  }
+            }
          }
       }
    }

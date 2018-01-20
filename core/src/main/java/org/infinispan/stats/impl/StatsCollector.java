@@ -4,15 +4,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
+import org.infinispan.AdvancedCache;
 import org.infinispan.commons.CacheException;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.offheap.OffHeapMemoryAllocator;
+import org.infinispan.context.Flag;
 import org.infinispan.factories.AbstractNamedCacheComponentFactory;
 import org.infinispan.factories.annotations.DefaultFactoryFor;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.SurvivesRestarts;
+import org.infinispan.interceptors.impl.CacheMgmtInterceptor;
 import org.infinispan.jmx.JmxStatisticsExposer;
 import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
@@ -41,19 +44,11 @@ public class StatsCollector implements Stats, JmxStatisticsExposer {
    private final LongAdder removeHits = new LongAdder();
    private final LongAdder removeMisses = new LongAdder();
 
-   private TimeService timeService;
-   private DataContainer dataContainer;
-   private OffHeapMemoryAllocator allocator;
-   private Configuration configuration;
-
-   @Inject
-   public void injectDependencies(TimeService timeService, DataContainer dataContainer,
-         OffHeapMemoryAllocator allocator, Configuration configuration) {
-      this.timeService = timeService;
-      this.dataContainer = dataContainer;
-      this.allocator = allocator;
-      this.configuration = configuration;
-   }
+   @Inject private AdvancedCache cache;
+   @Inject private TimeService timeService;
+   @Inject private DataContainer dataContainer;
+   @Inject private OffHeapMemoryAllocator allocator;
+   @Inject private Configuration configuration;
 
    @Start
    public void start() {
@@ -200,6 +195,11 @@ public class StatsCollector implements Stats, JmxStatisticsExposer {
    }
 
    @Override
+   public int getRequiredMinimumNumberOfNodes() {
+      return CacheMgmtInterceptor.calculateRequiredMinimumNumberOfNodes(cache);
+   }
+
+   @Override
    public void reset() {
       resetStatistics();
    }
@@ -220,6 +220,16 @@ public class StatsCollector implements Stats, JmxStatisticsExposer {
          displayType = DisplayType.SUMMARY
    )
    public int getNumberOfEntries() {
+      return cache.withFlags(Flag.CACHE_MODE_LOCAL).size();
+   }
+
+   @Override
+   @ManagedAttribute(
+         description = "Number of entries currently in-memory excluding expired entries",
+         displayName = "Number of in-memory cache entries",
+         displayType = DisplayType.SUMMARY
+   )
+   public int getCurrentNumberOfEntriesInMemory() {
       return dataContainer.size();
    }
 

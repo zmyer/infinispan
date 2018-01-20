@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.infinispan</groupId>
         <artifactId>infinispan-spring4-parent</artifactId>
-        <version>9.0.0-SNAPSHOT</version>
+        <version>9.2.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -30,12 +30,11 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-core</artifactId>
-            <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-spring4-common</artifactId>
         </dependency>
 
@@ -45,35 +44,35 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-commons-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-spring4-common</artifactId>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-core</artifactId>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-client-hotrod</artifactId>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-server-hotrod</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-server-hotrod</artifactId>
             <type>test-jar</type>
             <scope>test</scope>
@@ -86,11 +85,6 @@
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-context-support</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-web</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

@@ -18,6 +18,7 @@ import org.infinispan.util.logging.LogFactory;
  * Controls the eviction settings for the cache.
  * @deprecated Use {@link MemoryConfiguration} instead
  */
+@Deprecated
 public class EvictionConfigurationBuilder extends AbstractConfigurationChildBuilder implements Builder<EvictionConfiguration> {
    private static final Log log = LogFactory.getLog(EvictionConfigurationBuilder.class);
    private final AttributeSet attributes;
@@ -112,7 +113,7 @@ public class EvictionConfigurationBuilder extends AbstractConfigurationChildBuil
          if (size > 0) {
             strategy(EvictionStrategy.LIRS);
             log.debugf("Max entries configured (%d) without eviction strategy. Eviction strategy overriden to %s", size, strategy);
-         } else if (getBuilder().persistence().passivation() && strategy != EvictionStrategy.MANUAL) {
+         } else if (getBuilder().persistence().passivation() && strategy != EvictionStrategy.MANUAL && !getBuilder().template()) {
             log.passivationWithoutEviction();
          }
       }

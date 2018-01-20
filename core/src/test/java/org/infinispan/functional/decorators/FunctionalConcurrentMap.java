@@ -1,14 +1,14 @@
 package org.infinispan.functional.decorators;
 
-import static org.infinispan.commons.marshall.MarshallableFunctions.removeIfValueEqualsReturnBoolean;
-import static org.infinispan.commons.marshall.MarshallableFunctions.removeReturnPrevOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadOnlyFindIsPresent;
-import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadOnlyFindOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueConsumer;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueIfAbsentReturnPrevOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueIfEqualsReturnBoolean;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueIfPresentReturnPrevOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.removeIfValueEqualsReturnBoolean;
+import static org.infinispan.marshall.core.MarshallableFunctions.removeReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.returnReadOnlyFindIsPresent;
+import static org.infinispan.marshall.core.MarshallableFunctions.returnReadOnlyFindOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueConsumer;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueIfAbsentReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueIfEqualsReturnBoolean;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueIfPresentReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueReturnPrevOrNull;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -22,13 +22,12 @@ import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 import org.infinispan.AdvancedCache;
-import org.infinispan.commons.api.functional.EntryView.ReadEntryView;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadOnlyMap;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadWriteMap;
-import org.infinispan.commons.api.functional.FunctionalMap.WriteOnlyMap;
-import org.infinispan.commons.api.functional.Listeners.ReadWriteListeners;
-import org.infinispan.commons.api.functional.Listeners.WriteListeners;
-import org.infinispan.commons.api.functional.Param.FutureMode;
+import org.infinispan.functional.EntryView.ReadEntryView;
+import org.infinispan.functional.FunctionalMap.ReadOnlyMap;
+import org.infinispan.functional.FunctionalMap.ReadWriteMap;
+import org.infinispan.functional.FunctionalMap.WriteOnlyMap;
+import org.infinispan.functional.Listeners.ReadWriteListeners;
+import org.infinispan.functional.Listeners.WriteListeners;
 import org.infinispan.functional.impl.FunctionalMapImpl;
 import org.infinispan.functional.impl.ReadOnlyMapImpl;
 import org.infinispan.functional.impl.ReadWriteMapImpl;
@@ -49,10 +48,9 @@ public final class FunctionalConcurrentMap<K, V> implements ConcurrentMap<K, V>,
    // Rudimentary constructor, we'll provide more idiomatic construction
    // via main Infinispan class which is still to be defined
    private FunctionalConcurrentMap(FunctionalMapImpl<K, V> map) {
-      FunctionalMapImpl<K, V> blockingMap = map.withParams(FutureMode.COMPLETED);
-      this.readOnly = ReadOnlyMapImpl.create(blockingMap);
-      this.writeOnly = WriteOnlyMapImpl.create(blockingMap);
-      this.readWrite = ReadWriteMapImpl.create(blockingMap);
+      this.readOnly = ReadOnlyMapImpl.create(map);
+      this.writeOnly = WriteOnlyMapImpl.create(map);
+      this.readWrite = ReadWriteMapImpl.create(map);
    }
 
    public static <K, V> FunctionalConcurrentMap<K, V> create(AdvancedCache<K, V> cache) {
@@ -116,11 +114,7 @@ public final class FunctionalConcurrentMap<K, V> implements ConcurrentMap<K, V>,
 
    @Override
    public void putAll(Map<? extends K, ? extends V> m) {
-      // Since blocking is in use, there's no need to consume the iterator.
-      // With blocking, the iterator gets pro-actively consumed, and the
-      // return offers the possibility to re-iterate by the user.
-      // Since the iteration here has no result, we can skip the iteration altogether.
-      writeOnly.evalMany(m, setValueConsumer());
+      await(writeOnly.evalMany(m, setValueConsumer()));
    }
 
    @Override
@@ -194,7 +188,7 @@ public final class FunctionalConcurrentMap<K, V> implements ConcurrentMap<K, V>,
       @Override
       public V setValue(V value) {
          V prev = view.get();
-         writeOnly.eval(view.key(), value, setValueConsumer());
+         await(writeOnly.eval(view.key(), value, setValueConsumer()));
          return prev;
       }
 

@@ -18,6 +18,11 @@
  */
 package org.infinispan.server.endpoint.subsystem;
 
+import java.util.Collections;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.infinispan.rest.configuration.ExtendedHeaders;
 import org.jboss.as.controller.AbstractAddStepHandler;
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.OperationContext;
@@ -45,25 +50,50 @@ class RestSubsystemAdd extends AbstractAddStepHandler {
       // Read the full model
       ModelNode config = Resource.Tools.readModel(context.readResource(PathAddress.EMPTY_ADDRESS));
 
+      RestAuthMethod restAuthMethod = RestAuthMethod.NONE;
+      ModelNode authConfig = null;
+      if (config.hasDefined(ModelKeys.AUTHENTICATION) && config.get(ModelKeys.AUTHENTICATION, ModelKeys.AUTHENTICATION_NAME).isDefined()) {
+         authConfig = config.get(ModelKeys.AUTHENTICATION, ModelKeys.AUTHENTICATION_NAME);
+         restAuthMethod = RestAuthMethod.valueOf(RestAuthenticationResource.AUTH_METHOD.resolveModelAttribute(context, authConfig).asString());
+      }
+      String contextPath = RestConnectorResource.CONTEXT_PATH.resolveModelAttribute(context, config).asString();
+      ExtendedHeaders extendedHeaders = ExtendedHeaders.valueOf(RestConnectorResource.EXTENDED_HEADERS.resolveModelAttribute(context, config).asString());
+
+      Set<String> ignoredCaches = Collections.emptySet();
+      if (config.hasDefined(ModelKeys.IGNORED_CACHES)) {
+         ignoredCaches = config.get(ModelKeys.IGNORED_CACHES).asList()
+               .stream().map(ModelNode::asString).collect(Collectors.toSet());
+      }
+      int maxContentLength = RestConnectorResource.MAX_CONTENT_LENGTH.resolveModelAttribute(context, config).asInt();
       // Create the service
-      final RestService service = new RestService(getServiceName(config), config);
+      final RestService service = new RestService(getServiceName(config), restAuthMethod, cleanContextPath(contextPath), extendedHeaders, ignoredCaches, maxContentLength);
 
       // Setup the various dependencies with injectors and install the service
       ServiceBuilder<?> builder = context.getServiceTarget().addService(EndpointUtils.getServiceName(operation, "rest"), service);
       String cacheContainerName = config.hasDefined(ModelKeys.CACHE_CONTAINER) ? config.get(ModelKeys.CACHE_CONTAINER).asString() : null;
       EndpointUtils.addCacheContainerDependency(builder, cacheContainerName, service.getCacheManager());
       EndpointUtils.addCacheDependency(builder, cacheContainerName, null);
-      EndpointUtils.addSocketBindingDependency(builder, getSocketBindingName(operation), service.getSocketBinding());
-
-
+      EndpointUtils.addSocketBindingDependency(context, builder, getSocketBindingName(operation), service.getSocketBinding());
 
       builder.addDependency(PathManagerService.SERVICE_NAME, PathManager.class, service.getPathManagerInjector());
-      if (config.hasDefined(ModelKeys.SECURITY_DOMAIN)) {
-         EndpointUtils.addSecurityDomainDependency(builder, config.get(ModelKeys.SECURITY_DOMAIN).asString(), service.getSecurityDomainContextInjector());
+
+      if (authConfig != null) {
+         if(authConfig.hasDefined(ModelKeys.SECURITY_REALM)) {
+            EndpointUtils.addSecurityRealmDependency(builder, RestAuthenticationResource.SECURITY_REALM.resolveModelAttribute(context, authConfig).asString(), service.getAuthenticationSecurityRealm());
+         }
       }
-      EncryptableSubsystemHelper.processEncryption(config, service, builder);
+
+      EncryptableSubsystemHelper.processEncryption(context, config, service, builder);
       builder.setInitialMode(ServiceController.Mode.ACTIVE);
       builder.install();
+   }
+
+   private static String cleanContextPath(String s) {
+      if (s.endsWith("/")) {
+         return s.substring(0, s.length() - 1);
+      } else {
+         return s;
+      }
    }
 
    protected String getSocketBindingName(ModelNode config) {
@@ -95,6 +125,4 @@ class RestSubsystemAdd extends AbstractAddStepHandler {
    protected boolean requiresRuntimeVerification() {
       return false;
    }
-
-
 }

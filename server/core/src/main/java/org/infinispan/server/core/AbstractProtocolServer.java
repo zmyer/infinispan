@@ -16,8 +16,7 @@ import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.server.core.configuration.ProtocolServerConfiguration;
 import org.infinispan.server.core.logging.Log;
 import org.infinispan.server.core.transport.NettyTransport;
-
-import io.netty.channel.epoll.Epoll;
+import org.infinispan.tasks.TaskManager;
 
 /**
  * A common protocol server dealing with common property parameter validation and assignment and transport lifecycle.
@@ -38,21 +37,7 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
    protected A configuration;
    private ObjectName transportObjName;
    private MBeanServer mbeanServer;
-   private static final String USE_EPOLL_PROPERTY = "infinispan.server.channel.epoll";
-   private static final boolean IS_LINUX = System.getProperty("os.name").toLowerCase().startsWith("linux");
-   private static final boolean EPOLL_DISABLED = System.getProperty(USE_EPOLL_PROPERTY, "true").equalsIgnoreCase("false");
-   private static final boolean USE_NATIVE_EPOLL;
 
-   static {
-      if (Epoll.isAvailable()) {
-         USE_NATIVE_EPOLL = !EPOLL_DISABLED && IS_LINUX;
-      } else {
-         if (IS_LINUX) {
-            log.epollNotAvailable(Epoll.unavailabilityCause().toString());
-         }
-         USE_NATIVE_EPOLL = false;
-      }
-   }
 
    protected AbstractProtocolServer(String protocolName) {
       this.protocolName = protocolName;
@@ -66,11 +51,24 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
          log.debugf("Starting server with configuration: %s", configuration);
       }
 
+      registerAdminOperationsHandler();
+
       // Start default cache
       startDefaultCache();
 
       if(configuration.startTransport())
          startTransport();
+   }
+
+   private void registerAdminOperationsHandler() {
+      if (configuration.adminOperationsHandler() != null) {
+         TaskManager taskManager = SecurityActions.getGlobalComponentRegistry(cacheManager).getComponent(TaskManager.class);
+         if (taskManager != null) {
+            taskManager.registerTaskEngine(configuration.adminOperationsHandler());
+         } else {
+            throw log.cannotRegisterAdminOperationsHandler();
+         }
+      }
    }
 
    @Override
@@ -86,13 +84,22 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
 
    protected void startTransport() {
       InetSocketAddress address = new InetSocketAddress(configuration.host(), configuration.port());
-      transport = new NettyTransport(address, configuration, getQualifiedName(), cacheManager, USE_NATIVE_EPOLL);
+      transport = new NettyTransport(address, configuration, getQualifiedName(), cacheManager);
       transport.initializeHandler(getInitializer());
 
       // Register transport MBean regardless
       registerTransportMBean();
 
-      transport.start();
+      try {
+         transport.start();
+      } catch (Throwable re) {
+         try {
+            unregisterTransportMBean();
+         } catch (Exception e) {
+            throw new CacheException(e);
+         }
+         throw re;
+      }
    }
 
    protected void registerTransportMBean() {
@@ -155,6 +162,9 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
    }
 
    public int getPort() {
+      if (transport != null) {
+         return transport.getPort();
+      }
       return configuration.port();
    }
 

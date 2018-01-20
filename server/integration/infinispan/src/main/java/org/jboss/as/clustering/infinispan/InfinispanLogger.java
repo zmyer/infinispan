@@ -175,4 +175,27 @@ public interface InfinispanLogger extends BasicLogger {
     @LogMessage(level = ERROR)
     @Message(id = 16, value = "Waiting for deployment of Custom Cache Store (%s) timed out. Please check if this cache store is really present.")
     void loadingCustomCacheStoreTimeout(String customStoreClassName);
+
+    /**
+     * Logs a warning message indicating that the module attribute of the cache element is no longer valid.
+     */
+    @LogMessage(level = WARN)
+    @Message(id = 17, value = "Found and ignored unsupported (deprecated) attribute 'module' in cache configuration at [row,col] [%s, %s]")
+    void cacheModuleDeprecated(int row, int col);
+
+    @LogMessage(level = INFO)
+    @Message(id = 18, value = "Registering custom EntryMergePolicy '%s'")
+    void registeringCustomMergePolicy(String className);
+
+    @LogMessage(level = INFO)
+    @Message(id = 19, value = "Unregistering custom EntryMergePolicy '%s'")
+    void unregisteringCustomMergePolicy(String className);
+
+    @LogMessage(level = ERROR)
+    @Message(id = 20, value = "Waiting for deployment of custom EntryMergePolicy (%s) timed out. Please check if this EntryMergePolicy is really present.")
+    void loadingCustomMergePolicyTimeout(String className);
+
+    @LogMessage(level = WARN)
+    @Message(id = 21, value = "Managed configuration storage is currently unsupported in domain mode. Please use Overlay storage.")
+    void managedConfigurationUnavailableInDomainMode();
 }

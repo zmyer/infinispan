@@ -5,6 +5,7 @@ import static org.infinispan.persistence.PersistenceUtil.convert;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.concurrent.ExecutorService;
@@ -31,14 +32,13 @@ import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.KeySetCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.commons.equivalence.Equivalence;
-import org.infinispan.commons.equivalence.EquivalentHashSet;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CloseableSpliterator;
 import org.infinispan.commons.util.Closeables;
@@ -49,8 +49,8 @@ import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
-import org.infinispan.distribution.group.GroupFilter;
-import org.infinispan.distribution.group.GroupManager;
+import org.infinispan.distribution.group.impl.GroupFilter;
+import org.infinispan.distribution.group.impl.GroupManager;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
@@ -84,50 +84,28 @@ import org.infinispan.util.logging.LogFactory;
  */
 @MBean(objectName = "CacheLoader", description = "Component that handles loading entries from a CacheStore into memory.")
 public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
-   private final AtomicLong cacheLoads = new AtomicLong(0);
-   private final AtomicLong cacheMisses = new AtomicLong(0);
-
-   protected PersistenceManager persistenceManager;
-   protected CacheNotifier notifier;
-   protected EntryFactory entryFactory;
-   private TimeService timeService;
-   private InternalEntryFactory iceFactory;
-   private DataContainer<K, V> dataContainer;
-   private GroupManager groupManager;
-   private ExecutorService executorService;
-   private Cache<K, V> cache;
-   private Equivalence<? super K> keyEquivalence;
-   private boolean activation;
-
    private static final Log log = LogFactory.getLog(CacheLoaderInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject
-   protected void injectDependencies(PersistenceManager clm, EntryFactory entryFactory, CacheNotifier notifier,
-                                     TimeService timeService, InternalEntryFactory iceFactory, DataContainer<K, V> dataContainer,
-                                     GroupManager groupManager, @ComponentName(PERSISTENCE_EXECUTOR) ExecutorService persistenceExecutor,
-                                     Cache<K, V> cache) {
-      this.persistenceManager = clm;
-      this.notifier = notifier;
-      this.entryFactory = entryFactory;
-      this.timeService = timeService;
-      this.iceFactory = iceFactory;
-      this.dataContainer = dataContainer;
-      this.groupManager = groupManager;
-      this.executorService = persistenceExecutor;
-      this.cache = cache;
-   }
+   private final AtomicLong cacheLoads = new AtomicLong(0);
+   private final AtomicLong cacheMisses = new AtomicLong(0);
+
+   @Inject protected PersistenceManager persistenceManager;
+   @Inject protected CacheNotifier notifier;
+   @Inject protected EntryFactory entryFactory;
+   @Inject private TimeService timeService;
+   @Inject private InternalEntryFactory iceFactory;
+   @Inject private DataContainer<K, V> dataContainer;
+   @Inject private GroupManager groupManager;
+   @Inject @ComponentName(PERSISTENCE_EXECUTOR)
+   private ExecutorService executorService;
+   @Inject private Cache<K, V> cache;
+
+   private boolean activation;
 
    @Start
    public void start() {
-      this.keyEquivalence = cache.getCacheConfiguration().dataContainer().keyEquivalence();
       this.activation = cache.getCacheConfiguration().persistence().passivation();
-   }
-
-   @Override
-   public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command)
-         throws Throwable {
-      return visitDataCommand(ctx, command);
    }
 
    @Override
@@ -182,6 +160,16 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
       return visitDataCommand(ctx, command);
    }
 
+   @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return visitDataCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+      return visitDataCommand(ctx, command);
+   }
+
    private Object visitManyDataCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys)
          throws Throwable {
       for (Object key : keys) {
@@ -202,19 +190,18 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
    @Override
    public Object visitGetKeysInGroupCommand(final InvocationContext ctx,
                                             GetKeysInGroupCommand command) throws Throwable {
-      final String groupName = command.getGroupName();
       if (!command.isGroupOwner() || hasSkipLoadFlag(command)) {
          return invokeNext(ctx, command);
       }
 
-      final KeyFilter<Object> keyFilter = new CompositeKeyFilter<>(new GroupFilter<>(groupName, groupManager),
+      final KeyFilter<Object> keyFilter = new CompositeKeyFilter<>(new GroupFilter<>(command.getGroupName(), groupManager),
             new CollectionKeyFilter<>(ctx.getLookedUpEntries().keySet()));
       persistenceManager.processOnAllStores(keyFilter, new AdvancedCacheLoader.CacheLoaderTask() {
          @Override
          public void processEntry(MarshalledEntry marshalledEntry, AdvancedCacheLoader.TaskContext taskContext) throws InterruptedException {
             synchronized (ctx) {
                //the process can be made in multiple threads, so we need to synchronize in the context.
-               entryFactory.wrapExternalEntry(ctx, marshalledEntry.getKey(), convert(marshalledEntry, iceFactory), false);
+               entryFactory.wrapExternalEntry(ctx, marshalledEntry.getKey(), convert(marshalledEntry, iceFactory), true, false);
             }
          }
       }, true, true);
@@ -352,7 +339,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
       }
 
       if (entry != null) {
-         entryFactory.wrapExternalEntry(ctx, key, entry, cmd instanceof WriteCommand);
+         entryFactory.wrapExternalEntry(ctx, key, entry, true, cmd instanceof WriteCommand);
 
          if (isLoadedValue != null && isLoadedValue.booleanValue()) {
             Object value = entry.getValue();
@@ -385,7 +372,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
          return true;
       }
 
-      if (!canLoad(key)) {
+      if (!cmd.hasAnyFlag(FlagBitSets.SKIP_OWNERSHIP_CHECK) && !canLoad(key)) {
          if (trace) {
             log.tracef("Skip load for command %s. Cannot load the key.", cmd);
          }
@@ -499,18 +486,23 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
          this.entrySet = entrySet;
       }
 
+      long calculateTimeoutSeconds() {
+         int minimum = 10;
+         int size = dataContainer.sizeIncludingExpired();
+         if (size < 10_000) return minimum;
+         return Math.round(Math.log1p(size) * 10);
+      }
+
       @Override
       public CloseableIterator<CacheEntry<K, V>> iterator() {
          CloseableIterator<CacheEntry<K, V>> iterator = Closeables.iterator(entrySet.stream());
-         Set<K> seenKeys =
-               new EquivalentHashSet<K>(cache.getAdvancedCache().getDataContainer().size(), keyEquivalence);
+         Set<K> seenKeys = new HashSet<>(cache.getAdvancedCache().getDataContainer().sizeIncludingExpired());
          // TODO: how to handle concurrent activation....
          return new DistinctKeyDoubleEntryCloseableIterator<>(iterator, new CloseableSuppliedIterator<>(
-
                // TODO: how to pass in key filter...
                new PersistenceManagerCloseableSupplier<>(executorService, persistenceManager, iceFactory,
-                     new CollectionKeyFilter<>(seenKeys), 10, TimeUnit.SECONDS, 2048)), e -> e.getKey(),
-               seenKeys);
+                     new CollectionKeyFilter<>(seenKeys), calculateTimeoutSeconds(), TimeUnit.SECONDS, 2048)),
+                     CacheEntry::getKey, seenKeys);
       }
 
       @Override
@@ -545,8 +537,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
       @Override
       public CloseableIterator<K> iterator() {
          CloseableIterator<K> iterator = Closeables.iterator(keySet.stream());
-         Set<K> seenKeys = new EquivalentHashSet<K>(cache.getAdvancedCache().getDataContainer().size(),
-               keyEquivalence);
+         Set<K> seenKeys = new HashSet<>(cache.getAdvancedCache().getDataContainer().sizeIncludingExpired());
          // TODO: how to handle concurrent activation....
          return new DistinctKeyDoubleEntryCloseableIterator<>(iterator, new CloseableSuppliedIterator<>(new SupplierFunction<>(
                new PersistenceManagerCloseableSupplier<>(executorService, persistenceManager,

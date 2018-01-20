@@ -12,6 +12,8 @@ import java.util.stream.Stream;
 import org.infinispan.commands.DataCommand;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.functional.ReadOnlyKeyCommand;
+import org.infinispan.commands.functional.ReadOnlyManyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
 import org.infinispan.commands.functional.ReadWriteManyCommand;
@@ -20,9 +22,12 @@ import org.infinispan.commands.functional.WriteOnlyKeyCommand;
 import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
 import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
+import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
@@ -30,7 +35,7 @@ import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.container.DataContainer;
+import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.factories.annotations.Inject;
@@ -38,7 +43,6 @@ import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.InvocationFinallyAction;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.locks.LockManager;
-import org.infinispan.util.concurrent.locks.LockUtil;
 import org.infinispan.util.logging.Log;
 
 /**
@@ -49,9 +53,8 @@ import org.infinispan.util.logging.Log;
 public abstract class AbstractLockingInterceptor extends DDAsyncInterceptor {
    private final boolean trace = getLog().isTraceEnabled();
 
-   protected LockManager lockManager;
-   protected DataContainer<Object, Object> dataContainer;
-   protected ClusteringDependentLogic cdl;
+   @Inject protected LockManager lockManager;
+   @Inject protected ClusteringDependentLogic cdl;
 
    protected final InvocationFinallyAction unlockAllReturnHandler = new InvocationFinallyAction() {
       @Override
@@ -63,14 +66,6 @@ public abstract class AbstractLockingInterceptor extends DDAsyncInterceptor {
 
    protected abstract Log getLog();
 
-   @Inject
-   public void setDependencies(LockManager lockManager, DataContainer<Object, Object> dataContainer,
-                               ClusteringDependentLogic cdl) {
-      this.lockManager = lockManager;
-      this.dataContainer = dataContainer;
-      this.cdl = cdl;
-   }
-
    @Override
    public final Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
       return invokeNext(ctx, command);
@@ -78,11 +73,25 @@ public abstract class AbstractLockingInterceptor extends DDAsyncInterceptor {
 
    @Override
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
+      if (command.hasAnyFlag(FlagBitSets.PUT_FOR_EXTERNAL_READ)) {
+         // Cache.putForExternalRead() is non-transactional
+         return visitNonTxDataWriteCommand(ctx, command);
+      }
       return visitDataWriteCommand(ctx, command);
    }
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return visitDataWriteCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return visitDataWriteCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
       return visitDataWriteCommand(ctx, command);
    }
 
@@ -107,12 +116,13 @@ public abstract class AbstractLockingInterceptor extends DDAsyncInterceptor {
 
    // We need this method in here because of putForExternalRead
    protected final Object visitNonTxDataWriteCommand(InvocationContext ctx, DataWriteCommand command) throws Throwable {
-      if (hasSkipLocking(command) || !shouldLockKey(command.getKey())) {
+      Object key;
+      if (hasSkipLocking(command) || !shouldLockKey((key = command.getKey()))) {
          return invokeNext(ctx, command);
       }
 
       try {
-         lockAndRecord(ctx, command.getKey(), getLockTimeoutMillis(command));
+         lockAndRecord(ctx, key, getLockTimeoutMillis(command));
       } catch (Throwable t) {
          lockManager.unlockAll(ctx);
          throw t;
@@ -195,6 +205,11 @@ public abstract class AbstractLockingInterceptor extends DDAsyncInterceptor {
    }
 
    @Override
+   public Object visitReadOnlyKeyCommand(InvocationContext ctx, ReadOnlyKeyCommand command) throws Throwable {
+      return visitDataReadCommand(ctx, command);
+   }
+
+   @Override
    public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) throws Throwable {
       return handleWriteManyCommand(ctx, command, command.getAffectedKeys(), command.isForwarded());
    }
@@ -214,7 +229,19 @@ public abstract class AbstractLockingInterceptor extends DDAsyncInterceptor {
       return handleWriteManyCommand(ctx, command, command.getAffectedKeys(), command.isForwarded());
    }
 
-   protected abstract <K> Object handleWriteManyCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<K> keys, boolean forwarded) throws Throwable;
+   @Override
+   public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
+      return handleReadManyCommand(ctx, command, command.getKeys());
+   }
+
+   @Override
+   public Object visitReadOnlyManyCommand(InvocationContext ctx, ReadOnlyManyCommand command) throws Throwable {
+      return handleReadManyCommand(ctx, command, command.getKeys());
+   }
+
+   protected abstract Object handleReadManyCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys) throws Throwable;
+
+   protected abstract <K> Object handleWriteManyCommand(InvocationContext ctx, WriteCommand command, Collection<K> keys, boolean forwarded) throws Throwable;
 
    protected final long getLockTimeoutMillis(FlagAffectedCommand command) {
       return command.hasAnyFlag(FlagBitSets.ZERO_LOCK_ACQUISITION_TIMEOUT) ? 0 :
@@ -223,9 +250,13 @@ public abstract class AbstractLockingInterceptor extends DDAsyncInterceptor {
 
    protected final boolean shouldLockKey(Object key) {
       //only the primary owner acquires the lock.
-      boolean shouldLock = LockUtil.isLockOwner(key, cdl);
+      boolean shouldLock = isLockOwner(key);
       if (trace) getLog().tracef("Are (%s) we the lock owners for key '%s'? %s", cdl.getAddress(), toStr(key), shouldLock);
       return shouldLock;
+   }
+
+   protected final boolean isLockOwner(Object key) {
+      return cdl.getCacheTopology().getDistribution(key).isPrimary();
    }
 
    protected final void lockAndRecord(InvocationContext context, Object key, long timeout) throws InterruptedException {

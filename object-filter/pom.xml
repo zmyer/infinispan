@@ -4,8 +4,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-objectfilter</artifactId>
@@ -21,7 +21,7 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-query-dsl</artifactId>
       </dependency>
 
@@ -36,10 +36,12 @@
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
+
       <dependency>
          <groupId>org.antlr</groupId>
          <artifactId>antlr-runtime</artifactId>
       </dependency>
+
       <dependency>
          <groupId>org.assertj</groupId>
          <artifactId>assertj-core</artifactId>
@@ -54,7 +56,6 @@
    </dependencies>
 
    <properties>
-      <suite.exclude.groups>org.infinispan.commons.test.annotations.Profiling</suite.exclude.groups>
       <intermediary_jar_name>intermediary-${project.build.finalName}</intermediary_jar_name>
       <intermediary_jar_path>${project.build.directory}/${intermediary_jar_name}.jar</intermediary_jar_path>
    </properties>
@@ -65,7 +66,8 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration combine.self="override">
-               <excludedGroups>${suite.exclude.groups}</excludedGroups>
+               <groups combine.self="override">${defaultJUnitGroups}</groups>
+               <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
                <systemPropertyVariables>
                   <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
                   <build.directory>${project.build.directory}</build.directory>
@@ -76,7 +78,7 @@
             <dependencies>
                <dependency>
                   <groupId>org.apache.maven.surefire</groupId>
-                  <artifactId>surefire-junit4</artifactId>
+                  <artifactId>surefire-junit47</artifactId>
                   <version>${version.maven.surefire}</version>
                </dependency>
             </dependencies>
@@ -88,6 +90,7 @@
             <executions>
                <execution>
                   <id>antlr3</id>
+                  <phase>generate-sources</phase>
                   <goals>
                      <goal>antlr</goal>
                   </goals>
@@ -97,13 +100,6 @@
                <sourceDirectory>${basedir}/src/main/antlr3</sourceDirectory>
                <outputDirectory>${project.build.directory}/generated-sources/antlr3</outputDirectory>
             </configuration>
-            <dependencies>
-               <dependency>
-                  <groupId>org.antlr</groupId>
-                  <artifactId>antlr</artifactId>
-                  <version>${version.antlr}</version>
-               </dependency>
-            </dependencies>
          </plugin>
 
          <plugin>
@@ -150,4 +146,24 @@
          </plugin>
       </plugins>
    </build>
+
+   <profiles>
+      <profile>
+         <id>smoke</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <executions>
+                     <execution>
+                        <id>default-test</id>
+                        <phase>none</phase>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

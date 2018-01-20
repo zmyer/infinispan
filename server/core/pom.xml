@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-server-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
+      <version>9.2.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -21,7 +21,25 @@
    <dependencies>
       <dependency>
          <groupId>io.netty</groupId>
-         <artifactId>netty-all</artifactId>
+         <artifactId>netty-handler</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-transport-native-epoll</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-transport-native-epoll</artifactId>
+         <classifier>linux-x86_64</classifier>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-tasks</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-query</artifactId>
+         <optional>true</optional>
       </dependency>
       <dependency>
          <groupId>org.apache.logging.log4j</groupId>
@@ -50,6 +68,10 @@
                   <Export-Package>
                      ${project.groupId}.server.core.*;version=${project.version};-split-package:=error
                   </Export-Package>
+                  <Include-Resource>
+                     {maven-resources},
+                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
+                  </Include-Resource>
                </instructions>
             </configuration>
          </plugin>

@@ -41,6 +41,7 @@
     <xsl:param name="addVault">false</xsl:param>
     <xsl:param name="addConnection">false</xsl:param>
     <xsl:param name="trace">none</xsl:param>
+    <xsl:param name="remoteStoreHrVersion">none</xsl:param>
 
     <xsl:template match="node()|@*" name="copynode">
         <xsl:copy>
@@ -167,7 +168,7 @@
             <xsl:call-template name="copynode"/>
         </xsl:if>
     </xsl:template>
-    
+
     <xsl:template match="//*[local-name()='subsystem' and starts-with(namespace-uri(), $nsJGroups)]//*[local-name()='stack']">
         <xsl:if test="$addJGroupsSasl = 'false'">
             <xsl:call-template name="copynode"/>
@@ -179,9 +180,9 @@
             </xsl:copy>
         </xsl:if>
     </xsl:template>
-    
+
     <xsl:template match="p:extensions">
-        <xsl:call-template name="copynode"/> 
+        <xsl:call-template name="copynode"/>
         <xsl:if test="$addVault != 'false'">
             <xsl:copy-of select="document($addVault)"/>
         </xsl:if>
@@ -202,7 +203,7 @@
             </xsl:copy>
         </xsl:if>
     </xsl:template>
-    
+
     <!-- add outbound connections -->
     <xsl:template match="p:management">
         <xsl:if test="$addConnection = 'false'">
@@ -215,7 +216,7 @@
             </xsl:copy>
         </xsl:if>
     </xsl:template>
-    
+
     <!-- add security realm -->
     <xsl:template match="p:security-realms">
         <xsl:if test="$addSecRealm = 'false'">
@@ -279,8 +280,7 @@
         </xsl:if>
         <xsl:if test="$removeRestSecurity != 'false' and $restEncrypt = 'false'">
             <xsl:copy>
-                <xsl:copy-of select="@*[not(name() = 'security-domain' or name() = 'auth-method')]"/>
-                <xsl:apply-templates/>
+                <xsl:apply-templates select="@* | node()"/>
             </xsl:copy>
         </xsl:if>
         <xsl:if test="$removeRestSecurity = 'false' and $restEncrypt != 'false'">
@@ -291,11 +291,13 @@
         </xsl:if>
         <xsl:if test="$removeRestSecurity != 'false' and $restEncrypt != 'false'">
             <xsl:copy>
-                <xsl:copy-of select="@*[not(name() = 'security-domain' or name() = 'auth-method')]"/>
+                <xsl:apply-templates select="@* | node()"/>
                 <xsl:copy-of select="document($restEncrypt)"/>
             </xsl:copy>
         </xsl:if>
     </xsl:template>
+
+    <xsl:template match="//*[local-name()='subsystem' and starts-with(namespace-uri(), $nsEndpoint)]/*[local-name()='rest-connector']/*[local-name()='authentication']" />
 
     <xsl:template match="//*[local-name()='subsystem' and starts-with(namespace-uri(), $nsCore)]/*[local-name()='cache-container']/*[local-name()='transport']">
         <xsl:if test="$modifyStack = 'false'">
@@ -335,6 +337,17 @@
                 <xsl:copy-of select="document($addNewHotrodSocketBinding)"/>
             </xsl:when>
         </xsl:choose>
+    </xsl:template>
+
+    <xsl:template match="//*[local-name()='remote-store']">
+        <xsl:copy>
+            <xsl:if test="$remoteStoreHrVersion != 'none'">
+                <xsl:attribute name="protocol-version">
+                    <xsl:value-of select="$remoteStoreHrVersion"></xsl:value-of>
+                </xsl:attribute>
+            </xsl:if>
+            <xsl:apply-templates select="node()|@*"/>
+        </xsl:copy>
     </xsl:template>
 
     <!-- matches on the remaining tags and recursively applies templates to their children and copies them to the result -->

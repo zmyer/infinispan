@@ -39,7 +39,7 @@ import org.testng.annotations.Test;
  */
 @Test(groups = "functional", testName = "notifications.cachelistener.CacheNotifierFilterTest")
 public class CacheNotifierFilterTest extends MultipleCacheManagersTest {
-   protected final String CACHE_NAME = getClass().getName();
+   protected final String CACHE_NAME = "testCache";
    protected ConfigurationBuilder builderUsed;
 
    @Override
@@ -129,12 +129,11 @@ public class CacheNotifierFilterTest extends MultipleCacheManagersTest {
       cache0.addListener(listener, new CollectionKeyFilter<>(Collections.emptyList(), true));
 
       addClusterEnabledCacheManager(builderUsed);
-      defineConfigurationOnAllManagers(CACHE_NAME, builderUsed);
 
       waitForClusterToForm(CACHE_NAME);
 
-      // Adding a node requires 2 topologies x2 for pre/post = 4
-      assertEquals(4, listener.topologyEvents.size());
+      // Adding a node requires 4 topologies x2 for pre/post = 8
+      assertEquals(8, listener.topologyEvents.size());
    }
 
    @Test

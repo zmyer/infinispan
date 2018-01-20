@@ -45,18 +45,7 @@ import org.infinispan.stream.impl.intops.object.SkipOperation;
 import org.infinispan.stream.impl.intops.object.SortedComparatorOperation;
 import org.infinispan.stream.impl.intops.object.SortedOperation;
 import org.infinispan.util.function.RemovableFunction;
-import org.infinispan.util.function.SerializableBiConsumer;
-import org.infinispan.util.function.SerializableBiFunction;
-import org.infinispan.util.function.SerializableBinaryOperator;
-import org.infinispan.util.function.SerializableComparator;
-import org.infinispan.util.function.SerializableConsumer;
-import org.infinispan.util.function.SerializableFunction;
-import org.infinispan.util.function.SerializableIntFunction;
-import org.infinispan.util.function.SerializablePredicate;
 import org.infinispan.util.function.SerializableSupplier;
-import org.infinispan.util.function.SerializableToDoubleFunction;
-import org.infinispan.util.function.SerializableToIntFunction;
-import org.infinispan.util.function.SerializableToLongFunction;
 
 /**
  * CacheStream that is to be used locally.  This allows for full functionality of a regular stream but also has options
@@ -121,20 +110,10 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public LocalCacheStream<R> filter(SerializablePredicate<? super R> predicate) {
-      return filter((Predicate<? super R>) predicate);
-   }
-
-   @Override
    public <R1> LocalCacheStream<R1> map(Function<? super R, ? extends R1> mapper) {
       registry.wireDependencies(mapper);
       intermediateOperations.add(new MapOperation<>(mapper));
       return (LocalCacheStream<R1>) this;
-   }
-
-   @Override
-   public <R1> LocalCacheStream<R1> map(SerializableFunction<? super R, ? extends R1> mapper) {
-      return map((Function<? super R, ? extends R1>) mapper);
    }
 
    @Override
@@ -144,19 +123,9 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public LocalIntCacheStream mapToInt(SerializableToIntFunction<? super R> mapper) {
-      return mapToInt((ToIntFunction<? super R>) mapper);
-   }
-
-   @Override
    public LocalLongCacheStream mapToLong(ToLongFunction<? super R> mapper) {
       intermediateOperations.add(new MapToLongOperation<>(mapper));
       return new LocalLongCacheStream(this);
-   }
-
-   @Override
-   public LocalLongCacheStream mapToLong(SerializableToLongFunction<? super R> mapper) {
-      return mapToLong((ToLongFunction<? super R>) mapper);
    }
 
    @Override
@@ -166,19 +135,9 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public LocalDoubleCacheStream mapToDouble(SerializableToDoubleFunction<? super R> mapper) {
-      return mapToDouble((ToDoubleFunction<? super R>) mapper);
-   }
-
-   @Override
    public <R1> LocalCacheStream<R1> flatMap(Function<? super R, ? extends Stream<? extends R1>> mapper) {
       intermediateOperations.add(new FlatMapOperation<>(mapper));
       return (LocalCacheStream<R1>) this;
-   }
-
-   @Override
-   public <R1> LocalCacheStream<R1> flatMap(SerializableFunction<? super R, ? extends Stream<? extends R1>> mapper) {
-      return flatMap((Function<? super R, ? extends Stream<? extends R1>>) mapper);
    }
 
    @Override
@@ -188,30 +147,15 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public LocalIntCacheStream flatMapToInt(SerializableFunction<? super R, ? extends IntStream> mapper) {
-      return flatMapToInt((Function<? super R, ? extends IntStream>) mapper);
-   }
-
-   @Override
    public LocalLongCacheStream flatMapToLong(Function<? super R, ? extends LongStream> mapper) {
       intermediateOperations.add(new FlatMapToLongOperation<>(mapper));
       return new LocalLongCacheStream(this);
    }
 
    @Override
-   public LocalLongCacheStream flatMapToLong(SerializableFunction<? super R, ? extends LongStream> mapper) {
-      return flatMapToLong((Function<? super R, ? extends LongStream>) mapper);
-   }
-
-   @Override
    public LocalDoubleCacheStream flatMapToDouble(Function<? super R, ? extends DoubleStream> mapper) {
       intermediateOperations.add(new FlatMapToDoubleOperation<>(mapper));
       return new LocalDoubleCacheStream(this);
-   }
-
-   @Override
-   public LocalDoubleCacheStream flatMapToDouble(SerializableFunction<? super R, ? extends DoubleStream> mapper) {
-      return flatMapToDouble((Function<? super R, ? extends DoubleStream>) mapper);
    }
 
    @Override
@@ -233,19 +177,9 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public LocalCacheStream<R> sorted(SerializableComparator<? super R> comparator) {
-      return sorted((Comparator<? super R>) comparator);
-   }
-
-   @Override
    public LocalCacheStream<R> peek(Consumer<? super R> action) {
       intermediateOperations.add(new PeekOperation<>(action));
       return this;
-   }
-
-   @Override
-   public LocalCacheStream<R> peek(SerializableConsumer<? super R> action) {
-      return peek((Consumer<? super R>) action);
    }
 
    @Override
@@ -267,19 +201,10 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public void forEach(SerializableConsumer<? super R> action) {
-      forEach((Consumer<? super R>) action);
-   }
-
-   @Override
    public <K, V> void forEach(BiConsumer<Cache<K, V>, ? super R> action) {
       Cache<K, V> cache = registry.getComponent(Cache.class);
+      registry.wireDependencies(action);
       createStream().forEach(e -> action.accept(cache, e));
-   }
-
-   @Override
-   public <K, V> void forEach(SerializableBiConsumer<Cache<K, V>, ? super R> action) {
-      forEach((BiConsumer<Cache<K, V>, ? super R>) action);
    }
 
    @Override
@@ -310,18 +235,8 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public <A> A[] toArray(SerializableIntFunction<A[]> generator) {
-      return toArray((IntFunction<A[]>) generator);
-   }
-
-   @Override
    public R reduce(R identity, BinaryOperator<R> accumulator) {
       return createStream().reduce(identity, accumulator);
-   }
-
-   @Override
-   public R reduce(R identity, SerializableBinaryOperator<R> accumulator) {
-      return reduce(identity, (BinaryOperator<R>) accumulator);
    }
 
    @Override
@@ -330,18 +245,8 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public Optional<R> reduce(SerializableBinaryOperator<R> accumulator) {
-      return reduce((BinaryOperator<R>) accumulator);
-   }
-
-   @Override
    public <U> U reduce(U identity, BiFunction<U, ? super R, U> accumulator, BinaryOperator<U> combiner) {
       return createStream().reduce(identity, accumulator, combiner);
-   }
-
-   @Override
-   public <U> U reduce(U identity, SerializableBiFunction<U, ? super R, U> accumulator, SerializableBinaryOperator<U> combiner) {
-      return reduce(identity, (BiFunction<U, ? super R, U>) accumulator, combiner);
    }
 
    @Override
@@ -350,13 +255,18 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public <R1> R1 collect(SerializableSupplier<R1> supplier, SerializableBiConsumer<R1, ? super R> accumulator, SerializableBiConsumer<R1, R1> combiner) {
-      return collect((Supplier<R1>) supplier, accumulator, combiner);
+   public <R1, A> R1 collect(Collector<? super R, A, R1> collector) {
+      return createStream().collect(collector);
    }
 
    @Override
-   public <R1, A> R1 collect(Collector<? super R, A, R1> collector) {
-      return createStream().collect(collector);
+   public <R1> R1 collect(SerializableSupplier<Collector<? super R, ?, R1>> supplier) {
+      return createStream().collect(supplier.get());
+   }
+
+   @Override
+   public <R1> R1 collect(Supplier<Collector<? super R, ?, R1>> supplier) {
+      return createStream().collect(supplier.get());
    }
 
    @Override
@@ -365,18 +275,8 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public Optional<R> min(SerializableComparator<? super R> comparator) {
-      return min((Comparator<? super R>) comparator);
-   }
-
-   @Override
    public Optional<R> max(Comparator<? super R> comparator) {
       return createStream().max(comparator);
-   }
-
-   @Override
-   public Optional<R> max(SerializableComparator<? super R> comparator) {
-      return max((Comparator<? super R>) comparator);
    }
 
    @Override
@@ -390,28 +290,13 @@ public class LocalCacheStream<R> extends AbstractLocalCacheStream<R, Stream<R>, 
    }
 
    @Override
-   public boolean anyMatch(SerializablePredicate<? super R> predicate) {
-      return anyMatch((Predicate<? super R>) predicate);
-   }
-
-   @Override
    public boolean allMatch(Predicate<? super R> predicate) {
       return createStream().allMatch(predicate);
    }
 
    @Override
-   public boolean allMatch(SerializablePredicate<? super R> predicate) {
-      return allMatch((Predicate<? super R>) predicate);
-   }
-
-   @Override
    public boolean noneMatch(Predicate<? super R> predicate) {
       return createStream().noneMatch(predicate);
-   }
-
-   @Override
-   public boolean noneMatch(SerializablePredicate<? super R> predicate) {
-      return noneMatch((Predicate<? super R>) predicate);
    }
 
    @Override

@@ -37,11 +37,12 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
    }
 
    /**
-    * Repetitive DB operations this are batched according to this parameter. This is an optional parameter, and if it
-    * is not specified it will be defaulted to {@link TableManager#DEFAULT_BATCH_SIZE}.
+    * @deprecated Please use {@link org.infinispan.configuration.cache.AbstractStoreConfigurationBuilder#maxBatchSize(int)} instead.
     */
+   @Deprecated
    public S batchSize(int batchSize) {
       attributes.attribute(BATCH_SIZE).set(batchSize);
+      maxBatchSize(batchSize);
       return self();
    }
 

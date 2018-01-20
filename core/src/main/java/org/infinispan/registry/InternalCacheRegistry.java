@@ -36,7 +36,11 @@ public interface InternalCacheRegistry {
       /**
        * means that this cache should be queryable
        */
-      QUERYABLE
+      QUERYABLE,
+      /**
+       * means that this cache will be global to all nodes when running in clustered mode
+       */
+      GLOBAL
    }
 
    /**
@@ -60,6 +64,12 @@ public interface InternalCacheRegistry {
     *           The flags which determine the behaviour of the cache. See {@link Flag}
     */
    void registerInternalCache(String name, Configuration configuration, EnumSet<Flag> flags);
+
+   /**
+    * Unregisters  an internal cache
+    * @param name The name of the cache
+    */
+   void unregisterInternalCache(String name);
 
    /**
     * Returns whether the cache is internal, i.e. it has been registered using the

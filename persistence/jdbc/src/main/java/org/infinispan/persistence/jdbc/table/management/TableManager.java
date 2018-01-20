@@ -1,7 +1,11 @@
 package org.infinispan.persistence.jdbc.table.management;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 
+import org.infinispan.commons.io.ByteBuffer;
+import org.infinispan.configuration.cache.AbstractStoreConfiguration;
 import org.infinispan.persistence.spi.PersistenceException;
 
 /**
@@ -27,6 +31,10 @@ public interface TableManager {
 
    int getFetchSize();
 
+   /**
+    * @deprecated Please use {@link AbstractStoreConfiguration#maxBatchSize()} instead.
+    */
+   @Deprecated
    int getBatchSize();
 
    boolean isUpsertSupported();
@@ -64,4 +72,6 @@ public interface TableManager {
    boolean isStringEncodingRequired();
 
    String encodeString(String stringToEncode);
+
+   void prepareUpdateStatement(PreparedStatement ps, String key, long timestamp, ByteBuffer byteBuffer) throws SQLException;
 }

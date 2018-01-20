@@ -16,7 +16,6 @@ import org.infinispan.Cache;
 import org.infinispan.cache.impl.AbstractDelegatingAdvancedCache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.context.Flag;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
@@ -49,10 +48,8 @@ public class FlagsEnabledTest extends MultipleCacheManagersTest {
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.REPL_SYNC, true);
       builder
-            .locking().writeSkewCheck(true).isolationLevel(IsolationLevel.REPEATABLE_READ)
-            .versioning().enable().scheme(VersioningScheme.SIMPLE)
-            .persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class)
-            .transaction().syncCommitPhase(true);
+            .locking().isolationLevel(IsolationLevel.REPEATABLE_READ)
+            .persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class);
       createClusteredCaches(2, cacheName, builder);
    }
 
@@ -115,7 +112,7 @@ public class FlagsEnabledTest extends MultipleCacheManagersTest {
 
    public void testWithFlagsAndDelegateCache() {
       final AdvancedCache<Integer, String> c1 =
-            new CustomDelegateCache<Integer, String>(this.<Integer, String>advancedCache(0, cacheName));
+            new CustomDelegateCache<>(this.<Integer, String>advancedCache(0, cacheName));
       final AdvancedCache<Integer, String> c2 = advancedCache(1, cacheName);
 
       c1.withFlags(CACHE_MODE_LOCAL).put(1, "v1");
@@ -178,12 +175,9 @@ public class FlagsEnabledTest extends MultipleCacheManagersTest {
 
       final String v = v(m, 1);
       final String k = k(m, 1);
-      withTx(cache1.getTransactionManager(), new Callable<Void>() {
-         @Override
-         public Void call() throws Exception {
-            cache1.withFlags(Flag.SKIP_CACHE_LOAD).put(k, v);
-            return null;
-         }
+      withTx(cache1.getTransactionManager(), (Callable<Void>) () -> {
+         cache1.withFlags(Flag.SKIP_CACHE_LOAD).put(k, v);
+         return null;
       });
       // The write-skew check tries to load it from persistence on the primary owner.
       assertLoadsAndReset(cache1, isPrimaryOwner(cache1, k) ? 1 : 0, cache2, isPrimaryOwner(cache2, k) ? 1 : 0);
@@ -196,12 +190,7 @@ public class FlagsEnabledTest extends MultipleCacheManagersTest {
          extends AbstractDelegatingAdvancedCache<K, V> {
 
       public CustomDelegateCache(AdvancedCache<K, V> cache) {
-         super(cache, new AdvancedCacheWrapper<K, V>() {
-            @Override
-            public AdvancedCache<K, V> wrap(AdvancedCache<K, V> cache) {
-               return new CustomDelegateCache<K, V>(cache);
-            }
-         });
+         super(cache, CustomDelegateCache::new);
       }
    }
 
@@ -219,7 +208,7 @@ public class FlagsEnabledTest extends MultipleCacheManagersTest {
    }
 
    private boolean isPrimaryOwner(Cache<?, ?> cache, Object key) {
-      return TestingUtil.extractComponent(cache, ClusteringDependentLogic.class).localNodeIsPrimaryOwner(key);
+      return TestingUtil.extractComponent(cache, ClusteringDependentLogic.class).getCacheTopology().getDistribution(key).isPrimary();
    }
 
    private boolean isTxCache() {

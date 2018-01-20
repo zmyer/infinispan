@@ -2,12 +2,10 @@ package org.infinispan.container;
 
 import static org.infinispan.commons.util.Util.toStr;
 
-import org.infinispan.atomic.Delta;
-import org.infinispan.atomic.DeltaAware;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.container.entries.ClusteredRepeatableReadEntry;
-import org.infinispan.container.entries.DeltaAwareCacheEntry;
+import org.infinispan.container.entries.VersionedRepeatableReadEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.container.entries.NullCacheEntry;
@@ -19,7 +17,6 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
-import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.util.TimeService;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.logging.Log;
@@ -33,38 +30,28 @@ import org.infinispan.util.logging.LogFactory;
  */
 public class EntryFactoryImpl implements EntryFactory {
 
-   protected static final Log log = LogFactory.getLog(EntryFactoryImpl.class);
-   protected final static boolean trace = log.isTraceEnabled();
+   private static final Log log = LogFactory.getLog(EntryFactoryImpl.class);
+   private final static boolean trace = log.isTraceEnabled();
 
-   private boolean useRepeatableRead;
-   private DataContainer container;
+   @Inject private DataContainer container;
+   @Inject private Configuration configuration;
+   @Inject private TimeService timeService;
+   @Inject private VersionGenerator versionGenerator;
+
    private boolean isL1Enabled;
-   private Configuration configuration;
-   private PersistenceManager persistenceManager; // hack for DeltaAware
-   private TimeService timeService;
-   private VersionGenerator versionGenerator;
+   private boolean useRepeatableRead;
    private boolean useVersioning;
-
-   @Inject
-   public void injectDependencies(DataContainer dataContainer, Configuration configuration,
-                                  TimeService timeService, PersistenceManager persistenceManager,
-                                  VersionGenerator versionGenerator) {
-      this.container = dataContainer;
-      this.configuration = configuration;
-      this.timeService = timeService;
-      this.persistenceManager = persistenceManager;
-      this.versionGenerator = versionGenerator;
-   }
 
    @Start (priority = 8)
    public void init() {
+      // Scattered mode needs repeatable-read entries to properly retry half-committed multi-key operations
+      // (see RetryingEntryWrappingInterceptor for details).
       useRepeatableRead = configuration.transaction().transactionMode().isTransactional()
-            && configuration.locking().isolationLevel() == IsolationLevel.REPEATABLE_READ;
+            && configuration.locking().isolationLevel() == IsolationLevel.REPEATABLE_READ
+            || configuration.clustering().cacheMode().isScattered();
       isL1Enabled = configuration.clustering().l1().enabled();
       // Write-skew check implies isolation level = REPEATABLE_READ && locking mode = OPTIMISTIC
-      useVersioning = configuration.clustering().cacheMode().isClustered() &&
-            configuration.transaction().transactionMode().isTransactional() &&
-            configuration.locking().writeSkewCheck();
+      useVersioning = Configurations.isTxVersioned(configuration);
    }
 
    @Override
@@ -80,7 +67,9 @@ public class EntryFactoryImpl implements EntryFactory {
             // With repeatable read, we need to create a RepeatableReadEntry as internal cache entries are mutable
             // Otherwise we can store the InternalCacheEntry directly in the context
             if (useRepeatableRead) {
-               cacheEntry = createWrappedEntry(key, cacheEntry);
+               MVCCEntry mvccEntry = createWrappedEntry(key, cacheEntry);
+               mvccEntry.setRead();
+               cacheEntry = mvccEntry;
             }
             ctx.putLookedUpEntry(key, cacheEntry);
          }
@@ -92,12 +81,12 @@ public class EntryFactoryImpl implements EntryFactory {
    }
 
    @Override
-   public void wrapEntryForWriting(InvocationContext ctx, Object key, boolean isOwner) {
+   public void wrapEntryForWriting(InvocationContext ctx, Object key, boolean isOwner, boolean isRead) {
       CacheEntry contextEntry = getFromContext(ctx, key);
       if (contextEntry instanceof MVCCEntry) {
          // Nothing to do, already wrapped.
       } else if (contextEntry != null) {
-         // Already in the context as an InternalCacheEntry or DeltaAwareCacheEntry.
+         // Already in the context as an InternalCacheEntry
          // Need to wrap it in a MVCCEntry.
          MVCCEntry mvccEntry = createWrappedEntry(key, contextEntry);
          ctx.putLookedUpEntry(key, mvccEntry);
@@ -113,6 +102,9 @@ public class EntryFactoryImpl implements EntryFactory {
          if (cacheEntry.isNull()) {
             mvccEntry.setCreated(true);
          }
+         if (isRead) {
+            mvccEntry.setRead();
+         }
          ctx.putLookedUpEntry(key, mvccEntry);
          if (trace)
             log.tracef("Updated context entry %s -> %s", contextEntry, mvccEntry);
@@ -120,28 +112,34 @@ public class EntryFactoryImpl implements EntryFactory {
    }
 
    @Override
-   public void wrapExternalEntry(InvocationContext ctx, Object key, CacheEntry externalEntry, boolean isWrite) {
+   public void wrapExternalEntry(InvocationContext ctx, Object key, CacheEntry externalEntry, boolean isRead, boolean isWrite) {
       // For a write operation, the entry is always already wrapped. For a read operation, the entry may be
       // in the context as an InternalCacheEntry, as null, or missing altogether.
       CacheEntry contextEntry = getFromContext(ctx, key);
       if (contextEntry instanceof MVCCEntry) {
+         MVCCEntry mvccEntry = (MVCCEntry) contextEntry;
          // Already wrapped for a write. Update the value and the metadata.
-         if (contextEntry.skipLookup()) {
+         if (mvccEntry.skipLookup()) {
             // This can happen during getGroup() invocations, which request the whole group from remote nodes
             // even if some keys are already in the context.
             if (trace)
                log.tracef("Ignored update for context entry %s", contextEntry);
             return;
          }
-         contextEntry.setValue(externalEntry.getValue());
-         contextEntry.setCreated(externalEntry.getCreated());
-         contextEntry.setLastUsed(externalEntry.getLastUsed());
-         contextEntry.setMetadata(externalEntry.getMetadata());
-         ((MVCCEntry) contextEntry).updatePreviousValue();
+         // Without updating initial value a local write skew check would fail when the entry is loaded
+         // from the cache store. This shouldn't be called more than once since afterwards we set skipLookup
+         mvccEntry.setValue(externalEntry.getValue());
+         mvccEntry.setCreated(externalEntry.getCreated());
+         mvccEntry.setLastUsed(externalEntry.getLastUsed());
+         mvccEntry.setMetadata(externalEntry.getMetadata());
+         mvccEntry.updatePreviousValue();
          if (trace) log.tracef("Updated context entry %s", contextEntry);
       } else if (contextEntry == null || contextEntry.isNull()) {
          if (isWrite || useRepeatableRead) {
             MVCCEntry mvccEntry = createWrappedEntry(key, externalEntry);
+            if (isRead) {
+               mvccEntry.setRead();
+            }
             ctx.putLookedUpEntry(key, mvccEntry);
             if (trace)
                log.tracef("Updated context entry %s -> %s", contextEntry, mvccEntry);
@@ -159,29 +157,6 @@ public class EntryFactoryImpl implements EntryFactory {
             if (trace) log.tracef("Updated context entry %s -> %s", contextEntry, externalEntry);
          }
       }
-   }
-
-   @Override
-   public void wrapEntryForDelta(InvocationContext ctx, Object deltaKey, Delta delta, boolean isOwner) {
-      CacheEntry cacheEntry = getFromContext(ctx, deltaKey);
-      DeltaAwareCacheEntry deltaAwareEntry;
-      if (cacheEntry instanceof DeltaAwareCacheEntry) {
-         // Already delta-aware, nothing to do.
-         deltaAwareEntry = (DeltaAwareCacheEntry) cacheEntry;
-      } else if (cacheEntry != null) {
-         // Wrap the existing context entry inside a DeltaAwareCacheEntry
-         deltaAwareEntry = createWrappedDeltaEntry(deltaKey, (DeltaAware) cacheEntry.getValue(), cacheEntry, ctx);
-         ctx.putLookedUpEntry(deltaKey, deltaAwareEntry);
-      } else {
-         // Read the value from the container and wrap it
-         cacheEntry = getFromContainer(deltaKey, isOwner, false);
-         DeltaAwareCacheEntry deltaEntry =
-               createWrappedDeltaEntry(deltaKey, cacheEntry != null ? (DeltaAware) cacheEntry.getValue() : null, null, ctx);
-
-         ctx.putLookedUpEntry(deltaKey, deltaEntry);
-         deltaAwareEntry = deltaEntry;
-      }
-      if (trace) log.tracef("Wrap %s for delta. Entry=%s", deltaKey, deltaAwareEntry);
    }
 
    private CacheEntry getFromContext(InvocationContext ctx, Object key) {
@@ -256,7 +231,7 @@ public class EntryFactoryImpl implements EntryFactory {
             if (metadata == null) {
                metadata = new EmbeddedMetadata.Builder().version(versionGenerator.nonExistingVersion()).build();
             }
-            mvccEntry = new ClusteredRepeatableReadEntry(key, value, metadata);
+            mvccEntry = new VersionedRepeatableReadEntry(key, value, metadata);
          } else {
             mvccEntry = new RepeatableReadEntry(key, value, metadata);
          }
@@ -264,15 +239,5 @@ public class EntryFactoryImpl implements EntryFactory {
       } else {
          return new ReadCommittedEntry(key, value, metadata);
       }
-   }
-
-   private DeltaAwareCacheEntry createWrappedDeltaEntry(Object key, DeltaAware deltaAware, CacheEntry entry, InvocationContext ctx) {
-      DeltaAwareCacheEntry deltaAwareCacheEntry = new DeltaAwareCacheEntry(key, deltaAware, entry, ctx, persistenceManager, timeService);
-      // Set the delta aware entry to created so it ignores the previous value and only merges new deltas when it is
-      // committed
-      if (entry != null && entry.isCreated()) {
-         deltaAwareCacheEntry.setCreated(true);
-      }
-      return deltaAwareCacheEntry;
    }
 }

@@ -9,7 +9,6 @@ import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNotNull;
 
 import java.util.Arrays;
-import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -34,12 +33,13 @@ import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.concurrent.StateSequencer;
 import org.infinispan.transaction.impl.TransactionTable;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
-import org.infinispan.transaction.tm.DummyTransaction;
-import org.infinispan.transaction.tm.DummyTransactionManager;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
+import org.infinispan.transaction.tm.EmbeddedTransaction;
+import org.infinispan.transaction.tm.EmbeddedTransactionManager;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.ControlledConsistentHashFactory;
+import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
@@ -54,7 +54,7 @@ import org.testng.annotations.Test;
 public class TxReplay2Test extends MultipleCacheManagersTest {
    private static final String VALUE = "value";
 
-   ControlledConsistentHashFactory consistentHashFactory = new ControlledConsistentHashFactory(0, 1, 2);
+   ControlledConsistentHashFactory consistentHashFactory = new ControlledConsistentHashFactory.Default(0, 1, 2);
 
    public void testReplay() throws Exception {
       final StateSequencer sequencer = new StateSequencer();
@@ -81,11 +81,11 @@ public class TxReplay2Test extends MultipleCacheManagersTest {
       advanceOnInboundRpc(sequencer, newBackupOwnerCache, matchCommand(TxCompletionNotificationCommand.class).build())
             .before("tx:mark_tx_completed");
 
-      final DummyTransactionManager transactionManager = (DummyTransactionManager) tm(0);
+      final EmbeddedTransactionManager transactionManager = (EmbeddedTransactionManager) tm(0);
       transactionManager.begin();
       primaryOwnerCache.put(key, VALUE);
 
-      final DummyTransaction transaction = transactionManager.getTransaction();
+      final EmbeddedTransaction transaction = transactionManager.getTransaction();
       TransactionTable transactionTable0 = TestingUtil.getTransactionTable(primaryOwnerCache);
       final GlobalTransaction gtx = transactionTable0.getLocalTransaction(transaction).getGlobalTransaction();
       transaction.runPrepare();
@@ -96,25 +96,22 @@ public class TxReplay2Test extends MultipleCacheManagersTest {
       killMember(1);
 
       final int currentTopologyId = TestingUtil.extractComponentRegistry(primaryOwnerCache).getStateTransferManager().getCacheTopology().getTopologyId();
-      Future<Object> secondCommitFuture = fork(new Callable<Object>() {
-         @Override
-         public Object call() throws Exception {
-            // Wait for the commit command to block replaying the prepare on the new backup
-            sequencer.advance("sim:before_extra_commit");
-            // And try to run another commit command
-            CommitCommand command = new CommitCommand(ByteString.fromString(newBackupOwnerCache.getName()), gtx);
-            command.setTopologyId(currentTopologyId);
-            CommandsFactory cf = TestingUtil.extractCommandsFactory(newBackupOwnerCache);
-            cf.initializeReplicableCommand(command, true);
-            try {
-               command.invoke();
-            } catch (Throwable throwable) {
-               throw new CacheException(throwable);
-            }
-
-            sequencer.advance("sim:after_extra_commit");
-            return null;
+      Future<Object> secondCommitFuture = fork(() -> {
+         // Wait for the commit command to block replaying the prepare on the new backup
+         sequencer.advance("sim:before_extra_commit");
+         // And try to run another commit command
+         CommitCommand command = new CommitCommand(ByteString.fromString(newBackupOwnerCache.getName()), gtx);
+         command.setTopologyId(currentTopologyId);
+         CommandsFactory cf = TestingUtil.extractCommandsFactory(newBackupOwnerCache);
+         cf.initializeReplicableCommand(command, true);
+         try {
+            command.invoke();
+         } catch (Throwable throwable) {
+            throw new CacheException(throwable);
          }
+
+         sequencer.advance("sim:after_extra_commit");
+         return null;
       });
 
       checkIfTransactionExists(newBackupOwnerCache);
@@ -147,11 +144,12 @@ public class TxReplay2Test extends MultipleCacheManagersTest {
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
       builder.transaction()
             .useSynchronization(false)
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup())
             .recovery().disable();
       builder.clustering()
             .hash().numOwners(3).numSegments(1).consistentHashFactory(consistentHashFactory)
             .stateTransfer().fetchInMemoryState(true);
+      builder.locking().isolationLevel(IsolationLevel.READ_COMMITTED);
       createClusteredCaches(4, builder);
    }
 

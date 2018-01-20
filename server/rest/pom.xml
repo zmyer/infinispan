@@ -5,38 +5,19 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-server-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
+      <version>9.2.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-server-rest</artifactId>
-   <packaging>war</packaging>
    <name>Infinispan REST Server</name>
-   <description>REST interface for Infinispan, packaged as a WAR file for deployment in a servlet container
-   </description>
+   <description>REST interface for Infinispan</description>
 
-   <build>
-      <plugins>
-         <plugin>
-            <artifactId>maven-war-plugin</artifactId>
-            <configuration>
-               <attachClasses>true</attachClasses>
-            </configuration>
-         </plugin>
-      </plugins>
-
-   </build>
+   <properties>
+      <certificate.dname>CN=HotRod_1,OU=Infinispan,O=JBoss,L=Red Hat,ST=World,C=WW</certificate.dname>
+   </properties>
 
    <dependencies>
-      <dependency>
-         <groupId>org.jboss.resteasy</groupId>
-         <artifactId>resteasy-jaxrs</artifactId>
-      </dependency>
-      <dependency>
-         <groupId>org.jboss.resteasy</groupId>
-         <artifactId>resteasy-netty4</artifactId>
-      </dependency>
-
       <dependency>
          <groupId>org.codehaus.jackson</groupId>
          <artifactId>jackson-mapper-asl</artifactId>
@@ -47,29 +28,144 @@
          <artifactId>xstream</artifactId>
       </dependency>
 
-
       <dependency>
-         <groupId>javax.servlet</groupId>
-         <artifactId>servlet-api</artifactId>
-         <scope>provided</scope>
-      </dependency>
-
-      <dependency>
-        <groupId>${project.groupId}</groupId>
+        <groupId>org.infinispan</groupId>
         <artifactId>infinispan-server-core</artifactId>
       </dependency>
 
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-remote-query-server</artifactId>
+      </dependency>
+
+       <!-- and now for unit and integration tests -->
       <dependency>
          <groupId>org.testng</groupId>
          <artifactId>testng</artifactId>
          <scope>test</scope>
       </dependency>
-
       <dependency>
-         <groupId>commons-httpclient</groupId>
-         <artifactId>commons-httpclient</artifactId>
+         <groupId>org.eclipse.jetty</groupId>
+         <artifactId>jetty-client</artifactId>
          <scope>test</scope>
       </dependency>
-
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-codec-http</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-codec-http2</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-tcnative-boringssl-static</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.assertj</groupId>
+         <artifactId>assertj-core</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.mockito</groupId>
+         <artifactId>mockito-all</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.openjdk.jmh</groupId>
+         <artifactId>jmh-core</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.openjdk.jmh</groupId>
+         <artifactId>jmh-generator-annprocess</artifactId>
+         <scope>test</scope>
+      </dependency>
    </dependencies>
+
+   <build>
+      <plugins>
+          <plugin>
+              <artifactId>maven-war-plugin</artifactId>
+              <configuration>
+                  <!-- we also pack WEB-INF/classes separately so JDG can use infinispan-server-rest-x.y.z-classes.jar
+                       to build a custom server war rather than use the war generated here -->
+                  <attachClasses>true</attachClasses>
+              </configuration>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-antrun-plugin</artifactId>
+              <executions>
+                  <execution>
+                      <id>create-certificates</id>
+                      <phase>process-test-resources</phase>
+                      <goals>
+                          <goal>run</goal>
+                      </goals>
+                      <configuration>
+                          <target>
+                              <macrodef name="keytool">
+                                  <attribute name="command"/>
+                                  <element name="args"/>
+                                  <sequential>
+                                      <condition property="keytool.classname" value="com.ibm.crypto.tools.KeyTool">
+                                          <available classname="com.ibm.crypto.tools.KeyTool"/>
+                                      </condition>
+                                      <condition property="keytool.classname" value="sun.security.tools.keytool.Main">
+                                          <available classname="sun.security.tools.keytool.Main"/>
+                                      </condition>
+                                      <java classname="${keytool.classname}" failonerror="true">
+                                          <arg value="@{command}"/>
+                                          <!-- common arguments -->
+                                          <arg value="-validity"/>
+                                          <arg value="365"/>
+                                          <arg value="-keyalg"/>
+                                          <arg value="RSA"/>
+                                          <arg value="-keysize"/>
+                                          <arg value="2048"/>
+                                          <arg value="-noprompt"/>
+                                          <arg value="-storepass"/>
+                                          <arg value="secret"/>
+                                          <arg value="-keypass"/>
+                                          <arg value="secret"/>
+                                          <!-- additional arguments -->
+                                          <args/>
+                                      </java>
+                                  </sequential>
+                              </macrodef>
+                              <delete quiet="true">
+                                  <fileset dir="${project.build.testOutputDirectory}" includes="*.jks,*.csr,*.cer"/>
+                              </delete>
+                              <echo message="Generate the CA certificate"/>
+                              <keytool command="-genkeypair">
+                                  <args>
+                                      <arg value="-alias"/>
+                                      <arg value="default"/>
+                                      <arg value="-dname"/>
+                                      <arg value="${certificate.dname}"/>
+                                      <arg value="-keystore"/>
+                                      <arg value="${project.build.testOutputDirectory}/default_server_keystore.jks"/>
+                                  </args>
+                              </keytool>
+                              <keytool command="-importkeystore">
+                                  <args>
+                                      <arg value="-srckeystore"/>
+                                      <arg value="${project.build.testOutputDirectory}/default_server_keystore.jks"/>
+                                      <arg value="-srcstorepass"/>
+                                      <arg value="secret"/>
+                                      <arg value="-destkeystore"/>
+                                      <arg value="${project.build.testOutputDirectory}/default_client_truststore.jks"/>
+                                      <arg value="-deststorepass"/>
+                                      <arg value="secret"/>
+                                  </args>
+                              </keytool>
+                          </target>
+                      </configuration>
+                  </execution>
+              </executions>
+          </plugin>
+      </plugins>
+   </build>
 </project>

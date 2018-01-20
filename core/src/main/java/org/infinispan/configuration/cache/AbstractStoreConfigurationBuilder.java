@@ -1,5 +1,6 @@
 package org.infinispan.configuration.cache;
 
+import static org.infinispan.configuration.cache.AbstractStoreConfiguration.MAX_BATCH_SIZE;
 import static org.infinispan.configuration.cache.AbstractStoreConfiguration.FETCH_PERSISTENT_STATE;
 import static org.infinispan.configuration.cache.AbstractStoreConfiguration.IGNORE_MODIFICATIONS;
 import static org.infinispan.configuration.cache.AbstractStoreConfiguration.PRELOAD;
@@ -181,7 +182,23 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
    }
 
    @Override
+   public S maxBatchSize(int maxBatchSize) {
+      attributes.attribute(MAX_BATCH_SIZE).set(maxBatchSize);
+      return self();
+   }
+
+   @Override
    public void validate() {
+      validate(false);
+   }
+
+   protected void validate(boolean skipClassChecks) {
+      if (!skipClassChecks)
+         validateStoreWithAnnotations();
+      validateStoreAttributes();
+   }
+
+   private void validateStoreAttributes() {
       async.validate();
       singletonStore.validate();
       boolean shared = attributes.attribute(SHARED).get();
@@ -191,6 +208,27 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
       boolean transactional = attributes.attribute(TRANSACTIONAL).get();
       ConfigurationBuilder builder = getBuilder();
 
+      if (!shared && !fetchPersistentState && !purgeOnStartup
+            && builder.clustering().cacheMode().isClustered() && !getBuilder().template())
+         log.staleEntriesWithoutFetchPersistentStateOrPurgeOnStartup();
+
+      if (fetchPersistentState && attributes.attribute(FETCH_PERSISTENT_STATE).isModified() &&
+            clustering().cacheMode().isInvalidation()) {
+         throw log.attributeNotAllowedInInvalidationMode(FETCH_PERSISTENT_STATE.name());
+      }
+
+      if (shared && !preload && builder.indexing().enabled()
+            && builder.indexing().indexLocalOnly() && !getBuilder().template())
+         log.localIndexingWithSharedCacheLoaderRequiresPreload();
+
+      if (transactional && !builder.transaction().transactionMode().isTransactional())
+         throw log.transactionalStoreInNonTransactionalCache();
+
+      if (transactional && builder.persistence().passivation())
+         throw log.transactionalStoreInPassivatedCache();
+   }
+
+   private void validateStoreWithAnnotations() {
       Class configKlass = attributes.getKlass();
       if (configKlass != null && configKlass.isAnnotationPresent(ConfigurationFor.class)) {
          Class storeKlass = ((ConfigurationFor) configKlass.getAnnotation(ConfigurationFor.class)).value();
@@ -205,25 +243,6 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
       } else {
          log.warnConfigurationForAnnotationMissing(attributes.getName());
       }
-
-      if (!shared && !fetchPersistentState && !purgeOnStartup
-            && builder.clustering().cacheMode().isClustered())
-         log.staleEntriesWithoutFetchPersistentStateOrPurgeOnStartup();
-
-      if (fetchPersistentState && attributes.attribute(FETCH_PERSISTENT_STATE).isModified() &&
-            clustering().cacheMode().isInvalidation()) {
-         throw log.attributeNotAllowedInInvalidationMode(FETCH_PERSISTENT_STATE.name());
-      }
-
-      if (shared && !preload && builder.indexing().enabled()
-            && builder.indexing().indexLocalOnly())
-         log.localIndexingWithSharedCacheLoaderRequiresPreload();
-
-      if (transactional && !builder.transaction().transactionMode().isTransactional())
-         throw log.transactionalStoreInNonTransactionalCache();
-
-      if (transactional && builder.persistence().passivation())
-         throw log.transactionalStoreInPassivatedCache();
    }
 
    @Override

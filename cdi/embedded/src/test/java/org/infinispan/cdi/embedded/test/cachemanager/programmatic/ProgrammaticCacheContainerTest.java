@@ -22,7 +22,7 @@ import org.testng.annotations.Test;
  * @see Config
  */
 @Listeners(TestResourceTrackingListener.class)
-@Test(groups = "functional", testName = "cdi.test.cachemanager.embedded.programmatic.ProgrammaticCacheContainerTest")
+@Test(groups = {"functional", "smoke"}, testName = "cdi.test.cachemanager.embedded.programmatic.ProgrammaticCacheContainerTest")
 public class ProgrammaticCacheContainerTest extends Arquillian {
 
    @Deployment
@@ -47,7 +47,7 @@ public class ProgrammaticCacheContainerTest extends Arquillian {
    private SmallCacheObservers observers;
 
    public void testSmallCache() {
-      assertEquals(smallCache.getCacheConfiguration().eviction().maxEntries(), 7);
+      assertEquals(smallCache.getCacheConfiguration().memory().size(), 7);
       assertEquals(observers.getCacheStartedEventCount(), 1);
    }
 

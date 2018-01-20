@@ -14,6 +14,7 @@ import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.conflict.impl.InternalConflictManager;
 import org.infinispan.container.versioning.VersionGenerator;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.components.ComponentMetadata;
@@ -42,7 +43,8 @@ public class ComponentRegistry extends AbstractComponentRegistry {
    private final GlobalComponentRegistry globalComponents;
    private final String cacheName;
    private static final Log log = LogFactory.getLog(ComponentRegistry.class);
-   private CacheManagerNotifier cacheManagerNotifier;
+
+   @Inject private CacheManagerNotifier cacheManagerNotifier;
 
    //Cached fields:
    private StateTransferManager stateTransferManager;
@@ -53,11 +55,6 @@ public class ComponentRegistry extends AbstractComponentRegistry {
    private VersionGenerator versionGenerator;
 
    protected final WeakReference<ClassLoader> defaultClassLoader;
-
-   @Inject
-   public void setCacheManagerNotifier(CacheManagerNotifier cacheManagerNotifier) {
-      this.cacheManagerNotifier = cacheManagerNotifier;
-   }
 
    /**
     * Creates an instance of the component registry.  The configuration passed in is automatically registered.
@@ -85,12 +82,12 @@ public class ComponentRegistry extends AbstractComponentRegistry {
          Map<Byte, ModuleCommandInitializer> initializers = globalComponents.getModuleCommandInitializers();
          if (initializers != null && !initializers.isEmpty()) {
             registerNonVolatileComponent(initializers, MODULE_COMMAND_INITIALIZERS);
-            for (ModuleCommandInitializer mci: initializers.values()) registerNonVolatileComponent(mci, mci.getClass());
+            for (ModuleCommandInitializer mci : initializers.values())
+               registerNonVolatileComponent(mci, mci.getClass());
          } else
             registerNonVolatileComponent(
                   Collections.emptyMap(), MODULE_COMMAND_INITIALIZERS);
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new CacheException("Unable to construct a ComponentRegistry!", e);
       }
    }
@@ -230,6 +227,8 @@ public class ComponentRegistry extends AbstractComponentRegistry {
 
       super.start();
 
+      super.postStart();
+
       if (needToNotify && state == ComponentStatus.RUNNING) {
          cacheManagerNotifier.notifyCacheStarted(cacheName);
       }
@@ -247,12 +246,18 @@ public class ComponentRegistry extends AbstractComponentRegistry {
       boolean needToNotify = state == ComponentStatus.RUNNING || state == ComponentStatus.INITIALIZING;
       if (needToNotify) {
          for (ModuleLifecycle l : globalComponents.moduleLifecycles) {
+            if (log.isTraceEnabled()) {
+               log.tracef("Invoking %s.cacheStopping()", l);
+            }
             l.cacheStopping(this, cacheName);
          }
       }
       super.stop();
       if (state == ComponentStatus.TERMINATED && needToNotify) {
          for (ModuleLifecycle l : globalComponents.moduleLifecycles) {
+            if (log.isTraceEnabled()) {
+               log.tracef("Invoking %s.cacheStopped()", l);
+            }
             l.cacheStopped(this, cacheName);
          }
          cacheManagerNotifier.notifyCacheStopped(cacheName);
@@ -295,15 +300,17 @@ public class ComponentRegistry extends AbstractComponentRegistry {
    public CommandsFactory getCommandsFactory() {
       return commandsFactory;
    }
+
    /**
     * Caching shortcut for #getComponent(StateTransferManager.class);
     */
    public StateTransferLock getStateTransferLock() {
       return stateTransferLock;
    }
+
    /**
     * Caching shortcut for #getLocalComponent(VersionGenerator.class)
-     */
+    */
    public VersionGenerator getVersionGenerator() {
       return versionGenerator;
    }
@@ -334,6 +341,7 @@ public class ComponentRegistry extends AbstractComponentRegistry {
       versionGenerator = getOrCreateComponent(VersionGenerator.class);
       getOrCreateComponent(ClusterCacheStats.class);  //no need to save ref to a field, just initialize component
       getOrCreateComponent(CacheConfigurationMBean.class);
+      getOrCreateComponent(InternalConflictManager.class);
    }
 
    @Override

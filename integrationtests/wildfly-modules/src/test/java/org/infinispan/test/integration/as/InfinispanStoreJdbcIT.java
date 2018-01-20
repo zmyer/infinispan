@@ -2,6 +2,8 @@ package org.infinispan.test.integration.as;
 
 import static org.junit.Assert.assertEquals;
 
+import java.io.IOException;
+
 import org.infinispan.Cache;
 import org.infinispan.Version;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -18,6 +20,7 @@ import org.jboss.shrinkwrap.api.asset.StringAsset;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.jboss.shrinkwrap.descriptor.api.Descriptors;
 import org.jboss.shrinkwrap.descriptor.api.spec.se.manifest.ManifestDescriptor;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -30,9 +33,14 @@ import org.junit.runner.RunWith;
 @RunWith(Arquillian.class)
 public class InfinispanStoreJdbcIT {
 
+   private EmbeddedCacheManager cm;
+
    @Deployment
    public static Archive<?> deployment() {
-      return ShrinkWrap.create(WebArchive.class, "jdbc.war").addClass(InfinispanStoreJdbcIT.class).add(manifest(), "META-INF/MANIFEST.MF");
+      return ShrinkWrap.create(WebArchive.class, "jdbc.war")
+            .addClass(InfinispanStoreJdbcIT.class)
+            .addAsResource("jdbc-config.xml")
+            .add(manifest(), "META-INF/MANIFEST.MF");
    }
 
    private static Asset manifest() {
@@ -41,14 +49,19 @@ public class InfinispanStoreJdbcIT {
       return new StringAsset(manifest);
    }
 
+   @After
+   public void cleanUp() {
+      if (cm != null)
+         cm.stop();
+   }
+
    @Test
    public void testCacheManager() {
       GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder();
-      gcb.globalJmxStatistics().allowDuplicateDomains(true);
 
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.persistence().addStore(JdbcStringBasedStoreConfigurationBuilder.class)
-         .table()
+            .table()
             .tableNamePrefix("ISPN")
             .idColumnName("K")
             .idColumnType("VARCHAR(255)")
@@ -56,13 +69,21 @@ public class InfinispanStoreJdbcIT {
             .dataColumnType("BLOB")
             .timestampColumnName("T")
             .timestampColumnType("BIGINT")
-         .dataSource().jndiUrl("java:jboss/datasources/ExampleDS");
+            .dataSource().jndiUrl("java:jboss/datasources/ExampleDS");
 
-      EmbeddedCacheManager cm = new DefaultCacheManager(gcb.build(), builder.build());
+      cm = new DefaultCacheManager(gcb.build(), builder.build());
+
       Cache<String, String> cache = cm.getCache();
       cache.put("a", "a");
       assertEquals("a", cache.get("a"));
-      cm.stop();
+   }
+
+   @Test
+   public void testXmlConfig() throws IOException {
+      cm = new DefaultCacheManager("jdbc-config.xml");
+      Cache<String, String> cache = cm.getCache("anotherCache");
+      cache.put("a", "a");
+      assertEquals("a", cache.get("a"));
    }
 
 }

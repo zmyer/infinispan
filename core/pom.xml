@@ -5,8 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-core</artifactId>
@@ -51,7 +51,12 @@
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>io.reactivex.rxjava2</groupId>
+         <artifactId>rxjava</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
@@ -64,19 +69,18 @@
 
       <dependency>
          <groupId>org.mockito</groupId>
-         <artifactId>mockito-all</artifactId>
+         <artifactId>mockito-core</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.hamcrest</groupId>
+         <artifactId>hamcrest-core</artifactId>
          <scope>test</scope>
       </dependency>
 
       <dependency>
          <groupId>org.apache.commons</groupId>
          <artifactId>commons-math</artifactId>
-         <scope>test</scope>
-      </dependency>
-
-      <dependency>
-         <groupId>org.javassist</groupId>
-         <artifactId>javassist</artifactId>
          <scope>test</scope>
       </dependency>
 
@@ -104,6 +108,20 @@
          <optional>true</optional>
       </dependency>
 
+      <!-- We need the Karaf distribution as a dependency for karaf-maven-plugin -->
+      <!-- But we don't want to use its dependencies (e.g. pax-logging-api) in the core tests -->
+      <dependency>
+         <groupId>org.apache.karaf.features</groupId>
+         <artifactId>framework</artifactId>
+         <type>kar</type>
+         <scope>provided</scope>
+         <exclusions>
+            <exclusion>
+               <groupId>*</groupId>
+               <artifactId>*</artifactId>
+            </exclusion>
+         </exclusions>
+      </dependency>
    </dependencies>
 
    <build>
@@ -163,6 +181,9 @@
                <instructions>
                   <Export-Package>
                      !${project.groupId}.commons.*,
+                     !${project.groupId}.counter.*,
+                     !${project.groupId}.multimap.*,
+                     !${project.groupId}.lock.*,
                      org.infinispan.marshall.core,
                      ${project.groupId}.*;version=${project.version};-split-package:=error
                   </Export-Package>
@@ -173,7 +194,8 @@
                   <Include-Resource>
                      {maven-resources},
                      /META-INF/services=${project.basedir}/target/classes/META-INF/services,
-                     /OSGI-INF/blueprint/blueprint.xml=${project.basedir}/target/classes/OSGI-INF/blueprint/blueprint.xml
+                     /OSGI-INF/blueprint/blueprint.xml=${project.basedir}/target/classes/OSGI-INF/blueprint/blueprint.xml,
+                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
                   </Include-Resource>
                   <DynamicImport-Package>*</DynamicImport-Package>
                </instructions>
@@ -202,7 +224,16 @@
             </executions>
          </plugin>
          <plugin>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.apache.karaf.tooling</groupId>
+            <artifactId>karaf-maven-plugin</artifactId>
+            <configuration>
+               <features>
+                  <feature>infinispan-core</feature>
+               </features>
+            </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-defaults-maven-plugin</artifactId>
              <version>${project.version}</version>
             <executions>
@@ -218,4 +249,29 @@
       </plugins>
    </build>
 
+   <profiles>
+      <profile>
+         <id>smoke</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <configuration>
+                     <excludes>
+                        <!-- explicitly exclude some tests because of TestNG issue which ignores
+                             restricted groups in subclasses -->
+                        <exclude>**/*Async*.java</exclude>
+                        <exclude>**/ReplSyncDistributedExecutor*.java</exclude>
+                        <exclude>**/DistributedExecutorWith*.java</exclude>
+                        <exclude>**/DistAsync*.java</exclude>
+                        <exclude>**/DistSyncUnsafe*.java</exclude>
+                        <exclude>**/TopologyAwareDist*.java</exclude>
+                     </excludes>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

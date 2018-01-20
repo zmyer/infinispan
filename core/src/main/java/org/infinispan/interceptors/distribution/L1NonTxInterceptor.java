@@ -1,5 +1,6 @@
 package org.infinispan.interceptors.distribution;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -7,7 +8,6 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -15,15 +15,26 @@ import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.DataCommand;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.functional.ReadWriteKeyCommand;
+import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
+import org.infinispan.commands.functional.ReadWriteManyCommand;
+import org.infinispan.commands.functional.ReadWriteManyEntriesCommand;
+import org.infinispan.commands.functional.WriteOnlyKeyCommand;
+import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
+import org.infinispan.commands.functional.WriteOnlyManyCommand;
+import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
 import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.container.DataContainer;
@@ -38,7 +49,6 @@ import org.infinispan.interceptors.impl.BaseRpcInterceptor;
 import org.infinispan.interceptors.impl.MultiSubCommandInvoker;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.statetransfer.StateTransferLock;
-import org.infinispan.util.concurrent.CommandAckCollector;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -53,13 +63,12 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
    private static final Log log = LogFactory.getLog(L1NonTxInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   protected L1Manager l1Manager;
-   protected ClusteringDependentLogic cdl;
-   protected EntryFactory entryFactory;
-   protected CommandsFactory commandsFactory;
-   protected DataContainer dataContainer;
-   protected StateTransferLock stateTransferLock;
-   private CommandAckCollector commandAckCollector;
+   @Inject protected L1Manager l1Manager;
+   @Inject protected ClusteringDependentLogic cdl;
+   @Inject protected EntryFactory entryFactory;
+   @Inject protected CommandsFactory commandsFactory;
+   @Inject protected DataContainer dataContainer;
+   @Inject protected StateTransferLock stateTransferLock;
 
    private long l1Lifespan;
    private long replicationTimeout;
@@ -88,19 +97,6 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
     * invalidation may not invalidate the new value.
     */
    private final ConcurrentMap<Object, L1WriteSynchronizer> concurrentWrites = CollectionFactory.makeConcurrentMap();
-
-   @Inject
-   public void init(L1Manager l1Manager, ClusteringDependentLogic cdl, EntryFactory entryFactory,
-                    DataContainer dataContainer, StateTransferLock stateTransferLock,
-                    CommandsFactory commandsFactory, CommandAckCollector commandAckCollector) {
-      this.l1Manager = l1Manager;
-      this.cdl = cdl;
-      this.entryFactory = entryFactory;
-      this.dataContainer = dataContainer;
-      this.stateTransferLock = stateTransferLock;
-      this.commandsFactory = commandsFactory;
-      this.commandAckCollector = commandAckCollector;
-   }
 
    @Start
    public void start() {
@@ -194,7 +190,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
 
    protected boolean skipL1Lookup(FlagAffectedCommand command, Object key) {
       return command.hasAnyFlag(FlagBitSets.CACHE_MODE_LOCAL) || command.hasAnyFlag(FlagBitSets.SKIP_REMOTE_LOOKUP)
-            || command.hasAnyFlag(FlagBitSets.IGNORE_RETURN_VALUES) || cdl.localNodeIsOwner(key)
+            || command.hasAnyFlag(FlagBitSets.IGNORE_RETURN_VALUES) || cdl.getCacheTopology().isWriteOwner(key)
             || dataContainer.containsKey(key);
    }
 
@@ -202,6 +198,46 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command)
          throws Throwable {
       return handleDataWriteCommand(ctx, command, true);
+   }
+
+   @Override
+   public Object visitWriteOnlyKeyCommand(InvocationContext ctx, WriteOnlyKeyCommand command) throws Throwable {
+      return handleDataWriteCommand(ctx, command, false);
+   }
+
+   @Override
+   public Object visitReadWriteKeyValueCommand(InvocationContext ctx, ReadWriteKeyValueCommand command) throws Throwable {
+      return handleDataWriteCommand(ctx, command, false);
+   }
+
+   @Override
+   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
+      return handleDataWriteCommand(ctx, command, false);
+   }
+
+   @Override
+   public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) throws Throwable {
+      return handleWriteManyCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitWriteOnlyKeyValueCommand(InvocationContext ctx, WriteOnlyKeyValueCommand command) throws Throwable {
+      return handleDataWriteCommand(ctx, command, false);
+   }
+
+   @Override
+   public Object visitWriteOnlyManyCommand(InvocationContext ctx, WriteOnlyManyCommand command) throws Throwable {
+      return handleWriteManyCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) throws Throwable {
+      return handleWriteManyCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) throws Throwable {
+      return handleWriteManyCommand(ctx, command);
    }
 
    @Override
@@ -215,25 +251,51 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
    }
 
    @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return handleDataWriteCommand(ctx, command, true);
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+      return handleDataWriteCommand(ctx, command, true);
+   }
+
+   @Override
    public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
-      Set<Object> keys = command.getMap().keySet();
-      Set<Object> toInvalidate = new HashSet<Object>(keys.size());
+      return handleWriteManyCommand(ctx, command);
+   }
+
+   private Object handleWriteManyCommand(InvocationContext ctx, WriteCommand command) {
+      Collection<?> keys = command.getAffectedKeys();
+      Set<Object> toInvalidate = new HashSet<>(keys.size());
       for (Object k : keys) {
-         if (cdl.localNodeIsOwner(k)) {
+         if (cdl.getCacheTopology().isWriteOwner(k)) {
             toInvalidate.add(k);
          }
       }
 
-      Future<?> invalidationFuture =
+      CompletableFuture<?> invalidationFuture =
             !toInvalidate.isEmpty() ? l1Manager.flushCache(toInvalidate, ctx.getOrigin(), true) : null;
 
       //we also need to remove from L1 the keys that are not ours
-      Iterator<VisitableCommand> subCommands = command.getAffectedKeys().stream().filter(
-            k -> !cdl.localNodeIsOwner(k)).map(k -> removeFromL1Command(ctx, k)).iterator();
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         PutMapCommand putMapCommand = (PutMapCommand) rCommand;
-         processInvalidationResult(putMapCommand, invalidationFuture);
-         return MultiSubCommandInvoker.invokeEach(rCtx, subCommands, this, rv);
+      Iterator<VisitableCommand> subCommands = keys.stream().filter(
+            k -> !cdl.getCacheTopology().isWriteOwner(k)).map(k -> removeFromL1Command(ctx, k)).iterator();
+      return invokeNextAndHandle(ctx, command, (InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable ex) -> {
+         WriteCommand writeCommand = (WriteCommand) rCommand;
+         if (ex != null) {
+            if (mustSyncInvalidation(invalidationFuture, writeCommand)) {
+               return asyncValue(invalidationFuture).thenApply(rCtx, rCommand, (rCtx1, rCommand1, rv1) -> {
+                  throw ex;
+               });
+            }
+            throw ex;
+         } else {
+            if (mustSyncInvalidation(invalidationFuture, writeCommand)) {
+               return asyncValue(invalidationFuture).thenApply(null, null, (rCtx2, rCommand2, rv2) -> MultiSubCommandInvoker.invokeEach(rCtx, subCommands, this, rv));
+            } else {
+               return MultiSubCommandInvoker.invokeEach(rCtx, subCommands, this, rv);
+            }
+         }
       });
    }
 
@@ -246,7 +308,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
          // may not have the value - if so we need to add it then now that we know we waited for the get response
          // to complete
          if (ctx.lookupEntry(key) == null) {
-            entryFactory.wrapEntryForWriting(ctx, key, true);
+            entryFactory.wrapEntryForWriting(ctx, key, true, false);
          }
       }
       return invokeNext(ctx, invalidateL1Command);
@@ -293,28 +355,42 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
          }
          return invokeNext(ctx, command);
       }
-      Future<?> l1InvalidationFuture = invalidateL1InCluster(ctx, command, assumeOriginKeptEntryInL1);
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
+      CompletableFuture<?> l1InvalidationFuture = invalidateL1InCluster(ctx, command, assumeOriginKeptEntryInL1);
+      return invokeNextAndHandle(ctx, command, (InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable ex) -> {
          DataWriteCommand dataWriteCommand = (DataWriteCommand) rCommand;
-         processInvalidationResult(dataWriteCommand, l1InvalidationFuture);
-         return removeFromLocalL1(rCtx, dataWriteCommand, rv);
+         if (ex != null) {
+            if (mustSyncInvalidation(l1InvalidationFuture, dataWriteCommand)) {
+               return asyncValue(l1InvalidationFuture).thenApply(rCtx, rCommand, (rCtx1, rCommand1, rv1) -> {
+                  throw ex;
+               });
+            }
+            throw ex;
+         } else {
+            if (mustSyncInvalidation(l1InvalidationFuture, dataWriteCommand)) {
+               if (shouldRemoveFromLocalL1(rCtx, dataWriteCommand)) {
+                  VisitableCommand removeFromL1Command = removeFromL1Command(rCtx, dataWriteCommand.getKey());
+                  return makeStage(asyncInvokeNext(rCtx, removeFromL1Command, l1InvalidationFuture))
+                        .thenApply(null, null, (rCtx2, rCommand2, rv2) -> rv);
+               } else {
+                  return asyncValue(l1InvalidationFuture).thenApply(rCtx, rCommand, (rCtx1, rCommand1, rv1) -> rv);
+               }
+            } else if (shouldRemoveFromLocalL1(rCtx, dataWriteCommand)) {
+               VisitableCommand removeFromL1Command = removeFromL1Command(rCtx, dataWriteCommand.getKey());
+               return invokeNextThenApply(rCtx, removeFromL1Command, (rCtx2, rCommand2, rv2) -> rv);
+            } else if (trace) {
+               log.trace("Allowing entry to commit as local node is owner");
+            }
+         }
+         return rv;
       });
    }
 
-   private Object removeFromLocalL1(InvocationContext ctx, DataWriteCommand command, Object returnValue) {
-      if (ctx.isOriginLocal() && !cdl.localNodeIsOwner(command.getKey())) {
-         CompletableFuture<?> pendingAcks = commandAckCollector.getCollectorCompletableFuture(command.getCommandInvocationId());
-         VisitableCommand removeFromL1Command = removeFromL1Command(ctx, command.getKey());
-         if (pendingAcks == null) {
-            return invokeNextThenApply(ctx, removeFromL1Command, (rCtx, rCommand, rv) -> returnValue);
-         } else {
-            return asyncValue(pendingAcks).thenApply(ctx, removeFromL1Command, (rCtx, rCommand, rv) ->
-                  invokeNextThenApply(rCtx, rCommand, (rCtx1, rCommand1, rv1) -> returnValue));
-         }
-      } else if (trace) {
-         log.trace("Allowing entry to commit as local node is owner");
-      }
-      return returnValue;
+   private boolean mustSyncInvalidation(CompletableFuture<?> invalidationFuture, WriteCommand writeCommand) {
+      return invalidationFuture != null && !invalidationFuture.isDone() && isSynchronous(writeCommand);
+   }
+
+   private boolean shouldRemoveFromLocalL1(InvocationContext ctx, DataWriteCommand command) {
+      return ctx.isOriginLocal() && !cdl.getCacheTopology().isWriteOwner(command.getKey());
    }
 
    private VisitableCommand removeFromL1Command(InvocationContext ctx, Object key) {
@@ -323,23 +399,15 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
       }
       abortL1UpdateOrWait(key);
       ctx.removeLookedUpEntry(key);
-      entryFactory.wrapEntryForWriting(ctx, key, true);
+      entryFactory.wrapEntryForWriting(ctx, key, true, false);
 
       return commandsFactory.buildInvalidateFromL1Command(EnumUtil.EMPTY_BIT_SET,
             Collections.singleton(key));
    }
 
-   private void processInvalidationResult(FlagAffectedCommand command, Future<?> l1InvalidationFuture) throws InterruptedException, ExecutionException {
-      if (l1InvalidationFuture != null) {
-         if (isSynchronous(command)) {
-            l1InvalidationFuture.get();
-         }
-      }
-   }
-
-   private Future<?> invalidateL1InCluster(InvocationContext ctx, DataWriteCommand command, boolean assumeOriginKeptEntryInL1) {
-      Future<?> l1InvalidationFuture = null;
-      if (cdl.localNodeIsOwner(command.getKey())) {
+   private CompletableFuture<?> invalidateL1InCluster(InvocationContext ctx, DataWriteCommand command, boolean assumeOriginKeptEntryInL1) {
+      CompletableFuture<?> l1InvalidationFuture = null;
+      if (cdl.getCacheTopology().isWriteOwner(command.getKey())) {
          l1InvalidationFuture = l1Manager.flushCache(Collections.singletonList(command.getKey()), ctx.getOrigin(), assumeOriginKeptEntryInL1);
       } else if (trace) {
          log.tracef("Not invalidating key '%s' as local node(%s) is not owner", command.getKey(), rpcManager.getAddress());

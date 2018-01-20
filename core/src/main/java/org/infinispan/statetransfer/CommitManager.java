@@ -7,13 +7,15 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-import org.infinispan.commons.equivalence.AnyEquivalence;
-import org.infinispan.commons.equivalence.Equivalence;
+import org.infinispan.container.MergeOnStore;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
+import org.infinispan.context.InvocationContext;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.metadata.Metadata;
+import org.infinispan.persistence.PersistenceUtil;
+import org.infinispan.persistence.manager.PersistenceManager;
+import org.infinispan.util.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -31,14 +33,13 @@ public class CommitManager {
    private static final Log log = LogFactory.getLog(CommitManager.class);
    private static final boolean trace = log.isTraceEnabled();
    private final ConcurrentMap<Object, DiscardPolicy> tracker = new ConcurrentHashMap<>();
-   private DataContainer dataContainer;
+
+   @Inject private DataContainer dataContainer;
+   @Inject private PersistenceManager persistenceManager;
+   @Inject private TimeService timeService;
+
    private volatile boolean trackStateTransfer;
    private volatile boolean trackXSiteStateTransfer;
-
-   @Inject
-   public final void inject(DataContainer dataContainer) {
-      this.dataContainer = dataContainer;
-   }
 
    /**
     * It starts tracking keys committed. All the keys committed will be flagged with this flag. State transfer received
@@ -75,26 +76,24 @@ public class CommitManager {
    /**
     * It tries to commit the cache entry. The entry is not committed if it is originated from state transfer and other
     * operation already has updated it.
-    *
     * @param entry     the entry to commit
-    * @param metadata  the entry's metadata
     * @param operation if {@code null}, it identifies this commit as originated from a normal operation. Otherwise, it
-    *                  is originated from a state transfer (local or remote site)
+    * @param ctx
     */
-   public final void commit(final CacheEntry entry, final Metadata metadata, final Flag operation,
-                            boolean l1Invalidation) {
+   public final void commit(final CacheEntry entry, final Flag operation,
+                            boolean l1Only, InvocationContext ctx) {
       if (trace) {
-         log.tracef("Trying to commit. Key=%s. Operation Flag=%s, L1 invalidation=%s", toStr(entry.getKey()),
-               operation, l1Invalidation);
+         log.tracef("Trying to commit. Key=%s. Operation Flag=%s, L1 write/invalidation=%s", toStr(entry.getKey()),
+               operation, l1Only);
       }
-      if (l1Invalidation || (operation == null && !trackStateTransfer && !trackXSiteStateTransfer)) {
+      if (l1Only || (operation == null && !trackStateTransfer && !trackXSiteStateTransfer)) {
          //track == null means that it is a normal put and the tracking is not enabled!
          //if it is a L1 invalidation, commit without track it.
          if (trace) {
             log.tracef("Committing key=%s. It is a L1 invalidation or a normal put and no tracking is enabled!",
                   toStr(entry.getKey()));
          }
-         entry.commit(dataContainer, metadata);
+         commitEntry(entry, ctx);
          return;
       }
       if (isTrackDisabled(operation)) {
@@ -114,14 +113,28 @@ public class CommitManager {
             }
             return discardPolicy;
          }
-         entry.commit(dataContainer, metadata);
-         DiscardPolicy newDiscardPolicy = calculateDiscardPolicy();
+         commitEntry(entry, ctx);
+         DiscardPolicy newDiscardPolicy = calculateDiscardPolicy(operation);
          if (trace) {
             log.tracef("Committed key=%s. Old discard policy=%s. New discard policy=%s", toStr(entry.getKey()),
                        discardPolicy, newDiscardPolicy);
          }
          return newDiscardPolicy;
       });
+   }
+
+   private void commitEntry(CacheEntry entry, InvocationContext ctx) {
+      if (!entry.isEvicted() && !entry.isRemoved() && entry.getValue() instanceof MergeOnStore) {
+         PersistenceUtil.loadAndComputeInDataContainer(dataContainer, persistenceManager, entry.getKey(), ctx, timeService, (k, oldEntry, factory) -> {
+            Object newValue = ((MergeOnStore) entry.getValue()).merge(oldEntry == null ? null : oldEntry.getValue());
+            if (newValue == null) {
+               return null;
+            }
+            return factory.create(k, newValue, entry.getMetadata());
+         });
+      } else {
+         entry.commit(dataContainer);
+      }
    }
 
    /**
@@ -172,11 +185,13 @@ public class CommitManager {
             (track == Flag.PUT_FOR_X_SITE_STATE_TRANSFER && !trackXSiteStateTransfer);
    }
 
-   private DiscardPolicy calculateDiscardPolicy() {
-      if (!trackXSiteStateTransfer && !trackStateTransfer) {
+   private DiscardPolicy calculateDiscardPolicy(Flag operation) {
+      boolean discardStateTransfer = trackStateTransfer && operation != Flag.PUT_FOR_STATE_TRANSFER;
+      boolean discardXSiteStateTransfer = trackXSiteStateTransfer && operation != Flag.PUT_FOR_X_SITE_STATE_TRANSFER;
+      if (!discardStateTransfer && !discardXSiteStateTransfer) {
          return null;
       }
-      return new DiscardPolicy(trackStateTransfer, trackXSiteStateTransfer);
+      return new DiscardPolicy(discardStateTransfer, discardXSiteStateTransfer);
    }
 
    private static class DiscardPolicy {

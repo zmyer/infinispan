@@ -35,6 +35,8 @@ import org.infinispan.server.infinispan.spi.service.CacheContainerServiceName;
 import org.infinispan.server.infinispan.spi.service.CacheServiceName;
 import org.infinispan.server.infinispan.task.ServerTaskRegistry;
 import org.infinispan.server.infinispan.task.ServerTaskRegistryService;
+import org.jboss.as.clustering.infinispan.conflict.DeployedMergePolicyFactory;
+import org.jboss.as.clustering.infinispan.conflict.DeployedMergePolicyFactoryService;
 import org.jboss.as.clustering.infinispan.cs.factory.DeployedCacheStoreFactory;
 import org.jboss.as.clustering.infinispan.cs.factory.DeployedCacheStoreFactoryService;
 import org.jboss.as.controller.AbstractAddStepHandler;
@@ -102,7 +104,6 @@ public abstract class CacheAdd extends AbstractAddStepHandler implements Restart
         String containerName = containerAddress.getLastElement().getValue();
 
         // get model attributes
-        ModelNode resolvedValue = null;
         final String configuration = CacheResource.CONFIGURATION.resolveModelAttribute(context, cacheModel).asString();
         StartMode startMode = StartMode.valueOf(CacheConfigurationResource.START.resolveModelAttribute(context, cacheModel).asString());
         if (startMode != StartMode.EAGER) {
@@ -116,11 +117,11 @@ public abstract class CacheAdd extends AbstractAddStepHandler implements Restart
         Collection<ServiceController<?>> controllers = new ArrayList<>(2);
         // now install the corresponding cache service (starts a configured cache)
         controllers.add(this.installCacheService(target, containerName, cacheName, initialMode, configuration));
+
         // install a name service entry for the cache
-        /*
-        final String jndiName = ((resolvedValue = CacheConfigurationResource.JNDI_NAME.resolveModelAttribute(context, cacheModel)).isDefined()) ? resolvedValue.asString() : null;
-        controllers.add(this.installJndiService(target, containerName, cacheName, InfinispanJndiName.createCacheJndiName(jndiName, containerName, cacheName)));
-        */
+        ModelNode resolvedValue = CacheConfigurationResource.JNDI_NAME.resolveModelAttribute(context, cacheModel);
+        final String jndiName = InfinispanJndiName.createCacheJndiName(resolvedValue.isDefined() ? resolvedValue.asString() : null, containerName, cacheName);
+        controllers.add(this.installJndiService(target, containerName, cacheName, jndiName));
         log.debugf("Cache service for cache %s installed for container %s", cacheName, containerName);
 
         return controllers;
@@ -136,13 +137,10 @@ public abstract class CacheAdd extends AbstractAddStepHandler implements Restart
         final String cacheName = cacheAddress.getLastElement().getValue() ;
         final String containerName = containerAddress.getLastElement().getValue() ;
 
-        // remove all services started by CacheAdd, in reverse order
-
-        // FIXME restore JNDI removal
-        /*
         // remove the binder service
-        ContextNames.BindInfo bindInfo = ContextNames.bindInfoFor(InfinispanJndiName.createCacheJndiName(jndiName, containerName, cacheName));
-        context.removeService(bindInfo.getBinderServiceName()) ; */
+        ModelNode resolvedValue = CacheConfigurationResource.JNDI_NAME.resolveModelAttribute(context, cacheModel);
+        final String jndiName = InfinispanJndiName.createCacheJndiName(resolvedValue.isDefined() ? resolvedValue.asString() : null, containerName, cacheName);
+        context.removeService(ContextNames.bindInfoFor(jndiName).getBinderServiceName());
 
         // remove the CacheService instance
         context.removeService(CacheServiceName.CACHE.getServiceName(containerName, cacheName));
@@ -174,6 +172,7 @@ public abstract class CacheAdd extends AbstractAddStepHandler implements Restart
 
         builder.addDependency(DeployedCacheStoreFactoryService.SERVICE_NAME, DeployedCacheStoreFactory.class, cacheDependencies.getDeployedCacheStoreFactoryInjector());
         builder.addDependency(ServerTaskRegistryService.SERVICE_NAME, ServerTaskRegistry.class, cacheDependencies.getDeployedTaskRegistryInjector());
+        builder.addDependency(DeployedMergePolicyFactoryService.SERVICE_NAME, DeployedMergePolicyFactory.class, cacheDependencies.getDeployedMergePolicyRegistryInjector());
 
         return builder.install();
     }
@@ -252,6 +251,7 @@ public abstract class CacheAdd extends AbstractAddStepHandler implements Restart
         private final InjectedValue<XAResourceRecoveryRegistry> recoveryRegistry = new InjectedValue<>();
         private final InjectedValue<DeployedCacheStoreFactory> deployedCacheStoreFactory = new InjectedValue<>();
         private final InjectedValue<ServerTaskRegistry> deployedTaskRegistry = new InjectedValue<>();
+        private final InjectedValue<DeployedMergePolicyFactory> deployedMergePolicyRegistry = new InjectedValue<>();
 
         CacheDependencies(Value<EmbeddedCacheManager> container) {
             this.container = container;
@@ -267,6 +267,10 @@ public abstract class CacheAdd extends AbstractAddStepHandler implements Restart
 
         public InjectedValue<ServerTaskRegistry> getDeployedTaskRegistryInjector() {
             return deployedTaskRegistry;
+        }
+
+        public InjectedValue<DeployedMergePolicyFactory> getDeployedMergePolicyRegistryInjector() {
+            return deployedMergePolicyRegistry;
         }
 
         public ServerTaskRegistry getDeployedTaskRegistry() {
@@ -286,6 +290,11 @@ public abstract class CacheAdd extends AbstractAddStepHandler implements Restart
         @Override
         public CacheStoreFactory getDeployedCacheStoreFactory() {
            return deployedCacheStoreFactory.getValue();
+        }
+
+        @Override
+        public DeployedMergePolicyFactory getDeployedMergePolicyRegistry() {
+            return deployedMergePolicyRegistry.getValue();
         }
     }
 }

@@ -1,8 +1,8 @@
 package org.infinispan.interceptors.impl;
 
-import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashSet;
-import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.Spliterator;
@@ -39,8 +39,9 @@ import org.infinispan.commands.tx.AbstractTransactionBoundaryCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
@@ -49,7 +50,6 @@ import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CloseableSpliterator;
-import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
@@ -57,8 +57,9 @@ import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.RemoteTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.interceptors.InvocationStage;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.DDAsyncInterceptor;
+import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.jmx.JmxStatisticsExposer;
 import org.infinispan.jmx.annotations.DataType;
 import org.infinispan.jmx.annotations.DisplayType;
@@ -66,9 +67,6 @@ import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
-import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
-import org.infinispan.remoting.rpc.RpcManager;
-import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.OutdatedTopologyException;
 import org.infinispan.stream.impl.interceptor.AbstractDelegatingEntryCacheSet;
 import org.infinispan.stream.impl.interceptor.AbstractDelegatingKeyCacheSet;
@@ -101,34 +99,22 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    private final AtomicLong commits = new AtomicLong(0);
    private final AtomicLong rollbacks = new AtomicLong(0);
 
-   private RpcManager rpcManager;
-   private CommandsFactory commandsFactory;
-   private Cache<K, V> cache;
-   private RecoveryManager recoveryManager;
-   private TransactionTable txTable;
-   private PartitionHandlingManager partitionHandlingManager;
+   @Inject private CommandsFactory commandsFactory;
+   @Inject private Cache<K, V> cache;
+   @Inject private RecoveryManager recoveryManager;
+   @Inject private TransactionTable txTable;
 
    private boolean isTotalOrder;
    private boolean useOnePhaseForAutoCommitTx;
    private boolean useVersioning;
    private boolean statisticsEnabled;
 
-   @Inject
-   public void init(TransactionTable txTable, Configuration configuration, RpcManager rpcManager,
-                    RecoveryManager recoveryManager, CommandsFactory commandsFactory, Cache<K, V> cache,
-                    PartitionHandlingManager partitionHandlingManager) {
-      this.cacheConfiguration = configuration;
-      this.txTable = txTable;
-      this.rpcManager = rpcManager;
-      this.recoveryManager = recoveryManager;
-      this.commandsFactory = commandsFactory;
-      this.cache = cache;
-      this.partitionHandlingManager = partitionHandlingManager;
-
+   @Start
+   public void start() {
       statisticsEnabled = cacheConfiguration.jmxStatistics().enabled();
-      isTotalOrder = configuration.transaction().transactionProtocol().isTotalOrder();
+      isTotalOrder = cacheConfiguration.transaction().transactionProtocol().isTotalOrder();
       useOnePhaseForAutoCommitTx = cacheConfiguration.transaction().use1PcForAutoCommitTransactions();
-      useVersioning = Configurations.isVersioningEnabled(configuration);
+      useVersioning = Configurations.isTxVersioned(cacheConfiguration);
    }
 
    @Override
@@ -245,18 +231,22 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    }
 
    @Override
-   public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command)
-         throws Throwable {
-      return handleWriteCommand(ctx, command);
-   }
-
-   @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
       return handleWriteCommand(ctx, command);
    }
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return handleWriteCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return handleWriteCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
       return handleWriteCommand(ctx, command);
    }
 
@@ -559,50 +549,30 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
                                           Object rv, Throwable throwable) throws Throwable {
       final GlobalTransaction globalTransaction = command.getGlobalTransaction();
 
-      // command.getOrigin() and ctx.getOrigin() are not reliable for LockControlCommands started by
-      // ClusteredGetCommands
-      final Address origin = globalTransaction.getAddress();
-
-      //It is possible to receive a prepare or lock control command from a node that crashed. If that's the case rollback
-      //the transaction forcefully in order to cleanup resources.
-      boolean originatorMissing = !rpcManager.getTransport().getMembers().contains(origin);
-
       // It is also possible that the LCC timed out on the originator's end and this node has processed
       // a TxCompletionNotification.  So we need to check the presence of the remote transaction to
       // see if we need to clean up any acquired locks on our end.
       boolean alreadyCompleted = txTable.isTransactionCompleted(globalTransaction) || !txTable.containRemoteTx(globalTransaction);
 
-      // We want to throw an exception if the originator left the cluster and the transaction is not finished
-      // and/or it was rolled back by TransactionTable.cleanupLeaverTransactions().
-      // We don't want to throw an exception if the originator left the cluster but the transaction already
-      // completed successfully. So far, this only seems possible when forcing the commit of an orphaned
-      // transaction (with recovery enabled).
-      boolean completedSuccessfully = alreadyCompleted && !ctx.getCacheTransaction().isMarkedForRollback();
-
       boolean canRollback = command instanceof PrepareCommand && !((PrepareCommand) command).isOnePhaseCommit() ||
-            command instanceof RollbackCommand || command instanceof LockControlCommand;
+            command instanceof LockControlCommand;
 
       if (trace) {
-         log.tracef("Verifying transaction: originatorMissing=%s, alreadyCompleted=%s",
-                    originatorMissing, alreadyCompleted);
+         log.tracef("Verifying transaction: alreadyCompleted=%s", alreadyCompleted);
       }
 
-      if (alreadyCompleted || (originatorMissing && (canRollback || partitionHandlingManager.canRollbackTransactionAfterOriginatorLeave(globalTransaction)))) {
+      if (alreadyCompleted) {
          if (trace) {
-            log.tracef("Rolling back remote transaction %s because either already completed (%s) or originator no longer in the cluster (%s).",
-                       globalTransaction, alreadyCompleted, originatorMissing);
+            log.tracef("Rolling back remote transaction %s because it was already completed",
+                       globalTransaction);
          }
+         // The rollback command only marks the transaction as completed in invokeAsync()
+         txTable.markTransactionCompleted(globalTransaction, false);
          RollbackCommand rollback = commandsFactory.buildRollbackCommand(command.getGlobalTransaction());
          return invokeNextAndFinally(ctx, rollback, (rCtx, rCommand, rv1, throwable1) -> {
             RemoteTransaction remoteTx = ((TxInvocationContext<RemoteTransaction>) rCtx).getCacheTransaction();
             remoteTx.markForRollback(true);
             txTable.removeRemoteTransaction(globalTransaction);
-
-            if (throwable1 == null) {
-               if (originatorMissing && !completedSuccessfully) {
-                  throw log.orphanTransactionRolledBack(globalTransaction);
-               }
-            }
          });
       }
 
@@ -707,7 +677,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
       private final TxInvocationContext<LocalTransaction> ctx;
       // We store all the not yet seen context entries here.  We rely on the fact that the cache entry reference is updated
       // if a change occurs in between iterations to see updates.
-      private final List<CacheEntry> contextEntries;
+      private final Deque<CacheEntry> contextEntries;
       private final Set<Object> seenContextKeys = new HashSet<>();
       private final CloseableIterator<E> realIterator;
 
@@ -718,7 +688,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
                                                TxInvocationContext<LocalTransaction> ctx) {
          this.realIterator = realIterator;
          this.ctx = ctx;
-         contextEntries = new ArrayList<>(ctx.getLookedUpEntries().values());
+         contextEntries = new ArrayDeque<>(ctx.getLookedUpEntries().values());
       }
 
       @Override
@@ -754,7 +724,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
          // We first have to exhaust all of our context entries
          CacheEntry<K, V> entry;
          while (returnedValue == null && !contextEntries.isEmpty() &&
-                 (entry = contextEntries.remove(0)) != null) {
+                 (entry = contextEntries.poll()) != null) {
             seenContextKeys.add(entry.getKey());
             if (!ctx.isEntryRemovedInContext(entry.getKey()) && !entry.isNull()) {
                returnedValue = fromEntry(entry);

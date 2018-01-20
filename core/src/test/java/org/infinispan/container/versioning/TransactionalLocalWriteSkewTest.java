@@ -11,14 +11,13 @@ import javax.transaction.TransactionManager;
 
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.annotations.Test;
 
@@ -30,13 +29,11 @@ public class TransactionalLocalWriteSkewTest extends SingleCacheManagerTest {
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder
             .transaction()
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup())
             .transactionMode(TransactionMode.TRANSACTIONAL)
-            .lockingMode(LockingMode.OPTIMISTIC).syncCommitPhase(true)
+            .lockingMode(LockingMode.OPTIMISTIC)
             .locking().lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis())
-            .isolationLevel(IsolationLevel.REPEATABLE_READ)
-            .writeSkewCheck(true)
-            .versioning().enable().scheme(VersioningScheme.SIMPLE);
+            .isolationLevel(IsolationLevel.REPEATABLE_READ);
 
       EmbeddedCacheManager cacheManager = TestCacheManagerFactory.createCacheManager(builder);
       cacheManager.defineConfiguration("cache", builder.build());
@@ -56,7 +53,7 @@ public class TransactionalLocalWriteSkewTest extends SingleCacheManagerTest {
       // this will keep the values put by both threads. any duplicate value
       // will be detected because of the
       // return value of add() method
-      ConcurrentSkipListSet<Integer> uniqueValuesIncremented = new ConcurrentSkipListSet<Integer>();
+      ConcurrentSkipListSet<Integer> uniqueValuesIncremented = new ConcurrentSkipListSet<>();
 
       // create both threads (simulate a node)
       Future<Void> ict1 = fork(new IncrementCounterTask(c1, uniqueValuesIncremented, counterMaxValue), null);

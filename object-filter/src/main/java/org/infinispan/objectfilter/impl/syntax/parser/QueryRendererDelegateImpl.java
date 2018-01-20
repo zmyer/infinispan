@@ -20,7 +20,7 @@ import org.infinispan.objectfilter.impl.syntax.IndexedFieldProvider;
 import org.jboss.logging.Logger;
 
 /**
- * Transform the parsed tree into a {@link FilterParsingResult} containing the {@link
+ * Transform the parsed tree into a {@link IckleParsingResult} containing the {@link
  * org.infinispan.objectfilter.impl.syntax.BooleanExpr}s representing the WHERE and HAVING clauses of the query.
  *
  * @author Adrian Nistor
@@ -29,6 +29,11 @@ import org.jboss.logging.Logger;
 final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDelegate<TypeDescriptor<TypeMetadata>> {
 
    private static final Log log = Logger.getMessageLogger(Log.class, QueryRendererDelegateImpl.class.getName());
+
+   /**
+    * Initial length for various internal growable arrays.
+    */
+   private static final int ARRAY_INITIAL_LENGTH = 5;
 
    private enum Phase {
       SELECT,
@@ -54,9 +59,9 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
 
    private AggregationFunction aggregationFunction;
 
-   private final FilterExpressionBuilder<TypeMetadata> whereBuilder;
+   private final ExpressionBuilder<TypeMetadata> whereBuilder;
 
-   private final FilterExpressionBuilder<TypeMetadata> havingBuilder;
+   private final ExpressionBuilder<TypeMetadata> havingBuilder;
 
    /**
     * Persister space: keep track of aliases and entity names.
@@ -67,7 +72,7 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
 
    private String alias;
 
-   private final Map<String, Object> namedParameters = new HashMap<>(5);
+   private final Map<String, Object> namedParameters = new HashMap<>(ARRAY_INITIAL_LENGTH);
 
    private final ObjectPropertyHelper<TypeMetadata> propertyHelper;
 
@@ -79,13 +84,15 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
 
    private List<Class<?>> projectedTypes;
 
+   private List<Object> projectedNullMarkers;
+
    private final String queryString;
 
    QueryRendererDelegateImpl(String queryString, ObjectPropertyHelper<TypeMetadata> propertyHelper) {
       this.queryString = queryString;
       this.propertyHelper = propertyHelper;
-      this.whereBuilder = new FilterExpressionBuilder<>(propertyHelper);
-      this.havingBuilder = new FilterExpressionBuilder<>(propertyHelper);
+      this.whereBuilder = new ExpressionBuilder<>(propertyHelper);
+      this.havingBuilder = new ExpressionBuilder<>(propertyHelper);
    }
 
    /**
@@ -305,9 +312,9 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
       }
       checkAnalyzed(property, false);
       if (phase == Phase.WHERE) {
-         whereBuilder.addLike(property, (String) pattern, escapeCharacter);
+         whereBuilder.addLike(property, pattern, escapeCharacter);
       } else if (phase == Phase.HAVING) {
-         havingBuilder.addLike(property, (String) pattern, escapeCharacter);
+         havingBuilder.addLike(property, pattern, escapeCharacter);
       } else {
          throw new IllegalStateException();
       }
@@ -384,9 +391,9 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
          if (property.isEmpty()) {
             throw log.getPredicatesOnEntityAliasNotAllowedException(propertyPath.asStringPath());
          }
-         String from = lower != null ? (String) parameterValue(lower) : null;
-         String to = upper != null ? (String) parameterValue(upper) : null;
-         checkAnalyzed(property, true);
+         Object from = lower != null ? parameterValue(lower) : null;
+         Object to = upper != null ? parameterValue(upper) : null;
+         checkIndexed(property);
          whereBuilder.addFullTextRange(property, includeLower, from, to, includeUpper);
       } else if (phase == Phase.HAVING) {
          throw log.getFullTextQueriesNotAllowedInHavingClauseException();
@@ -404,6 +411,12 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
          if (expectAnalyzed) {
             throw log.getFullTextQueryOnNotAalyzedPropertyNotSupportedException(targetTypeName, propertyPath.asStringPath());
          }
+      }
+   }
+
+   private void checkIndexed(PropertyPath<?> propertyPath) {
+      if (!fieldIndexingMetadata.isIndexed(propertyPath.asArrayPath())) {
+         throw log.getFullTextQueryOnNotIndexedPropertyNotSupportedException(targetTypeName, propertyPath.asStringPath());
       }
    }
 
@@ -466,21 +479,25 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
       }
       if (phase == Phase.SELECT) {
          if (projections == null) {
-            projections = new ArrayList<>(5);
-            projectedTypes = new ArrayList<>(5);
+            projections = new ArrayList<>(ARRAY_INITIAL_LENGTH);
+            projectedTypes = new ArrayList<>(ARRAY_INITIAL_LENGTH);
+            projectedNullMarkers = new ArrayList<>(ARRAY_INITIAL_LENGTH);
          }
          PropertyPath<TypeDescriptor<TypeMetadata>> projection;
          Class<?> propertyType;
+         Object nullMarker;
          if (propertyPath.getLength() == 1 && propertyPath.isAlias()) {
             projection = new PropertyPath<>(Collections.singletonList(new PropertyPath.PropertyReference<>("__HSearch_This", null, true))); //todo [anistor] this is a leftover from hsearch ????   this represents the entity itself. see org.hibernate.search.ProjectionConstants
             propertyType = null;
+            nullMarker = null;
          } else {
             projection = resolveAlias(propertyPath);
             propertyType = propertyHelper.getPrimitivePropertyType(targetEntityMetadata, projection.asArrayPath());
+            nullMarker = fieldIndexingMetadata.getNullMarker(projection.asArrayPath());
          }
          projections.add(projection);
          projectedTypes.add(propertyType);
-
+         projectedNullMarkers.add(nullMarker);
       } else {
          this.propertyPath = propertyPath;
       }
@@ -516,9 +533,9 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
       checkAnalyzed(property, false);     //todo [anistor] cannot sort on analyzed field?
 
       if (sortFields == null) {
-         sortFields = new ArrayList<>(5);
+         sortFields = new ArrayList<>(ARRAY_INITIAL_LENGTH);
       }
-      sortFields.add(new FilterParsingResult.SortFieldImpl<>(property, isAscending));
+      sortFields.add(new IckleParsingResult.SortFieldImpl<>(property, isAscending));
    }
 
    /**
@@ -530,7 +547,7 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
    public void groupingValue(String collateName) {
       // collationName is ignored for now
       if (groupBy == null) {
-         groupBy = new ArrayList<>(5);
+         groupBy = new ArrayList<>(ARRAY_INITIAL_LENGTH);
       }
       groupBy.add(resolveAlias(propertyPath));
    }
@@ -615,8 +632,8 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
       }
    }
 
-   public FilterParsingResult<TypeMetadata> getResult() {
-      return new FilterParsingResult<>(
+   public IckleParsingResult<TypeMetadata> getResult() {
+      return new IckleParsingResult<>(
             queryString,
             Collections.unmodifiableSet(new HashSet<>(namedParameters.keySet())),
             whereBuilder.build(),
@@ -625,6 +642,7 @@ final class QueryRendererDelegateImpl<TypeMetadata> implements QueryRendererDele
             targetEntityMetadata,
             projections == null ? null : projections.toArray(new PropertyPath[projections.size()]),
             projectedTypes == null ? null : projectedTypes.toArray(new Class<?>[projectedTypes.size()]),
+            projectedNullMarkers == null ? null : projectedNullMarkers.toArray(new Object[projectedNullMarkers.size()]),
             groupBy == null ? null : groupBy.toArray(new PropertyPath[groupBy.size()]),
             sortFields == null ? null : sortFields.toArray(new SortField[sortFields.size()]));
    }

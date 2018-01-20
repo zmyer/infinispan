@@ -9,7 +9,6 @@ import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -23,9 +22,11 @@ import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.globalstate.NoOpGlobalConfigurationManager;
 import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.distribution.L1WriteSynchronizer;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.statetransfer.StateTransferLock;
 import org.infinispan.test.Exceptions;
 import org.infinispan.test.TestingUtil;
@@ -33,7 +34,6 @@ import org.infinispan.test.fwk.CheckPoint;
 import org.infinispan.transaction.TransactionMode;
 import org.mockito.AdditionalAnswers;
 import org.mockito.Mockito;
-import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.testng.annotations.Test;
 
@@ -58,9 +58,14 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       return builder;
    }
 
+   @Override
+   protected void amendCacheManagerBeforeStart(EmbeddedCacheManager cm) {
+      NoOpGlobalConfigurationManager.amendCacheManager(cm);
+   }
+
    protected BlockingInterceptor addBlockingInterceptorBeforeTx(Cache<?, ?> cache,
-         final CyclicBarrier barrier,
-                                                 Class<? extends VisitableCommand> commandClass) {
+                                                                final CyclicBarrier barrier,
+                                                                Class<? extends VisitableCommand> commandClass) {
       return addBlockingInterceptorBeforeTx(cache, barrier, commandClass, true);
    }
 
@@ -76,7 +81,7 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
                                          Class<? extends VisitableCommand> commandClass,
          Class<? extends AsyncInterceptor> interceptorPosition,
                                          boolean blockAfterCommand) {
-      BlockingInterceptor bi = new BlockingInterceptor(barrier, commandClass, blockAfterCommand, false);
+      BlockingInterceptor bi = new BlockingInterceptor<>(barrier, commandClass, blockAfterCommand, false);
       AsyncInterceptorChain interceptorChain = cache.getAdvancedCache().getAsyncInterceptorChain();
       assertTrue(interceptorChain.addInterceptorBefore(bi, interceptorPosition));
       return bi;
@@ -98,7 +103,7 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       addBlockingInterceptorBeforeTx(nonOwnerCache, barrier, GetKeyValueCommand.class);
 
       try {
-         Future<String> future = nonOwnerCache.getAsync(key);
+         Future<String> future = fork(() -> nonOwnerCache.get(key));
 
          // Now wait for the get to return and block it for now
          barrier.await(5, TimeUnit.SECONDS);
@@ -188,7 +193,7 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       try {
          assertEquals(firstValue, nonOwnerCache.get(key));
 
-         Future<String> futurePut = ownerCache.putAsync(key, secondValue);
+         Future<String> futurePut = fork(() -> ownerCache.put(key, secondValue));
 
          // Wait for the invalidation to be processing
          invalidationBarrier.await(5, TimeUnit.SECONDS);
@@ -205,7 +210,7 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
          CyclicBarrier getBarrier = new CyclicBarrier(2);
          addBlockingInterceptorBeforeTx(nonOwnerCache, getBarrier, GetKeyValueCommand.class);
 
-         Future<String> futureGet = nonOwnerCache.getAsync(key);
+         Future<String> futureGet = fork(() -> nonOwnerCache.get(key));
 
          // Wait for the get to retrieve the remote value but not try to update L1 yet
          getBarrier.await(5, TimeUnit.SECONDS);
@@ -232,13 +237,10 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
 
          // It is possible that the async L1LastChance will blow away this get, so we have to make sure to check
          // it eventually
-         eventually(new Condition() {
-            @Override
-            public boolean isSatisfied() throws Exception {
-               // The nonOwnerCache should retrieve new value as it isn't in L1
-               assertEquals(secondValue, nonOwnerCache.get(key));
-               return isInL1(nonOwnerCache, key);
-            }
+         eventually(() -> {
+            // The nonOwnerCache should retrieve new value as it isn't in L1
+            assertEquals(secondValue, nonOwnerCache.get(key));
+            return isInL1(nonOwnerCache, key);
          });
       }
       finally {
@@ -265,12 +267,7 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
 
       try {
 
-         Future<String> future = fork(new Callable<String>() {
-            @Override
-            public String call() throws Exception {
-               return nonOwnerCache.get(key);
-            }
-         });
+         Future<String> future = fork(() -> nonOwnerCache.get(key));
 
          // Wait for the get to register L1 before it has sent remote
          nonOwnerGetBarrier.await(10, TimeUnit.SECONDS);
@@ -301,7 +298,6 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
 
    /**
     * See ISPN-3364
-    * @throws Throwable
     */
    @Test
    public void testRemoteGetArrivesButWriteOccursBeforeRegistration() throws Throwable {
@@ -324,7 +320,7 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
             getL1InterceptorClass(), true);
 
       try {
-         Future<String> future = nonOwnerCache.getAsync(key);
+         Future<String> future = fork(() -> nonOwnerCache.get(key));
 
          // Wait until get goes remote and retrieves value before going back into L1 interceptor
          getBarrier.await(10, TimeUnit.SECONDS);
@@ -359,12 +355,12 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
 
       log.warn("Doing get here - ignore all previous");
 
-      Future<String> getFuture = nonOwnerCache.getAsync(key);
+      Future<String> getFuture = fork(() -> nonOwnerCache.get(key));
 
       // Wait until we are about to write value into data container on non owner
       checkPoint.awaitStrict("pre_acquire_shared_topology_lock_invoked", 10, TimeUnit.SECONDS);
 
-      Future<String> putFuture = ownerCache.putAsync(key, secondValue);
+      Future<String> putFuture = fork(() -> ownerCache.put(key, secondValue));
 
       Exceptions.expectException(TimeoutException.class, () -> putFuture.get(1, TimeUnit.SECONDS));
 
@@ -393,12 +389,12 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       try {
          log.warn("Doing get here - ignore all previous");
 
-         Future<String> getFuture = nonOwnerCache.getAsync(key);
+         Future<String> getFuture = fork(() -> nonOwnerCache.get(key));
 
          // Wait until we are about to write value into data container on non owner
          checkPoint.awaitStrict("pre_acquire_shared_topology_lock_invoked", 10, TimeUnit.SECONDS);
 
-         Future<String> getFuture2 = nonOwnerCache.getAsync(key);
+         Future<String> getFuture2 = fork(() -> nonOwnerCache.get(key));
 
          Exceptions.expectException(TimeoutException.class, () -> getFuture2.get(1, TimeUnit.SECONDS));
 
@@ -428,12 +424,12 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       try {
          log.warn("Doing get here - ignore all previous");
 
-         Future<String> getFuture = nonOwnerCache.getAsync(key);
+         Future<String> getFuture = fork(() -> nonOwnerCache.get(key));
 
          // Wait until we are about to write value into data container on non owner
          checkPoint.awaitStrict("pre_acquire_shared_topology_lock_invoked", 10, TimeUnit.SECONDS);
 
-         Future<String> getFuture2 = nonOwnerCache.getAsync(key);
+         Future<String> getFuture2 = fork(() -> nonOwnerCache.get(key));
 
          Exceptions.expectException(TimeoutException.class, () -> getFuture2.get(1, TimeUnit.SECONDS));
 
@@ -462,12 +458,12 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
 
       log.warn("Doing get here - ignore all previous");
 
-      Future<String> getFuture = nonOwnerCache.getAsync(key);
+      Future<String> getFuture = fork(() -> nonOwnerCache.get(key));
 
       // Wait until we are about to write value into data container on non owner
       checkPoint.awaitStrict("pre_acquire_shared_topology_lock_invoked", 10, TimeUnit.SECONDS);
 
-      Future<String> putFuture = nonOwnerCache.putAsync(key, secondValue);
+      Future<String> putFuture = fork(() -> nonOwnerCache.put(key, secondValue));
 
       Exceptions.expectException(TimeoutException.class, () -> putFuture.get(1, TimeUnit.SECONDS));
 
@@ -552,16 +548,13 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       StateTransferLock stl = TestingUtil.extractComponent(cache, StateTransferLock.class);
       final Answer<Object> forwardedAnswer = AdditionalAnswers.delegatesTo(stl);
       StateTransferLock mockLock = mock(StateTransferLock.class, withSettings().defaultAnswer(forwardedAnswer));
-      doAnswer(new Answer() {
-         @Override
-         public Object answer(InvocationOnMock invocation) throws Throwable {
-            // Wait for main thread to sync up
-            checkPoint.trigger("pre_acquire_shared_topology_lock_invoked");
-            // Now wait until main thread lets us through
-            checkPoint.awaitStrict("pre_acquire_shared_topology_lock_released", 10, TimeUnit.SECONDS);
+      doAnswer(invocation -> {
+         // Wait for main thread to sync up
+         checkPoint.trigger("pre_acquire_shared_topology_lock_invoked");
+         // Now wait until main thread lets us through
+         checkPoint.awaitStrict("pre_acquire_shared_topology_lock_released", 10, TimeUnit.SECONDS);
 
-            return forwardedAnswer.answer(invocation);
-         }
+         return forwardedAnswer.answer(invocation);
       }).when(mockLock).acquireSharedTopologyLock();
       TestingUtil.replaceComponent(cache, StateTransferLock.class, mockLock, true);
       return stl;
@@ -578,17 +571,14 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       L1Manager l1Manager = TestingUtil.extractComponent(cache, L1Manager.class);
       final Answer<Object> forwardedAnswer = AdditionalAnswers.delegatesTo(l1Manager);
       L1Manager mockL1 = mock(L1Manager.class, withSettings().defaultAnswer(forwardedAnswer));
-      doAnswer(new Answer() {
-         @Override
-         public Object answer(InvocationOnMock invocation) throws Throwable {
-            // Wait for main thread to sync up
-            checkPoint.trigger("pre_acquire_shared_topology_lock_invoked");
-            // Now wait until main thread lets us through
-            checkPoint.awaitStrict("pre_acquire_shared_topology_lock_released", 10, TimeUnit.SECONDS);
+      doAnswer(invocation -> {
+         // Wait for main thread to sync up
+         checkPoint.trigger("pre_acquire_shared_topology_lock_invoked");
+         // Now wait until main thread lets us through
+         checkPoint.awaitStrict("pre_acquire_shared_topology_lock_released", 10, TimeUnit.SECONDS);
 
-            return forwardedAnswer.answer(invocation);
-         }
-      }).when(mockL1).registerL1WriteSynchronizer(Mockito.anyObject(), Mockito.any(L1WriteSynchronizer.class));
+         return forwardedAnswer.answer(invocation);
+      }).when(mockL1).registerL1WriteSynchronizer(Mockito.notNull(), Mockito.any(L1WriteSynchronizer.class));
       TestingUtil.replaceComponent(cache, L1Manager.class, mockL1, true);
       return l1Manager;
    }

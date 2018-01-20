@@ -30,7 +30,7 @@ import org.infinispan.transaction.LockingMode;
 import org.jgroups.protocols.DISCARD;
 import org.testng.annotations.Test;
 
-@Test(groups = "stress", testName = "partitionhandling.PartitionStressTest")
+@Test(groups = "stress", testName = "partitionhandling.PartitionStressTest", timeOut = 15*60*1000)
 public class PartitionStressTest extends MultipleCacheManagersTest {
 
    public static final int NUM_NODES = 4;
@@ -52,7 +52,7 @@ public class PartitionStressTest extends MultipleCacheManagersTest {
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.clustering().cacheMode(cacheMode);
       builder.transaction().transactionMode(transactionMode()).lockingMode(lockingMode);
-      builder.clustering().partitionHandling().enabled(true);
+      builder.clustering().partitionHandling().whenSplit(PartitionHandling.DENY_READ_WRITES);
       for (int i = 0; i < NUM_NODES; i++) {
          addClusterEnabledCacheManager(builder, new TransportFlags().withFD(true).withMerge(true));
       }
@@ -155,7 +155,7 @@ public class PartitionStressTest extends MultipleCacheManagersTest {
                      AvailabilityMode.AVAILABLE;
             }
          });
-         TestingUtil.waitForRehashToComplete(caches());
+         TestingUtil.waitForNoRebalance(caches());
 
          assertFuturesRunning(futures);
          splitIndex++;

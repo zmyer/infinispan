@@ -1,6 +1,7 @@
 package org.infinispan.statetransfer;
 
 import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.anyBoolean;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -14,29 +15,28 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.hash.MurmurHash3;
+import org.infinispan.commons.util.SmallIntSet;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.ImmortalCacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.distribution.TestAddress;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
 import org.infinispan.distribution.ch.impl.DefaultConsistentHashFactory;
+import org.infinispan.distribution.ch.impl.HashFunctionPartitioner;
 import org.infinispan.notifications.cachelistener.cluster.ClusterCacheNotifier;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
@@ -49,14 +49,12 @@ import org.infinispan.topology.CacheTopology;
 import org.infinispan.topology.PersistentUUID;
 import org.infinispan.topology.PersistentUUIDManager;
 import org.infinispan.topology.PersistentUUIDManagerImpl;
-import org.infinispan.transaction.impl.LocalTransaction;
-import org.infinispan.transaction.impl.RemoteTransaction;
+import org.infinispan.transaction.impl.TransactionOriginatorChecker;
 import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
@@ -107,17 +105,9 @@ public class StateProviderTest {
       cb.clustering().invocationBatching().enable()
             .clustering().cacheMode(CacheMode.DIST_SYNC)
             .clustering().stateTransfer().timeout(10000)
-            .versioning().enable().scheme(VersioningScheme.SIMPLE)
             .locking().lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis())
-            .locking().writeSkewCheck(true).isolationLevel(IsolationLevel.REPEATABLE_READ);
+            .locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
       configuration = cb.build();
-
-      ThreadFactory threadFactory = new ThreadFactory() {
-         @Override
-         public Thread newThread(Runnable r) {
-            return new Thread(r);
-         }
-      };
 
       mockExecutorService = mock(ExecutorService.class);
       cache = mock(Cache.class);
@@ -132,67 +122,52 @@ public class StateProviderTest {
       stateTransferLock = mock(StateTransferLock.class);
       stateConsumer = mock(StateConsumer.class);
       ef = mock(InternalEntryFactory.class);
-      when(stateConsumer.getCacheTopology()).thenAnswer(new Answer<CacheTopology>() {
-         @Override
-         public CacheTopology answer(InvocationOnMock invocation) {
-            return cacheTopology;
-         }
-      });
+      when(stateConsumer.getCacheTopology()).thenAnswer(invocation -> cacheTopology);
    }
 
    public void test1() throws InterruptedException {
       int numSegments = 4;
 
       // create list of 6 members
-      List<Address> members1 = Arrays.<Address>asList(A, B, C, D, E, F);
-      List<Address> members2 = new ArrayList<Address>(members1);
+      List<Address> members1 = Arrays.asList(A, B, C, D, E, F);
+      List<Address> members2 = new ArrayList<>(members1);
       members2.remove(A);
       members2.remove(F);
       members2.add(G);
 
       // create CHes
+      KeyPartitioner keyPartitioner = new HashFunctionPartitioner();
       DefaultConsistentHashFactory chf = new DefaultConsistentHashFactory();
       DefaultConsistentHash ch1 = chf.create(MurmurHash3.getInstance(), 2, numSegments, members1, null);
       DefaultConsistentHash ch2 = chf.updateMembers(ch1, members2, null);
 
       // create dependencies
-      when(mockExecutorService.submit(any(Runnable.class))).thenAnswer(new Answer<Future<?>>() {
-         @Override
-         public Future<?> answer(InvocationOnMock invocation) {
-            return null;
-         }
-      });
+      when(mockExecutorService.submit(any(Runnable.class)))
+            .thenAnswer((Answer<Future<?>>) invocation -> null);
 
       when(rpcManager.getAddress()).thenReturn(A);
-      when(rpcManager.getRpcOptionsBuilder(any(ResponseMode.class))).thenAnswer(new Answer<RpcOptionsBuilder>() {
-         @Override
-         public RpcOptionsBuilder answer(InvocationOnMock invocation) {
-            Object[] args = invocation.getArguments();
-            return new RpcOptionsBuilder(10000, TimeUnit.MILLISECONDS, (ResponseMode) args[0], DeliverOrder.PER_SENDER);
-         }
+      when(rpcManager.getRpcOptionsBuilder(any(ResponseMode.class))).thenAnswer(invocation -> {
+         Object[] args = invocation.getArguments();
+         return new RpcOptionsBuilder(10000, TimeUnit.MILLISECONDS, (ResponseMode) args[0], DeliverOrder.PER_SENDER);
       });
 
       // create state provider
       StateProviderImpl stateProvider = new StateProviderImpl();
-      stateProvider.init(cache, mockExecutorService,
+      TestingUtil.inject(stateProvider, cache, mockExecutorService,
             configuration, rpcManager, commandsFactory, cacheNotifier, persistenceManager,
-            dataContainer, transactionTable, stateTransferLock, stateConsumer, ef);
+            dataContainer, transactionTable, stateTransferLock, stateConsumer, ef, keyPartitioner, TransactionOriginatorChecker.LOCAL);
+      stateProvider.start();
 
-      final List<InternalCacheEntry> cacheEntries = new ArrayList<InternalCacheEntry>();
+      final List<InternalCacheEntry> cacheEntries = new ArrayList<>();
       Object key1 = new TestKey("key1", 0, ch1);
       Object key2 = new TestKey("key2", 0, ch1);
       cacheEntries.add(new ImmortalCacheEntry(key1, "value1"));
       cacheEntries.add(new ImmortalCacheEntry(key2, "value2"));
-      when(dataContainer.iterator()).thenAnswer(new Answer<Iterator<InternalCacheEntry>>() {
-         @Override
-         public Iterator<InternalCacheEntry> answer(InvocationOnMock invocation) {
-            return cacheEntries.iterator();
-         }
-      });
-      when(transactionTable.getLocalTransactions()).thenReturn(Collections.<LocalTransaction>emptyList());
-      when(transactionTable.getRemoteTransactions()).thenReturn(Collections.<RemoteTransaction>emptyList());
+      when(dataContainer.iterator()).thenAnswer(invocation -> cacheEntries.iterator());
+      when(transactionTable.getLocalTransactions()).thenReturn(Collections.emptyList());
+      when(transactionTable.getRemoteTransactions()).thenReturn(Collections.emptyList());
 
-      cacheTopology = new CacheTopology(1, 1, ch1, ch1, ch1, ch1.getMembers(), persistentUUIDManager.mapAddresses(ch1.getMembers()));
+      cacheTopology = new CacheTopology(1, 1, ch1, ch1, ch1, CacheTopology.Phase.READ_OLD_WRITE_ALL, ch1.getMembers(), persistentUUIDManager.mapAddresses(ch1.getMembers()));
       stateProvider.onTopologyUpdate(cacheTopology, false);
 
       log.debug("ch1: " + ch1);
@@ -201,7 +176,7 @@ public class StateProviderTest {
       assertEquals(0, transactions.size());
 
       try {
-         stateProvider.getTransactionsForSegments(members1.get(0), 1, new HashSet<Integer>(Arrays.asList(2, numSegments)));
+         stateProvider.getTransactionsForSegments(members1.get(0), 1, SmallIntSet.of(2, numSegments));
          fail("IllegalArgumentException expected");
       } catch (IllegalArgumentException e) {
          // expected
@@ -209,17 +184,17 @@ public class StateProviderTest {
 
       verifyNoMoreInteractions(stateTransferLock);
 
-      stateProvider.startOutboundTransfer(F, 1, Collections.singleton(0));
+      stateProvider.startOutboundTransfer(F, 1, Collections.singleton(0), true);
 
       assertTrue(stateProvider.isStateTransferInProgress());
 
       log.debug("ch2: " + ch2);
-      cacheTopology = new CacheTopology(2, 1, ch2, ch2, ch2, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch2.getMembers()));
+      cacheTopology = new CacheTopology(2, 1, ch2, ch2, ch2, CacheTopology.Phase.READ_OLD_WRITE_ALL, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch2.getMembers()));
       stateProvider.onTopologyUpdate(cacheTopology, true);
 
       assertFalse(stateProvider.isStateTransferInProgress());
 
-      stateProvider.startOutboundTransfer(D, 1, Collections.singleton(0));
+      stateProvider.startOutboundTransfer(D, 1, Collections.singleton(0), true);
 
       assertTrue(stateProvider.isStateTransferInProgress());
 
@@ -232,26 +207,25 @@ public class StateProviderTest {
       int numSegments = 4;
 
       // create list of 6 members
-      List<Address> members1 = Arrays.<Address>asList(A, B, C, D, E, F);
-      List<Address> members2 = new ArrayList<Address>(members1);
+      List<Address> members1 = Arrays.asList(A, B, C, D, E, F);
+      List<Address> members2 = new ArrayList<>(members1);
       members2.remove(A);
       members2.remove(F);
       members2.add(G);
 
       // create CHes
+      KeyPartitioner keyPartitioner = new HashFunctionPartitioner();
       DefaultConsistentHashFactory chf = new DefaultConsistentHashFactory();
       DefaultConsistentHash ch1 = chf.create(MurmurHash3.getInstance(), 2, numSegments, members1, null);
       //todo [anistor] it seems that address 6 is not used for un-owned segments
       DefaultConsistentHash ch2 = chf.updateMembers(ch1, members2, null);
 
-      when(commandsFactory.buildStateResponseCommand(any(Address.class), anyInt(), any(Collection.class))).thenAnswer(new Answer<StateResponseCommand>() {
-         @Override
-         public StateResponseCommand answer(InvocationOnMock invocation) {
-            return new StateResponseCommand(ByteString.fromString("testCache"), (Address) invocation.getArguments()[0],
-                  ((Integer) invocation.getArguments()[1]).intValue(),
-                  (Collection<StateChunk>) invocation.getArguments()[2]);
-         }
-      });
+      when(commandsFactory.buildStateResponseCommand(any(Address.class), anyInt(), any(Collection.class), anyBoolean(), anyBoolean()))
+            .thenAnswer(invocation -> new StateResponseCommand(ByteString.fromString("testCache"),
+                                                               (Address) invocation.getArguments()[0],
+                                                               (Integer) invocation.getArguments()[1],
+                                                               (Collection<StateChunk>) invocation.getArguments()[2],
+                                                               true, false));
 
       // create dependencies
       when(rpcManager.getAddress()).thenReturn(A);
@@ -272,22 +246,20 @@ public class StateProviderTest {
 //      }).when(rpcManager).invokeRemotelyInFuture(any(Collection.class), any(ReplicableCommand.class), any(RpcOptions.class),
 //                                                 any(NotifyingNotifiableFuture.class));
 
-      when(rpcManager.getRpcOptionsBuilder(any(ResponseMode.class))).thenAnswer(new Answer<RpcOptionsBuilder>() {
-         @Override
-         public RpcOptionsBuilder answer(InvocationOnMock invocation) {
-            Object[] args = invocation.getArguments();
-            return new RpcOptionsBuilder(10000, TimeUnit.MILLISECONDS, (ResponseMode) args[0], DeliverOrder.PER_SENDER);
-         }
+      when(rpcManager.getRpcOptionsBuilder(any(ResponseMode.class))).thenAnswer(invocation -> {
+         Object[] args = invocation.getArguments();
+         return new RpcOptionsBuilder(10000, TimeUnit.MILLISECONDS, (ResponseMode) args[0], DeliverOrder.PER_SENDER);
       });
 
 
       // create state provider
       StateProviderImpl stateProvider = new StateProviderImpl();
-      stateProvider.init(cache, mockExecutorService,
+      TestingUtil.inject(stateProvider, cache, mockExecutorService,
             configuration, rpcManager, commandsFactory, cacheNotifier, persistenceManager,
-            dataContainer, transactionTable, stateTransferLock, stateConsumer, ef);
+            dataContainer, transactionTable, stateTransferLock, stateConsumer, ef, keyPartitioner, TransactionOriginatorChecker.LOCAL);
+      stateProvider.start();
 
-      final List<InternalCacheEntry> cacheEntries = new ArrayList<InternalCacheEntry>();
+      final List<InternalCacheEntry> cacheEntries = new ArrayList<>();
       Object key1 = new TestKey("key1", 0, ch1);
       Object key2 = new TestKey("key2", 0, ch1);
       Object key3 = new TestKey("key3", 1, ch1);
@@ -296,16 +268,11 @@ public class StateProviderTest {
       cacheEntries.add(new ImmortalCacheEntry(key2, "value2"));
       cacheEntries.add(new ImmortalCacheEntry(key3, "value3"));
       cacheEntries.add(new ImmortalCacheEntry(key4, "value4"));
-      when(dataContainer.iterator()).thenAnswer(new Answer<Iterator<InternalCacheEntry>>() {
-         @Override
-         public Iterator<InternalCacheEntry> answer(InvocationOnMock invocation) {
-            return cacheEntries.iterator();
-         }
-      });
-      when(transactionTable.getLocalTransactions()).thenReturn(Collections.<LocalTransaction>emptyList());
-      when(transactionTable.getRemoteTransactions()).thenReturn(Collections.<RemoteTransaction>emptyList());
+      when(dataContainer.iterator()).thenAnswer(invocation -> cacheEntries.iterator());
+      when(transactionTable.getLocalTransactions()).thenReturn(Collections.emptyList());
+      when(transactionTable.getRemoteTransactions()).thenReturn(Collections.emptyList());
 
-      cacheTopology = new CacheTopology(1, 1, ch1, ch1, ch1, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch2.getMembers()));
+      cacheTopology = new CacheTopology(1, 1, ch1, ch1, ch1, CacheTopology.Phase.READ_OLD_WRITE_ALL, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch1.getMembers()));
       stateProvider.onTopologyUpdate(cacheTopology, false);
 
       log.debug("ch1: " + ch1);
@@ -314,7 +281,7 @@ public class StateProviderTest {
       assertEquals(0, transactions.size());
 
       try {
-         stateProvider.getTransactionsForSegments(members1.get(0), 1, new HashSet<Integer>(Arrays.asList(2, numSegments)));
+         stateProvider.getTransactionsForSegments(members1.get(0), 1, SmallIntSet.of(2, numSegments));
          fail("IllegalArgumentException expected");
       } catch (IllegalArgumentException e) {
          // expected
@@ -322,18 +289,18 @@ public class StateProviderTest {
 
       verifyNoMoreInteractions(stateTransferLock);
 
-      stateProvider.startOutboundTransfer(F, 1, Collections.singleton(0));
+      stateProvider.startOutboundTransfer(F, 1, Collections.singleton(0), true);
 
       assertTrue(stateProvider.isStateTransferInProgress());
 
       // TestingUtil.sleepThread(15000);
       log.debug("ch2: " + ch2);
-      cacheTopology = new CacheTopology(2, 1, ch2, ch2, ch2, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch2.getMembers()));
+      cacheTopology = new CacheTopology(2, 1, ch2, ch2, ch2, CacheTopology.Phase.READ_OLD_WRITE_ALL, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch2.getMembers()));
       stateProvider.onTopologyUpdate(cacheTopology, false);
 
       assertFalse(stateProvider.isStateTransferInProgress());
 
-      stateProvider.startOutboundTransfer(E, 1, Collections.singleton(0));
+      stateProvider.startOutboundTransfer(E, 1, Collections.singleton(0), true);
 
       assertTrue(stateProvider.isStateTransferInProgress());
 

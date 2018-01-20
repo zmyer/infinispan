@@ -49,7 +49,7 @@ public class ClusteredCacheWithLongIndexNameTest extends MultipleCacheManagersTe
             .indexing()
             .index(Index.ALL)
             .addIndexedEntity(VeryLongIndexNamedClass.class)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT");
 
       return cacheCfg;
@@ -74,7 +74,7 @@ public class ClusteredCacheWithLongIndexNameTest extends MultipleCacheManagersTe
       assertEquals(100, cq.getResultSize());
 
       addClusterEnabledCacheManager(getDefaultConfiguration());
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1), cache(2), cache(3));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1), cache(2), cache(3));
 
       sm = Search.getSearchManager(cache(3));
       qb = sm.buildQueryBuilderForClass(VeryLongIndexNamedClass.class).get();

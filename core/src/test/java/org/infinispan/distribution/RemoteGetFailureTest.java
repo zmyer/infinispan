@@ -6,7 +6,6 @@ import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
@@ -30,7 +29,6 @@ import org.infinispan.container.entries.ImmortalCacheValue;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.interceptors.DDAsyncInterceptor;
-import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.RemoteException;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
@@ -40,7 +38,6 @@ import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.rpc.RpcOptions;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.remoting.transport.jgroups.CommandAwareRpcDispatcher;
 import org.infinispan.remoting.transport.jgroups.JGroupsAddress;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.statetransfer.StateTransferInterceptor;
@@ -53,38 +50,16 @@ import org.infinispan.util.concurrent.TimeoutException;
 import org.jgroups.JChannel;
 import org.jgroups.View;
 import org.jgroups.protocols.pbcast.GMS;
-import org.testng.annotations.AfterClass;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
 @Test(groups = "functional")
 @CleanupAfterMethod
 public class RemoteGetFailureTest extends MultipleCacheManagersTest {
-   private boolean staggered;
    private Object key;
 
    @Override
-   public Object[] factory() {
-      return new Object[] {
-         new RemoteGetFailureTest().staggered(true),
-         new RemoteGetFailureTest().staggered(false)
-      };
-   }
-
-   @Override
-   protected String parameters() {
-      return "[staggered=" + staggered + "]";
-   }
-
-   protected RemoteGetFailureTest staggered(boolean staggered) {
-      this.staggered = staggered;
-      return this;
-   }
-
-
-   @Override
    protected void createCacheManagers() throws Throwable {
-      setStaggered(staggered);
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC);
       // cache stop takes quite long when the view splits
       builder.clustering().stateTransfer().timeout(10, TimeUnit.SECONDS);
@@ -94,29 +69,13 @@ public class RemoteGetFailureTest extends MultipleCacheManagersTest {
       key = getKeyForCache(cache(1), cache(2));
    }
 
-   private static void setStaggered(boolean staggered) {
-      try {
-         Field staggerDelayNanos = CommandAwareRpcDispatcher.class.getDeclaredField("STAGGER_DELAY_NANOS");
-         staggerDelayNanos.setAccessible(true);
-         staggerDelayNanos.setLong(null, staggered ? TimeUnit.MILLISECONDS.toNanos(5) : 0L);
-      } catch (Exception e) {
-         throw new IllegalStateException(e);
-      }
-   }
-
-   @AfterClass
-   @Override
-   protected void destroy() {
-      setStaggered(true); // the default
-   }
-
    @AfterMethod(alwaysRun = true)
    @Override
    protected void clearContent() throws Throwable {
       // When we send a ClearCommand from node that does not have a newer view installed to node that has already
       // installed a view without the sender, the message is dropped and the ClearCommand has to time out.
       // Therefore, don't issue the clear command at all.
-      TestingUtil.killCacheManagers(false, cacheManagers.toArray(new EmbeddedCacheManager[cacheManagers.size()]));
+      TestingUtil.killCacheManagers(cacheManagers);
       cacheManagers.clear();
    }
 
@@ -187,8 +146,9 @@ public class RemoteGetFailureTest extends MultipleCacheManagersTest {
 
       // The entry was lost, so we'll get null
       assertNull(future.get());
-      assertEquals(1, thrown.get());
-      assertEquals(1, retried.get());
+      // Since we've lost all owners
+      assertEquals(1, thrown.get()); // OwnersLostException
+      assertEquals(0, retried.get());
       release.countDown();
    }
 

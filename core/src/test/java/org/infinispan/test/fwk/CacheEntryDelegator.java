@@ -54,16 +54,6 @@ public class CacheEntryDelegator implements CacheEntry {
    }
 
    @Override
-   public boolean isValid() {
-      return delegate.isValid();
-   }
-
-   @Override
-   public boolean isLoaded() {
-      return delegate.isLoaded();
-   }
-
-   @Override
    public Object getKey() {
       return delegate.getKey();
    }
@@ -104,8 +94,8 @@ public class CacheEntryDelegator implements CacheEntry {
    }
 
    @Override
-   public void commit(DataContainer container, Metadata metadata) {
-      delegate.commit(container, metadata);
+   public void commit(DataContainer container) {
+      delegate.commit(container);
    }
 
    @Override
@@ -126,16 +116,6 @@ public class CacheEntryDelegator implements CacheEntry {
    @Override
    public void setEvicted(boolean evicted) {
       delegate.setEvicted(evicted);
-   }
-
-   @Override
-   public void setValid(boolean valid) {
-      delegate.setValid(valid);
-   }
-
-   @Override
-   public void setLoaded(boolean loaded) {
-      delegate.setLoaded(loaded);
    }
 
    @Override

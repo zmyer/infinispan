@@ -59,7 +59,7 @@ public class NonTxOriginatorBecomingPrimaryOwnerTest extends MultipleCacheManage
 
       // Every PutKeyValueCommand will be blocked before reaching the distribution interceptor
       CyclicBarrier distInterceptorBarrier = new CyclicBarrier(2);
-      BlockingInterceptor blockingInterceptor = new BlockingInterceptor(distInterceptorBarrier, PutKeyValueCommand.class, false, false);
+      BlockingInterceptor blockingInterceptor = new BlockingInterceptor<>(distInterceptorBarrier, PutKeyValueCommand.class, false, false);
       cache0.getAsyncInterceptorChain().addInterceptorBefore(blockingInterceptor, TriangleDistributionInterceptor.class);
 
       for (int i = 0; i < NUM_KEYS; i++) {
@@ -77,7 +77,7 @@ public class NonTxOriginatorBecomingPrimaryOwnerTest extends MultipleCacheManage
          cache1.stop();
 
          // Wait for the new topology to be installed
-         TestingUtil.waitForRehashToComplete(cache0, cache2);
+         TestingUtil.waitForNoRebalance(cache0, cache2);
 
          // Resume blocking new commands
          blockingInterceptor.suspend(false);
@@ -104,7 +104,7 @@ public class NonTxOriginatorBecomingPrimaryOwnerTest extends MultipleCacheManage
 
          // Prepare for the next iteration...
          cache1.start();
-         TestingUtil.waitForRehashToComplete(cache0, cache1, cache2);
+         TestingUtil.waitForNoRebalance(cache0, cache1, cache2);
       }
    }
 }

@@ -8,6 +8,7 @@ import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
+import static org.testng.AssertJUnit.fail;
 
 import java.io.ByteArrayInputStream;
 import java.io.FileNotFoundException;
@@ -389,6 +390,77 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       });
    }
 
+
+   public void testWildcards() throws IOException {
+      String config = InfinispanStartTag.LATEST +
+            "<cache-container>" +
+            "   <local-cache-configuration name=\"wildcache*\">\n" +
+            "      <expiration interval=\"10500\" lifespan=\"11\" max-idle=\"11\"/>\n" +
+            "   </local-cache-configuration>\n" +
+            "</cache-container>" +
+            TestingUtil.INFINISPAN_END_TAG;
+
+      InputStream is = new ByteArrayInputStream(config.getBytes());
+      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
+
+         @Override
+         public void call() {
+            Configuration wildcache1 = cm.getCacheConfiguration("wildcache1");
+            assertNotNull(wildcache1);
+            assertEquals(10500, wildcache1.expiration().wakeUpInterval());
+            assertEquals(11, wildcache1.expiration().lifespan());
+            assertEquals(11, wildcache1.expiration().maxIdle());
+         }
+
+      });
+   }
+
+   @Test(expectedExceptions = CacheConfigurationException.class, expectedExceptionsMessageRegExp = "ISPN000485:.*")
+   public void testAmbiguousWildcards() throws IOException {
+      String config = InfinispanStartTag.LATEST +
+            "<cache-container>" +
+            "   <local-cache-configuration name=\"wildcache*\">\n" +
+            "      <expiration interval=\"10500\" lifespan=\"11\" max-idle=\"11\"/>\n" +
+            "   </local-cache-configuration>\n" +
+            "   <local-cache-configuration name=\"wild*\">\n" +
+            "   </local-cache-configuration>\n" +
+            "</cache-container>" +
+            TestingUtil.INFINISPAN_END_TAG;
+
+      InputStream is = new ByteArrayInputStream(config.getBytes());
+      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
+
+         @Override
+         public void call() {
+            cm.getCacheConfiguration("wildcache1");
+            fail("Ambiguous name should have thrown exception");
+         }
+
+      });
+   }
+
+   @Test(expectedExceptions = CacheConfigurationException.class, expectedExceptionsMessageRegExp = "ISPN000484:.*")
+   public void testNoWildcardsInCacheName() throws Exception {
+      String config = InfinispanStartTag.LATEST +
+            "<cache-container>" +
+            "   <transport cluster=\"demoCluster\"/>\n" +
+            "   <replicated-cache name=\"wildcard*\">\n" +
+            "   </replicated-cache>\n" +
+            "</cache-container>" +
+            TestingUtil.INFINISPAN_END_TAG;
+
+      InputStream is = new ByteArrayInputStream(config.getBytes());
+      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
+
+         @Override
+         public void call() {
+            fail("Should have failed earlier");
+         }
+
+      });
+   }
+
+
    private void assertNamedCacheFile(EmbeddedCacheManager cm, boolean deprecated) {
       final GlobalConfiguration gc = cm.getCacheManagerConfiguration();
 
@@ -456,7 +528,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
 
       assertEquals(1000, defaultCfg.locking().lockAcquisitionTimeout());
       assertEquals(100, defaultCfg.locking().concurrencyLevel());
-      assertEquals(IsolationLevel.READ_COMMITTED, defaultCfg.locking().isolationLevel());
+      assertEquals(IsolationLevel.REPEATABLE_READ, defaultCfg.locking().isolationLevel());
       if (!deprecated) {
          assertReaperAndTimeoutInfo(defaultCfg);
       }
@@ -465,7 +537,6 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       Configuration c = cm.getCacheConfiguration("transactional");
       assertTrue(!c.clustering().cacheMode().isClustered());
       assertTrue(c.transaction().transactionManagerLookup() instanceof GenericTransactionManagerLookup);
-      assertTrue(c.transaction().syncRollbackPhase());
       if (!deprecated) {
          assertReaperAndTimeoutInfo(defaultCfg);
       }
@@ -520,10 +591,10 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertEquals(20000, c.locking().lockAcquisitionTimeout());
       assertEquals(1000, c.locking().concurrencyLevel());
       assertEquals(IsolationLevel.REPEATABLE_READ, c.locking().isolationLevel());
-      assertTrue(!c.storeAsBinary().enabled());
+      assertEquals(StorageType.OBJECT, c.memory().storageType());
 
       c = cm.getCacheConfiguration("storeAsBinary");
-      assertTrue(c.storeAsBinary().enabled());
+      assertEquals(StorageType.BINARY, c.memory().storageType());
 
       c = cm.getCacheConfiguration("withFileStore");
       assertTrue(c.persistence().preload());
@@ -603,14 +674,12 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertEquals(500, c.expiration().wakeUpInterval());
 
       c = cm.getCacheConfiguration("withDeadlockDetection");
-      assertTrue(c.deadlockDetection().enabled());
-      assertEquals(1221, c.deadlockDetection().spinDuration());
+      assertFalse(c.deadlockDetection().enabled());
+      assertEquals(-1, c.deadlockDetection().spinDuration());
       assertEquals(CacheMode.DIST_SYNC, c.clustering().cacheMode());
 
       c = cm.getCacheConfiguration("storeKeyValueBinary");
-      assertTrue(c.storeAsBinary().enabled());
-      assertTrue(c.storeAsBinary().storeKeysAsBinary());
-      assertTrue(c.storeAsBinary().storeValuesAsBinary());
+      assertEquals(StorageType.BINARY, c.memory().storageType());
    }
 
    private void assertReaperAndTimeoutInfo(Configuration defaultCfg) {

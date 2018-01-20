@@ -2,7 +2,6 @@ package org.infinispan.context;
 
 import java.util.Collections;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 
 import org.infinispan.container.entries.CacheEntry;
@@ -82,7 +81,7 @@ public final class SingleKeyNonTxInvocationContext implements InvocationContext 
       if (this.key == null) {
          // Set the key here
          this.key = key;
-      } else if (!this.key.equals(key)) {
+      } else if (!isKeyEquals(key)) {
          throw illegalStateException();
       }
 
@@ -95,10 +94,14 @@ public final class SingleKeyNonTxInvocationContext implements InvocationContext 
 
    @Override
    public CacheEntry lookupEntry(final Object key) {
-      if (this.key != null && this.key.equals(key))
+      if (this.key != null && isKeyEquals(key))
          return cacheEntry;
 
       return null;
+   }
+
+   public boolean isKeyEquals(Object key) {
+      return this.key == key || this.key.equals(key);
    }
 
    @Override
@@ -111,7 +114,7 @@ public final class SingleKeyNonTxInvocationContext implements InvocationContext 
       if (this.key == null) {
          // Set the key here
          this.key = key;
-      } else if (!this.key.equals(key)) {
+      } else if (!isKeyEquals(key)) {
          throw illegalStateException();
       }
 
@@ -120,7 +123,7 @@ public final class SingleKeyNonTxInvocationContext implements InvocationContext 
 
    @Override
    public void removeLookedUpEntry(final Object key) {
-      if (this.key != null && this.key.equals(key)) {
+      if (this.key != null && isKeyEquals(key)) {
          this.cacheEntry = null;
       }
    }
@@ -150,7 +153,7 @@ public final class SingleKeyNonTxInvocationContext implements InvocationContext 
 
    @Override
    public boolean hasLockedKey(final Object key) {
-      return isLocked && this.key.equals(key);
+      return isLocked && isKeyEquals(key);
    }
 
    @Override
@@ -165,4 +168,15 @@ public final class SingleKeyNonTxInvocationContext implements InvocationContext 
       this.isLocked = false;
    }
 
+   @Override
+   public String toString() {
+      final StringBuilder sb = new StringBuilder("SingleKeyNonTxInvocationContext{");
+      sb.append("isLocked=").append(isLocked);
+      sb.append(", key=").append(key);
+      sb.append(", cacheEntry=").append(cacheEntry);
+      sb.append(", origin=").append(origin);
+      sb.append(", lockOwner=").append(lockOwner);
+      sb.append('}');
+      return sb.toString();
+   }
 }

@@ -4,6 +4,7 @@ import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertTrue;
 
+import java.lang.invoke.MethodHandles;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.BrokenBarrierException;
@@ -18,9 +19,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.transaction.LockingMode;
@@ -42,7 +43,16 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "api.ConditionalOperationsConcurrentTest")
 public class ConditionalOperationsConcurrentTest extends MultipleCacheManagersTest {
 
-   private final Log log = LogFactory.getLog(getClass());
+   private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
+
+   @Override
+   public Object[] factory() {
+      return new Object[] {
+            new ConditionalOperationsConcurrentTest().cacheMode(CacheMode.DIST_SYNC),
+            new ConditionalOperationsConcurrentTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.NEVER),
+            new ConditionalOperationsConcurrentTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.ON_WRITE)
+      };
+   }
 
    public ConditionalOperationsConcurrentTest() {
       this(2, 10, 2);
@@ -68,7 +78,6 @@ public class ConditionalOperationsConcurrentTest extends MultipleCacheManagersTe
    private volatile String failureMessage = "";
 
    protected boolean transactional = false;
-   private final CacheMode mode = CacheMode.DIST_SYNC;
    protected LockingMode lockingMode = LockingMode.OPTIMISTIC;
    protected boolean writeSkewCheck = false;
 
@@ -83,12 +92,13 @@ public class ConditionalOperationsConcurrentTest extends MultipleCacheManagersTe
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      ConfigurationBuilder dcc = getDefaultClusteredCacheConfig(mode, transactional);
+      ConfigurationBuilder dcc = getDefaultClusteredCacheConfig(cacheMode, transactional);
       dcc.transaction().lockingMode(lockingMode);
       if (writeSkewCheck) {
-         dcc.transaction().locking().writeSkewCheck(true);
          dcc.transaction().locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
-         dcc.transaction().versioning().enable().scheme(VersioningScheme.SIMPLE);
+      }
+      if (biasAcquisition != null) {
+         dcc.clustering().biasAcquisition(biasAcquisition);
       }
       createCluster(dcc, nodes);
       waitForClusterToForm();
@@ -196,16 +206,13 @@ public class ConditionalOperationsConcurrentTest extends MultipleCacheManagersTe
             //not all threads might finish at the same block, so make sure none stays waiting for us when we exit
             quit.set(true);
             barrier.reset();
-         } catch (InterruptedException e) {
+         } catch (InterruptedException | RuntimeException e) {
             log.error("Caught exception", e);
             fail(e);
          } catch (BrokenBarrierException e) {
             log.error("Caught exception", e);
             //just quit
             print("Broken barrier!");
-         } catch (RuntimeException e) {
-            log.error("Caught exception", e);
-            fail(e);
          } finally {
             int andGet = liveWorkers.decrementAndGet();
             barrier.reset();
@@ -310,7 +317,7 @@ public class ConditionalOperationsConcurrentTest extends MultipleCacheManagersTe
             log.tracef("Value seen by cache %s is %s", currentCache, v);
             boolean sameValue = v == null ? currentStored == null : v.equals(currentStored);
             if (!sameValue) {
-               fail("Not all the caches see the same value. first cache: " + currentStored + " cache " + currentCache +" saw " + v);
+               fail(Thread.currentThread().getName() + ": Not all the caches see the same value. first cache: " + currentStored + " cache " + currentCache +" saw " + v);
             }
          }
       }

@@ -3,6 +3,7 @@ package org.infinispan.configuration.cache;
 import org.infinispan.commons.configuration.attributes.Attribute;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.commons.configuration.attributes.Matchable;
 
 /**
  * Controls whether when stored in memory, keys and values are stored as references to their original objects, or in
@@ -16,7 +17,8 @@ import org.infinispan.commons.configuration.attributes.AttributeSet;
  * @see StoreAsBinaryConfigurationBuilder
  * @deprecated Use {@link MemoryConfiguration} instead
  */
-public class StoreAsBinaryConfiguration {
+@Deprecated
+public class StoreAsBinaryConfiguration implements Matchable<StoreAsBinaryConfiguration> {
    public static final AttributeDefinition<Boolean> ENABLED = AttributeDefinition.builder("enabled", false).autoPersist(false).build();
    public static final AttributeDefinition<Boolean> STORE_KEYS_AS_BINARY = AttributeDefinition.builder("keys", true).immutable().build();
    public static final AttributeDefinition<Boolean> STORE_VALUES_AS_BINARY = AttributeDefinition.builder("values", true).immutable().build();
@@ -39,11 +41,14 @@ public class StoreAsBinaryConfiguration {
 
    /**
     * Enables storing both keys and values as binary.
+    * @deprecated use {@link MemoryConfiguration#storageType()} instead
     */
+   @Deprecated
    public boolean enabled() {
       return enabled.get();
    }
 
+   @Deprecated
    public StoreAsBinaryConfiguration enabled(boolean enabled) {
       this.enabled.set(enabled);
       return this;
@@ -53,6 +58,7 @@ public class StoreAsBinaryConfiguration {
     * Enables storing keys as binary.
     * @deprecated when store as binary is enabled, keys are always stored as binary
     */
+   @Deprecated
    public boolean storeKeysAsBinary() {
       return storeKeysAsBinary.get();
    }
@@ -61,6 +67,7 @@ public class StoreAsBinaryConfiguration {
     * Enables storing values as binary.
     * @deprecated when store as binary is enabled, values are always stored as binary
     */
+   @Deprecated
    public boolean storeValuesAsBinary() {
       return storeValuesAsBinary.get();
    }

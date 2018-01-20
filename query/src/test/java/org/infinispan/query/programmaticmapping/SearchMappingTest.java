@@ -47,13 +47,13 @@ public class SearchMappingTest extends AbstractInfinispanTest {
             .property("isin", ElementType.METHOD).field();
 
       final Properties properties = new Properties();
-      properties.put("default.directory_provider", "ram");
+      properties.put("default.directory_provider", "local-heap");
       properties.put("lucene_version", "LUCENE_CURRENT");
       properties.put(Environment.MODEL_MAPPING, mapping);
 
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.indexing()
-            .index(Index.LOCAL).withProperties(properties);
+            .index(Index.PRIMARY_OWNER).withProperties(properties);
 
       withCacheManager(new CacheManagerCallable(
             TestCacheManagerFactory.createCacheManager(builder)) {
@@ -117,11 +117,11 @@ public class SearchMappingTest extends AbstractInfinispanTest {
    @Test
    public void testWithoutSearchMapping() {
       final Properties properties = new Properties();
-      properties.put("default.directory_provider", "ram");
+      properties.put("default.directory_provider", "local-heap");
       properties.put("lucene_version", "LUCENE_CURRENT");
 
       ConfigurationBuilder builder = new ConfigurationBuilder();
-      builder.indexing().index(Index.LOCAL).withProperties(properties);
+      builder.indexing().index(Index.PRIMARY_OWNER).withProperties(properties);
 
       withCacheManager(new CacheManagerCallable(
             TestCacheManagerFactory.createCacheManager(builder)) {

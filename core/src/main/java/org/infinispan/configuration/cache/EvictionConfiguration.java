@@ -3,6 +3,7 @@ package org.infinispan.configuration.cache;
 import org.infinispan.commons.configuration.attributes.Attribute;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.commons.configuration.attributes.Matchable;
 import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.eviction.EvictionThreadPolicy;
 import org.infinispan.eviction.EvictionType;
@@ -13,7 +14,8 @@ import org.infinispan.util.logging.LogFactory;
  * Controls the eviction settings for the cache.
  * @deprecated Use {@link MemoryConfiguration} instead
  */
-public class EvictionConfiguration {
+@Deprecated
+public class EvictionConfiguration implements Matchable<EvictionConfiguration> {
    static final Log log = LogFactory.getLog(EvictionConfiguration.class);
    public static final AttributeDefinition<Long> SIZE  = AttributeDefinition.builder("size", -1l).build();
    public static final AttributeDefinition<EvictionType> TYPE  = AttributeDefinition.builder("type", EvictionType.COUNT).build();
@@ -41,14 +43,18 @@ public class EvictionConfiguration {
    /**
     * Eviction strategy. Available options are 'UNORDERED', 'LRU', 'LIRS' and 'NONE' (to disable
     * eviction).
+    * @deprecated use {@link MemoryConfiguration#evictionType()} instead
     */
+   @Deprecated
    public EvictionStrategy strategy() {
       return strategy.get();
    }
 
    /**
     * Threading policy for eviction.
+    * @deprecated
     */
+   @Deprecated
    public EvictionThreadPolicy threadPolicy() {
       return threadPolicy.get();
    }
@@ -58,7 +64,10 @@ public class EvictionConfiguration {
     * limit specified by max entries. However, due to the nature of eviction it is unlikely to ever
     * be exactly maximum number of entries specified here. Only makes sense when using the
     * COUNT type.
+    *
+    * @deprecated use {@link MemoryConfiguration#size()} instead
     */
+   @Deprecated
    public long maxEntries() {
       if (type.get() != EvictionType.COUNT) {
          throw new IllegalStateException();
@@ -66,14 +75,23 @@ public class EvictionConfiguration {
       return size();
    }
 
+   /**
+    * @deprecated use {@link MemoryConfiguration#size()} instead
+    */
+   @Deprecated
    public long size() {
       return size.get();
    }
 
+   @Deprecated
    public void size(long newSize) {
       size.set(newSize);
    }
 
+   /**
+    * @deprecated use {@link MemoryConfiguration#evictionType()} instead
+    */
+   @Deprecated
    public EvictionType type() {
       return type.get();
    }

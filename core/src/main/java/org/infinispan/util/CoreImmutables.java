@@ -56,7 +56,7 @@ public class CoreImmutables extends Immutables {
       }
 
       @Override
-      public void commit(DataContainer container, Metadata metadata) {
+      public void commit(DataContainer container) {
          throw new UnsupportedOperationException();
       }
 
@@ -186,16 +186,6 @@ public class CoreImmutables extends Immutables {
       }
 
       @Override
-      public boolean isValid() {
-         return entry.isValid();
-      }
-
-      @Override
-      public boolean isLoaded() {
-         return entry.isLoaded();
-      }
-
-      @Override
       public void setCreated(boolean created) {
          throw new UnsupportedOperationException();
       }
@@ -213,16 +203,6 @@ public class CoreImmutables extends Immutables {
       @Override
       public void setEvicted(boolean evicted) {
          entry.setEvicted(evicted);
-      }
-
-      @Override
-      public void setValid(boolean valid) {
-         throw new UnsupportedOperationException();
-      }
-
-      @Override
-      public void setLoaded(boolean loaded) {
-         throw new UnsupportedOperationException();
       }
 
       @Override

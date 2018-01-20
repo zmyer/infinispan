@@ -38,12 +38,7 @@ import org.infinispan.util.TimeService;
  */
 public class InternalEntryFactoryImpl implements InternalEntryFactory {
 
-   private TimeService timeService;
-
-   @Inject
-   public void injectTimeService(TimeService timeService) {
-      this.timeService = timeService;
-   }
+   @Inject private TimeService timeService;
 
    @Override
    public InternalCacheEntry create(Object key, Object value, Metadata metadata) {
@@ -371,7 +366,7 @@ public class InternalEntryFactoryImpl implements InternalEntryFactory {
     * @return true if the entire metadata object needs to be stored, otherwise
     * simply store lifespan and/or maxIdle in existing cache entries
     */
-   private boolean isStoreMetadata(Metadata metadata, InternalCacheEntry ice) {
+   public static boolean isStoreMetadata(Metadata metadata, InternalCacheEntry ice) {
       return metadata != null
             && (ice == null || isEntryMetadataAware(ice))
             && (metadata.version() != null
@@ -379,7 +374,7 @@ public class InternalEntryFactoryImpl implements InternalEntryFactory {
    }
 
 
-   private boolean isEntryMetadataAware(InternalCacheEntry ice) {
+   private static boolean isEntryMetadataAware(InternalCacheEntry ice) {
       return ice instanceof MetadataImmortalCacheEntry
             || ice instanceof MetadataMortalCacheEntry
             || ice instanceof MetadataTransientCacheEntry

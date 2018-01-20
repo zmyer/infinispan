@@ -6,12 +6,11 @@ import javax.transaction.TransactionManager;
 
 import org.infinispan.batch.BatchContainer;
 import org.infinispan.commons.CacheException;
-import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.context.impl.LocalTxInvocationContext;
 import org.infinispan.context.impl.NonTxInvocationContext;
 import org.infinispan.context.impl.RemoteTxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.interceptors.AsyncInterceptorChain;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.transaction.impl.RemoteTransaction;
@@ -23,20 +22,17 @@ import org.infinispan.transaction.impl.TransactionTable;
  * @author Mircea.Markus@jboss.com
  * @deprecated Since 9.0, this class is going to be moved to an internal package.
  */
+@Deprecated
 public class TransactionalInvocationContextFactory extends AbstractInvocationContextFactory {
 
-   private TransactionManager tm;
-   private TransactionTable transactionTable;
-   private BatchContainer batchContainer;
+   @Inject private TransactionManager tm;
+   @Inject private TransactionTable transactionTable;
+   @Inject private BatchContainer batchContainer;
+
    private boolean batchingEnabled;
 
-   @Inject
-   public void init(TransactionManager tm, TransactionTable transactionTable, Configuration config,
-                    BatchContainer batchContainer, AsyncInterceptorChain interceptorChain) {
-      super.init(config, interceptorChain);
-      this.tm = tm;
-      this.transactionTable = transactionTable;
-      this.batchContainer = batchContainer;
+   @Start
+   public void start() {
       this.batchingEnabled = config.invocationBatching().enabled();
    }
 

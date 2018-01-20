@@ -8,6 +8,7 @@ import java.io.ObjectOutput;
 import java.util.Objects;
 
 import org.infinispan.commands.CommandInvocationId;
+import org.infinispan.commands.MetadataAwareCommand;
 import org.infinispan.commands.Visitor;
 import org.infinispan.commons.marshall.MarshallUtil;
 import org.infinispan.container.entries.MVCCEntry;
@@ -24,13 +25,14 @@ import org.infinispan.util.logging.LogFactory;
  * @author <a href="mailto:galder.zamarreno@jboss.com">Galder Zamarreno</a>
  * @since 4.0
  */
-public class RemoveCommand extends AbstractDataWriteCommand {
+public class RemoveCommand extends AbstractDataWriteCommand implements MetadataAwareCommand {
    private static final Log log = LogFactory.getLog(RemoveCommand.class);
    public static final byte COMMAND_ID = 10;
    protected CacheNotifier<Object, Object> notifier;
    protected boolean successful = true;
    private boolean nonExistent = false;
 
+   protected Metadata metadata;
    protected ValueMatcher valueMatcher;
 
    /**
@@ -101,12 +103,23 @@ public class RemoveCommand extends AbstractDataWriteCommand {
    }
 
    public void notify(InvocationContext ctx, Object removedValue, Metadata removedMetadata, boolean isPre) {
-      notifier.notifyCacheEntryRemoved(key, removedValue, removedMetadata, isPre, ctx, this);
+      if (removedValue != null)
+         notifier.notifyCacheEntryRemoved(key, removedValue, removedMetadata, isPre, ctx, this);
    }
 
    @Override
    public byte getCommandId() {
       return COMMAND_ID;
+   }
+
+   @Override
+   public void setMetadata(Metadata metadata) {
+      this.metadata = metadata;
+   }
+
+   @Override
+   public Metadata getMetadata() {
+      return metadata;
    }
 
    @Override
@@ -134,8 +147,11 @@ public class RemoveCommand extends AbstractDataWriteCommand {
          .append("RemoveCommand{key=")
          .append(toStr(key))
          .append(", value=").append(toStr(value))
+         .append(", metadata=").append(metadata)
          .append(", flags=").append(printFlags())
+         .append(", commandInvocationId=").append(CommandInvocationId.show(commandInvocationId))
          .append(", valueMatcher=").append(valueMatcher)
+         .append(", topologyId=").append(getTopologyId())
          .append("}")
          .toString();
    }
@@ -158,6 +174,7 @@ public class RemoveCommand extends AbstractDataWriteCommand {
    public void writeTo(ObjectOutput output) throws IOException {
       output.writeObject(key);
       output.writeObject(value);
+      output.writeObject(metadata);
       output.writeLong(FlagBitSets.copyWithoutRemotableFlags(getFlagsBitSet()));
       MarshallUtil.marshallEnum(valueMatcher, output);
       CommandInvocationId.writeTo(output, commandInvocationId);
@@ -167,6 +184,7 @@ public class RemoveCommand extends AbstractDataWriteCommand {
    public void readFrom(ObjectInput input) throws IOException, ClassNotFoundException {
       key = input.readObject();
       value = input.readObject();
+      metadata = (Metadata) input.readObject();
       setFlagsBitSet(input.readLong());
       valueMatcher = MarshallUtil.unmarshallEnum(input, ValueMatcher::valueOf);
       commandInvocationId = CommandInvocationId.readFrom(input);
@@ -183,11 +201,8 @@ public class RemoveCommand extends AbstractDataWriteCommand {
    }
 
    @Override
-   public void updateStatusFromRemoteResponse(Object remoteResponse) {
-      // Remove without an expected value can't fail
-      if (value != null) {
-         successful = (Boolean) remoteResponse;
-      }
+   public void fail() {
+      successful = false;
    }
 
    @Override
@@ -210,20 +225,8 @@ public class RemoveCommand extends AbstractDataWriteCommand {
    }
 
    @Override
-   public void initBackupWriteRcpCommand(BackupWriteRcpCommand command) {
+   public void initBackupWriteRpcCommand(BackupWriteRpcCommand command) {
       command.setRemove(commandInvocationId, key, getFlagsBitSet(), getTopologyId());
-   }
-
-   @Override
-   public void initPrimaryAck(PrimaryAckCommand command, Object localReturnValue) {
-      command.initCommandInvocationIdAndTopologyId(commandInvocationId, getTopologyId());
-      if (isConditional()) {
-         command.initWithBoolReturnValue(successful);
-      } else if (isReturnValueExpected()) {
-         command.initWithReturnValue(successful, localReturnValue);
-      } else {
-         command.initWithoutReturnValue(successful);
-      }
    }
 
    protected Object performRemove(MVCCEntry e, Object prevValue, InvocationContext ctx) {
@@ -233,6 +236,9 @@ public class RemoveCommand extends AbstractDataWriteCommand {
       e.setValid(false);
       e.setChanged(true);
       e.setValue(null);
+      if (metadata != null) {
+         e.setMetadata(metadata);
+      }
 
       if (valueMatcher != ValueMatcher.MATCH_EXPECTED_OR_NEW) {
          return isConditional() ? true : prevValue;

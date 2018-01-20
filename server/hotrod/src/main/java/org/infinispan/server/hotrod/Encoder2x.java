@@ -1,5 +1,7 @@
 package org.infinispan.server.hotrod;
 
+import static org.infinispan.server.hotrod.transport.ExtendedByteBuf.writeUnsignedLong;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,12 +16,15 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.container.versioning.NumericVersion;
+import org.infinispan.counter.impl.CounterModuleLifecycle;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.server.hotrod.counter.listener.ClientCounterEvent;
+import org.infinispan.server.hotrod.counter.response.CounterResponse;
 import org.infinispan.server.hotrod.logging.Log;
+import org.infinispan.server.hotrod.multimap.MultimapResponseHandler;
 import org.infinispan.server.hotrod.transport.ExtendedByteBuf;
 import org.infinispan.topology.CacheTopology;
 
@@ -36,12 +41,7 @@ class Encoder2x implements VersionedEncoder {
    public void writeEvent(Events.Event e, ByteBuf buf) {
       if (isTrace)
          log.tracef("Write event %s", e);
-
-      buf.writeByte(Constants.MAGIC_RES);
-      ExtendedByteBuf.writeUnsignedLong(e.messageId, buf);
-      buf.writeByte(e.op.getResponseOpCode());
-      buf.writeByte(OperationStatus.Success.getCode());
-      buf.writeByte(0); // no topology change
+      writeHeaderNoTopology(buf, e.messageId, e.op);
       ExtendedByteBuf.writeRangedBytes(e.listenerId, buf);
       e.writeEvent(buf);
    }
@@ -51,18 +51,30 @@ class Encoder2x implements VersionedEncoder {
       // Sometimes an error happens before we have added the cache to the knownCaches/knownCacheConfigurations map
       // If that happens, we pretend the cache is LOCAL and we skip the topology update
       String cacheName = r.cacheName.isEmpty() ? server.getConfiguration().defaultCacheName() : r.cacheName;
-      ComponentRegistry cr = server.getCacheRegistry(cacheName);
-      Configuration configuration = server.getCacheConfiguration(cacheName);
-      CacheMode cacheMode = configuration == null ? CacheMode.LOCAL : configuration.clustering().cacheMode();
 
-      CacheTopology cacheTopology = cacheMode.isClustered() ? cr.getStateTransferManager().getCacheTopology() : null;
-      Optional<AbstractTopologyResponse> newTopology = getTopologyResponse(r, addressCache, cacheMode, cacheTopology);
+      Optional<AbstractTopologyResponse> newTopology;
+      boolean compatibilityEnabled;
+      CacheTopology cacheTopology;
+
+      if (CounterModuleLifecycle.COUNTER_CACHE_NAME.equals(cacheName)) {
+         cacheTopology = getCounterCacheTopology(addressCache.getCacheManager());
+         newTopology = getTopologyResponse(r, addressCache, CacheMode.DIST_SYNC, cacheTopology);
+         compatibilityEnabled = false;
+      } else {
+         ComponentRegistry cr = server.getCacheRegistry(cacheName);
+         Configuration configuration = server.getCacheConfiguration(cacheName);
+         CacheMode cacheMode = configuration == null ? CacheMode.LOCAL : configuration.clustering().cacheMode();
+
+         cacheTopology = cacheMode.isClustered() ? cr.getStateTransferManager().getCacheTopology() : null;
+         newTopology = getTopologyResponse(r, addressCache, cacheMode, cacheTopology);
+         compatibilityEnabled = configuration != null && configuration.compatibility().enabled();
+      }
 
 
       buf.writeByte(Constants.MAGIC_RES);
-      ExtendedByteBuf.writeUnsignedLong(r.messageId, buf);
+      writeUnsignedLong(r.messageId, buf);
       buf.writeByte(r.operation.getResponseOpCode());
-      writeStatus(r, buf, server, configuration);
+      writeStatus(r, buf, server, compatibilityEnabled);
       if (newTopology.isPresent()) {
          AbstractTopologyResponse topology = newTopology.get();
          if (topology instanceof TopologyAwareResponse) {
@@ -80,11 +92,32 @@ class Encoder2x implements VersionedEncoder {
       }
    }
 
-   private void writeStatus(Response r, ByteBuf buf, HotRodServer server, Configuration cfg) {
+   @Override
+   public void writeCounterEvent(ClientCounterEvent event, ByteBuf buffer) {
+      writeHeaderNoTopology(buffer, event.getMessageId(), HotRodOperation.COUNTER_EVENT);
+      event.writeTo(buffer);
+   }
+
+   private CacheTopology getCounterCacheTopology(EmbeddedCacheManager cacheManager) {
+      return cacheManager.getCache(CounterModuleLifecycle.COUNTER_CACHE_NAME).getAdvancedCache()
+            .getComponentRegistry()
+            .getStateTransferManager()
+            .getCacheTopology();
+   }
+
+   private void writeHeaderNoTopology(ByteBuf buffer, long messageId, HotRodOperation operation) {
+      buffer.writeByte(Constants.MAGIC_RES);
+      writeUnsignedLong(messageId, buffer);
+      buffer.writeByte(operation.getResponseOpCode());
+      buffer.writeByte(OperationStatus.Success.getCode());
+      buffer.writeByte(0); // no topology change
+   }
+
+   private void writeStatus(Response r, ByteBuf buf, HotRodServer server, boolean compatibilityEnabled) {
       if (server == null || Constants.isVersionPre24(r.version))
          buf.writeByte(r.status.getCode());
       else {
-         OperationStatus st = OperationStatus.withCompatibility(r.status, cfg.compatibility().enabled());
+         OperationStatus st = OperationStatus.withCompatibility(r.status, compatibilityEnabled);
          buf.writeByte(st.getCode());
       }
    }
@@ -237,220 +270,233 @@ class Encoder2x implements VersionedEncoder {
 
    @Override
    public void writeResponse(Response response, ByteBuf buf, EmbeddedCacheManager cacheManager, HotRodServer server) {
-      switch(response.operation) {
-         case GET: {
-            GetResponse r = (GetResponse) response;
-            if (r.status == OperationStatus.Success) ExtendedByteBuf.writeRangedBytes(r.data, buf);
-            break;
-         }
-         case GET_WITH_METADATA: {
-            GetWithMetadataResponse r = (GetWithMetadataResponse) response;
-            if (r.status == OperationStatus.Success) {
-               writeMetadata(r.lifespan, r.maxIdle, r.created, r.lastUsed, r.dataVersion, buf);
-               ExtendedByteBuf.writeRangedBytes(r.data, buf);
+      if (response.operation.isMultimap()) {
+         MultimapResponseHandler.handle(response, buf);
+      } else {
+         switch (response.operation) {
+            case GET: {
+               GetResponse r = (GetResponse) response;
+               if (r.status == OperationStatus.Success) ExtendedByteBuf.writeRangedBytes(r.data, buf);
+               break;
             }
-            break;
-         }
-         case GET_WITH_VERSION: {
-            GetWithVersionResponse r = (GetWithVersionResponse) response;
-            if (r.status == OperationStatus.Success) {
-               buf.writeLong(r.dataVersion);
-               ExtendedByteBuf.writeRangedBytes(r.data, buf);
+            case GET_WITH_METADATA: {
+               GetWithMetadataResponse r = (GetWithMetadataResponse) response;
+               if (r.status == OperationStatus.Success) {
+                  MetadataUtils.writeMetadata(r.lifespan, r.maxIdle, r.created, r.lastUsed, r.dataVersion, buf);
+                  ExtendedByteBuf.writeRangedBytes(r.data, buf);
+               }
+               break;
             }
-            break;
-         }
-         case GET_STREAM: {
-            GetStreamResponse r = (GetStreamResponse) response;
-            if (r.status == OperationStatus.Success) {
-               writeMetadata(r.lifespan, r.maxIdle, r.created, r.lastUsed, r.dataVersion, buf);
-               ExtendedByteBuf.writeRangedBytes(r.data, r.offset, buf);
+            case GET_WITH_VERSION: {
+               GetWithVersionResponse r = (GetWithVersionResponse) response;
+               if (r.status == OperationStatus.Success) {
+                  buf.writeLong(r.dataVersion);
+                  ExtendedByteBuf.writeRangedBytes(r.data, buf);
+               }
+               break;
             }
-            break;
-         }
-         case PUT:
-         case PUT_IF_ABSENT:
-         case REPLACE:
-         case REPLACE_IF_UNMODIFIED:
-         case REMOVE:
-         case REMOVE_IF_UNMODIFIED: {
-            if (response instanceof ResponseWithPrevious) {
-               ResponseWithPrevious r = (ResponseWithPrevious) response;
-               if (!r.previous.isPresent())
+            case GET_STREAM: {
+               GetStreamResponse r = (GetStreamResponse) response;
+               if (r.status == OperationStatus.Success) {
+                  MetadataUtils.writeMetadata(r.lifespan, r.maxIdle, r.created, r.lastUsed, r.dataVersion, buf);
+                  ExtendedByteBuf.writeRangedBytes(r.data, r.offset, buf);
+               }
+               break;
+            }
+            case PUT:
+            case PUT_IF_ABSENT:
+            case REPLACE:
+            case REPLACE_IF_UNMODIFIED:
+            case REMOVE:
+            case REMOVE_IF_UNMODIFIED: {
+               if (response instanceof ResponseWithPrevious) {
+                  ResponseWithPrevious r = (ResponseWithPrevious) response;
+                  if (!r.previous.isPresent())
+                     ExtendedByteBuf.writeUnsignedInt(0, buf);
+                  else
+                     ExtendedByteBuf.writeRangedBytes(r.previous.get(), buf);
+               }
+               break;
+            }
+            case STATS: {
+               StatsResponse r = (StatsResponse) response;
+               ExtendedByteBuf.writeUnsignedInt(r.stats.size(), buf);
+               for (Map.Entry<String, String> stat : r.stats.entrySet()) {
+                  ExtendedByteBuf.writeString(stat.getKey(), buf);
+                  ExtendedByteBuf.writeString(stat.getValue(), buf);
+               }
+               break;
+            }
+            case PING:
+            case CLEAR:
+            case CONTAINS_KEY:
+            case PUT_ALL:
+            case PUT_STREAM:
+            case ITERATION_END:
+            case ADD_CLIENT_LISTENER:
+            case REMOVE_CLIENT_LISTENER:
+            case COUNTER_CREATE:
+            case COUNTER_REMOVE:
+            case COUNTER_IS_DEFINED:
+            case COUNTER_RESET:
+            case COUNTER_ADD_LISTENER:
+            case COUNTER_REMOVE_LISTENER:
+               // Empty response
+               break;
+            case COUNTER_ADD_AND_GET:
+            case COUNTER_GET:
+            case COUNTER_GET_CONFIGURATION:
+            case COUNTER_CAS:
+            case COUNTER_GET_NAMES:
+               if (response.status == OperationStatus.Success) {
+                  ((CounterResponse) response).writeTo(buf);
+               }
+               break;
+            case SIZE: {
+               SizeResponse r = (SizeResponse) response;
+               writeUnsignedLong(r.size, buf);
+               break;
+            }
+            case AUTH_MECH_LIST: {
+               AuthMechListResponse r = (AuthMechListResponse) response;
+               ExtendedByteBuf.writeUnsignedInt(r.mechs.size(), buf);
+               r.mechs.forEach(s -> ExtendedByteBuf.writeString(s, buf));
+               break;
+            }
+            case AUTH: {
+               AuthResponse r = (AuthResponse) response;
+               if (r.challenge != null) {
+                  buf.writeBoolean(false);
+                  ExtendedByteBuf.writeRangedBytes(r.challenge, buf);
+               } else {
+                  buf.writeBoolean(true);
                   ExtendedByteBuf.writeUnsignedInt(0, buf);
-               else
-                  ExtendedByteBuf.writeRangedBytes(r.previous.get(), buf);
+               }
+               break;
             }
-            break;
-         }
-         case STATS: {
-            StatsResponse r = (StatsResponse) response;
-            ExtendedByteBuf.writeUnsignedInt(r.stats.size(), buf);
-            for (Map.Entry<String, String> stat : r.stats.entrySet()) {
-               ExtendedByteBuf.writeString(stat.getKey(), buf);
-               ExtendedByteBuf.writeString(stat.getValue(), buf);
+            case EXEC: {
+               ExecResponse r = (ExecResponse) response;
+               ExtendedByteBuf.writeRangedBytes(r.result, buf);
+               break;
             }
-            break;
-         }
-         case PING:
-         case CLEAR:
-         case CONTAINS_KEY:
-         case PUT_ALL:
-         case PUT_STREAM:
-         case ITERATION_END:
-         case ADD_CLIENT_LISTENER:
-         case REMOVE_CLIENT_LISTENER:
-            // Empty response
-            break;
-         case SIZE: {
-            SizeResponse r = (SizeResponse) response;
-            ExtendedByteBuf.writeUnsignedLong(r.size, buf);
-            break;
-         }
-         case AUTH_MECH_LIST: {
-            AuthMechListResponse r = (AuthMechListResponse) response;
-            ExtendedByteBuf.writeUnsignedInt(r.mechs.size(), buf);
-            r.mechs.forEach(s -> ExtendedByteBuf.writeString(s, buf));
-            break;
-         }
-         case AUTH: {
-            AuthResponse r = (AuthResponse) response;
-            if (r.challenge != null) {
-               buf.writeBoolean(false);
-               ExtendedByteBuf.writeRangedBytes(r.challenge, buf);
-            } else {
-               buf.writeBoolean(true);
-               ExtendedByteBuf.writeUnsignedInt(0, buf);
-            }
-            break;
-         }
-         case EXEC: {
-            ExecResponse r = (ExecResponse) response;
-            ExtendedByteBuf.writeRangedBytes(r.result, buf);
-            break;
-         }
-         case BULK_GET: {
-            BulkGetResponse r = (BulkGetResponse) response;
-            if (isTrace) log.trace("About to respond to bulk get request");
-            if (r.status == OperationStatus.Success) {
-               try (CloseableIterator<Map.Entry<byte[], byte[]>> iterator = r.entries.iterator()) {
-                  int max = Integer.MAX_VALUE;
-                  if (r.count != 0) {
-                     if (isTrace) log.tracef("About to write (max) %d messages to the client", r.count);
-                     max = r.count;
+            case BULK_GET: {
+               BulkGetResponse r = (BulkGetResponse) response;
+               if (isTrace) log.trace("About to respond to bulk get request");
+               if (r.status == OperationStatus.Success) {
+                  try (CloseableIterator<Map.Entry<byte[], byte[]>> iterator = (CloseableIterator<Map.Entry<byte[], byte[]>>) r.entries.iterator()) {
+                     int max = Integer.MAX_VALUE;
+                     if (r.count != 0) {
+                        if (isTrace) log.tracef("About to write (max) %d messages to the client", r.count);
+                        max = r.count;
+                     }
+                     int count = 0;
+                     while (iterator.hasNext() && count < max) {
+                        Map.Entry<byte[], byte[]> entry = iterator.next();
+                        buf.writeByte(1); // Not done
+                        ExtendedByteBuf.writeRangedBytes(entry.getKey(), buf);
+                        ExtendedByteBuf.writeRangedBytes(entry.getValue(), buf);
+                        count++;
+                     }
+                     buf.writeByte(0); // Done
                   }
-                  int count = 0;
-                  while (iterator.hasNext() && count < max) {
-                     Map.Entry<byte[], byte[]> entry = iterator.next();
+               }
+               break;
+            }
+            case BULK_GET_KEYS: {
+               BulkGetKeysResponse r = (BulkGetKeysResponse) response;
+               if (r.status == OperationStatus.Success) {
+                  r.iterator.forEachRemaining(key -> {
                      buf.writeByte(1); // Not done
-                     ExtendedByteBuf.writeRangedBytes(entry.getKey(), buf);
-                     ExtendedByteBuf.writeRangedBytes(entry.getValue(), buf);
-                     count++;
-                  }
+                     ExtendedByteBuf.writeRangedBytes(key, buf);
+                  });
                   buf.writeByte(0); // Done
                }
+               break;
             }
-            break;
-         }
-         case BULK_GET_KEYS: {
-            BulkGetKeysResponse r = (BulkGetKeysResponse) response;
-            if (r.status == OperationStatus.Success) {
-               r.iterator.forEachRemaining(key -> {
-                  buf.writeByte(1); // Not done
-                  ExtendedByteBuf.writeRangedBytes(key, buf);
-               });
-               buf.writeByte(0); // Done
+            case QUERY: {
+               QueryResponse r = (QueryResponse) response;
+               ExtendedByteBuf.writeRangedBytes(r.result, buf);
+               break;
             }
-            break;
-         }
-         case QUERY: {
-            QueryResponse r = (QueryResponse) response;
-            ExtendedByteBuf.writeRangedBytes(r.result, buf);
-            break;
-         }
-         case ITERATION_START: {
-            IterationStartResponse r = (IterationStartResponse) response;
-            ExtendedByteBuf.writeString(r.iterationId, buf);
-            break;
-         }
-         case ITERATION_NEXT: {
-            IterationNextResponse r = (IterationNextResponse) response;
-            ExtendedByteBuf.writeRangedBytes(r.iterationResult.segmentsToBytes(), buf);
-            List<CacheEntry> entries = r.iterationResult.getEntries();
-            ExtendedByteBuf.writeUnsignedInt(entries.size(), buf);
-            Optional<Integer> projectionLength = projectionInfo(entries, r.version);
-            projectionLength.ifPresent(i -> ExtendedByteBuf.writeUnsignedInt(i, buf));
-            entries.forEach(cacheEntry -> {
-               if (Constants.isVersionPost24(r.version)) {
-                  if (r.iterationResult.isMetadata()) {
-                     buf.writeByte(1);
-                     InternalCacheEntry ice = (InternalCacheEntry) cacheEntry;
-                     int lifespan = ice.getLifespan() < 0 ? -1 : (int) (ice.getLifespan() / 1000);
-                     int maxIdle = ice.getMaxIdle() < 0 ? -1 : (int) (ice.getMaxIdle() / 1000);
-                     long lastUsed = ice.getLastUsed();
-                     long created = ice.getCreated();
-                     NumericVersion dataVersion = (NumericVersion) ice.getMetadata().version();
-                     writeMetadata(lifespan, maxIdle, created, lastUsed, dataVersion.getVersion(), buf);
+            case ITERATION_START: {
+               IterationStartResponse r = (IterationStartResponse) response;
+               ExtendedByteBuf.writeString(r.iterationId, buf);
+               break;
+            }
+            case ITERATION_NEXT: {
+               IterationNextResponse r = (IterationNextResponse) response;
+               ExtendedByteBuf.writeRangedBytes(r.iterationResult.segmentsToBytes(), buf);
+               List<CacheEntry> entries = r.iterationResult.getEntries();
+               ExtendedByteBuf.writeUnsignedInt(entries.size(), buf);
+               Optional<Integer> projectionLength = projectionInfo(entries, r.version);
+               projectionLength.ifPresent(i -> ExtendedByteBuf.writeUnsignedInt(i, buf));
+               entries.forEach(cacheEntry -> {
+                  if (Constants.isVersionPost24(r.version)) {
+                     if (r.iterationResult.isMetadata()) {
+                        buf.writeByte(1);
+                        InternalCacheEntry ice = (InternalCacheEntry) cacheEntry;
+                        int lifespan = ice.getLifespan() < 0 ? -1 : (int) (ice.getLifespan() / 1000);
+                        int maxIdle = ice.getMaxIdle() < 0 ? -1 : (int) (ice.getMaxIdle() / 1000);
+                        long lastUsed = ice.getLastUsed();
+                        long created = ice.getCreated();
+                        long dataVersion = MetadataUtils.extractVersion(ice);
+                        MetadataUtils.writeMetadata(lifespan, maxIdle, created, lastUsed, dataVersion, buf);
+                     } else {
+                        buf.writeByte(0);
+                     }
+                  }
+                  Object key = cacheEntry.getKey();
+                  Object value = cacheEntry.getValue();
+                  if (r.iterationResult.isCompatEnabled()) {
+                     key = r.iterationResult.unbox(key);
+                     value = r.iterationResult.unbox(value);
+                  }
+                  ExtendedByteBuf.writeRangedBytes((byte[]) key, buf);
+                  if (value instanceof Object[]) {
+                     for (Object o : (Object[]) value) {
+                        ExtendedByteBuf.writeRangedBytes((byte[]) o, buf);
+                     }
+                  } else if (value instanceof byte[]) {
+                     ExtendedByteBuf.writeRangedBytes((byte[]) value, buf);
                   } else {
-                     buf.writeByte(0);
+                     throw new IllegalArgumentException("Unsupported type passed: " + value.getClass());
                   }
-               }
-               Object key = cacheEntry.getKey();
-               Object value = cacheEntry.getValue();
-               if (r.iterationResult.isCompatEnabled()) {
-                  key = r.iterationResult.unbox(key);
-                  value = r.iterationResult.unbox(value);
-               }
-               ExtendedByteBuf.writeRangedBytes((byte[]) key, buf);
-               if (value instanceof Object[]) {
-                  for (Object o : (Object[]) value) {
-                     ExtendedByteBuf.writeRangedBytes((byte[]) o, buf);
-                  }
-               } else if (value instanceof byte[]) {
-                  ExtendedByteBuf.writeRangedBytes((byte[]) value, buf);
-               } else {
-                  throw new IllegalArgumentException("Unsupported type passed: " + value.getClass());
-               }
-            });
-            break;
-         }
-         case GET_ALL: {
-            GetAllResponse r = (GetAllResponse) response;
-            if (r.status == OperationStatus.Success) {
-               ExtendedByteBuf.writeUnsignedInt(r.entries.size(), buf);
-               r.entries.forEach((k, v) -> {
-                  ExtendedByteBuf.writeRangedBytes(k, buf);
-                  ExtendedByteBuf.writeRangedBytes(v, buf);
                });
+               break;
             }
-            break;
+            case GET_ALL: {
+               GetAllResponse r = (GetAllResponse) response;
+               if (r.status == OperationStatus.Success) {
+                  ExtendedByteBuf.writeUnsignedInt(r.entries.size(), buf);
+                  r.entries.forEach((k, v) -> {
+                     ExtendedByteBuf.writeRangedBytes(k, buf);
+                     ExtendedByteBuf.writeRangedBytes(v, buf);
+                  });
+               }
+               break;
+            }
+            case ERROR: {
+               ErrorResponse r = (ErrorResponse) response;
+               ExtendedByteBuf.writeString(r.msg, buf);
+               break;
+            }
+            case CACHE_ENTRY_CREATED_EVENT:
+            case CACHE_ENTRY_MODIFIED_EVENT:
+            case CACHE_ENTRY_REMOVED_EVENT:
+            case CACHE_ENTRY_EXPIRED_EVENT:
+               throw new UnsupportedOperationException(response.toString());
+            case COMMIT_TX:
+            case PREPARE_TX:
+            case ROLLBACK_TX:
+               TransactionResponse txRsp = (TransactionResponse) response;
+               if (txRsp.status == OperationStatus.Success) {
+                  buf.writeInt(txRsp.xaReturnCode);
+               }
+               break;
+            default:
+               throw new UnsupportedOperationException(response.toString());
          }
-         case ERROR: {
-            ErrorResponse r = (ErrorResponse) response;
-            ExtendedByteBuf.writeString(r.msg, buf);
-            break;
-         }
-         case CACHE_ENTRY_CREATED_EVENT:
-         case CACHE_ENTRY_MODIFIED_EVENT:
-         case CACHE_ENTRY_REMOVED_EVENT:
-         case CACHE_ENTRY_EXPIRED_EVENT:
-            throw new UnsupportedOperationException(response.toString());
-         default:
-            throw new UnsupportedOperationException(response.toString());
       }
-   }
-
-   static void writeMetadata(int lifespan, int maxIdle, long created, long lastUsed, long dataVersion, ByteBuf buf) {
-      int flags = (lifespan < 0 ? Constants.INFINITE_LIFESPAN : 0) + (maxIdle < 0 ? Constants.INFINITE_MAXIDLE : 0);
-      buf.writeByte(flags);
-      if (lifespan >= 0) {
-         buf.writeLong(created);
-         ExtendedByteBuf.writeUnsignedInt(lifespan, buf);
-      }
-      if (maxIdle >= 0) {
-         buf.writeLong(lastUsed);
-         ExtendedByteBuf.writeUnsignedInt(maxIdle, buf);
-      }
-      buf.writeLong(dataVersion);
    }
 
    static Optional<Integer> projectionInfo(List<CacheEntry> entries, byte version) {

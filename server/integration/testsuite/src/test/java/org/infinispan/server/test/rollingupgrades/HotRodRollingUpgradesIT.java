@@ -5,23 +5,15 @@ import static org.junit.Assert.assertEquals;
 
 import javax.management.ObjectName;
 
-import org.infinispan.arquillian.core.InfinispanResource;
-import org.infinispan.arquillian.core.RemoteInfinispanServers;
 import org.infinispan.arquillian.utils.MBeanServerConnectionProvider;
 import org.infinispan.client.hotrod.ProtocolVersion;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
-import org.infinispan.client.hotrod.impl.ConfigurationProperties;
 import org.infinispan.server.infinispan.spi.InfinispanSubsystem;
 import org.infinispan.server.test.category.RollingUpgrades;
-import org.infinispan.server.test.util.RemoteCacheManagerFactory;
 import org.infinispan.server.test.util.RemoteInfinispanMBeans;
-import org.jboss.arquillian.container.test.api.ContainerController;
 import org.jboss.arquillian.junit.Arquillian;
-import org.jboss.arquillian.test.api.ArquillianResource;
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -33,30 +25,7 @@ import org.junit.runner.RunWith;
  */
 @RunWith(Arquillian.class)
 @Category({RollingUpgrades.class})
-public class HotRodRollingUpgradesIT {
-
-    @InfinispanResource
-    RemoteInfinispanServers serverManager;
-
-    static final String DEFAULT_CACHE_NAME = "default";
-
-    @ArquillianResource
-    ContainerController controller;
-
-    RemoteCacheManagerFactory rcmFactory;
-
-    @Before
-    public void setUp() {
-        rcmFactory = new RemoteCacheManagerFactory();
-    }
-
-    @After
-    public void tearDown() {
-        if (rcmFactory != null) {
-            rcmFactory.stopManagers();
-        }
-        rcmFactory = null;
-    }
+public class HotRodRollingUpgradesIT extends AbstractHotRodRollingUpgradesIT {
 
     @Test
     public void testHotRodRollingUpgradesDiffVersions() throws Exception {
@@ -99,12 +68,9 @@ public class HotRodRollingUpgradesIT {
 
             assertEquals("Can't access entries stored in source node (target's RemoteCacheStore).", "value1", c1.get("key1"));
 
-            provider2 = new MBeanServerConnectionProvider("127.0.0.1", managementPortServer2);
-
             final ObjectName rollMan = new ObjectName("jboss." + InfinispanSubsystem.SUBSYSTEM_NAME + ":type=Cache," + "name=\"default(local)\","
                     + "manager=\"local\"," + "component=RollingUpgradeManager");
 
-            invokeOperation(provider2, rollMan.toString(), "recordKnownGlobalKeyset", new Object[]{}, new String[]{});
 
             provider1 = new MBeanServerConnectionProvider(s1.server.getHotrodEndpoint().getInetAddress().getHostName(),
                     managementPortServer1);
@@ -134,28 +100,5 @@ public class HotRodRollingUpgradesIT {
                 controller.stop("hotrod-rolling-upgrade-2-old");
             }
         }
-    }
-
-    protected RemoteCache<Object, Object> createCache(RemoteInfinispanMBeans cacheBeans) {
-        if (System.getProperty("hotrod.protocol.version") != null) {
-            // we might want to test backwards compatibility as well
-            // old Hot Rod protocol version was set for communication with new server
-            return createCache(cacheBeans, System.getProperty("hotrod.protocol.version"));
-        } else {
-            return createCache(cacheBeans, ProtocolVersion.DEFAULT_PROTOCOL_VERSION.toString());
-        }
-    }
-
-    protected RemoteCache<Object, Object> createCache(RemoteInfinispanMBeans cacheBeans, String protocolVersion) {
-        return rcmFactory.createCache(cacheBeans, protocolVersion);
-    }
-
-    protected RemoteInfinispanMBeans createRemotes(String serverName, String managerName, String cacheName) {
-        return RemoteInfinispanMBeans.create(serverManager, serverName, cacheName, managerName);
-    }
-
-    private Object invokeOperation(MBeanServerConnectionProvider provider, String mbean, String operationName, Object[] params,
-                                   String[] signature) throws Exception {
-        return provider.getConnection().invoke(new ObjectName(mbean), operationName, params, signature);
     }
 }

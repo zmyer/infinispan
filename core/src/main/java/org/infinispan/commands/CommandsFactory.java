@@ -38,6 +38,8 @@ import org.infinispan.commands.read.SizeCommand;
 import org.infinispan.commands.remote.ClusteredGetAllCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
+import org.infinispan.commands.remote.RenewBiasCommand;
+import org.infinispan.commands.remote.RevokeBiasCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTransactionsCommand;
@@ -51,34 +53,42 @@ import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.BackupAckCommand;
 import org.infinispan.commands.write.BackupMultiKeyAckCommand;
-import org.infinispan.commands.write.BackupPutMapRcpCommand;
-import org.infinispan.commands.write.BackupWriteRcpCommand;
+import org.infinispan.commands.write.BackupPutMapRpcCommand;
+import org.infinispan.commands.write.BackupWriteRpcCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
 import org.infinispan.commands.write.InvalidateCommand;
+import org.infinispan.commands.write.InvalidateVersionsCommand;
 import org.infinispan.commands.write.PrimaryAckCommand;
-import org.infinispan.commands.write.PrimaryMultiKeyAckCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.RemoveExpiredCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.commons.api.functional.EntryView.ReadEntryView;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
-import org.infinispan.commons.api.functional.EntryView.WriteEntryView;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.functional.EntryView.ReadEntryView;
+import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.EntryView.WriteEntryView;
 import org.infinispan.functional.impl.Params;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.StateChunk;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
+import org.infinispan.stream.impl.StreamIteratorCloseCommand;
+import org.infinispan.stream.impl.StreamIteratorNextCommand;
+import org.infinispan.stream.impl.StreamIteratorRequestCommand;
 import org.infinispan.stream.impl.StreamRequestCommand;
 import org.infinispan.stream.impl.StreamResponseCommand;
+import org.infinispan.stream.impl.intops.IntermediateOperation;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.xsite.SingleXSiteRpcCommand;
 import org.infinispan.xsite.XSiteAdminCommand;
@@ -159,6 +169,28 @@ public interface CommandsFactory {
     * @return a ReplaceCommand
     */
    ReplaceCommand buildReplaceCommand(Object key, Object oldValue, Object newValue, Metadata metadata, long flagsBitSet);
+
+
+   /**
+    * Builds a ComputeCommand
+    * @param key key to compute if this key is absent
+    * @param mappingFunction BiFunction for the key and the value
+    * @param computeIfPresent flag to apply as computeIfPresent mode
+    * @param metadata metadata of entry
+    * @param flagsBitSet Command flags provided by cache
+    * @return a ComputeCommand
+    */
+   ComputeCommand buildComputeCommand(Object key, BiFunction mappingFunction, boolean computeIfPresent, Metadata metadata, long flagsBitSet);
+
+   /**
+    * Builds a ComputeIfAbsentCommand
+    * @param key key to compute if this key is absent
+    * @param mappingFunction mappingFunction for the key
+    * @param metadata metadata of entry
+    * @param flagsBitSet Command flags provided by cache
+    * @return a ComputeCommand
+    */
+   ComputeIfAbsentCommand buildComputeIfAbsentCommand(Object key, Function mappingFunction, Metadata metadata, long flagsBitSet);
 
    /**
     * Builds a SizeCommand
@@ -335,12 +367,12 @@ public interface CommandsFactory {
    /**
     * Builds a StateRequestCommand used for requesting transactions and locks and for starting or canceling transfer of cache entries.
     */
-   StateRequestCommand buildStateRequestCommand(StateRequestCommand.Type subtype, Address sender, int viewId, Set<Integer> segments);
+   StateRequestCommand buildStateRequestCommand(StateRequestCommand.Type subtype, Address sender, int topologyId, Set<Integer> segments);
 
    /**
     * Builds a StateResponseCommand used for pushing cache entries to another node in response to a StateRequestCommand.
     */
-   StateResponseCommand buildStateResponseCommand(Address sender, int viewId, Collection<StateChunk> stateChunks);
+   StateResponseCommand buildStateResponseCommand(Address sender, int viewId, Collection<StateChunk> stateChunks, boolean applyState, boolean pushTransfer);
 
    /**
     * Retrieves the cache name this CommandFactory is set up to construct commands for.
@@ -392,8 +424,12 @@ public interface CommandsFactory {
     *
     * @return ApplyDeltaCommand instance
     * @see ApplyDeltaCommand
+    * @deprecated since 9.1
     */
-   ApplyDeltaCommand buildApplyDeltaCommand(Object deltaAwareValueKey, Delta delta, Collection keys);
+   @Deprecated
+   default ApplyDeltaCommand buildApplyDeltaCommand(Object deltaAwareValueKey, Delta delta, Collection keys) {
+      throw new UnsupportedOperationException();
+   }
 
    /**
     * Same as {@code buildCreateCacheCommand(cacheName, cacheConfigurationName, false, 0)}.
@@ -454,7 +490,7 @@ public interface CommandsFactory {
     * @param groupName the group name.
     * @return the GetKeysInGroup created.
     */
-   GetKeysInGroupCommand buildGetKeysInGroupCommand(long flagsBitSet, String groupName);
+   GetKeysInGroupCommand buildGetKeysInGroupCommand(long flagsBitSet, Object groupName);
 
    <K> StreamRequestCommand<K> buildStreamRequestCommand(Object id, boolean parallelStream, StreamRequestCommand.Type type,
            Set<Integer> segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader, Object terminalOperation);
@@ -472,42 +508,56 @@ public interface CommandsFactory {
    <R> StreamResponseCommand<R> buildStreamResponseCommand(Object identifier, boolean complete, Set<Integer> lostSegments,
            R response);
 
-   <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(K key, Function<ReadEntryView<K, V>, R> f);
+   <K> StreamIteratorRequestCommand<K> buildStreamIteratorRequestCommand(Object id, boolean parallelStream,
+         IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader,
+         Iterable<IntermediateOperation> intOps, long batchSize);
 
-   <K, V, R> ReadOnlyManyCommand<K, V, R> buildReadOnlyManyCommand(Collection<? extends K> keys, Function<ReadEntryView<K, V>, R> f);
+   StreamIteratorNextCommand buildStreamIteratorNextCommand(Object id, long batchSize);
+
+   StreamIteratorCloseCommand buildStreamIteratorCloseCommand(Object id);
+
+   <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(K key, Function<ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
+
+   <K, V, R> ReadOnlyManyCommand<K, V, R> buildReadOnlyManyCommand(Collection<? extends K> keys, Function<ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
    <K, V> WriteOnlyKeyCommand<K, V> buildWriteOnlyKeyCommand(
-      K key, Consumer<WriteEntryView<V>> f, Params params);
+         K key, Consumer<WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
    <K, V, R> ReadWriteKeyValueCommand<K, V, R> buildReadWriteKeyValueCommand(
-      K key, V value, BiFunction<V, ReadWriteEntryView<K, V>, R> f, Params params);
+         K key, V value, BiFunction<V, ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
    <K, V, R> ReadWriteKeyCommand<K, V, R> buildReadWriteKeyCommand(
-      K key, Function<ReadWriteEntryView<K, V>, R> f, Params params);
+         K key, Function<ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
    <K, V> WriteOnlyManyEntriesCommand<K, V> buildWriteOnlyManyEntriesCommand(
-      Map<? extends K, ? extends V> entries, BiConsumer<V, WriteEntryView<V>> f, Params params);
+         Map<? extends K, ? extends V> entries, BiConsumer<V, WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
    <K, V> WriteOnlyKeyValueCommand<K, V> buildWriteOnlyKeyValueCommand(
-      K key, V value, BiConsumer<V, WriteEntryView<V>> f, Params params);
+         K key, V value, BiConsumer<V, WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
-   <K, V> WriteOnlyManyCommand<K, V> buildWriteOnlyManyCommand(Collection<? extends K> keys, Consumer<WriteEntryView<V>> f, Params params);
+   <K, V> WriteOnlyManyCommand<K, V> buildWriteOnlyManyCommand(Collection<? extends K> keys, Consumer<WriteEntryView<V>> f,
+                                                               Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
-   <K, V, R> ReadWriteManyCommand<K, V, R> buildReadWriteManyCommand(Collection<? extends K> keys, Function<ReadWriteEntryView<K, V>, R> f, Params params);
+   <K, V, R> ReadWriteManyCommand<K, V, R> buildReadWriteManyCommand(Collection<? extends K> keys, Function<ReadWriteEntryView<K, V>, R> f,
+                                                                     Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
-   <K, V, R> ReadWriteManyEntriesCommand<K, V, R> buildReadWriteManyEntriesCommand(Map<? extends K, ? extends V> entries, BiFunction<V, ReadWriteEntryView<K, V>, R> f, Params params);
+   <K, V, R> ReadWriteManyEntriesCommand<K, V, R> buildReadWriteManyEntriesCommand(Map<? extends K, ? extends V> entries, BiFunction<V, ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
-   BackupAckCommand buildBackupAckCommand(CommandInvocationId id, int topologyId);
+   BackupAckCommand buildBackupAckCommand(long id, int topologyId);
 
-   PrimaryAckCommand buildPrimaryAckCommand();
+   BackupMultiKeyAckCommand buildBackupMultiKeyAckCommand(long id, int segment, int topologyId);
 
-   BackupMultiKeyAckCommand buildBackupMultiKeyAckCommand(CommandInvocationId id, int segment, int topologyId);
+   PrimaryAckCommand buildPrimaryAckCommand(long id, boolean success, Object value, Address[] waitFor);
 
-   PrimaryMultiKeyAckCommand buildPrimaryMultiKeyAckCommand(CommandInvocationId id, int topologyId);
+   ExceptionAckCommand buildExceptionAckCommand(long id, Throwable throwable, int topologyId);
 
-   ExceptionAckCommand buildExceptionAckCommand(CommandInvocationId id, Throwable throwable, int topologyId);
+   BackupWriteRpcCommand buildBackupWriteRpcCommand(DataWriteCommand command);
 
-   BackupWriteRcpCommand buildBackupWriteRcpCommand(DataWriteCommand command);
+   BackupPutMapRpcCommand buildBackupPutMapRpcCommand(PutMapCommand command);
 
-   BackupPutMapRcpCommand buildBackupPutMapRcpCommand(PutMapCommand command);
+   InvalidateVersionsCommand buildInvalidateVersionsCommand(int topologyId, Object[] keys, int[] topologyIds, long[] versions, boolean removed);
+
+   RevokeBiasCommand buildRevokeBiasCommand(Address ackTarget, long id, int topologyId, Collection<Object> keys);
+
+   RenewBiasCommand buildRenewBiasCommand(Object[] keys);
 }

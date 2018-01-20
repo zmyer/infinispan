@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 import javax.transaction.TransactionManager;
 
@@ -16,8 +17,6 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.ImmortalCacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.container.entries.L1InternalCacheEntry;
-import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.groups.KXGrouper;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -88,7 +87,7 @@ public abstract class BaseDistFunctionalTest<K, V> extends MultipleCacheManagers
       if (INIT_CLUSTER_SIZE > 2) c3 = caches.get(2);
       if (INIT_CLUSTER_SIZE > 3) c4 = caches.get(3);
 
-      cacheAddresses = new ArrayList<Address>(INIT_CLUSTER_SIZE);
+      cacheAddresses = new ArrayList<>(INIT_CLUSTER_SIZE);
       for (Cache cache : caches) {
          EmbeddedCacheManager cacheManager = cache.getCacheManager();
          cacheAddresses.add(cacheManager.getAddress());
@@ -107,6 +106,8 @@ public abstract class BaseDistFunctionalTest<K, V> extends MultipleCacheManagers
          // we also need to use repeatable read for tests to work when we dont have reliable return values, since the
          // tests repeatedly queries changes
          configuration.locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
+      } else {
+         configuration.locking().isolationLevel(IsolationLevel.READ_COMMITTED);
       }
       if (transactional) {
          configuration.invocationBatching().enable();
@@ -187,15 +188,17 @@ public abstract class BaseDistFunctionalTest<K, V> extends MultipleCacheManagers
          DataContainer dc = c.getAdvancedCache().getDataContainer();
          InternalCacheEntry ice = dc.get(key);
          if (isOwner(c, key)) {
-            assert ice != null : "Fail on owner cache " + addressOf(c) + ": dc.get(" + key + ") returned null!";
+            assert ice != null && ice.getValue() != null : "Fail on owner cache " + addressOf(c) + ": dc.get(" + key + ") returned " + ice;
             assert ice instanceof ImmortalCacheEntry : "Fail on owner cache " + addressOf(c) + ": dc.get(" + key + ") returned " + safeType(ice);
          } else {
             if (allowL1) {
-               assert ice == null || ice instanceof L1InternalCacheEntry : "Fail on non-owner cache " + addressOf(c) + ": dc.get(" + key + ") returned " + safeType(ice);
+               assert ice == null || ice.getValue() == null || ice.isL1Entry() : "Fail on non-owner cache " + addressOf(c) + ": dc.get(" + key + ") returned " + safeType(ice);
             } else {
                // Segments no longer owned are invalidated asynchronously
-               eventuallyEquals("Fail on non-owner cache " + addressOf(c) + ": dc.get(" + key + ")",
-                     null, () -> dc.get(key));
+               eventually("Fail on non-owner cache " + addressOf(c) + ": dc.get(" + key + ")", () -> {
+                  InternalCacheEntry ice2 = dc.get(key);
+                  return ice2 == null || ice2.getValue() == null;
+               });
             }
          }
       }
@@ -208,7 +211,7 @@ public abstract class BaseDistFunctionalTest<K, V> extends MultipleCacheManagers
    protected boolean isInL1(Cache<?, ?> cache, Object key) {
       DataContainer dc = cache.getAdvancedCache().getDataContainer();
       InternalCacheEntry ice = dc.get(key);
-      return ice != null && !(ice instanceof ImmortalCacheEntry);
+      return ice != null && ice.getValue() != null && !(ice instanceof ImmortalCacheEntry);
    }
 
    protected void assertIsInL1(Cache<?, ?> cache, Object key) {
@@ -279,28 +282,34 @@ public abstract class BaseDistFunctionalTest<K, V> extends MultipleCacheManagers
       return nonOwners;
    }
 
-   protected List<Address> residentAddresses(Object key) {
-      DistributionManager dm = c1.getAdvancedCache().getComponentRegistry().getComponent(DistributionManager.class);
-      return dm.locate(key);
-   }
-
    protected DistributionManager getDistributionManager(Cache<?, ?> c) {
       return c.getAdvancedCache().getComponentRegistry().getComponent(DistributionManager.class);
    }
 
-   protected ConsistentHash getConsistentHash(Cache<?, ?> c) {
-      return getDistributionManager(c).getConsistentHash();
+   protected LocalizedCacheTopology getCacheTopology(Cache<?, ?> c) {
+      return getDistributionManager(c).getCacheTopology();
    }
 
    /**
     * Blocks and waits for a replication event on async caches
-    *
-    * @param key     key that causes the replication.  Used to determine which caches to listen on.  If null, all caches
+    *  @param key     key that causes the replication.  Used to determine which caches to listen on.  If null, all caches
     *                are checked
     * @param command command to listen for
-    * @param caches  on which this key should be invalidated
     */
-   protected void asyncWait(Object key, Class<? extends VisitableCommand> command, Cache<?, ?>... caches) {
+   protected void asyncWait(Object key, Class<? extends VisitableCommand> command) {
+      asyncWait(key, command::isInstance);
+   }
+
+   protected void asyncWait(Object key, Predicate<VisitableCommand> test) {
+      // no op.
+   }
+
+   /**
+    * Blocks and waits for a replication event on primary owners in async caches
+    * @param key     key that causes the replication. Must be non-null.
+    * @param command command to listen for
+    */
+   protected void asyncWaitOnPrimary(Object key, Class<? extends VisitableCommand> command) {
       // no op.
    }
 
@@ -315,6 +324,17 @@ public abstract class BaseDistFunctionalTest<K, V> extends MultipleCacheManagers
          blockingInterceptor.suspend(true);
          chain.removeInterceptor(blockingInterceptor.getClass());
          blockingInterceptor = chain.findInterceptorExtending(BlockingInterceptor.class);
+      }
+   }
+
+   protected MagicKey getMagicKey() {
+      switch (numOwners) {
+         case 1:
+            return new MagicKey(c1);
+         case 2:
+            return new MagicKey(c1, c2);
+         default:
+            throw new IllegalArgumentException();
       }
    }
 }

@@ -17,7 +17,7 @@ import org.infinispan.remoting.responses.Response;
 public class DefaultTopologyRunnable extends BaseBlockingRunnable {
 
    private final TopologyMode topologyMode;
-   private final int commandTopologyId;
+   protected final int commandTopologyId;
 
    public DefaultTopologyRunnable(BasePerCacheInboundInvocationHandler handler, CacheRpcCommand command, Reply reply,
                                   TopologyMode topologyMode, int commandTopologyId, boolean sync) {
@@ -67,4 +67,14 @@ public class DefaultTopologyRunnable extends BaseBlockingRunnable {
       return Math.max(commandTopologyId, 0);
    }
 
+   @Override
+   public String toString() {
+      final StringBuilder sb = new StringBuilder("DefaultTopologyRunnable{");
+      sb.append("topologyMode=").append(topologyMode);
+      sb.append(", commandTopologyId=").append(commandTopologyId);
+      sb.append(", command=").append(command);
+      sb.append(", sync=").append(sync);
+      sb.append('}');
+      return sb.toString();
+   }
 }

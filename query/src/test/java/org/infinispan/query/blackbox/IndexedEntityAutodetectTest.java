@@ -4,13 +4,12 @@ import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertTrue;
 
-import java.util.Arrays;
-import java.util.Map;
-import java.util.Set;
-
 import org.hibernate.search.engine.integration.impl.ExtendedSearchIntegrator;
 import org.hibernate.search.engine.spi.EntityIndexBinding;
+import org.hibernate.search.spi.IndexedTypeMap;
+import org.hibernate.search.spi.IndexedTypeSet;
 import org.hibernate.search.spi.SearchIntegrator;
+import org.hibernate.search.spi.impl.IndexedTypeSets;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
@@ -24,7 +23,7 @@ import org.testng.annotations.Test;
 /**
  * Tests that undeclared indexed entities are autodetected.
  *
- * TODO [anistor] remove this test in infinispan 9.0
+ * TODO [anistor] remove this test in Infinispan 10.0
  *
  * @author anistor@redhat.com
  * @since 8.2
@@ -39,7 +38,7 @@ public class IndexedEntityAutodetectTest extends LocalCacheTest {
       cfg
             .indexing()
             .index(Index.ALL)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("error_handler", "org.infinispan.query.helper.StaticTestingErrorHandler")
             .addProperty("lucene_version", "LUCENE_CURRENT");
       enhanceConfig(cfg);
@@ -56,11 +55,11 @@ public class IndexedEntityAutodetectTest extends LocalCacheTest {
       ComponentRegistry cr = cache.getAdvancedCache().getComponentRegistry();
       SearchIntegrator searchIntegrator = cr.getComponent(SearchIntegrator.class);
       assertNotNull(searchIntegrator);
-      Map<Class<?>, EntityIndexBinding> indexBindingForEntity = searchIntegrator.unwrap(ExtendedSearchIntegrator.class).getIndexBindings();
+      IndexedTypeMap<EntityIndexBinding> indexBindingForEntity = searchIntegrator.unwrap(ExtendedSearchIntegrator.class).getIndexBindings();
       assertNotNull(indexBindingForEntity);
-      Set<Class<?>> keySet = indexBindingForEntity.keySet();
+      IndexedTypeSet keySet = indexBindingForEntity.keySet();
       assertEquals(types.length, keySet.size());
-      assertTrue(keySet.containsAll(Arrays.asList(types)));
+      assertTrue(keySet.containsAll(IndexedTypeSets.fromClasses(types)));
    }
 
    @Override

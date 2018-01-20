@@ -8,7 +8,7 @@ import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
-import org.infinispan.eviction.EvictionStrategy;
+import org.infinispan.eviction.EvictionType;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.persistence.BaseStoreTest;
@@ -35,11 +35,10 @@ public class RemoteStoreTest extends BaseStoreTest {
    @Override
    protected AdvancedLoadWriteStore createStore() throws Exception {
       ConfigurationBuilder localBuilder = TestCacheManagerFactory.getDefaultCacheConfiguration(false);
-      localBuilder.eviction().maxEntries(100).strategy(EvictionStrategy.UNORDERED)
-            .expiration().wakeUpInterval(10L);
+      localBuilder.memory().evictionType(EvictionType.COUNT).size(WRITE_DELETE_BATCH_MAX_ENTRIES).expiration().wakeUpInterval(10L);
 
       GlobalConfigurationBuilder globalConfig = new GlobalConfigurationBuilder().nonClusteredDefault();
-      globalConfig.globalJmxStatistics().allowDuplicateDomains(true).defaultCacheName(REMOTE_CACHE);
+      globalConfig.globalJmxStatistics().defaultCacheName(REMOTE_CACHE);
 
       localCacheManager = TestCacheManagerFactory.createCacheManager(
             globalConfig, hotRodCacheConfiguration(localBuilder));
@@ -49,6 +48,8 @@ public class RemoteStoreTest extends BaseStoreTest {
       gcr.rewire();
       localCacheManager.getCache(REMOTE_CACHE).getAdvancedCache().getComponentRegistry().rewire();
       hrServer = HotRodClientTestingUtil.startHotRodServer(localCacheManager);
+      // In case if the server has to unmarshall the value, make sure to use the same marshaller
+      hrServer.setMarshaller(getMarshaller());
 
       ConfigurationBuilder builder = TestCacheManagerFactory
             .getDefaultCacheConfiguration(false);

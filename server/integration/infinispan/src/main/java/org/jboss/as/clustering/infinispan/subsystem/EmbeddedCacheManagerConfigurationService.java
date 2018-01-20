@@ -26,6 +26,7 @@ import java.util.Map;
 
 import javax.management.MBeanServer;
 
+import org.infinispan.globalstate.ConfigurationStorage;
 import org.infinispan.server.jgroups.spi.ChannelFactory;
 import org.jboss.modules.ModuleLoader;
 import org.jgroups.JChannel;
@@ -53,8 +54,12 @@ public class EmbeddedCacheManagerConfigurationService {
     interface GlobalStateLocationConfiguration {
         String getPersistencePath();
         String getPersistenceRelativeTo();
+        String getSharedPersistencePath();
+        String getSharedPersistenceRelativeTo();
         String getTemporaryPath();
         String getTemporaryRelativeTo();
+        ConfigurationStorage getConfigurationStorage();
+        String getConfigurationStorageClass();
     }
 
     interface Dependencies {

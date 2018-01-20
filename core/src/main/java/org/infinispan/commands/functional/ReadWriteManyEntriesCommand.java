@@ -7,15 +7,20 @@ import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 
 import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.Visitor;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.commands.functional.functions.InjectableComponent;
+import org.infinispan.commons.marshall.MarshallUtil;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.encoding.DataConversion;
+import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.functional.EntryView.ReadWriteEntryView;
 import org.infinispan.functional.impl.EntryViews;
 import org.infinispan.functional.impl.Params;
 
@@ -28,25 +33,30 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
    private Map<? extends K, ? extends V> entries;
    private BiFunction<V, ReadWriteEntryView<K, V>, R> f;
 
-   private int topologyId = -1;
    boolean isForwarded = false;
 
-   public ReadWriteManyEntriesCommand(Map<? extends K, ? extends V> entries, BiFunction<V, ReadWriteEntryView<K, V>, R> f, Params params, CommandInvocationId commandInvocationId) {
-      super(commandInvocationId);
+   public ReadWriteManyEntriesCommand(Map<? extends K, ? extends V> entries,
+                                      BiFunction<V, ReadWriteEntryView<K, V>, R> f,
+                                      Params params,
+                                      CommandInvocationId commandInvocationId,
+                                      DataConversion keyDataConversion,
+                                      DataConversion valueDataConversion,
+                                      ComponentRegistry componentRegistry) {
+      super(commandInvocationId, params, keyDataConversion, valueDataConversion);
       this.entries = entries;
       this.f = f;
-      this.params = params;
-   }
-
-   public ReadWriteManyEntriesCommand() {
+      init(componentRegistry);
    }
 
    public ReadWriteManyEntriesCommand(ReadWriteManyEntriesCommand command) {
-      this.commandInvocationId = command.commandInvocationId;
+      super(command);
       this.entries = command.entries;
       this.f = command.f;
-      this.params = command.params;
-      this.flags = command.flags;
+      this.keyDataConversion = command.getKeyDataConversion();
+      this.valueDataConversion = command.getValueDataConversion();
+   }
+
+   public ReadWriteManyEntriesCommand() {
    }
 
    public Map<? extends K, ? extends V> getEntries() {
@@ -70,23 +80,28 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
    @Override
    public void writeTo(ObjectOutput output) throws IOException {
       CommandInvocationId.writeTo(output, commandInvocationId);
-      output.writeObject(entries);
+      MarshallUtil.marshallMap(entries, output);
       output.writeObject(f);
       output.writeBoolean(isForwarded);
       Params.writeObject(output, params);
       output.writeInt(topologyId);
       output.writeLong(flags);
+      output.writeObject(keyDataConversion);
+      output.writeObject(valueDataConversion);
    }
 
    @Override
    public void readFrom(ObjectInput input) throws IOException, ClassNotFoundException {
       commandInvocationId = CommandInvocationId.readFrom(input);
-      entries = (Map<? extends K, ? extends V>) input.readObject();
+      // We use LinkedHashMap in order to guarantee the same order of iteration
+      entries = MarshallUtil.unmarshallMap(input, LinkedHashMap::new);
       f = (BiFunction<V, ReadWriteEntryView<K, V>, R>) input.readObject();
       isForwarded = input.readBoolean();
       params = Params.readObject(input);
       topologyId = input.readInt();
       flags = input.readLong();
+      keyDataConversion = (DataConversion) input.readObject();
+      valueDataConversion = (DataConversion) input.readObject();
    }
 
    public boolean isForwarded() {
@@ -103,16 +118,6 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
    }
 
    @Override
-   public int getTopologyId() {
-      return topologyId;  // TODO: Customise this generated block
-   }
-
-   @Override
-   public void setTopologyId(int topologyId) {
-      this.topologyId = topologyId;
-   }
-
-   @Override
    public Object acceptVisitor(InvocationContext ctx, Visitor visitor) throws Throwable {
       return visitor.visitReadWriteManyEntriesCommand(ctx, this);
    }
@@ -126,7 +131,8 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
          if (entry == null) {
             throw new IllegalStateException();
          }
-         R r = f.apply(v, EntryViews.readWrite(entry));
+         V decodedValue = (V) valueDataConversion.fromStorage(v);
+         R r = f.apply(decodedValue, EntryViews.readWrite(entry, keyDataConversion, valueDataConversion));
          returns.add(snapshot(r));
       });
       return returns;
@@ -157,6 +163,8 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
       sb.append("entries=").append(entries);
       sb.append(", f=").append(f.getClass().getName());
       sb.append(", isForwarded=").append(isForwarded);
+      sb.append(", keyDataConversion=").append(keyDataConversion);
+      sb.append(", valueDataConversion=").append(valueDataConversion);
       sb.append('}');
       return sb.toString();
    }
@@ -169,6 +177,16 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
 
    @Override
    public Mutation<K, V, ?> toMutation(K key) {
-      return new Mutations.ReadWriteWithValue(entries.get(key), f);
+      V valueFromStorage = (V) valueDataConversion.fromStorage(entries.get(key));
+      return new Mutations.ReadWriteWithValue(valueFromStorage, f);
+   }
+
+   @Override
+   public void init(ComponentRegistry componentRegistry) {
+      componentRegistry.wireDependencies(keyDataConversion);
+      componentRegistry.wireDependencies(valueDataConversion);
+
+      if (f instanceof InjectableComponent)
+         ((InjectableComponent) f).inject(componentRegistry);
    }
 }

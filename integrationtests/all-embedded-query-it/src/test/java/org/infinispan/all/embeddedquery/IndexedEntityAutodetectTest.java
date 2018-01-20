@@ -10,10 +10,9 @@ import org.infinispan.transaction.TransactionMode;
 import org.junit.Before;
 import org.junit.Test;
 
+// TODO [anistor] remove this test in infinispan 10.0
 /**
  * Tests that undeclared indexed entities are autodetected.
- *
- * TODO [anistor] remove this test in infinispan 9.0
  *
  * @author anistor@redhat.com
  * @since 8.2
@@ -22,7 +21,6 @@ public class IndexedEntityAutodetectTest extends LocalCacheTest {
 
    protected static EmbeddedCacheManager createCacheManager() throws Exception {
       GlobalConfigurationBuilder gcfg = new GlobalConfigurationBuilder();
-      gcfg.globalJmxStatistics().allowDuplicateDomains(true);
 
       // this configuration does not declare any indexed types on purpose, so they are autodetected
       ConfigurationBuilder cfg = new ConfigurationBuilder();
@@ -30,7 +28,7 @@ public class IndexedEntityAutodetectTest extends LocalCacheTest {
             .transactionMode(TransactionMode.TRANSACTIONAL)
             .indexing()
             .index(Index.ALL)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("error_handler", "org.infinispan.all.embeddedquery.testdomain.StaticTestingErrorHandler")
             .addProperty("lucene_version", "LUCENE_CURRENT");
 

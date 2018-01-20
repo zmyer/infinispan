@@ -14,7 +14,6 @@ import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.container.DataContainer;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
@@ -25,7 +24,7 @@ import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.ControlledConsistentHashFactory;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.logging.Log;
@@ -59,19 +58,17 @@ public class DistStateTransferOnLeaveConsistencyTest extends MultipleCacheManage
    protected ConfigurationBuilder createConfigurationBuilder(boolean isOptimistic) {
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true, true);
       builder.transaction().transactionMode(TransactionMode.TRANSACTIONAL)
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
-            .syncCommitPhase(true).syncRollbackPhase(true);
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup());
 
       if (isOptimistic) {
          builder.transaction().lockingMode(LockingMode.OPTIMISTIC)
-               .locking().writeSkewCheck(true).isolationLevel(IsolationLevel.REPEATABLE_READ)
-               .versioning().enable().scheme(VersioningScheme.SIMPLE);
+               .locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
       } else {
          builder.transaction().lockingMode(LockingMode.PESSIMISTIC);
       }
 
       // Make it impossible for a key to be owned by nodes 0 and 2
-      consistentHashFactory = new ControlledConsistentHashFactory(new int[]{0, 1}, new int[]{1, 2});
+      consistentHashFactory = new ControlledConsistentHashFactory.Default(new int[][]{{0, 1}, {1, 2}});
       builder.clustering().hash().numOwners(2).numSegments(2).consistentHashFactory(consistentHashFactory);
       builder.clustering().stateTransfer().fetchInMemoryState(true).awaitInitialTransfer(false);
       builder.clustering().l1().disable().locking().lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis());
@@ -185,7 +182,7 @@ public class DistStateTransferOnLeaveConsistencyTest extends MultipleCacheManage
       }, 0);
 
       // The indexes will only be used after node 1 is killed
-      consistentHashFactory.setOwnerIndexes(new int[]{0, 1}, new int[]{1, 0});
+      consistentHashFactory.setOwnerIndexes(new int[][]{{0, 1}, {1, 0}});
       log.info("Killing node 1 ..");
       TestingUtil.killCacheManagers(manager(1));
       log.info("Node 1 killed");
@@ -224,7 +221,7 @@ public class DistStateTransferOnLeaveConsistencyTest extends MultipleCacheManage
                cache(0).put(i, "after_st_" + i);
             }
          } else if (op == Operation.PUT_MAP) {
-            Map<Integer, String> toPut = new HashMap<Integer, String>();
+            Map<Integer, String> toPut = new HashMap<>();
             for (int i = 0; i < numKeys; i++) {
                toPut.put(i, "after_st_" + i);
             }
@@ -249,7 +246,7 @@ public class DistStateTransferOnLeaveConsistencyTest extends MultipleCacheManage
       applyStateProceedLatch.countDown();
 
       // wait for apply state to end
-      TestingUtil.waitForRehashToComplete(cache(0), cache(2));
+      TestingUtil.waitForNoRebalance(cache(0), cache(2));
 
       // at this point state transfer is fully done
       log.infof("Data container of NodeA has %d keys: %s", dc0.size(), dc0.entrySet());

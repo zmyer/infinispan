@@ -25,13 +25,13 @@ import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.interceptors.BaseAsyncInterceptor;
 import org.infinispan.interceptors.InvocationExceptionFunction;
-import org.infinispan.interceptors.totalorder.RetryPrepareException;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.CacheContainer;
 import org.infinispan.statetransfer.OutdatedTopologyException;
 import org.infinispan.transaction.WriteSkewException;
 import org.infinispan.transaction.impl.AbstractCacheTransaction;
 import org.infinispan.transaction.impl.TransactionTable;
+import org.infinispan.util.UserRaisedFunctionalException;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -41,25 +41,28 @@ import org.infinispan.util.logging.LogFactory;
  * @since 9.0
  */
 public class InvocationContextInterceptor extends BaseAsyncInterceptor {
-
-   private ComponentRegistry componentRegistry;
-   private TransactionTable txTable;
-
    private static final Log log = LogFactory.getLog(InvocationContextInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
+
+   @Inject private ComponentRegistry componentRegistry;
+   @Inject private TransactionTable txTable;
+
    private volatile boolean shuttingDown = false;
 
-   private final InvocationExceptionFunction suppressExceptionsHandler = new InvocationExceptionFunction() {
-      @Override
-      public Object apply(InvocationContext rCtx, VisitableCommand rCommand, Throwable throwable) throws Throwable {
-         if (throwable instanceof InvalidCacheUsageException || throwable instanceof InterruptedException) {
-            throw throwable;
+   private final InvocationExceptionFunction suppressExceptionsHandler = (rCtx, rCommand, throwable) -> {
+      if (throwable instanceof InvalidCacheUsageException || throwable instanceof InterruptedException) {
+         throw throwable;
+      } if (throwable instanceof UserRaisedFunctionalException) {
+         if (rCtx.isOriginLocal()) {
+            throw throwable.getCause();
          } else {
-            rethrowException(rCtx, rCommand, throwable);
+            throw throwable;
          }
-         // Ignore the exception
-         return rCommand instanceof LockControlCommand ? Boolean.FALSE : null;
+      } else {
+         rethrowException(rCtx, rCommand, throwable);
       }
+      // Ignore the exception
+      return rCommand instanceof LockControlCommand ? Boolean.FALSE : null;
    };
 
    @Start(priority = 1)
@@ -71,13 +74,6 @@ public class InvocationContextInterceptor extends BaseAsyncInterceptor {
    private void setStopStatus() {
       shuttingDown = true;
    }
-
-   @Inject
-   public void init(ComponentRegistry componentRegistry, TransactionTable txTable) {
-      this.componentRegistry = componentRegistry;
-      this.txTable = txTable;
-   }
-
 
    @Override
    public Object visitCommand(InvocationContext ctx, VisitableCommand command) throws Throwable {
@@ -125,10 +121,7 @@ public class InvocationContextInterceptor extends BaseAsyncInterceptor {
             // We log this as DEBUG rather than ERROR - see ISPN-2076
             log.debug("Exception executing call", th);
          } else if (th instanceof OutdatedTopologyException) {
-            log.outdatedTopology(th);
-         } else if (th instanceof RetryPrepareException) {
-            log.debugf("Retrying total order prepare command for transaction %s, affected keys %s",
-               ctx.getLockOwner(), toStr(extractWrittenKeys(ctx, command)));
+            if (trace) log.tracef("Topology changed, retrying command: %s", th);
          } else {
             Collection<?> affectedKeys = extractWrittenKeys(ctx, command);
             log.executionError(command.getClass().getSimpleName(), toStr(affectedKeys), th);

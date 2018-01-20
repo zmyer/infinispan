@@ -4,6 +4,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -14,9 +15,11 @@ import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.entries.RepeatableReadEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.topology.CacheTopology;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -34,7 +37,6 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
    private static final boolean trace = log.isTraceEnabled();
 
    private Set<Address> remoteLockedNodes;
-   private Set<Object> readKeys = null;
 
    private final Transaction transaction;
 
@@ -153,13 +155,20 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
 
    @Override
    public void addReadKey(Object key) {
-      if (readKeys == null) readKeys = new HashSet<>(2);
-      readKeys.add(key);
+      CacheEntry entry = lookupEntry(key);
+      if (entry instanceof RepeatableReadEntry) {
+         ((RepeatableReadEntry) entry).setRead();
+      }
    }
 
    @Override
    public boolean keyRead(Object key) {
-      return readKeys != null && readKeys.contains(key);
+      CacheEntry entry = lookupEntry(key);
+      if (entry instanceof RepeatableReadEntry) {
+         return ((RepeatableReadEntry) entry).isRead();
+      } else {
+         return false;
+      }
    }
 
    public void setStateTransferFlag(Flag stateTransferFlag) {
@@ -192,7 +201,9 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
     * this method returns the reunion between 'recipients' and {@link #getRemoteLocksAcquired()} from which it discards
     * the members that left.
     */
-   public Collection<Address> getCommitNodes(Collection<Address> recipients, int currentTopologyId, Collection<Address> members) {
+   public Collection<Address> getCommitNodes(Collection<Address> recipients, CacheTopology cacheTopology) {
+      int currentTopologyId = cacheTopology.getTopologyId();
+      List<Address> members = cacheTopology.getMembers();
       if (trace) log.tracef("getCommitNodes recipients=%s, currentTopologyId=%s, members=%s, txTopologyId=%s",
                             recipients, currentTopologyId, members, getTopologyId());
       if (hasModification(ClearCommand.class)) {
@@ -201,12 +212,12 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
       if (recipients == null) {
          return null;
       }
-      if (getTopologyId() == currentTopologyId) {
-         return recipients;
-      }
+      // Include all the nodes we sent a LockControlCommand to and are not in the recipients list now
+      // either because the topology changed, or because the lock failed.
+      // Also include nodes that are no longer in the cluster, so if JGroups retransmits a lock/prepare command
+      // after a merge, it also retransmits the commit/rollback.
       Set<Address> allRecipients = new HashSet<>(getRemoteLocksAcquired());
       allRecipients.addAll(recipients);
-      allRecipients.retainAll(members);
       if (trace) log.tracef("The merged list of nodes to send commit/rollback is %s", allRecipients);
       return allRecipients;
    }

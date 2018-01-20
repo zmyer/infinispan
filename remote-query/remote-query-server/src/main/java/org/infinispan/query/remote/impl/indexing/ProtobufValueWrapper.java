@@ -7,23 +7,32 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Set;
 
+import org.hibernate.search.spi.IndexedTypeIdentifier;
+import org.hibernate.search.spi.impl.PojoIndexedTypeIdentifier;
 import org.infinispan.commons.io.UnsignedNumeric;
 import org.infinispan.commons.marshall.AbstractExternalizer;
+import org.infinispan.commons.marshall.WrappedBytes;
+import org.infinispan.protostream.descriptors.Descriptor;
 import org.infinispan.query.remote.impl.ExternalizerIds;
 
 /**
- * This is used to wrap binary values encoded with Protocol Buffers. ProtobufValueWrapperFieldBridge is used as a
- * class bridge to allow indexing of the binary payload.
+ * This is used to wrap binary values encoded with Protocol Buffers. {@link ProtobufValueWrapperFieldBridge} is used as
+ * a class bridge to allow indexing of the binary payload.
  *
  * @author anistor@redhat.com
  * @since 6.0
  */
-public final class ProtobufValueWrapper {
+public final class ProtobufValueWrapper implements WrappedBytes {
+
+   public static final IndexedTypeIdentifier INDEXING_TYPE = PojoIndexedTypeIdentifier.convertFromLegacy(ProtobufValueWrapper.class);
 
    // The protobuf encoded payload
    private final byte[] binary;
 
    private int hashCode = 0;
+
+   // The Descriptor of the message (if it's a Message and not a primitive value). Transient field!
+   private Descriptor messageDescriptor;
 
    public ProtobufValueWrapper(byte[] binary) {
       if (binary == null) {
@@ -34,6 +43,14 @@ public final class ProtobufValueWrapper {
 
    public byte[] getBinary() {
       return binary;
+   }
+
+   public Descriptor getMessageDescriptor() {
+      return messageDescriptor;
+   }
+
+   public void setMessageDescriptor(Descriptor messageDescriptor) {
+      this.messageDescriptor = messageDescriptor;
    }
 
    @Override
@@ -70,6 +87,26 @@ public final class ProtobufValueWrapper {
       }
       sb.append("])");
       return sb.toString();
+   }
+
+   @Override
+   public byte[] getBytes() {
+      return binary;
+   }
+
+   @Override
+   public int backArrayOffset() {
+      return 0;
+   }
+
+   @Override
+   public int getLength() {
+      return binary.length;
+   }
+
+   @Override
+   public byte getByte(int offset) {
+      return binary[offset];
    }
 
    public static final class Externalizer extends AbstractExternalizer<ProtobufValueWrapper> {

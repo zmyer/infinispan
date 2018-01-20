@@ -4,8 +4,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-distribution</artifactId>
    <name>Infinispan Distribution</name>
@@ -13,103 +13,101 @@
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-embedded</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-embedded-query</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cli</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-remote</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-rest</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-core</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-memcached</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-rest</artifactId>
-         <classifier>classes</classifier>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-websocket</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-spring4-embedded</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-spring4-remote</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-tools</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-tree</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-extended-statistics</artifactId>
          <version>${project.version}</version>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-javadoc-embedded</artifactId>
          <version>${project.version}</version>
          <classifier>javadoc</classifier>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-javadoc-remote</artifactId>
          <version>${project.version}</version>
          <classifier>javadoc</classifier>
       </dependency>
-
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-javadoc-all</artifactId>
          <version>${project.version}</version>
          <classifier>javadoc</classifier>
@@ -133,9 +131,108 @@
       <plugins>
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-resources-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>copy-licenses-xml</id>
+                  <phase>prepare-package</phase>
+                  <goals>
+                     <goal>copy-resources</goal>
+                  </goals>
+                  <configuration>
+                     <outputDirectory>${project.build.directory}/docs/licenses</outputDirectory>
+                     <resources>
+                        <resource>
+                           <directory>${project.basedir}/src/main/resources/template</directory>
+                           <includes>
+                              <include>licenses.xml</include>
+                              <include>licenses.css</include>
+                           </includes>
+                           <filtering>false</filtering>
+                        </resource>
+                        <resource>
+                           <directory>${project.basedir}/src/main/resources/licenses</directory>
+                           <includes>
+                              <include>*</include>
+                           </includes>
+                           <filtering>false</filtering>
+                        </resource>
+                     </resources>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <!-- Collect licenses -->
+         <plugin>
+            <groupId>org.wildfly.maven.plugins</groupId>
+            <artifactId>licenses-plugin</artifactId>
+            <version>1.0.0</version>
+            <inherited>false</inherited>
+            <executions>
+               <execution>
+                  <id>update-licenses-xml</id>
+                  <goals>
+                     <goal>insert-versions</goal>
+                  </goals>
+                  <phase>prepare-package</phase>
+                  <configuration>
+                     <sortByGroupIdAndArtifactId>true</sortByGroupIdAndArtifactId>
+                     <licensesOutputFile>${project.build.directory}/docs/licenses/licenses.xml</licensesOutputFile>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <!-- Generate license file -->
+         <!-- Create HTML (parameters: product, version) -->
+         <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>xml-maven-plugin</artifactId>
+            <version>1.0.1</version>
+            <inherited>false</inherited>
+            <executions>
+               <execution>
+                  <id>generate-licenses-html</id>
+                  <goals>
+                     <goal>transform</goal>
+                  </goals>
+                  <phase>prepare-package</phase>
+                  <configuration>
+                     <transformationSets>
+                        <transformationSet>
+                           <dir>${project.build.directory}/docs/licenses</dir>
+                           <includes>
+                              <include>licenses.xml</include>
+                           </includes>
+                           <stylesheet>${project.basedir}/src/main/resources/template/licenses.xsl</stylesheet>
+                           <outputDir>${project.build.directory}/docs/licenses</outputDir>
+                           <fileMappers>
+                              <fileMapper
+                                      implementation="org.codehaus.plexus.components.io.filemappers.FileExtensionMapper">
+                                 <targetExtension>.html</targetExtension>
+                              </fileMapper>
+                           </fileMappers>
+                           <parameters>
+                              <parameter>
+                                 <name>product</name>
+                                 <value>${project.name}</value>
+                              </parameter>
+                              <parameter>
+                                 <name>version</name>
+                                 <value>${project.version}</value>
+                              </parameter>
+                           </parameters>
+                        </transformationSet>
+                     </transformationSets>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-antrun-plugin</artifactId>
             <executions>
                <execution>
+                  <!-- Build the Schema documentation -->
                   <id>xsdocgen</id>
                   <phase>package</phase>
                   <goals>
@@ -147,6 +244,7 @@
                         <echo message="Base dir: ${basedir}" />
                         <path id="xsd.fileset.path">
                            <fileset casesensitive="yes" dir="${basedir}/..">
+                              <!-- make sure core comes first -->
                               <include name="core/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
                               <include name="persistence/*/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
                               <include name="spring/spring/src/main/resources/org/infinispan/spring/config/*-${infinispan.core.schema.version}.xsd" />
@@ -237,7 +335,7 @@
                <outputDirectory>${buildDirectory}/distribution</outputDirectory>
                <workDirectory>${buildDirectory}/assembly/work</workDirectory>
 
-
+               <!-- Do not attach ZIP files to the Maven repository -->
                <attach>false</attach>
             </configuration>
          </plugin>

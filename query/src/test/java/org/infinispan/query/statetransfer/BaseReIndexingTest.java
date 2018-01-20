@@ -38,7 +38,7 @@ public abstract class BaseReIndexingTest extends MultipleCacheManagersTest {
 
       builder.indexing().index(Index.ALL)
             .addIndexedEntity(Person.class)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT");
 
       configureCache(builder);
@@ -97,7 +97,7 @@ public abstract class BaseReIndexingTest extends MultipleCacheManagersTest {
          public void call() throws Exception {
             // New node joining
             Cache<String, Person> newCache = cm.getCache();
-            TestingUtil.waitForRehashToComplete(caches().get(0), caches().get(1), newCache);
+            TestingUtil.waitForNoRebalance(caches().get(0), caches().get(1), newCache);
 
             // Verify state transfer
             int size = newCache.size();

@@ -3,6 +3,7 @@ package org.infinispan.it.osgi.persistence.jpa;
 import static org.infinispan.it.osgi.util.IspnKarafOptions.perSuiteOptions;
 import static org.ops4j.pax.exam.CoreOptions.options;
 
+import org.infinispan.it.osgi.util.CustomPaxExamRunner;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.fwk.TestResourceTracker;
 import org.junit.After;
@@ -12,11 +13,10 @@ import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 import org.ops4j.pax.exam.Configuration;
 import org.ops4j.pax.exam.Option;
-import org.ops4j.pax.exam.junit.PaxExam;
 import org.ops4j.pax.exam.spi.reactors.ExamReactorStrategy;
 import org.ops4j.pax.exam.spi.reactors.PerSuite;
 
-@RunWith(PaxExam.class)
+@RunWith(CustomPaxExamRunner.class)
 @ExamReactorStrategy(PerSuite.class)
 @Category(PerSuite.class)
 public class JpaStoreVehicleEntityTest extends org.infinispan.persistence.jpa.JpaStoreVehicleEntityTest {

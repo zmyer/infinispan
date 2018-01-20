@@ -12,10 +12,13 @@ import java.util.function.Function;
 
 import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.Visitor;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.commands.functional.functions.InjectableComponent;
 import org.infinispan.commons.marshall.MarshallUtil;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.encoding.DataConversion;
+import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.functional.EntryView.ReadWriteEntryView;
 import org.infinispan.functional.impl.EntryViews;
 import org.infinispan.functional.impl.Params;
 
@@ -28,22 +31,26 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
    private Collection<? extends K> keys;
    private Function<ReadWriteEntryView<K, V>, R> f;
 
-   private int topologyId = -1;
    boolean isForwarded = false;
 
-   public ReadWriteManyCommand(Collection<? extends K> keys, Function<ReadWriteEntryView<K, V>, R> f, Params params, CommandInvocationId commandInvocationId) {
-      super(commandInvocationId);
+   public ReadWriteManyCommand(Collection<? extends K> keys,
+                               Function<ReadWriteEntryView<K, V>, R> f, Params params,
+                               CommandInvocationId commandInvocationId,
+                               DataConversion keyDataConversion,
+                               DataConversion valueDataConversion,
+                               ComponentRegistry componentRegistry) {
+      super(commandInvocationId, params, keyDataConversion, valueDataConversion);
       this.keys = keys;
       this.f = f;
-      this.params = params;
+      init(componentRegistry);
    }
 
    public ReadWriteManyCommand(ReadWriteManyCommand command) {
-      this.commandInvocationId = command.commandInvocationId;
+      super(command);
       this.keys = command.keys;
       this.f = command.f;
-      this.params = command.params;
-      this.flags = command.flags;
+      this.keyDataConversion = command.keyDataConversion;
+      this.valueDataConversion = command.valueDataConversion;
    }
 
    public ReadWriteManyCommand() {
@@ -72,6 +79,8 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
       Params.writeObject(output, params);
       output.writeInt(topologyId);
       output.writeLong(flags);
+      output.writeObject(keyDataConversion);
+      output.writeObject(valueDataConversion);
    }
 
    @Override
@@ -83,6 +92,8 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
       params = Params.readObject(input);
       topologyId = input.readInt();
       flags = input.readLong();
+      keyDataConversion = (DataConversion) input.readObject();
+      valueDataConversion = (DataConversion) input.readObject();
    }
 
    public boolean isForwarded() {
@@ -96,16 +107,6 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
    @Override
    public boolean isReturnValueExpected() {
       return true;
-   }
-
-   @Override
-   public int getTopologyId() {
-      return topologyId;
-   }
-
-   @Override
-   public void setTopologyId(int topologyId) {
-      this.topologyId = topologyId;
    }
 
    @Override
@@ -125,7 +126,7 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
 
          // Could be that the key is not local, 'null' is how this is signalled
          if (entry != null) {
-            R r = f.apply(EntryViews.readWrite(entry));
+            R r = f.apply(EntryViews.readWrite(entry, keyDataConversion, valueDataConversion));
             returns.add(snapshot(r));
          }
       });
@@ -135,10 +136,6 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
    @Override
    public Collection<?> getAffectedKeys() {
       return keys;
-   }
-
-   @Override
-   public void updateStatusFromRemoteResponse(Object remoteResponse) {
    }
 
    @Override
@@ -152,6 +149,8 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
       sb.append("keys=").append(keys);
       sb.append(", f=").append(f);
       sb.append(", isForwarded=").append(isForwarded);
+      sb.append(", keyDataConversion=").append(keyDataConversion);
+      sb.append(", valueDataConversion=").append(valueDataConversion);
       sb.append('}');
       return sb.toString();
    }
@@ -165,5 +164,14 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
    @Override
    public Mutation toMutation(K key) {
       return new Mutations.ReadWrite<>(f);
+   }
+
+   @Override
+   public void init(ComponentRegistry componentRegistry) {
+      componentRegistry.wireDependencies(keyDataConversion);
+      componentRegistry.wireDependencies(valueDataConversion);
+      if (f instanceof InjectableComponent) {
+         ((InjectableComponent) f).inject(componentRegistry);
+      }
    }
 }

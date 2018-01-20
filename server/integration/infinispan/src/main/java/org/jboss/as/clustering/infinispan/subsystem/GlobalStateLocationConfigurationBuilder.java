@@ -1,5 +1,6 @@
 package org.jboss.as.clustering.infinispan.subsystem;
 
+import org.infinispan.globalstate.ConfigurationStorage;
 import org.jboss.as.clustering.infinispan.subsystem.EmbeddedCacheManagerConfigurationService.GlobalStateLocationConfiguration;
 import org.jboss.msc.value.Value;
 
@@ -12,8 +13,12 @@ import org.jboss.msc.value.Value;
 public class GlobalStateLocationConfigurationBuilder implements Value<GlobalStateLocationConfiguration>, GlobalStateLocationConfiguration {
     private String persistencePath;
     private String persistenceRelativeTo;
+    private String sharedPersistencePath;
+    private String sharedPersistenceRelativeTo;
     private String temporaryPath;
     private String temporaryRelativeTo;
+    private ConfigurationStorage configurationStorage;
+    private String configurationStorageClass;
 
     @Override
     public String getPersistencePath() {
@@ -35,6 +40,26 @@ public class GlobalStateLocationConfigurationBuilder implements Value<GlobalStat
         return this;
     }
 
+    @Override
+    public String getSharedPersistencePath() {
+        return sharedPersistencePath;
+    }
+
+    public GlobalStateLocationConfigurationBuilder setSharedPersistencePath(String path) {
+        this.sharedPersistencePath = path;
+        return this;
+    }
+
+    @Override
+    public String getSharedPersistenceRelativeTo() {
+        return sharedPersistenceRelativeTo;
+    }
+
+    public GlobalStateLocationConfigurationBuilder setSharedPersistenceRelativeTo(String relativeTo) {
+        this.sharedPersistenceRelativeTo = relativeTo;
+        return this;
+    }
+
     public GlobalStateLocationConfigurationBuilder setTemporaryPath(String path) {
         this.temporaryPath = path;
         return this;
@@ -53,6 +78,26 @@ public class GlobalStateLocationConfigurationBuilder implements Value<GlobalStat
     @Override
     public String getTemporaryRelativeTo() {
         return temporaryRelativeTo;
+    }
+
+    public GlobalStateLocationConfigurationBuilder setConfigurationStorage(ConfigurationStorage configurationStorage) {
+        this.configurationStorage = configurationStorage;
+        return this;
+    }
+
+    @Override
+    public ConfigurationStorage getConfigurationStorage() {
+        return configurationStorage;
+    }
+
+    public GlobalStateLocationConfigurationBuilder setConfigurationStorageClass(String configurationStorageClass) {
+        this.configurationStorageClass = configurationStorageClass;
+        return this;
+    }
+
+    @Override
+    public String getConfigurationStorageClass() {
+        return configurationStorageClass;
     }
 
     @Override

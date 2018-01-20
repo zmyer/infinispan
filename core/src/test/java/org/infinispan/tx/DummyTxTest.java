@@ -3,6 +3,7 @@ package org.infinispan.tx;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 
+import java.lang.invoke.MethodHandles;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -10,12 +11,11 @@ import javax.transaction.RollbackException;
 import javax.transaction.SystemException;
 
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
-import org.infinispan.util.concurrent.IsolationLevel;
+import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
@@ -29,16 +29,14 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "tx.DummyTxTest")
 public class DummyTxTest extends SingleCacheManagerTest {
 
-   protected final Log log = LogFactory.getLog(getClass());
+   protected static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
    protected EmbeddedCacheManager createCacheManager() throws Exception {
       EmbeddedCacheManager cm = TestCacheManagerFactory.createCacheManager(false);  // also try this test with 'true' so you can tell the difference between DummyTransactionManager and JBoss TM
 
       ConfigurationBuilder cb = new ConfigurationBuilder();
-      cb.clustering().invocationBatching().enable()
-            .versioning().enable().scheme(VersioningScheme.SIMPLE)
-            .locking().lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis())
-            .writeSkewCheck(true).isolationLevel(IsolationLevel.REPEATABLE_READ);
+      cb.transaction().transactionMode(TransactionMode.TRANSACTIONAL) //default to write-skew
+            .locking().lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis());
 
       cm.defineConfiguration("test", cb.build());
       cache = cm.getCache("test");

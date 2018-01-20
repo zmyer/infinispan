@@ -13,7 +13,6 @@ import javax.transaction.TransactionManager;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.LockingMode;
@@ -23,8 +22,6 @@ import org.testng.AssertJUnit;
 import org.testng.annotations.Test;
 
 /**
- * {@link org.infinispan.atomic.impl.AtomicHashMap} test with write skew check enabled in a replicated cluster.
- *
  * @author Pedro Ruivo
  * @since 7.0
  */
@@ -105,9 +102,8 @@ public class ReplWriteSkewAtomicMapAPITest extends RepeatableReadAtomicMapAPITes
             .transactionMode(TransactionMode.TRANSACTIONAL)
             .lockingMode(LockingMode.OPTIMISTIC)
             .locking().lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis())
-            .isolationLevel(IsolationLevel.REPEATABLE_READ).writeSkewCheck(true)
-            .versioning().enable().scheme(VersioningScheme.SIMPLE)
-            .clustering().hash().numOwners(2)
+            .isolationLevel(IsolationLevel.REPEATABLE_READ)
+            .clustering().hash().numOwners(2).groups().enabled()
             .stateTransfer().fetchInMemoryState(false);
       return configurationBuilder;
    }

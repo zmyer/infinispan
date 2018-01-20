@@ -6,12 +6,20 @@ package org.infinispan.configuration.cache;
  * @author Paul Ferraro
  */
 public enum Index {
-   NONE, LOCAL, ALL, PRIMARY_OWNER;
+   NONE,
+   /**
+    * Use PRIMARY_OWNER instead
+    * @deprecated since 9.1
+    */
+   @Deprecated LOCAL,
+   ALL,
+   PRIMARY_OWNER;
 
    public boolean isEnabled() {
       return this != NONE;
    }
 
+   @Deprecated
    public boolean isLocalOnly() {
       return this == LOCAL;
    }

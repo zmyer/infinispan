@@ -8,6 +8,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commons.executors.BlockingThreadPoolExecutorFactory;
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
@@ -24,7 +25,7 @@ import org.testng.annotations.Test;
  * @author wburns
  * @since 7.2
  */
-@Test(groups = "stress", testName = "commands.PutMapCommandStressTest")
+@Test(groups = "stress", testName = "commands.PutMapCommandStressTest", timeOut = 15*60*1000)
 public class PutMapCommandStressTest extends StressTest {
    protected final static int NUM_OWNERS = 3;
    protected final static int CACHE_COUNT = 6;
@@ -37,6 +38,8 @@ public class PutMapCommandStressTest extends StressTest {
       return new Object[] {
          new PutMapCommandStressTest().cacheMode(CacheMode.DIST_SYNC).transactional(false),
          new PutMapCommandStressTest().cacheMode(CacheMode.DIST_SYNC).transactional(true),
+         new PutMapCommandStressTest().cacheMode(CacheMode.SCATTERED_SYNC).transactional(false).biasAcquisition(BiasAcquisition.NEVER),
+         new PutMapCommandStressTest().cacheMode(CacheMode.SCATTERED_SYNC).transactional(false).biasAcquisition(BiasAcquisition.ON_WRITE),
       };
    }
 
@@ -44,12 +47,17 @@ public class PutMapCommandStressTest extends StressTest {
    protected void createCacheManagers() throws Throwable {
       builderUsed = new ConfigurationBuilder();
       builderUsed.clustering().cacheMode(cacheMode);
-      builderUsed.clustering().hash().numOwners(NUM_OWNERS);
+      if (!cacheMode.isScattered()) {
+         builderUsed.clustering().hash().numOwners(NUM_OWNERS);
+      }
       builderUsed.clustering().stateTransfer().chunkSize(25000);
       // This is increased just for the put all command when doing full tracing
       builderUsed.clustering().remoteTimeout(12000);
       if (transactional) {
          builderUsed.transaction().transactionMode(TransactionMode.TRANSACTIONAL);
+      }
+      if (biasAcquisition != null) {
+         builderUsed.clustering().biasAcquisition(biasAcquisition);
       }
       createClusteredCaches(CACHE_COUNT, CACHE_NAME, builderUsed);
    }
@@ -113,7 +121,7 @@ public class PutMapCommandStressTest extends StressTest {
 
       // TODO: need to figure out code to properly test having a node dying constantly
       // Then spawn a thread that just constantly kills the last cache and recreates over and over again
-      futures.add(forkRestartingThread());
+      futures.add(forkRestartingThread(CACHE_COUNT));
       waitAndFinish(futures, 1, TimeUnit.MINUTES);
    }
 }

@@ -16,7 +16,12 @@ import org.hamcrest.Description;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.distribution.DistributionInfo;
+import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.MagicKey;
+import org.infinispan.globalstate.NoOpGlobalConfigurationManager;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.statetransfer.StateConsumer;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -66,6 +71,11 @@ public class WriteOperationDuringLeaverTest extends MultipleCacheManagersTest {
       createClusteredCaches(NUMBER_NODES, builder);
    }
 
+   @Override
+   protected void amendCacheManagerBeforeStart(EmbeddedCacheManager cm) {
+      NoOpGlobalConfigurationManager.amendCacheManager(cm);
+   }
+
    private void doTest(Operation operation, boolean init) throws TimeoutException, InterruptedException {
       final MagicKey key = new MagicKey(cache(1), cache(2));
       if (init) {
@@ -95,10 +105,11 @@ public class WriteOperationDuringLeaverTest extends MultipleCacheManagersTest {
       stateSequencer.enter("st1:block", 10, TimeUnit.SECONDS);
 
       //check if we are in the correct state
-      CacheTopology cacheTopology = TestingUtil.extractComponent(cache(0), StateConsumer.class).getCacheTopology();
-      assertFalse(cacheTopology.getReadConsistentHash().isKeyLocalToNode(address(0), key));
-      assertTrue(cacheTopology.getWriteConsistentHash().isKeyLocalToNode(address(0), key));
-      assertEquals(cacheTopology.getWriteConsistentHash().locatePrimaryOwner(key), address(1));
+      LocalizedCacheTopology cacheTopology = TestingUtil.extractComponent(cache(0), DistributionManager.class).getCacheTopology();
+      DistributionInfo distributionInfo = cacheTopology.getDistribution(key);
+      assertFalse(distributionInfo.isReadOwner());
+      assertTrue(distributionInfo.isWriteOwner());
+      assertEquals(address(1), distributionInfo.primary());
 
       operation.put(key, "v2", cache(1));
 

@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Stream;
@@ -16,12 +17,15 @@ import org.infinispan.CacheSet;
 import org.infinispan.cache.impl.AbstractDelegatingCache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.equivalence.AnyEquivalence;
-import org.infinispan.commons.equivalence.EquivalentHashSet;
+import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
+import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
@@ -30,10 +34,11 @@ import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.annotation.DataRehashed;
 import org.infinispan.notifications.cachelistener.event.DataRehashedEvent;
+import org.infinispan.remoting.responses.ValidResponse;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.statetransfer.StateTransferManager;
-import org.infinispan.topology.CacheTopology;
+import org.infinispan.remoting.transport.impl.SingleResponseCollector;
+import org.infinispan.stream.impl.intops.IntermediateOperation;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -51,12 +56,14 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
 
    private AdvancedCache<K, V> cache;
    private ComponentRegistry registry;
-   private StateTransferManager stm;
+   private DistributionManager dm;
    private RpcManager rpc;
    private CommandsFactory factory;
    private boolean hasLoader;
+   private IteratorHandler iteratorHandler;
 
    private Address localAddress;
+   private CacheMode cacheMode;
 
    private final ConcurrentMap<Object, SegmentListener> changeListener = CollectionFactory.makeConcurrentMap();
    private ByteString cacheName;
@@ -69,7 +76,7 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
       SegmentListener(Set<Integer> segments, SegmentAwareOperation op) {
          this.segments = new HashSet<>(segments);
          this.op = op;
-         this.segmentsLost = new HashSet<>();
+         this.segmentsLost = Collections.synchronizedSet(new HashSet<>());
       }
 
       public void localSegments(Set<Integer> localSegments) {
@@ -103,24 +110,26 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
    }
 
    @Inject
-   public void inject(Cache<K, V> cache, ComponentRegistry registry, StateTransferManager stm, RpcManager rpc,
-           Configuration configuration, CommandsFactory factory) {
+   public void inject(Cache<K, V> cache, ComponentRegistry registry, DistributionManager dm, RpcManager rpc,
+           Configuration configuration, CommandsFactory factory, IteratorHandler iterationHandler) {
       // We need to unwrap the cache as a local stream should only deal with BOXED values and obviously only
       // with local entries.  Any mappings will be provided by the originator node in their intermediate operation
       // stack in the operation itself.
       this.cache = AbstractDelegatingCache.unwrapCache(cache).getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL);
       this.cacheName = ByteString.fromString(cache.getName());
       this.registry = registry;
-      this.stm = stm;
+      this.dm = dm;
       this.rpc = rpc;
       this.factory = factory;
       this.hasLoader = configuration.persistence().usingStores();
+      this.iteratorHandler = iterationHandler;
    }
 
    @Start
    public void start() {
       localAddress = rpc.getAddress();
       cache.addListener(this);
+      cacheMode = cache.getCacheConfiguration().clustering().cacheMode();
    }
 
    /**
@@ -181,7 +190,11 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
            Set<Integer> segments, Set<K> keysToInclude, Set<K> keysToExclude) {
       Stream<CacheEntry<K, V>> stream = (parallelStream ? cacheEntrySet.parallelStream() : cacheEntrySet.stream())
               .filterKeys(keysToInclude).filterKeySegments(segments);
+      if (cacheMode.isScattered()) {
+         stream = stream.filter(entry -> entry.getValue() != null);
+      }
       if (!keysToExclude.isEmpty()) {
+         log.warn("Added exclude filter");
          return stream.filter(e -> !keysToExclude.contains(e.getKey()));
       }
       return stream;
@@ -190,7 +203,7 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
    private Stream<CacheEntry<K, V>> getRehashStream(CacheSet<CacheEntry<K, V>> cacheEntrySet, Object requestId,
            SegmentListener listener, boolean parallelStream, Set<Integer> segments, Set<K> keysToInclude,
            Set<K> keysToExclude) {
-      CacheTopology topology = stm.getCacheTopology();
+      LocalizedCacheTopology topology = dm.getCacheTopology();
       if (trace) {
          log.tracef("Topology for supplier is %s for id %s", topology, requestId);
       }
@@ -202,10 +215,10 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
          while (iterator.hasNext()) {
             Integer segment = iterator.next();
             // This is to ensure we only unbox the value once, as below will twice most times (happy path)
-            int intSegment = segment.intValue();
+            int intSegment = segment;
             // If the segment is not owned by both CHs we can't use it during rehash
-            if (!pendingCH.locateOwnersForSegment(intSegment).contains(localAddress)
-                    || !readCH.locateOwnersForSegment(intSegment).contains(localAddress)) {
+            if (!pendingCH.isSegmentLocalToNode(localAddress, intSegment)
+                    || !readCH.isSegmentLocalToNode(localAddress, intSegment)) {
                iterator.remove();
                lostSegments.add(segment);
             }
@@ -219,7 +232,7 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
             log.tracef("Currently in the middle of a rehash for id %s", requestId);
          }
       } else {
-         Set<Integer> ourSegments = readCH.getSegmentsForOwner(localAddress);
+         Set<Integer> ourSegments = topology.getLocalReadSegments();
          if (segments.retainAll(ourSegments)) {
             if (trace) {
                log.tracef("We found to be missing some segments requested for id %s", requestId);
@@ -233,6 +246,21 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
       return getStream(cacheEntrySet, parallelStream, segments, keysToInclude, keysToExclude);
    }
 
+   private void handleResponseError(CompletionStage<ValidResponse> rpcFuture, Object requestId,
+                                    Address origin) {
+      if (trace) {
+         rpcFuture.whenComplete((response, e) -> {
+            if (e != null) {
+               log.tracef(e, "Encountered exception for %s sending response to %s", requestId, origin);
+            } else if (response != null && !response.isSuccessful()) {
+               log.tracef("Unsuccessful response for %s sending response to %s", requestId, origin);
+            } else {
+               log.tracef("Response successfully sent for %s", requestId);
+            }
+         });
+      }
+   }
+
    @Override
    public <R> void streamOperation(Object requestId, Address origin, boolean parallelStream, Set<Integer> segments,
            Set<K> keysToInclude, Set<K> keysToExclude, boolean includeLoader, TerminalOperation<R> operation) {
@@ -243,8 +271,11 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
       operation.setSupplier(() -> getStream(cacheEntrySet, parallelStream, segments, keysToInclude, keysToExclude));
       operation.handleInjection(registry);
       R value = operation.performOperation();
-      rpc.invokeRemotely(Collections.singleton(origin), factory.buildStreamResponseCommand(requestId, true,
-              Collections.emptySet(), value), rpc.getDefaultRpcOptions(true));
+      StreamResponseCommand<R> command =
+         factory.buildStreamResponseCommand(requestId, true, Collections.emptySet(), value);
+      CompletionStage<ValidResponse> completableFuture =
+         rpc.invokeCommand(origin, command, SingleResponseCollector.validOnly(), rpc.getSyncRpcOptions());
+      handleResponseError(completableFuture, requestId, origin);
    }
 
    @Override
@@ -290,11 +321,10 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
       if (trace) {
          log.tracef("Sending response for %s", requestId);
       }
-      rpc.invokeRemotely(Collections.singleton(origin), factory.buildStreamResponseCommand(requestId, true,
-              listener.segmentsLost, value), rpc.getDefaultRpcOptions(true));
-      if (trace) {
-         log.tracef("Sent response for %s", requestId);
-      }
+      StreamResponseCommand<R> command = factory.buildStreamResponseCommand(requestId, true, listener.segmentsLost, value);
+      CompletionStage<ValidResponse> completableFuture =
+         this.rpc.invokeCommand(origin, command, SingleResponseCollector.validOnly(), rpc.getSyncRpcOptions());
+      handleResponseError(completableFuture, requestId, origin);
    }
 
    @Override
@@ -310,8 +340,11 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
       operation.handleInjection(registry);
       Collection<R> value = operation.performOperation(new NonRehashIntermediateCollector<>(origin, requestId,
               parallelStream));
-      rpc.invokeRemotely(Collections.singleton(origin), factory.buildStreamResponseCommand(requestId, true,
-              Collections.emptySet(), value), rpc.getDefaultRpcOptions(true));
+      StreamResponseCommand<Collection<R>> command =
+         factory.buildStreamResponseCommand(requestId, true, Collections.emptySet(), value);
+      CompletionStage<ValidResponse> completableFuture =
+         rpc.invokeCommand(origin, command, SingleResponseCollector.validOnly(), rpc.getSyncRpcOptions());
+      handleResponseError(completableFuture, requestId, origin);
    }
 
    @Override
@@ -355,8 +388,52 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
          results = null;
       }
 
-      rpc.invokeRemotely(Collections.singleton(origin), factory.buildStreamResponseCommand(requestId, true,
-              listener.segmentsLost, results), rpc.getDefaultRpcOptions(true));
+      StreamResponseCommand<Collection<CacheEntry<K, R2>>> command =
+         factory.buildStreamResponseCommand(requestId, true, listener.segmentsLost, results);
+      CompletionStage<ValidResponse> completableFuture =
+         rpc.invokeCommand(origin, command, SingleResponseCollector.validOnly(), rpc.getSyncRpcOptions());
+      handleResponseError(completableFuture, requestId, origin);
+   }
+
+   @Override
+   public IteratorResponse startIterator(Object requestId, Address origin, IntSet segments, Set<K> keysToInclude,
+         Set<K> keysToExclude, boolean includeLoader, Iterable<IntermediateOperation> intermediateOperations, long batchSize) {
+      if (trace) {
+         log.tracef("Received rehash aware operation request to start iterator for id %s from %s for segments %s",
+               requestId, origin, segments);
+      }
+      CacheSet<CacheEntry<K, V>> cacheEntrySet = getCacheRespectingLoader(includeLoader).cacheEntrySet();
+      SegmentListener listener = new SegmentListener(segments, i -> true);
+
+      if (changeListener.putIfAbsent(requestId, listener) != null) {
+         throw new IllegalStateException("Iterator was already created for id " + requestId);
+      }
+
+      if (trace) {
+         log.tracef("Registered change listener for %s", requestId);
+      }
+      IteratorHandler.OnCloseIterator<Object> iterator = iteratorHandler.start(origin, () -> getRehashStream(cacheEntrySet,
+            requestId, listener, false, segments,
+            keysToInclude, keysToExclude), intermediateOperations, requestId);
+      // Have to clear out our change listener when the iterator is closed
+      iterator.onClose(() -> {
+         changeListener.remove(requestId);
+         // If the cache is no longer running, all segments have to be suspect
+         if (cache.getStatus() != ComponentStatus.RUNNING) {
+            if (trace) {
+               log.tracef("Cache status is no longer running after completing iterator, all segments are now suspect for %s", requestId);
+            }
+            listener.segmentsLost.addAll(segments);
+         }
+      });
+
+      return new IteratorResponses.RemoteResponse(iterator, listener.segmentsLost, batchSize);
+   }
+
+   @Override
+   public IteratorResponse continueIterator(Object requestId, long batchSize) {
+      CloseableIterator<Object> iterator = iteratorHandler.getIterator(requestId);
+      return new IteratorResponses.RemoteResponse(iterator, changeListener.get(requestId).segmentsLost, batchSize);
    }
 
    class NonRehashIntermediateCollector<R> implements KeyTrackingTerminalOperation.IntermediateCollector<R> {
@@ -382,8 +459,10 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
                throw new CacheException(e);
             }
          } else {
-            rpc.invokeRemotely(Collections.singleton(origin), new StreamResponseCommand<>(cacheName, localAddress,
-                    requestId, false, response), rpc.getDefaultRpcOptions(true));
+            StreamResponseCommand<R> command =
+               new StreamResponseCommand<>(cacheName, localAddress, requestId, false, response);
+            rpc.blocking(
+               rpc.invokeCommand(origin, command, SingleResponseCollector.validOnly(), rpc.getSyncRpcOptions()));
          }
       }
 
@@ -401,8 +480,10 @@ public class LocalStreamManagerImpl<K, V> implements LocalStreamManager<K> {
                // This way we don't send more than 1 response to the originating node but still inside managed blocker
                // so we don't consume a thread
                synchronized (NonRehashIntermediateCollector.this) {
-                  rpc.invokeRemotely(Collections.singleton(origin), new StreamResponseCommand<>(cacheName, localAddress,
-                          requestId, false, response), rpc.getDefaultRpcOptions(true));
+                  StreamResponseCommand<R> command = new StreamResponseCommand<>(cacheName, localAddress,
+                                                                             requestId, false, response);
+                  rpc.blocking(
+                     rpc.invokeCommand(origin, command, SingleResponseCollector.validOnly(), rpc.getSyncRpcOptions()));
                }
             }
             completed = true;

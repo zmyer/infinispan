@@ -9,18 +9,21 @@ import static org.testng.AssertJUnit.assertTrue;
 
 import java.io.Serializable;
 import java.lang.reflect.Method;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import javax.transaction.TransactionManager;
 
 import org.infinispan.Cache;
 import org.infinispan.atomic.AtomicMap;
 import org.infinispan.atomic.AtomicMapLookup;
-import org.infinispan.commons.equivalence.ByteArrayEquivalence;
 import org.infinispan.commons.util.ByRef;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -28,6 +31,7 @@ import org.infinispan.marshall.core.ExternalPojo;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.manager.PersistenceManagerStub;
+import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
@@ -121,13 +125,13 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
 
    public void testPreloadStoredAsBinary() {
       ConfigurationBuilder cb = TestCacheManagerFactory.getDefaultCacheConfiguration(false);
-      createCacheStoreConfig(cb.persistence(), true).storeAsBinary().enable();
+      createCacheStoreConfig(cb.persistence(), true).memory().storageType(StorageType.BINARY);
       cacheManager.defineConfiguration("testPreloadStoredAsBinary", cb.build());
       Cache<String, Pojo> cache = cacheManager.getCache("testPreloadStoredAsBinary");
       cache.start();
 
       assert cache.getCacheConfiguration().persistence().preload();
-      assert cache.getCacheConfiguration().storeAsBinary().enabled();
+      assertEquals(StorageType.BINARY, cache.getCacheConfiguration().memory().storageType());
 
       cache.put("k1", new Pojo(1));
       cache.put("k2", new Pojo(2), 111111, TimeUnit.MILLISECONDS);
@@ -203,7 +207,6 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
 
    public void testStoreByteArrays(final Method m) throws PersistenceException {
       ConfigurationBuilder base = new ConfigurationBuilder();
-      base.dataContainer().keyEquivalence(ByteArrayEquivalence.INSTANCE);
       // we need to purge the container when loading, because we could try to compare
       // some old entry using ByteArrayEquivalence and this throws ClassCastException
       // for non-byte[] arguments
@@ -235,7 +238,7 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
          assertTrue(local.isRunning(cacheName));
          cache.put("1", wrap("1", "v1"));
          assertCacheEntry(cache, "1", "v1", -1, -1);
-         local.removeCache(cacheName);
+         local.administration().removeCache(cacheName);
          assertFalse(local.isRunning(cacheName));
       } finally {
          TestingUtil.killCacheManagers(local);
@@ -262,19 +265,37 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
             }
 
             @Override
-            public void writeToAllNonTxStores(MarshalledEntry marshalledEntry, AccessMode modes) {
+            public void writeBatchToAllNonTxStores(Iterable<MarshalledEntry> entries, AccessMode accessMode, long flags) {
                passivate.set(true);
             }
          };
-         cache.getAdvancedCache().getComponentRegistry().registerComponent(stub, PersistenceManager.class);
-         cache.getAdvancedCache().getComponentRegistry().rewire();
-         local.removeCache(cacheName);
+         TestingUtil.replaceComponent(cache, PersistenceManager.class, stub, true);
+         local.administration().removeCache(cacheName);
          assertFalse(local.isRunning(cacheName));
          assertFalse(passivate.get());
          assertEquals(0, actual.size());
       } finally {
          TestingUtil.killCacheManagers(local);
       }
+   }
+
+   public void testPutAllBatch() throws Exception {
+      int numberOfEntries = 100;
+      String cacheName = "testPutAllBatch";
+      ConfigurationBuilder cb = new ConfigurationBuilder();
+      cb.read(cacheManager.getDefaultCacheConfiguration());
+      createCacheStoreConfig(cb.persistence(), false);
+      cacheManager.defineConfiguration(cacheName, cb.build());
+
+      Cache<String, Object> cache = cacheManager.getCache(cacheName);
+      Map<String, Object> entriesMap = IntStream.range(0, numberOfEntries).boxed()
+            .collect(Collectors.toMap(i -> i.toString(), i -> wrap(i.toString(), "Val"+i)));
+      cache.putAll(entriesMap);
+
+      assertEquals(numberOfEntries, cache.size());
+      CacheLoader cl = TestingUtil.getCacheLoader(cache);
+      if (cl != null)
+         IntStream.range(0, numberOfEntries).forEach(i -> assertNotNull(cl.load(Integer.toString(i))));
    }
 
    private ConfigurationBuilder configureCacheLoader(ConfigurationBuilder base, boolean purge) {

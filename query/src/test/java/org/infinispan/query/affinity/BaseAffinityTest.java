@@ -22,7 +22,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.HdrHistogram.Histogram;
@@ -225,8 +224,7 @@ public abstract class BaseAffinityTest extends MultipleCacheManagersTest {
    }
 
    synchronized void addNode() {
-      EmbeddedCacheManager cacheManager = addClusterEnabledCacheManager(getDefaultCacheConfigBuilder());
-      configureIndexCaches(Collections.singleton(cacheManager));
+      addClusterEnabledCacheManager(getDefaultCacheConfigBuilder());
       waitForClusterToForm();
    }
 

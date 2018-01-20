@@ -1,12 +1,15 @@
 package org.infinispan.persistence.jdbc.table.management;
 
+import java.io.ByteArrayInputStream;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Objects;
 
+import org.infinispan.commons.io.ByteBuffer;
 import org.infinispan.persistence.jdbc.JdbcUtil;
 import org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration;
 import org.infinispan.persistence.jdbc.connectionfactory.ConnectionFactory;
@@ -111,7 +114,7 @@ public abstract class AbstractTableManager implements TableManager {
       if (cacheName == null || cacheName.trim().length() == 0)
          throw new PersistenceException("cacheName needed in order to create table");
 
-      String ddl = String.format("CREATE TABLE %1$s (%2$s %3$s NOT NULL, %4$s %5$s, %6$s %7$s, PRIMARY KEY (%2$s))",
+      String ddl = String.format("CREATE TABLE %1$s (%2$s %3$s NOT NULL, %4$s %5$s NOT NULL, %6$s %7$s NOT NULL, PRIMARY KEY (%2$s))",
                                  getTableName(), config.idColumnName(), config.idColumnType(), config.dataColumnName(),
                                  config.dataColumnType(), config.timestampColumnName(), config.timestampColumnType());
 
@@ -356,5 +359,12 @@ public abstract class AbstractTableManager implements TableManager {
    @Override
    public String encodeString(String string) {
       return string;
+   }
+
+   @Override
+   public void prepareUpdateStatement(PreparedStatement ps, String key, long timestamp, ByteBuffer byteBuffer) throws SQLException {
+      ps.setBinaryStream(1, new ByteArrayInputStream(byteBuffer.getBuf(), byteBuffer.getOffset(), byteBuffer.getLength()), byteBuffer.getLength());
+      ps.setLong(2, timestamp);
+      ps.setString(3, key);
    }
 }

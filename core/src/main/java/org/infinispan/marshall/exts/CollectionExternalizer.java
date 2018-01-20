@@ -2,6 +2,7 @@ package org.infinispan.marshall.exts;
 
 import org.infinispan.commons.marshall.AdvancedExternalizer;
 import org.infinispan.commons.marshall.MarshallUtil;
+import org.infinispan.commons.util.FastCopyHashMap;
 import org.infinispan.commons.util.Util;
 import org.infinispan.distribution.util.ReadOnlySegmentAwareCollection;
 import org.infinispan.marshall.core.Ids;
@@ -10,6 +11,7 @@ import org.jboss.marshalling.util.IdentityIntMap;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
+import java.util.AbstractMap;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -17,6 +19,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -32,6 +36,8 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
    private static final int SYNCHRONIZED_SET = 7;
    private static final int ARRAY_DEQUE = 8;
    private static final int READ_ONLY_SEGMENT_AWARE_COLLECTION = 9;
+   private static final int ENTRY_SET = 10;
+   private static final int EMPTY_SET = 11;
 
    private final IdentityIntMap<Class<?>> numbers = new IdentityIntMap<>(16);
 
@@ -42,6 +48,7 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
       numbers.put(LinkedList.class, LINKED_LIST);
       numbers.put(getPrivateSingletonListClass(), SINGLETON_LIST);
       numbers.put(getPrivateEmptyListClass(), EMPTY_LIST);
+      numbers.put(getPrivateEmptySetClass(), EMPTY_SET);
       numbers.put(ArrayDeque.class, ARRAY_DEQUE);
       numbers.put(HashSet.class, HASH_SET);
       numbers.put(TreeSet.class, TREE_SET);
@@ -49,6 +56,9 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
       numbers.put(getPrivateSynchronizedSetClass(), SYNCHRONIZED_SET);
       numbers.put(getPrivateUnmodifiableSetClass(), HASH_SET);
       numbers.put(ReadOnlySegmentAwareCollection.class, READ_ONLY_SEGMENT_AWARE_COLLECTION);
+      numbers.put(FastCopyHashMap.KeySet.class, HASH_SET);
+      numbers.put(FastCopyHashMap.Values.class, ARRAY_LIST);
+      numbers.put(FastCopyHashMap.EntrySet.class, ENTRY_SET);
    }
 
    @Override
@@ -65,6 +75,8 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
             MarshallUtil.marshallCollection(collection, output);
             break;
          case SINGLETON_LIST:
+            output.writeObject(((List) collection).get(0));
+            break;
          case SINGLETON_SET:
             output.writeObject(collection.iterator().next());
             break;
@@ -72,7 +84,13 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
             output.writeObject(((TreeSet) collection).comparator());
             MarshallUtil.marshallCollection(collection, output);
             break;
-
+         case ENTRY_SET:
+            MarshallUtil.marshallCollection(collection, output, (out, element) -> {
+               Map.Entry entry = (Map.Entry) element;
+               out.writeObject(entry.getKey());
+               out.writeObject(entry.getValue());
+            });
+            break;
       }
    }
 
@@ -102,6 +120,11 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
             return MarshallUtil.unmarshallCollection(input, ArrayDeque::new);
          case READ_ONLY_SEGMENT_AWARE_COLLECTION:
             return MarshallUtil.unmarshallCollection(input, ArrayList::new);
+         case ENTRY_SET:
+            return MarshallUtil.<Map.Entry, Set<Map.Entry>>unmarshallCollection(input, s -> new HashSet(),
+                  in -> new AbstractMap.SimpleEntry(in.readObject(), in.readObject()));
+         case EMPTY_SET:
+            return Collections.emptySet();
          default:
             throw new IllegalStateException("Unknown Set type: " + magicNumber);
       }
@@ -119,11 +142,13 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
             getPrivateUnmodifiableListClass(),
             getPrivateSingletonListClass(),
             getPrivateEmptyListClass(),
+            getPrivateEmptySetClass(),
             HashSet.class, TreeSet.class,
             getPrivateSingletonSetClass(),
             getPrivateSynchronizedSetClass(), getPrivateUnmodifiableSetClass(),
             ArrayDeque.class,
-            ReadOnlySegmentAwareCollection.class);
+            ReadOnlySegmentAwareCollection.class,
+            FastCopyHashMap.KeySet.class, FastCopyHashMap.Values.class, FastCopyHashMap.EntrySet.class);
    }
 
    private static Class<Collection> getPrivateArrayListClass() {
@@ -136,6 +161,10 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
 
    private static Class<Collection> getPrivateEmptyListClass() {
       return getCollectionClass("java.util.Collections$EmptyList");
+   }
+
+   private static Class<Collection> getPrivateEmptySetClass() {
+      return getCollectionClass("java.util.Collections$EmptySet");
    }
 
    private static Class<Collection> getPrivateSingletonListClass() {

@@ -1,13 +1,10 @@
 package org.infinispan.functional;
 
-import java.io.Serializable;
 import java.util.Collections;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.infinispan.AdvancedCache;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadWriteMap;
+import org.infinispan.functional.FunctionalMap.ReadWriteMap;
 import org.infinispan.functional.impl.FunctionalMapImpl;
 import org.infinispan.functional.impl.ReadWriteMapImpl;
 import org.infinispan.test.TestingUtil;
@@ -83,8 +80,7 @@ public class FunctionalDistributionTest extends AbstractFunctionalTest {
    }
 
    private void iterate(Object key, ReadWriteMap<Object, Integer> rw, int expectedValue) throws InterruptedException {
-      rw.eval(key, (Function<ReadWriteEntryView<Object, Integer>, Void> & Serializable)
-            entry -> {
+      rw.eval(key, entry -> {
                // we need a small delay so that the value gets committed before the replication finishes:
                TestingUtil.sleepThread(10);
                return entry.set(entry.find().orElse(0) + 1);

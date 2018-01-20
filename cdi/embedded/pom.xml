@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.infinispan</groupId>
         <artifactId>infinispan-cdi-parent</artifactId>
-        <version>9.0.0-SNAPSHOT</version>
+        <version>9.2.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -25,22 +25,23 @@
             <artifactId>infinispan-cdi-common</artifactId>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-core</artifactId>
         </dependency>
 
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-commons-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-core</artifactId>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
 
+        <!-- Arquillian -->
         <dependency>
             <groupId>org.jboss.arquillian.testng</groupId>
             <artifactId>arquillian-testng-container</artifactId>
@@ -63,20 +64,15 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.jboss.shrinkwrap.resolver</groupId>
-            <artifactId>shrinkwrap-resolver-impl-maven</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
             <groupId>org.testng</groupId>
             <artifactId>testng</artifactId>
             <scope>test</scope>
         </dependency>
 
+        <!-- /Arquillian -->
         <dependency>
             <groupId>org.mockito</groupId>
-            <artifactId>mockito-all</artifactId>
+            <artifactId>mockito-core</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

@@ -6,6 +6,7 @@ import static org.infinispan.tx.recovery.RecoveryTestUtil.prepareTransaction;
 import static org.testng.Assert.assertEquals;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 import org.infinispan.Cache;
@@ -14,8 +15,8 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
-import org.infinispan.transaction.tm.DummyTransaction;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
+import org.infinispan.transaction.tm.EmbeddedTransaction;
 import org.testng.annotations.Test;
 
 /**
@@ -31,7 +32,7 @@ public class ParticipantFailsAfterPrepareTest extends MultipleCacheManagersTest 
          .locking()
             .useLockStriping(false)
          .transaction()
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup())
             .useSynchronization(false)
             .recovery()
                .disable()
@@ -46,12 +47,12 @@ public class ParticipantFailsAfterPrepareTest extends MultipleCacheManagersTest 
 
    public void testNonOriginatorFailsAfterPrepare() throws Exception {
       final Object key = getKeyForCache(0);
-      DummyTransaction dummyTransaction = beginAndSuspendTx(cache(0), key);
+      EmbeddedTransaction dummyTransaction = beginAndSuspendTx(cache(0), key);
       prepareTransaction(dummyTransaction);
 
       int indexToKill = -1;
       //this tx spreads over 3 out of 4 nodes, let's find one that has the tx and kill it
-      final List<Address> locate = advancedCache(0).getDistributionManager().getConsistentHash().locateOwners(key);
+      final Collection<Address> locate = advancedCache(0).getDistributionManager().getCacheTopology().getWriteOwners(key);
       for (int i = 3; i > 0; i--) {
          if (locate.contains(address(i))) {
             indexToKill = i;
@@ -69,7 +70,7 @@ public class ParticipantFailsAfterPrepareTest extends MultipleCacheManagersTest 
       participants = getAliveParticipants(indexToKill);
 
       TestingUtil.blockUntilViewsReceived(60000, false, participants);
-      TestingUtil.waitForRehashToComplete(participants);
+      TestingUtil.waitForNoRebalance(participants);
 
       //one of the participants must not have a prepare on it
       boolean noLocks = false;
@@ -92,7 +93,7 @@ public class ParticipantFailsAfterPrepareTest extends MultipleCacheManagersTest 
    }
 
    private List<Cache> getAliveParticipants(int indexToKill) {
-      List<Cache> participants = new ArrayList<Cache>();
+      List<Cache> participants = new ArrayList<>();
       for (int i = 0; i < 4; i++) {
          if (i == indexToKill) continue;
          participants.add(cache(i));

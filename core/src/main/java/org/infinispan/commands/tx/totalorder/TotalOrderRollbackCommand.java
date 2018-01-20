@@ -1,7 +1,6 @@
 package org.infinispan.commands.tx.totalorder;
 
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.transaction.impl.RemoteTransaction;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.logging.Log;
@@ -34,10 +33,5 @@ public class TotalOrderRollbackCommand extends RollbackCommand {
    @Override
    public byte getCommandId() {
       return COMMAND_ID;
-   }
-
-   @Override
-   protected RemoteTransaction getRemoteTransaction() {
-      return txTable.getOrCreateRemoteTransaction(globalTx, null);
    }
 }

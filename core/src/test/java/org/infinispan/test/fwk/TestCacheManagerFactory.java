@@ -20,6 +20,7 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.configuration.internal.PrivateGlobalConfigurationBuilder;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ParserRegistry;
 import org.infinispan.jmx.MBeanServerLookup;
@@ -55,11 +56,12 @@ public class TestCacheManagerFactory {
 
    /**
     * Note this method does not amend the global configuration to reduce overall resource footprint.  It is therefore
-    * suggested to use {@link org.infinispan.test.fwk.TestCacheManagerFactory#createClusteredCacheManager(org.infinispan.configuration.cache.ConfigurationBuilder, TransportFlags)}
-    * instead when this is needed
-    * @param start Whether to start this cache container
-    * @param gc The global configuration builder to use
-    * @param c The default configuration to use
+    * suggested to use {@link org.infinispan.test.fwk.TestCacheManagerFactory#createClusteredCacheManager(org.infinispan.configuration.cache.ConfigurationBuilder,
+    * TransportFlags)} instead when this is needed
+    *
+    * @param start         Whether to start this cache container
+    * @param gc            The global configuration builder to use
+    * @param c             The default configuration to use
     * @param keepJmxDomain Whether or not the provided jmx domain should be used or if a unique one is generated
     * @return The resultant cache manager that is created
     */
@@ -90,7 +92,7 @@ public class TestCacheManagerFactory {
 
    public static EmbeddedCacheManager fromXml(String xmlFile, boolean keepJmxDomainName, boolean defaultParserOnly) throws IOException {
       InputStream is = FileLookupFactory.newInstance().lookupFileStrict(
-              xmlFile, Thread.currentThread().getContextClassLoader());
+            xmlFile, Thread.currentThread().getContextClassLoader());
       return fromStream(is, keepJmxDomainName, defaultParserOnly, true);
    }
 
@@ -127,12 +129,8 @@ public class TestCacheManagerFactory {
          builder.transaction().transactionMode(TransactionMode.NON_TRANSACTIONAL);
       } else {
          builder.transaction()
-            .transactionMode(TransactionMode.TRANSACTIONAL);
-         //Skip this step in OSGi. This operation requires internal packages of Arjuna. These are not exported from the Arjuna
-         //bundle in OSGi
+               .transactionMode(TransactionMode.TRANSACTIONAL);
          if (!Util.isOSGiContext()) {
-            // Set volatile stores just in case...
-            JBossTransactionsUtils.setVolatileStores();
             //automatically change default TM lookup to the desired one but only outside OSGi. In OSGi we need to use GenericTransactionManagerLookup
             builder.transaction().transactionManagerLookup(Util.getInstance(TransactionSetup.getManagerLookup(), TestCacheManagerFactory.class.getClassLoader()));
          }
@@ -144,8 +142,7 @@ public class TestCacheManagerFactory {
    }
 
    private static void amendJTA(ConfigurationBuilder builder) {
-      org.infinispan.configuration.cache.Configuration c = builder.build();
-      if (c.transaction().transactionMode().equals(TransactionMode.TRANSACTIONAL) && c.transaction().transactionManagerLookup() == null) {
+      if (builder.transaction().transactionMode() == TransactionMode.TRANSACTIONAL && builder.transaction().transactionManagerLookup() == null) {
          builder.transaction().transactionManagerLookup(Util.getInstance(TransactionSetup.getManagerLookup(), TestCacheManagerFactory.class.getClassLoader()));
       }
    }
@@ -222,6 +219,16 @@ public class TestCacheManagerFactory {
       return createCacheManager(new ConfigurationBuilder());
    }
 
+   public static EmbeddedCacheManager createServerModeCacheManager() {
+      return createServerModeCacheManager(new ConfigurationBuilder());
+   }
+
+   public static EmbeddedCacheManager createServerModeCacheManager(ConfigurationBuilder builder) {
+      GlobalConfigurationBuilder globalBuilder = new GlobalConfigurationBuilder().nonClusteredDefault();
+      globalBuilder.addModule(PrivateGlobalConfigurationBuilder.class).serverMode(true);
+      return createCacheManager(globalBuilder, builder);
+   }
+
    public static EmbeddedCacheManager createCacheManager(boolean start) {
       return newDefaultCacheManager(start, new GlobalConfigurationBuilder().nonClusteredDefault(), new ConfigurationBuilder(), false);
    }
@@ -243,16 +250,15 @@ public class TestCacheManagerFactory {
    public static EmbeddedCacheManager createCacheManager(CacheMode mode, boolean indexing) {
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder
-         .clustering()
+            .clustering()
             .cacheMode(mode)
-         .indexing()
+            .indexing()
             .index(indexing ? Index.ALL : Index.NONE)
             .addProperty("lucene_version", "LUCENE_CURRENT")
-         ;
+      ;
       if (mode.isClustered()) {
          return createClusteredCacheManager(builder);
-      }
-      else {
+      } else {
          return createCacheManager(builder);
       }
    }
@@ -261,7 +267,7 @@ public class TestCacheManagerFactory {
     * @see #createCacheManagerEnforceJmxDomain(String)
     */
    public static EmbeddedCacheManager createCacheManagerEnforceJmxDomain(String jmxDomain) {
-      return createCacheManagerEnforceJmxDomain(jmxDomain, true, true);
+      return createCacheManagerEnforceJmxDomain(jmxDomain, true, true, true);
    }
 
    public static EmbeddedCacheManager createClusteredCacheManagerEnforceJmxDomain(String jmxDomain) {
@@ -305,17 +311,18 @@ public class TestCacheManagerFactory {
    /**
     * @see #createCacheManagerEnforceJmxDomain(String)
     */
-   public static EmbeddedCacheManager createCacheManagerEnforceJmxDomain(String jmxDomain, boolean exposeGlobalJmx, boolean exposeCacheJmx) {
-      return createCacheManagerEnforceJmxDomain(jmxDomain, null, exposeGlobalJmx, exposeCacheJmx);
+   public static EmbeddedCacheManager createCacheManagerEnforceJmxDomain(String jmxDomain, boolean exposeGlobalJmx, boolean exposeCacheJmx, boolean allowDuplicates) {
+      return createCacheManagerEnforceJmxDomain(jmxDomain, null, exposeGlobalJmx, exposeCacheJmx, allowDuplicates);
    }
 
    /**
     * @see #createCacheManagerEnforceJmxDomain(String)
     */
-   public static EmbeddedCacheManager createCacheManagerEnforceJmxDomain(String jmxDomain, String cacheManagerName, boolean exposeGlobalJmx, boolean exposeCacheJmx) {
+   public static EmbeddedCacheManager createCacheManagerEnforceJmxDomain(String jmxDomain, String cacheManagerName, boolean exposeGlobalJmx, boolean exposeCacheJmx, boolean allowDuplicates) {
       GlobalConfigurationBuilder globalConfiguration = new GlobalConfigurationBuilder();
       globalConfiguration
-         .globalJmxStatistics()
+            .globalJmxStatistics()
+            .allowDuplicateDomains(allowDuplicates)
             .jmxDomain(jmxDomain)
             .mBeanServerLookup(new PerThreadMBeanServerLookup())
             .enabled(exposeGlobalJmx);
@@ -384,11 +391,7 @@ public class TestCacheManagerFactory {
          try {
             Marshaller marshaller = Util.getInstanceStrict(MARSHALLER, Thread.currentThread().getContextClassLoader());
             builder.serialization().marshaller(marshaller);
-         } catch (ClassNotFoundException e) {
-            // No-op, stick to GlobalConfiguration default.
-         } catch (InstantiationException e) {
-            // No-op, stick to GlobalConfiguration default.
-         } catch (IllegalAccessException e) {
+         } catch (ClassNotFoundException | InstantiationException | IllegalAccessException e) {
             // No-op, stick to GlobalConfiguration default.
          }
       }

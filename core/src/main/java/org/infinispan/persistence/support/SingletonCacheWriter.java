@@ -3,7 +3,6 @@ package org.infinispan.persistence.support;
 import static org.infinispan.persistence.PersistenceUtil.internalMetadata;
 
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -16,7 +15,6 @@ import java.util.concurrent.TimeoutException;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.SingletonStoreConfiguration;
 import org.infinispan.container.DataContainer;
-import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.notifications.Listener;
@@ -142,17 +140,13 @@ public class SingletonCacheWriter extends DelegatingCacheWriter {
    /**
     * Pushes the state of a specific cache by reading the cache's data and putting in the cache store.
     */
-   protected void pushState(final Cache cache) throws Exception {
-      DataContainer dc = cache.getAdvancedCache().getDataContainer();
-      Set<Object> keys = dc.keySet();
-      for (Object k : keys) {
-         InternalCacheEntry entry = dc.get(k);
-         if (entry != null) {
-            MarshalledEntry me = ctx.getMarshalledEntryFactory().newMarshalledEntry(entry.getKey(), entry.getValue(),
-                                                             internalMetadata(entry));
-            write(me);
-         }
-      }
+   protected void pushState(final Cache<?, ?> cache) throws Exception {
+      DataContainer<?, ?> dc = cache.getAdvancedCache().getDataContainer();
+      dc.iterator().forEachRemaining(entry -> {
+         MarshalledEntry me = ctx.getMarshalledEntryFactory().newMarshalledEntry(entry.getKey(), entry.getValue(),
+               internalMetadata(entry));
+         write(me);
+      });
    }
 
 

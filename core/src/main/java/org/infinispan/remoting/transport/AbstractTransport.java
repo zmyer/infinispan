@@ -17,16 +17,12 @@ import org.infinispan.util.logging.Log;
  *
  * @author Manik Surtani
  * @version 4.2
+ * @deprecated Since 9.1, please implement {@link Transport} directly.
  */
+@Deprecated
 public abstract class AbstractTransport implements Transport {
 
-   protected GlobalConfiguration configuration;
-
-   @Inject
-   @SuppressWarnings("unused")
-   public void setConfiguration(GlobalConfiguration globalConfiguration) {
-      this.configuration = globalConfiguration;
-   }
+   @Inject protected GlobalConfiguration configuration;
 
    public Response checkResponse(Object responseObject, Address sender, boolean ignoreCacheNotFoundResponse) {
       Log log = getLog();

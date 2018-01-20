@@ -71,15 +71,10 @@ public class OrphanTransactionsCleanupTest extends MultipleCacheManagersTest {
       manager(1).stop();
       TestingUtil.blockUntilViewsReceived(60000, false, c0, c2);
       // Cache 2 should not be in the CH yet
-      TestingUtil.waitForRehashToComplete(c0);
+      TestingUtil.waitForNoRebalance(c0);
 
-      assertEquals(Arrays.asList(address(0)), c0.getAdvancedCache().getDistributionManager().getConsistentHash().getMembers());
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            return tt0.getRemoteTransactions().size() == 1;
-         }
-      });
+      assertEquals(Arrays.asList(address(0)), c0.getAdvancedCache().getDistributionManager().getWriteConsistentHash().getMembers());
+      eventuallyEquals(1, () -> tt0.getRemoteTransactions().size());
 
       // Committing the tx on c2 should succeed
       tm(2).resume(tx2);

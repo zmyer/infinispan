@@ -6,7 +6,6 @@ import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.eviction.EvictionManager;
-import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.impl.BatchingInterceptor;
 import org.infinispan.remoting.transport.Transport;
@@ -14,8 +13,8 @@ import org.infinispan.test.AbstractCacheTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
-import org.infinispan.transaction.tm.DummyTransactionManager;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
+import org.infinispan.transaction.tm.EmbeddedTransactionManager;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
@@ -25,7 +24,7 @@ import org.testng.annotations.Test;
  */
 @Test(groups = "functional", testName = "manager.CacheManagerComponentRegistryTest")
 public class CacheManagerComponentRegistryTest extends AbstractCacheTest {
-   EmbeddedCacheManager cm;
+   private EmbeddedCacheManager cm;
 
    @AfterMethod
    public void tearDown() {
@@ -49,13 +48,13 @@ public class CacheManagerComponentRegistryTest extends AbstractCacheTest {
       Cache c = cm.getCache();
 
       ConfigurationBuilder overrides = TestCacheManagerFactory.getDefaultCacheConfiguration(true);
-      overrides.transaction().transactionManagerLookup(new DummyTransactionManagerLookup());
+      overrides.transaction().transactionManagerLookup(new EmbeddedTransactionManagerLookup());
       cm.defineConfiguration("transactional", overrides.build());
       Cache transactional = cm.getCache("transactional");
 
       // assert components.
       assert TestingUtil.extractComponent(c, TransactionManager.class) == null;
-      assert TestingUtil.extractComponent(transactional, TransactionManager.class) instanceof DummyTransactionManager;
+      assert TestingUtil.extractComponent(transactional, TransactionManager.class) instanceof EmbeddedTransactionManager;
 
       // assert force-shared components
       assert TestingUtil.extractComponent(c, Transport.class) != null;
@@ -68,9 +67,7 @@ public class CacheManagerComponentRegistryTest extends AbstractCacheTest {
       defaultCfg
          .clustering()
             .stateTransfer()
-               .fetchInMemoryState(false)
-            .eviction()
-               .strategy(EvictionStrategy.NONE);
+               .fetchInMemoryState(false);
       // cache manager with default configuration
       cm = TestCacheManagerFactory.createClusteredCacheManager(defaultCfg);
 
@@ -78,7 +75,7 @@ public class CacheManagerComponentRegistryTest extends AbstractCacheTest {
       Cache c = cm.getCache();
 
       ConfigurationBuilder overrides = TestCacheManagerFactory.getDefaultCacheConfiguration(true);
-      overrides.transaction().transactionManagerLookup(new DummyTransactionManagerLookup());
+      overrides.transaction().transactionManagerLookup(new EmbeddedTransactionManagerLookup());
       cm.defineConfiguration("transactional", overrides.build());
       Cache transactional = cm.getCache("transactional");
 

@@ -31,11 +31,13 @@ public enum Element {
     COMMON_NAME_ROLE_MAPPER("common-name-role-mapper"),
     COMPATIBILITY("compatibility"),
     CUSTOM_INTERCEPTORS("custom-interceptors"),
+    CUSTOM_CONFIGURATION_STORAGE("custom-configuration-storage"),
     CUSTOM_ROLE_MAPPER("custom-role-mapper"),
     DATA_CONTAINER("data-container"),
     DEFAULT("default"),
     DISTRIBUTED_CACHE("distributed-cache"),
     DISTRIBUTED_CACHE_CONFIGURATION("distributed-cache-configuration"),
+    ENCODING("encoding"),
     EVICTION("eviction"),
     EXPIRATION("expiration"),
     FILE_STORE("file-store"),
@@ -54,6 +56,7 @@ public enum Element {
     INVALIDATION_CACHE_CONFIGURATION("invalidation-cache-configuration"),
     JMX("jmx"),
     JMX_STATISTICS("jmxStatistics"),
+    KEY_DATA_TYPE("key"),
     L1("l1"),
     LOADER("loader"),
     LOCAL_CACHE("local-cache"),
@@ -61,10 +64,13 @@ public enum Element {
     PERSISTENCE("persistence"),
     PERSISTENT_LOCATION("persistent-location"),
     LOCKING("locking"),
+    MANAGED_CONFIGURATION_STORAGE("managed-configuration-storage"),
     MEMORY("memory"),
     MODULES("modules"),
     OBJECT("object"),
     OFFHEAP("off-heap"),
+    OVERLAY_CONFIGURATION_STORAGE("overlay-configuration-storage"),
+    PARTITION_HANDLING("partition-handling"),
     PROPERTIES("properties"),
     PROPERTY("property"),
     RECOVERY("recovery"),
@@ -72,6 +78,9 @@ public enum Element {
     REPLICATED_CACHE_CONFIGURATION("replicated-cache-configuration"),
     ROLE("role"),
     ROOT("infinispan"),
+    SCATTERED_CACHE("scattered-cache"),
+    SCATTERED_CACHE_CONFIGURATION("scattered-cache-configuration"),
+    SHARED_PERSISTENT_LOCATION("shared-persistent-location"),
     SCHEDULED_THREAD_POOL("scheduled-thread-pool"),
     SECURITY("security"),
     SERIALIZATION("serialization"),
@@ -92,9 +101,10 @@ public enum Element {
     TRANSACTION("transaction"),
     TRANSPORT("transport"),
     UNSAFE("unsafe"),
+    VALUE_DATA_TYPE("value"),
     VERSIONING("versioning"),
+    VOLATILE_CONFIGURATION_STORAGE("volatile-configuration-storage"),
     WRITE_BEHIND("write-behind"),
-    PARTITION_HANDLING("partition-handling"),
     ;
 
     private final String name;
@@ -115,7 +125,7 @@ public enum Element {
     private static final Map<String, Element> MAP;
 
     static {
-        final Map<String, Element> map = new HashMap<String, Element>(8);
+        final Map<String, Element> map = new HashMap<>(8);
         for (Element element : values()) {
             final String name = element.getLocalName();
             if (name != null) map.put(name, element);

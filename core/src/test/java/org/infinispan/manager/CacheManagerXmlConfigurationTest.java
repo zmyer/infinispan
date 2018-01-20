@@ -12,8 +12,6 @@ import java.io.IOException;
 import javax.transaction.TransactionManager;
 
 import org.infinispan.Cache;
-import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.TestingUtil;
@@ -98,31 +96,6 @@ public class CacheManagerXmlConfigurationTest extends AbstractInfinispanTest {
          assert false : "Should fail";
       } catch (Throwable expected) {
       }
-   }
-
-   public void testNamedCacheXMLClashingNamesProgrammatic() throws IOException {
-      String xml = InfinispanStartTag.LATEST +
-            "\n" +
-            "<cache-container default-cache=\"default\">" +
-            "   <local-cache name=\"default\">\n" +
-            "        <locking concurrency-level=\"100\" acquire-timeout=\"1000\" />\n" +
-            "    </local-cache>\n" +
-            "\n" +
-            "   <local-cache name=\"c1\">\n" +
-            "        <transaction transaction-manager-lookup=\"org.infinispan.transaction.lookup.GenericTransactionManagerLookup\"/>\n" +
-            "    </local-cache>\n" +
-            "</cache-container>" +
-            INFINISPAN_END_TAG;
-
-      ByteArrayInputStream bais = new ByteArrayInputStream(xml.getBytes());
-      cm = TestCacheManagerFactory.fromStream(bais);
-
-      assertNotNull(cm.getCache());
-      assertNotNull(cm.getCache("c1"));
-      Configuration c1Config = cm.getCache("c1").getCacheConfiguration();
-      assertNotNull(c1Config);
-      Configuration redefinedConfig = cm.defineConfiguration("c1", new ConfigurationBuilder().read(c1Config).build());
-      assertEquals(c1Config, redefinedConfig);
    }
 
    public void testBatchingIsEnabled() throws Exception {

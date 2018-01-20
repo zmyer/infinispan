@@ -4,7 +4,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.tx.PrepareCommand;
@@ -12,20 +12,14 @@ import org.infinispan.context.Flag;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.LocalTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.DDAsyncInterceptor;
-import org.infinispan.remoting.inboundhandler.DeliverOrder;
-import org.infinispan.remoting.responses.ExceptionResponse;
 import org.infinispan.remoting.responses.Response;
-import org.infinispan.remoting.responses.SelfDeliverFilter;
-import org.infinispan.remoting.responses.TimeoutValidationResponseFilter;
-import org.infinispan.remoting.rpc.ResponseFilter;
-import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
-import org.infinispan.remoting.rpc.RpcOptions;
-import org.infinispan.remoting.rpc.RpcOptionsBuilder;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
@@ -38,41 +32,18 @@ import org.infinispan.util.logging.Log;
  * @since 9.0
  */
 public abstract class BaseRpcInterceptor extends DDAsyncInterceptor {
-   protected boolean trace = getLog().isTraceEnabled();
+   protected final boolean trace = getLog().isTraceEnabled();
 
-   protected RpcManager rpcManager;
+   @Inject protected RpcManager rpcManager;
+   @Inject protected ComponentRegistry componentRegistry;
 
    protected boolean defaultSynchronous;
-   private boolean syncCommitPhase;
-   protected RpcOptions staggeredOptions;
-   protected RpcOptions defaultSyncOptions;
-   protected RpcOptions defaultAsyncOptions;
 
    protected abstract Log getLog();
-
-   @Inject
-   public void inject(RpcManager rpcManager) {
-      this.rpcManager = rpcManager;
-   }
 
    @Start
    public void init() {
       defaultSynchronous = cacheConfiguration.clustering().cacheMode().isSynchronous();
-      syncCommitPhase = cacheConfiguration.transaction().syncCommitPhase();
-      // This is a simplified state-less version of ClusteredGetResponseValidityFilter
-      staggeredOptions = rpcManager.getRpcOptionsBuilder(ResponseMode.WAIT_FOR_VALID_RESPONSE, DeliverOrder.NONE).responseFilter(new ResponseFilter() {
-         @Override
-         public boolean isAcceptable(Response response, Address sender) {
-            return response.isValid() || response instanceof ExceptionResponse;
-         }
-
-         @Override
-         public boolean needMoreResponses() {
-            return true;
-         }
-      }).build();
-      defaultSyncOptions = rpcManager.getDefaultRpcOptions(true);
-      defaultAsyncOptions = rpcManager.getDefaultRpcOptions(false);
    }
 
    protected final boolean isSynchronous(FlagAffectedCommand command) {
@@ -139,17 +110,21 @@ public abstract class BaseRpcInterceptor extends DDAsyncInterceptor {
             && !((LocalTransaction)ctx.getCacheTransaction()).isCommitOrRollbackSent();
    }
 
-   protected CompletableFuture<Object> totalOrderPrepare(TxInvocationContext<?> ctx, PrepareCommand command,
-                                                         Collection<Address> recipients,
-                                                         TimeoutValidationResponseFilter responseFilter) {
+   protected CompletionStage<Object> totalOrderPrepare(TxInvocationContext<?> ctx, PrepareCommand command,
+                                                       Collection<Address> recipients) {
       try {
-         Set<Address> realRecipients = null;
+         CompletionStage<Map<Address, Response>> remoteInvocation;
          if (recipients != null) {
-            realRecipients = new HashSet<>(recipients);
+            Set<Address> realRecipients = new HashSet<>(recipients);
             realRecipients.add(rpcManager.getAddress());
+            remoteInvocation = rpcManager.invokeCommand(realRecipients, command,
+                                                        MapResponseCollector.ignoreLeavers(realRecipients.size()),
+                                                        rpcManager.getTotalSyncRpcOptions());
+         } else {
+            remoteInvocation = rpcManager.invokeCommandOnAll(command,
+                                                             MapResponseCollector.ignoreLeavers(),
+                                                             rpcManager.getTotalSyncRpcOptions());
          }
-         CompletableFuture<Map<Address, Response>> remoteInvocation =
-               internalTotalOrderPrepare(realRecipients, command, responseFilter);
          return remoteInvocation.handle((responses, t) -> {
             transactionRemotelyPrepared(ctx);
             CompletableFutures.rethrowException(t);
@@ -162,35 +137,4 @@ public abstract class BaseRpcInterceptor extends DDAsyncInterceptor {
       }
    }
 
-   private CompletableFuture<Map<Address, Response>> internalTotalOrderPrepare(Collection<Address> recipients,
-                                                                               PrepareCommand prepareCommand,
-                                                                               TimeoutValidationResponseFilter responseFilter) {
-      if (defaultSynchronous) {
-         RpcOptionsBuilder builder = rpcManager.getRpcOptionsBuilder(ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, DeliverOrder.TOTAL);
-         if (responseFilter != null) {
-            builder.responseFilter(responseFilter);
-         }
-         CompletableFuture<Map<Address, Response>> remoteInvocation =
-               rpcManager.invokeRemotelyAsync(recipients, prepareCommand, builder.build());
-         if (responseFilter == null) {
-            return remoteInvocation;
-         }
-         return remoteInvocation.thenApply(responses -> {
-            responseFilter.validate();
-            return responses;
-         });
-      } else {
-         RpcOptionsBuilder builder = rpcManager.getRpcOptionsBuilder(ResponseMode.ASYNCHRONOUS,
-                                                                     DeliverOrder.TOTAL);
-         return rpcManager.invokeRemotelyAsync(recipients, prepareCommand, builder.build());
-      }
-   }
-
-   protected final boolean isSyncCommitPhase() {
-      return syncCommitPhase;
-   }
-
-   protected final TimeoutValidationResponseFilter getSelfDeliverFilter() {
-      return new SelfDeliverFilter(rpcManager.getAddress());
-   }
 }

@@ -1,18 +1,18 @@
 package org.infinispan.functional.decorators;
 
-import static org.infinispan.commons.marshall.MarshallableFunctions.identity;
-import static org.infinispan.commons.marshall.MarshallableFunctions.removeConsumer;
-import static org.infinispan.commons.marshall.MarshallableFunctions.removeIfValueEqualsReturnBoolean;
-import static org.infinispan.commons.marshall.MarshallableFunctions.removeReturnBoolean;
-import static org.infinispan.commons.marshall.MarshallableFunctions.removeReturnPrevOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadOnlyFindIsPresent;
-import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadOnlyFindOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueConsumer;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueIfAbsentReturnBoolean;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueIfEqualsReturnBoolean;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueIfPresentReturnBoolean;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueIfPresentReturnPrevOrNull;
-import static org.infinispan.commons.marshall.MarshallableFunctions.setValueReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.identity;
+import static org.infinispan.marshall.core.MarshallableFunctions.removeConsumer;
+import static org.infinispan.marshall.core.MarshallableFunctions.removeIfValueEqualsReturnBoolean;
+import static org.infinispan.marshall.core.MarshallableFunctions.removeReturnBoolean;
+import static org.infinispan.marshall.core.MarshallableFunctions.removeReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.returnReadOnlyFindIsPresent;
+import static org.infinispan.marshall.core.MarshallableFunctions.returnReadOnlyFindOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueConsumer;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueIfAbsentReturnBoolean;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueIfEqualsReturnBoolean;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueIfPresentReturnBoolean;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueIfPresentReturnPrevOrNull;
+import static org.infinispan.marshall.core.MarshallableFunctions.setValueReturnPrevOrNull;
 
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -36,15 +36,14 @@ import javax.cache.processor.EntryProcessorResult;
 import javax.cache.processor.MutableEntry;
 
 import org.infinispan.AdvancedCache;
-import org.infinispan.commons.api.functional.EntryView.ReadEntryView;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadOnlyMap;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadWriteMap;
-import org.infinispan.commons.api.functional.FunctionalMap.WriteOnlyMap;
-import org.infinispan.commons.api.functional.Listeners.ReadWriteListeners;
-import org.infinispan.commons.api.functional.Listeners.WriteListeners;
-import org.infinispan.commons.api.functional.Param.FutureMode;
-import org.infinispan.commons.api.functional.Traversable;
+import org.infinispan.functional.EntryView.ReadEntryView;
+import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.FunctionalMap.ReadOnlyMap;
+import org.infinispan.functional.FunctionalMap.ReadWriteMap;
+import org.infinispan.functional.FunctionalMap.WriteOnlyMap;
+import org.infinispan.functional.Listeners.ReadWriteListeners;
+import org.infinispan.functional.Listeners.WriteListeners;
+import org.infinispan.functional.Traversable;
 import org.infinispan.commons.marshall.Externalizer;
 import org.infinispan.commons.marshall.SerializeWith;
 import org.infinispan.functional.impl.FunctionalMapImpl;
@@ -67,10 +66,9 @@ public final class FunctionalJCache<K, V> implements Cache<K, V>, FunctionalList
    // Rudimentary constructor, we'll provide more idiomatic construction
    // via main Infinispan class which is still to be defined
    private FunctionalJCache(FunctionalMapImpl<K, V> map) {
-      FunctionalMapImpl<K, V> blockingMap = map.withParams(FutureMode.COMPLETED);
-      this.readOnly = ReadOnlyMapImpl.create(blockingMap);
-      this.writeOnly = WriteOnlyMapImpl.create(blockingMap);
-      this.readWrite = ReadWriteMapImpl.create(blockingMap);
+      this.readOnly = ReadOnlyMapImpl.create(map);
+      this.writeOnly = WriteOnlyMapImpl.create(map);
+      this.readWrite = ReadWriteMapImpl.create(map);
    }
 
    public static <K, V> Cache<K, V> create(AdvancedCache<K, V> cache) {
@@ -119,12 +117,7 @@ public final class FunctionalJCache<K, V> implements Cache<K, V>, FunctionalList
 
    @Override
    public void putAll(Map<? extends K, ? extends V> map) {
-      // Since blocking is in use, there's no need to consume the iterator for
-      // the put all effects to be executed.
-      // With blocking, the iterator gets pro-actively consumed, and the
-      // return offers the possibility to re-iterate by the user.
-      // Since the iteration here has no result, we can skip the iteration altogether.
-      writeOnly.evalMany(map, setValueConsumer());
+      await(writeOnly.evalMany(map, setValueConsumer()));
    }
 
    @Override
@@ -164,17 +157,12 @@ public final class FunctionalJCache<K, V> implements Cache<K, V>, FunctionalList
 
    @Override
    public void removeAll(Set<? extends K> keys) {
-      // Since blocking is in use, there's no need to consume the iterator for
-      // the put all effects to be executed.
-      // With blocking, the iterator gets pro-actively consumed, and the
-      // return offers the possibility to re-iterate by the user.
-      // Since the iteration here has no result, we can skip the iteration altogether.
-      writeOnly.evalMany(keys, removeConsumer());
+      await(writeOnly.evalMany(keys, removeConsumer()));
    }
 
    @Override
    public void removeAll() {
-      writeOnly.evalAll(removeConsumer());
+      await(writeOnly.evalAll(removeConsumer()));
    }
 
    @Override

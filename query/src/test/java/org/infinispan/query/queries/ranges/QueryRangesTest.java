@@ -26,7 +26,7 @@ import org.testng.annotations.Test;
  *
  * @author Anna Manukyan
  */
-@Test(groups = {"functional", "smoke"}, testName = "query.queries.ranges.QueryRangesTest")
+@Test(groups = {"functional"}, testName = "query.queries.ranges.QueryRangesTest")
 public class QueryRangesTest extends SingleCacheManagerTest {
 
    private final static TimeZone GMT = TimeZone.getTimeZone("GMT");
@@ -52,7 +52,7 @@ public class QueryRangesTest extends SingleCacheManagerTest {
             .indexing()
             .index(Index.ALL)
             .addIndexedEntity(Person.class)
-            .addProperty("default.directory_provider", "ram")
+            .addProperty("default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT");
       return TestCacheManagerFactory.createCacheManager(cfg);
    }

@@ -1,17 +1,15 @@
 package org.infinispan.notifications.cachelistener.cluster;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertTrue;
+import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.List;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import org.infinispan.Cache;
-import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.notifications.cachelistener.event.CacheEntryCreatedEvent;
@@ -51,12 +49,7 @@ public abstract class AbstractClusterListenerNonTxTest extends AbstractClusterLi
       checkPoint.triggerForever("pre_raise_notification_release");
 
       final MagicKey key = new MagicKey(cache1, cache2);
-      Future<String> future = fork(new Callable<String>() {
-         @Override
-         public String call() throws Exception {
-            return cache0.put(key, FIRST_VALUE);
-         }
-      });
+      Future<String> future = fork(() -> cache0.put(key, FIRST_VALUE));
 
       checkPoint.awaitStrict("post_raise_notification_invoked", 10, TimeUnit.SECONDS);
       awaitForBackups(cache0);
@@ -66,26 +59,26 @@ public abstract class AbstractClusterListenerNonTxTest extends AbstractClusterLi
 
       future.get(10, TimeUnit.SECONDS);
 
-      // The command is retried during rebalance, but there are two topologies - in the first (rebalancing) topology
-      // one node can be primary owner and in the second (rebalanced) the other. In this case, it's possible that
-      // the listener is fired both in the first topology and then after the response from primary owner arrives
-      // and the originator now has become the new primary owner.
-      // Similar situation is possible with triangle algorithm (TODO pruivo: elaborate)
-      assertTrue(clusterListener.events.size() >= 2);
-      assertTrue(clusterListener.events.size() <= 3);
+      TestingUtil.waitForNoRebalance(cache0, cache2);
+
+      // The command is retried during rebalance, but there are 5 topology updates (thus up to 5 retries)
+      // 1: top - 1 NO_REBALANCE
+      // 2: top     READ_OLD_WRITE_ALL
+      // 3: top     READ_ALL_WRITE_ALL
+      // 4: top     READ_NEW_WRITE_ALL
+      // 5: top     NO_REBALANCE
+      assertTrue("Expected 2 - 6 events, but received " + clusterListener.events,
+            clusterListener.events.size() >= 2 && clusterListener.events.size() <= 6);
+      // Since the first event was generated properly it is a create without retry
       checkEvent(clusterListener.events.get(0), key, true, false);
 
       Address cache0primary = cache0.getAdvancedCache().getDistributionManager().getPrimaryLocation(key);
       Address cache2primary = cache2.getAdvancedCache().getDistributionManager().getPrimaryLocation(key);
       // we expect that now both nodes have the same topology
       assertEquals(cache0primary, cache2primary);
-      // This is possible after rebalance; when rebalancing, primary owner is always the old backup
 
-      checkEvent(clusterListener.events.get(1), key, false, true);
-      if (clusterListener.events.size() == 3) {
-         assertTrue(cache0primary.equals(cache0.getCacheManager().getAddress()));
-         checkEvent(clusterListener.events.get(2), key, false, true);
-      }
+      // Any extra events would be retries as modifications
+      clusterListener.events.stream().skip(1).forEach(e -> checkEvent(e, key, false, true));
    }
 
    protected void checkEvent(CacheEntryEvent<Object, String> event, MagicKey key, boolean isCreated, boolean isRetried) {
@@ -106,7 +99,7 @@ public abstract class AbstractClusterListenerNonTxTest extends AbstractClusterLi
    protected void awaitForBackups(Cache<?, ?> cache) {
       if (TestingUtil.isTriangleAlgorithm(cacheMode, tx)) {
          CommandAckCollector collector = TestingUtil.extractComponent(cache, CommandAckCollector.class);
-         List<CommandInvocationId> pendingCommands = collector.getPendingCommands();
+         List<Long> pendingCommands = collector.getPendingCommands();
          //only 1 put is waiting (it may receive the backup ack, but not the primary ack since it is blocked!)
          assertEquals(1, pendingCommands.size());
          //make sure that the backup received the update

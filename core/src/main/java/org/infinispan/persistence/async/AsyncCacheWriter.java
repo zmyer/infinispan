@@ -3,23 +3,27 @@ package org.infinispan.persistence.async;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.configuration.cache.AsyncStoreConfiguration;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.factories.threads.DefaultThreadFactory;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.modifications.Modification;
+import org.infinispan.persistence.modifications.ModificationsList;
 import org.infinispan.persistence.modifications.Remove;
 import org.infinispan.persistence.modifications.Store;
 import org.infinispan.persistence.spi.CacheWriter;
@@ -60,16 +64,16 @@ import net.jcip.annotations.GuardedBy;
 public class AsyncCacheWriter extends DelegatingCacheWriter {
    private static final Log log = LogFactory.getLog(AsyncCacheWriter.class);
    private static final boolean trace = log.isTraceEnabled();
-   private static final AtomicInteger threadId = new AtomicInteger(0);
 
    private ExecutorService executor;
    private Thread coordinator;
    private int concurrencyLevel;
    private String cacheName;
+   private String nodeName;
 
    protected BufferLock stateLock;
    @GuardedBy("stateLock")
-   protected final AtomicReference<State> state = new AtomicReference<State>();
+   protected final AtomicReference<State> state = new AtomicReference<>();
    @GuardedBy("stateLock")
    private boolean stopped;
 
@@ -88,6 +92,7 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
       Configuration cacheCfg = cache != null ? cache.getCacheConfiguration() : null;
       concurrencyLevel = cacheCfg != null ? cacheCfg.locking().concurrencyLevel() : 16;
       cacheName = cache != null ? cache.getName() : null;
+      nodeName = cache != null ? cache.getCacheManager().getCacheManagerConfiguration().transport().nodeName() : null;
    }
 
    @Override
@@ -100,18 +105,17 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
       // Create a thread pool with unbounded work queue, so that all work is accepted and eventually
       // executed. A bounded queue could throw RejectedExecutionException and thus lose data.
       int poolSize = asyncConfiguration.threadPoolSize();
-      executor = new ThreadPoolExecutor(poolSize, poolSize, 120L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(),
-                                        new ThreadFactory() {
-                                           @Override
-                                           public Thread newThread(Runnable r) {
-                                              Thread t = new Thread(r, "AsyncStoreProcessor-" + cacheName + "-" + threadId.getAndIncrement());
-                                              t.setDaemon(true);
-                                              return t;
-                                           }
-                                        });
+      DefaultThreadFactory processorThreadFactory =
+            new DefaultThreadFactory(null, Thread.NORM_PRIORITY, DefaultThreadFactory.DEFAULT_PATTERN, nodeName,
+                                     "AsyncStoreProcessor");
+      executor = new ThreadPoolExecutor(poolSize, poolSize, 120L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(),
+                                        processorThreadFactory);
       ((ThreadPoolExecutor) executor).allowCoreThreadTimeOut(true);
-      coordinator = new Thread(new AsyncStoreCoordinator(), "AsyncStoreCoordinator-" + cacheName);
-      coordinator.setDaemon(true);
+
+      DefaultThreadFactory coordinatorThreadFactory =
+            new DefaultThreadFactory(null, Thread.NORM_PRIORITY, DefaultThreadFactory.DEFAULT_PATTERN, nodeName,
+                                     "AsyncStoreCoordinator");
+      coordinator = coordinatorThreadFactory.newThread(new AsyncStoreCoordinator());
       coordinator.start();
    }
 
@@ -146,26 +150,46 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
    }
 
    @Override
+   public void writeBatch(Iterable entries) {
+      putAll(
+            StreamSupport.stream((Spliterator<MarshalledEntry>) entries.spliterator(), false)
+                  .map(me -> new Store(me.getKey(), me))
+                  .collect(Collectors.toList())
+      );
+   }
+
+   @Override
+   public void deleteBatch(Iterable keys) {
+      putAll(
+            StreamSupport.stream((Spliterator<Object>) keys.spliterator(), false)
+                  .map(Remove::new)
+                  .collect(Collectors.toList())
+      );
+   }
+
+   @Override
    public boolean delete(Object key) {
       put(new Remove(key), 1);
       return true;
    }
 
    protected void applyModificationsSync(List<Modification> mods) throws PersistenceException {
-      for (Modification m : mods) {
-         switch (m.getType()) {
-            case STORE:
-               actual.write(((Store) m).getStoredValue());
-               break;
-            case REMOVE:
-               actual.delete(((Remove) m).getKey());
-               break;
-            default:
-               throw new IllegalArgumentException("Unknown modification type " + m.getType());
-         }
-      }
-   }
+      actual.writeBatch(
+            () -> StreamSupport.stream(Spliterators.spliterator(mods, Spliterator.NONNULL), false)
+                  .filter(m -> m.getType() == Modification.Type.STORE)
+                  .map(Store.class::cast)
+                  .map(Store::getStoredValue)
+                  .iterator()
+      );
 
+      actual.deleteBatch(
+            () -> StreamSupport.stream(Spliterators.spliterator(mods, Spliterator.NONNULL), false)
+                  .filter(m -> m.getType() == Modification.Type.REMOVE)
+                  .map(Remove.class::cast)
+                  .map(Remove::getKey)
+                  .iterator()
+      );
+   }
 
    protected State newState(boolean clear, State next) {
       ConcurrentMap<Object, Modification> map = CollectionFactory.makeConcurrentMap(64, concurrencyLevel);
@@ -185,6 +209,15 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
 
          assertNotStopped();
          state.get().put(mod);
+      } finally {
+         stateLock.writeUnlock();
+      }
+   }
+
+   private void putAll(List<Modification> mods) {
+      stateLock.writeLock(mods.size());
+      try {
+         state.get().put(new ModificationsList(mods));
       } finally {
          stateLock.writeUnlock();
       }

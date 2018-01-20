@@ -1,17 +1,16 @@
 package org.infinispan.functional.impl;
 
-import static org.infinispan.factories.KnownComponentNames.ASYNC_OPERATIONS_EXECUTOR;
-
-import java.util.concurrent.ExecutorService;
-
 import org.infinispan.AdvancedCache;
+import org.infinispan.Cache;
+import org.infinispan.cache.impl.AbstractDelegatingCache;
+import org.infinispan.cache.impl.DecoratedCache;
 import org.infinispan.commands.CommandsFactory;
-import org.infinispan.commons.api.functional.FunctionalMap;
-import org.infinispan.commons.api.functional.Param;
-import org.infinispan.commons.api.functional.Status;
 import org.infinispan.commons.util.Experimental;
 import org.infinispan.context.InvocationContextFactory;
-import org.infinispan.interceptors.InterceptorChain;
+import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.functional.FunctionalMap;
+import org.infinispan.functional.Param;
+import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.lifecycle.ComponentStatus;
 
 /**
@@ -24,38 +23,58 @@ public final class FunctionalMapImpl<K, V> implements FunctionalMap<K, V> {
 
    final Params params;
    final AdvancedCache<K, V> cache;
+   final AsyncInterceptorChain chain;
+   final CommandsFactory commandsFactory;
+   final InvocationContextFactory invCtxFactory;
+   final Object lockOwner;
+   final FunctionalNotifier notifier;
 
    public static <K, V> FunctionalMapImpl<K, V> create(Params params, AdvancedCache<K, V> cache) {
+      params = params.addAll(Params.fromFlagsBitSet(getFlagsBitSet(cache)));
       return new FunctionalMapImpl<>(params, cache);
    }
 
    public static <K, V> FunctionalMapImpl<K, V> create(AdvancedCache<K, V> cache) {
-      return new FunctionalMapImpl<>(Params.create(), cache);
+      Params params = Params.fromFlagsBitSet(getFlagsBitSet(cache));
+      return new FunctionalMapImpl<>(params, cache);
+   }
+
+   private static <K, V> long getFlagsBitSet(Cache<K, V> cache) {
+      long flagsBitSet = 0;
+      for (; ; ) {
+         if (cache instanceof DecoratedCache) {
+            flagsBitSet |= ((DecoratedCache) cache).getFlagsBitSet();
+         }
+         if (cache instanceof AbstractDelegatingCache) {
+            cache = ((AbstractDelegatingCache) cache).getDelegate();
+         } else {
+            break;
+         }
+      }
+      return flagsBitSet;
+   }
+
+   // Finds the first decorated cache if there are delegates surrounding it otherwise null
+   private DecoratedCache<K, V> findDecoratedCache(Cache<K, V> cache) {
+      if (cache instanceof AbstractDelegatingCache) {
+         if (cache instanceof DecoratedCache) {
+            return ((DecoratedCache<K, V>) cache);
+         }
+         return findDecoratedCache(((AbstractDelegatingCache<K, V>) cache).getDelegate());
+      }
+      return null;
    }
 
    private FunctionalMapImpl(Params params, AdvancedCache<K, V> cache) {
       this.params = params;
       this.cache = cache;
-   }
-
-   InvocationContextFactory invCtxFactory() {
-      return cache.getComponentRegistry().getComponent(InvocationContextFactory.class);
-   }
-
-   CommandsFactory cmdFactory() {
-      return cache.getComponentRegistry().getComponent(CommandsFactory.class);
-   }
-
-   InterceptorChain chain() {
-      return cache.getComponentRegistry().getComponent(InterceptorChain.class);
-   }
-
-   ExecutorService asyncExec() {
-      return cache.getComponentRegistry().getComponent(ExecutorService.class, ASYNC_OPERATIONS_EXECUTOR);
-   }
-
-   FunctionalNotifier<K, V> notifier() {
-      return cache.getComponentRegistry().getComponent(FunctionalNotifier.class);
+      ComponentRegistry componentRegistry = cache.getComponentRegistry();
+      chain = componentRegistry.getComponent(AsyncInterceptorChain.class);
+      invCtxFactory = componentRegistry.getComponent(InvocationContextFactory.class);
+      DecoratedCache<K, V> decoratedCache = findDecoratedCache(cache);
+      lockOwner = decoratedCache == null ? null : decoratedCache.getLockOwner();
+      commandsFactory = componentRegistry.getComponent(CommandsFactory.class);
+      notifier = componentRegistry.getComponent(FunctionalNotifier.class);
    }
 
    @Override
@@ -75,17 +94,12 @@ public final class FunctionalMapImpl<K, V> implements FunctionalMap<K, V> {
    }
 
    @Override
-   public Status getStatus() {
-      return toStatus(cache.getStatus());
+   public ComponentStatus getStatus() {
+      return cache.getStatus();
    }
 
    @Override
    public void close() throws Exception {
       cache.stop();
    }
-
-   private static Status toStatus(ComponentStatus cacheStatus) {
-      return Status.valueOf(cacheStatus.name());
-   }
-
 }

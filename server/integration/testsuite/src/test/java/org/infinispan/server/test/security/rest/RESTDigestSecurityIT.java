@@ -30,23 +30,18 @@ public class RESTDigestSecurityIT extends AbstractBasicSecurity {
 
     @Before
     public void setUp() throws Exception {
-        RESTHelper.addServer(server.getRESTEndpoint().getInetAddress().getHostName(), server.getRESTEndpoint()
+        rest = new RESTHelper();
+        rest.addServer(server.getRESTEndpoint().getInetAddress().getHostName(), server.getRESTEndpoint()
                 .getContextPath());
     }
 
     @After
     public void tearDown() throws Exception {
-        RESTHelper.clearServers();
+        rest.clearServers();
     }
 
     @Test
-    @WithRunningServer({@RunningServer(name = CONTAINER, config = "testsuite/rest-sec-digest-wr.xml")})
-    public void testSecuredWriteOperations() throws Exception {
-        securedWriteOperations();
-    }
-
-    @Test
-    @WithRunningServer({@RunningServer(name = CONTAINER, config = "testsuite/rest-sec-digest-rw.xml")})
+    @WithRunningServer({@RunningServer(name = CONTAINER, config = "testsuite/rest-sec-digest.xml")})
     public void testSecuredReadWriteOperations() throws Exception {
         securedReadWriteOperations();
     }

@@ -3,12 +3,11 @@ package org.infinispan.statetransfer;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.infinispan.test.TestingUtil.extractComponent;
 import static org.infinispan.test.TestingUtil.findInterceptor;
-import static org.infinispan.test.TestingUtil.waitForRehashToComplete;
+import static org.infinispan.test.TestingUtil.waitForNoRebalance;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNull;
 
 import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -35,6 +34,7 @@ import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.util.ReplicatedControlledConsistentHashFactory;
+import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.annotations.Test;
 
 /**
@@ -67,6 +67,7 @@ public class ReplCommandRetryTest extends MultipleCacheManagersTest {
          configurationBuilder.customInterceptors().addInterceptor()
                .after(EntryWrappingInterceptor.class).interceptor(new DelayInterceptor(commandToBlock));
       }
+      configurationBuilder.locking().isolationLevel(IsolationLevel.READ_COMMITTED);
       return configurationBuilder;
    }
 
@@ -79,15 +80,12 @@ public class ReplCommandRetryTest extends MultipleCacheManagersTest {
       EmbeddedCacheManager cm2 = addClusterEnabledCacheManager(buildConfig(null, PutKeyValueCommand.class, false));
       final Cache<Object, Object> c2 = cm2.getCache();
       DelayInterceptor di2 = findInterceptor(c2, DelayInterceptor.class);
-      waitForStateTransfer(initialTopologyId + 2, c1, c2);
+      waitForStateTransfer(initialTopologyId + 4, c1, c2);
 
-      Future<Object> f = fork(new Callable<Object>() {
-         @Override
-         public Object call() throws Exception {
-            log.tracef("Initiating a put command on %s", c1);
-            c1.put("k", "v");
-            return null;
-         }
+      Future<Object> f = fork(() -> {
+         log.tracef("Initiating a put command on %s", c1);
+         c1.put("k", "v");
+         return null;
       });
 
       // The command is replicated to c2, and blocks in the DelayInterceptor on c2
@@ -97,7 +95,7 @@ public class ReplCommandRetryTest extends MultipleCacheManagersTest {
       EmbeddedCacheManager cm3 = addClusterEnabledCacheManager(buildConfig(null, PutKeyValueCommand.class, false));
       Cache<Object, Object> c3 = cm3.getCache();
       DelayInterceptor di3 = findInterceptor(c3, DelayInterceptor.class);
-      waitForStateTransfer(initialTopologyId + 4, c1, c2, c3);
+      waitForStateTransfer(initialTopologyId + 8, c1, c2, c3);
 
       // Unblock the replicated command on c2.
       log.tracef("Triggering retry 1");
@@ -115,7 +113,7 @@ public class ReplCommandRetryTest extends MultipleCacheManagersTest {
       EmbeddedCacheManager cm4 = addClusterEnabledCacheManager(buildConfig(null, PutKeyValueCommand.class, false));
       Cache<Object, Object> c4 = cm4.getCache();
       DelayInterceptor di4 = findInterceptor(c4, DelayInterceptor.class);
-      waitForStateTransfer(initialTopologyId + 6, c1, c2, c3, c4);
+      waitForStateTransfer(initialTopologyId + 12, c1, c2, c3, c4);
 
       // Unblock the command with the new topology id on c3.
       log.tracef("Triggering retry 2");
@@ -170,18 +168,15 @@ public class ReplCommandRetryTest extends MultipleCacheManagersTest {
       int initialTopologyId = extractComponent(c1, StateTransferManager.class).getCacheTopology().getTopologyId();
 
       EmbeddedCacheManager cm2 = addClusterEnabledCacheManager(buildConfig(lockingMode, commandClass, true));
-      final Cache c2 = cm2.getCache();
+      final Cache<String, String> c2 = cm2.getCache();
       DelayInterceptor di2 = findInterceptor(c2, DelayInterceptor.class);
-      waitForStateTransfer(initialTopologyId + 2, c1, c2);
+      waitForStateTransfer(initialTopologyId + 4, c1, c2);
 
-      Future<Object> f = fork(new Callable<Object>() {
-         @Override
-         public Object call() throws Exception {
-            // The LockControlCommand wouldn't be replicated if we initiated the transaction on the primary owner (c1)
-            log.tracef("Initiating a transaction on backup owner %s", c2);
-            c2.put("k", "v");
-            return null;
-         }
+      Future<Object> f = fork(() -> {
+         // The LockControlCommand wouldn't be replicated if we initiated the transaction on the primary owner (c1)
+         log.tracef("Initiating a transaction on backup owner %s", c2);
+         c2.put("k", "v");
+         return null;
       });
 
       // The prepare command is replicated to cache c1, and it blocks in the DelayInterceptor
@@ -191,7 +186,7 @@ public class ReplCommandRetryTest extends MultipleCacheManagersTest {
       EmbeddedCacheManager cm3 = addClusterEnabledCacheManager(buildConfig(lockingMode, commandClass, false));
       Cache c3 = cm3.getCache();
       DelayInterceptor di3 = findInterceptor(c3, DelayInterceptor.class);
-      waitForStateTransfer(initialTopologyId + 4, c1, c2, c3);
+      waitForStateTransfer(initialTopologyId + 8, c1, c2, c3);
 
       // Unblock the replicated command on c1.
       // c1 will return an UnsureResponse, and c2 will retry (1)
@@ -206,7 +201,7 @@ public class ReplCommandRetryTest extends MultipleCacheManagersTest {
       EmbeddedCacheManager cm4 = addClusterEnabledCacheManager(buildConfig(lockingMode, commandClass, false));
       Cache c4 = cm4.getCache();
       DelayInterceptor di4 = findInterceptor(c4, DelayInterceptor.class);
-      waitForStateTransfer(initialTopologyId + 6, c1, c2, c3, c4);
+      waitForStateTransfer(initialTopologyId + 12, c1, c2, c3, c4);
 
       // Unblock the replicated command on c1
       di1.unblock(2);
@@ -239,7 +234,7 @@ public class ReplCommandRetryTest extends MultipleCacheManagersTest {
    }
 
    private void waitForStateTransfer(int expectedTopologyId, Cache... caches) {
-      waitForRehashToComplete(caches);
+      waitForNoRebalance(caches);
       for (Cache c : caches) {
          CacheTopology cacheTopology = extractComponent(c, StateTransferManager.class).getCacheTopology();
          assertEquals(String.format("Wrong topology on cache %s, expected %d and got %s", c, expectedTopologyId, cacheTopology),

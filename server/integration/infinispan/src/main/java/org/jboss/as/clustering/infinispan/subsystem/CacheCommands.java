@@ -90,7 +90,7 @@ public abstract class CacheCommands implements OperationStepHandler {
             try {
                 operationResult = invokeCommand(cache, operation, context);
             } catch (Exception e) {
-                throw new OperationFailedException(MESSAGES.failedToInvokeOperation(e.getLocalizedMessage()));
+                throw new OperationFailedException(MESSAGES.failedToInvokeOperation(e.getLocalizedMessage()), e);
             }
             if (operationResult != null) {
                 context.getResult().set(operationResult);
@@ -340,20 +340,6 @@ public abstract class CacheCommands implements OperationStepHandler {
                 int readBatch = CacheResource.READ_BATCH.resolveModelAttribute(context,operation).asInt();
                 int writeThreads = CacheResource.WRITE_THREADS.resolveModelAttribute(context,operation).asInt();
                 manager.synchronizeData(operation.require(ModelKeys.MIGRATOR_NAME).asString(), readBatch, writeThreads);
-            }
-            return null;
-        }
-    }
-
-    public static class RecordGlobalKeySetCommand extends CacheCommands {
-        public static final RecordGlobalKeySetCommand INSTANCE = new RecordGlobalKeySetCommand();
-
-        @Override
-        protected ModelNode invokeCommand(Cache<?, ?> cache, ModelNode operation, OperationContext context) throws Exception {
-            ComponentRegistry registry = SecurityActions.getComponentRegistry(cache.getAdvancedCache());
-            RollingUpgradeManager manager = registry.getComponent(RollingUpgradeManager.class);
-            if (manager != null) {
-                manager.recordKnownGlobalKeyset();
             }
             return null;
         }

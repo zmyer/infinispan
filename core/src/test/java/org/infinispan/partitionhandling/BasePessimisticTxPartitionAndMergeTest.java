@@ -16,7 +16,7 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 
 /**
  * It tests multiple scenarios where a split can happen during a transaction.
@@ -26,14 +26,14 @@ import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
  */
 public abstract class BasePessimisticTxPartitionAndMergeTest extends BaseTxPartitionAndMergeTest {
 
-   protected static final String PESSIMISTIC_TX_CACHE_NAME = "pes-cache";
+   static final String PESSIMISTIC_TX_CACHE_NAME = "pes-cache";
 
    @Override
    protected void createCacheManagers() throws Throwable {
       super.createCacheManagers();
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC);
-      builder.clustering().partitionHandling().enabled(true);
-      builder.transaction().lockingMode(LockingMode.PESSIMISTIC).transactionMode(TransactionMode.TRANSACTIONAL).transactionManagerLookup(new DummyTransactionManagerLookup());
+      builder.clustering().partitionHandling().whenSplit(PartitionHandling.DENY_READ_WRITES);
+      builder.transaction().lockingMode(LockingMode.PESSIMISTIC).transactionMode(TransactionMode.TRANSACTIONAL).transactionManagerLookup(new EmbeddedTransactionManagerLookup());
       defineConfigurationOnAllManagers(PESSIMISTIC_TX_CACHE_NAME, builder);
    }
 
@@ -77,6 +77,7 @@ public abstract class BasePessimisticTxPartitionAndMergeTest extends BaseTxParti
       }
 
       checkLocksDuringPartition(splitMode, keyInfo, discard);
+      filterCollection.stopDiscard();
 
       mergeCluster(PESSIMISTIC_TX_CACHE_NAME);
       finalAsserts(PESSIMISTIC_TX_CACHE_NAME, keyInfo, txFail ? INITIAL_VALUE : FINAL_VALUE);

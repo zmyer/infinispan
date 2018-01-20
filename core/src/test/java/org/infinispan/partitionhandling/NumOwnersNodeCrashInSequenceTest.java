@@ -5,7 +5,6 @@ import static org.infinispan.test.concurrent.StateSequencerUtil.matchCommand;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.fail;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -17,9 +16,6 @@ import org.infinispan.manager.CacheContainer;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.remoting.transport.Transport;
-import org.infinispan.remoting.transport.jgroups.JGroupsAddress;
-import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.statetransfer.StateResponseCommand;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -28,12 +24,6 @@ import org.infinispan.topology.LocalTopologyManager;
 import org.infinispan.util.ControlledConsistentHashFactory;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-import org.jgroups.JChannel;
-import org.jgroups.View;
-import org.jgroups.protocols.DISCARD;
-import org.jgroups.protocols.TP;
-import org.jgroups.protocols.pbcast.GMS;
-import org.jgroups.stack.ProtocolStack;
 import org.testng.annotations.Test;
 
 /**
@@ -57,10 +47,9 @@ public class NumOwnersNodeCrashInSequenceTest extends MultipleCacheManagersTest 
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      cchf = new ControlledConsistentHashFactory(new int[]{0, 1}, new int[]{1, 2},
-                                            new int[]{2, 3}, new int[]{3, 0});
+      cchf = new ControlledConsistentHashFactory.Default(new int[][]{{0, 1}, {1, 2}, {2, 3}, {3, 0}});
       configBuilder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC);
-      configBuilder.clustering().partitionHandling().enabled(true);
+      configBuilder.clustering().partitionHandling().whenSplit(PartitionHandling.DENY_READ_WRITES);
       configBuilder.clustering().hash().numSegments(4).stateTransfer().timeout(30000);
    }
 
@@ -99,8 +88,7 @@ public class NumOwnersNodeCrashInSequenceTest extends MultipleCacheManagersTest 
 
    private void testNodeCrashedBeforeStFinished(final int a0, final int a1, final int c0, final int c1) throws Exception {
 
-      cchf.setOwnerIndexes(new int[]{a0, a1}, new int[]{a1, c0},
-                           new int[]{c0, c1}, new int[]{c1, a0});
+      cchf.setOwnerIndexes(new int[][]{{a0, a1}, {a1, c0}, {c0, c1}, {c1, a0}});
       configBuilder.clustering().hash().consistentHashFactory(cchf);
       createCluster(configBuilder, 4);
       waitForClusterToForm();
@@ -131,8 +119,7 @@ public class NumOwnersNodeCrashInSequenceTest extends MultipleCacheManagersTest 
 
       // Prepare for rebalance. Manager a1 will request state from c0 for segment 2
       cchf.setMembersToUse(advancedCache(a0).getRpcManager().getTransport().getMembers());
-      cchf.setOwnerIndexes(new int[]{a0, a1}, new int[]{a1, c0},
-            new int[]{c0, a1}, new int[]{c0, a0});
+      cchf.setOwnerIndexes(new int[][]{{a0, a1}, {a1, c0}, {c0, a1}, {c0, a0}});
 
       Address missing = address(c1);
       log.tracef("Before killing node %s", missing);
@@ -179,49 +166,18 @@ public class NumOwnersNodeCrashInSequenceTest extends MultipleCacheManagersTest 
       }
 
       log.debug("Changing partition availability mode back to AVAILABLE");
-      cchf.setOwnerIndexes(new int[]{a0, a1}, new int[]{a1, a0},
-            new int[]{a0, a1}, new int[]{a1, a0});
+      cchf.setOwnerIndexes(new int[][]{{a0, a1}, {a1, a0}, {a0, a1}, {a1, a0}});
       LocalTopologyManager ltm = TestingUtil.extractGlobalComponent(manager(a0), LocalTopologyManager.class);
       ltm.setCacheAvailability(CacheContainer.DEFAULT_CACHE_NAME, AvailabilityMode.AVAILABLE);
-      TestingUtil.waitForRehashToComplete(cache(a0), cache(a1));
+      TestingUtil.waitForNoRebalance(cache(a0), cache(a1));
       eventuallyEquals(AvailabilityMode.AVAILABLE, phm0::getAvailabilityMode);
    }
 
    private void installNewView(List<Address> members, Address missing, EmbeddedCacheManager... where) {
-      log.tracef("installNewView:members=%s, missing=%s", members, missing);
-      final List<org.jgroups.Address> viewMembers = new ArrayList<org.jgroups.Address>();
-      for (Address a : members)
-         if (!a.equals(missing))
-            viewMembers.add(((JGroupsAddress) a).getJGroupsAddress());
-      int viewId = where[0].getTransport().getViewId() + 1;
-      View view = View.create(viewMembers.get(0), viewId, viewMembers.toArray(new org.jgroups.Address[viewMembers.size()]));
-
-      log.trace("Before installing new view:" + viewMembers);
-      for (EmbeddedCacheManager ecm : where) {
-         JChannel c = ((JGroupsTransport) ecm.getTransport()).getChannel();
-         ((GMS) c.getProtocolStack().findProtocol(GMS.class)).installView(view);
-      }
+      TestingUtil.installNewView(members.stream().filter(a -> !a.equals(missing)), where);
    }
 
-   /**
-    * Simulates a node crash, discarding all the messages from/to this node and then stopping the caches.
-    */
    protected void crashCacheManagers(EmbeddedCacheManager... cacheManagers) {
-      for (EmbeddedCacheManager cm : cacheManagers) {
-         JGroupsTransport t = (JGroupsTransport) cm.getGlobalComponentRegistry().getComponent(Transport.class);
-         JChannel channel = t.getChannel();
-         try {
-            DISCARD discard = new DISCARD();
-            discard.setDiscardAll(true);
-            channel.getProtocolStack().insertProtocol(discard, ProtocolStack.Position.ABOVE, TP.class);
-         } catch (Exception e) {
-            log.warn("Problems inserting discard", e);
-            throw new RuntimeException(e);
-         }
-         View view = View.create(channel.getAddress(), 100, channel.getAddress());
-         ((GMS) channel.getProtocolStack().findProtocol(GMS.class)).installView(view);
-      }
-      TestingUtil.killCacheManagers(cacheManagers);
+      TestingUtil.crashCacheManagers(cacheManagers);
    }
-
 }

@@ -21,6 +21,7 @@ import org.infinispan.query.test.Person;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
+import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -44,8 +45,9 @@ public class TwoPhaseCommitIndexingTest extends SingleCacheManagerTest {
          .indexing()
             .index(Index.ALL)
             .addIndexedEntity(Person.class)
-            .addProperty("default.directory_provider", "ram")
-            .addProperty("lucene_version", "LUCENE_CURRENT");
+            .addProperty("default.directory_provider", "local-heap")
+            .addProperty("lucene_version", "LUCENE_CURRENT")
+         .locking().isolationLevel(IsolationLevel.READ_COMMITTED);
       return TestCacheManagerFactory.createCacheManager(cfg);
    }
 

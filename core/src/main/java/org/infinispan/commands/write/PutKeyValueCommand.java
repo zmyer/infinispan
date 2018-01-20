@@ -6,9 +6,6 @@ import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 
-import org.infinispan.atomic.CopyableDeltaAware;
-import org.infinispan.atomic.Delta;
-import org.infinispan.atomic.DeltaAware;
 import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.MetadataAwareCommand;
 import org.infinispan.commands.Visitor;
@@ -50,10 +47,6 @@ public class PutKeyValueCommand extends AbstractDataWriteCommand implements Meta
       //noinspection unchecked
       this.notifier = notifier;
       this.metadata = metadata;
-
-      if (value instanceof DeltaAware) {
-         addFlags(FlagBitSets.DELTA_WRITE);
-      }
    }
 
    public void init(CacheNotifier notifier) {
@@ -76,9 +69,7 @@ public class PutKeyValueCommand extends AbstractDataWriteCommand implements Meta
 
    @Override
    public LoadType loadType() {
-      if (hasAnyFlag(FlagBitSets.DELTA_WRITE)) {
-         return LoadType.OWNER;
-      } else if (isConditional() || !hasAnyFlag(FlagBitSets.IGNORE_RETURN_VALUES)) {
+      if (isConditional() || !hasAnyFlag(FlagBitSets.IGNORE_RETURN_VALUES)) {
          return LoadType.PRIMARY;
       } else {
          return LoadType.DONT_LOAD;
@@ -183,10 +174,12 @@ public class PutKeyValueCommand extends AbstractDataWriteCommand implements Meta
             .append(toStr(key))
             .append(", value=").append(toStr(value))
             .append(", flags=").append(printFlags())
+            .append(", commandInvocationId=").append(CommandInvocationId.show(commandInvocationId))
             .append(", putIfAbsent=").append(putIfAbsent)
             .append(", valueMatcher=").append(valueMatcher)
             .append(", metadata=").append(metadata)
             .append(", successful=").append(successful)
+            .append(", topologyId=").append(getTopologyId())
             .append("}")
             .toString();
    }
@@ -212,69 +205,41 @@ public class PutKeyValueCommand extends AbstractDataWriteCommand implements Meta
    }
 
    @Override
-   public void updateStatusFromRemoteResponse(Object remoteResponse) {
-      // Only putIfAbsent commands can fail
-      if (putIfAbsent) {
-         successful = remoteResponse == null;
-      }
-   }
-
-   @Override
-   public void initBackupWriteRcpCommand(BackupWriteRcpCommand command) {
+   public void initBackupWriteRpcCommand(BackupWriteRpcCommand command) {
       command.setWrite(commandInvocationId, key, value, metadata, getFlagsBitSet(), getTopologyId());
    }
 
    @Override
-   public void initPrimaryAck(PrimaryAckCommand command, Object localReturnValue) {
-      command.initCommandInvocationIdAndTopologyId(commandInvocationId, getTopologyId());
-      if (isConditional() || isReturnValueExpected()) {
-         command.initWithReturnValue(successful, localReturnValue);
-      } else {
-         command.initWithoutReturnValue(successful);
-      }
+   public void fail() {
+      successful = false;
+   }
+
+   @Override
+   public boolean isReturnValueExpected() {
+      return isConditional() || super.isReturnValueExpected();
    }
 
    private Object performPut(MVCCEntry<Object, Object> e, InvocationContext ctx) {
       Object entryValue = e.getValue();
       Object o;
 
-      if (e.isCreated()) {
-         notifier.notifyCacheEntryCreated(key, value, metadata, true, ctx, this);
-      } else {
-         notifier.notifyCacheEntryModified(key, value, metadata, entryValue, e.getMetadata(), true, ctx, this);
+      // Non tx and tx both have this set if it was state transfer
+      if (!hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER | FlagBitSets.PUT_FOR_X_SITE_STATE_TRANSFER)) {
+         if (e.isCreated()) {
+            notifier.notifyCacheEntryCreated(key, value, metadata, true, ctx, this);
+         } else {
+            notifier.notifyCacheEntryModified(key, value, metadata, entryValue, e.getMetadata(), true, ctx, this);
+         }
       }
 
-      if (value instanceof Delta) {
-         // magic
-         Delta dv = (Delta) value;
-         if (e.isRemoved()) {
-            e.setExpired(false);
-            e.setRemoved(false);
-            e.setCreated(true);
-            e.setValid(true);
-            e.setValue(dv.merge(null));
-            Metadatas.updateMetadata(e, metadata);
-         } else {
-            DeltaAware toMergeWith = null;
-            if (entryValue instanceof CopyableDeltaAware) {
-               toMergeWith = ((CopyableDeltaAware) entryValue).copy();
-            } else if (entryValue instanceof DeltaAware) {
-               toMergeWith = (DeltaAware) entryValue;
-            }
-            e.setValue(dv.merge(toMergeWith));
-            Metadatas.updateMetadata(e, metadata);
-         }
-         o = entryValue;
-      } else {
-         o = e.setValue(value);
-         Metadatas.updateMetadata(e, metadata);
-         if (e.isRemoved()) {
-            e.setCreated(true);
-            e.setExpired(false);
-            e.setRemoved(false);
-            e.setValid(true);
-            o = null;
-         }
+      o = e.setValue(value);
+      Metadatas.updateMetadata(e, metadata);
+      if (e.isRemoved()) {
+         e.setCreated(true);
+         e.setExpired(false);
+         e.setRemoved(false);
+         e.setValid(true);
+         o = null;
       }
       e.setChanged(true);
       // Return the expected value when retrying a putIfAbsent command (i.e. null)

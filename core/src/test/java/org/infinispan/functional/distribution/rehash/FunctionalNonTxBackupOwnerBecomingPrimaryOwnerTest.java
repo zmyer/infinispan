@@ -1,18 +1,12 @@
 package org.infinispan.functional.distribution.rehash;
 
-import static org.infinispan.commons.api.functional.EntryVersion.CompareResult.EQUAL;
-
-import java.io.Serializable;
-import java.util.function.BiFunction;
-import java.util.function.Consumer;
+import static org.infinispan.container.versioning.InequalVersionComparisonResult.EQUAL;
 
 import org.infinispan.AdvancedCache;
-import org.infinispan.commons.api.functional.EntryVersion.NumericEntryVersion;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
-import org.infinispan.commons.api.functional.EntryView.WriteEntryView;
-import org.infinispan.commons.api.functional.FunctionalMap.ReadWriteMap;
-import org.infinispan.commons.api.functional.FunctionalMap.WriteOnlyMap;
-import org.infinispan.commons.api.functional.MetaParam.MetaEntryVersion;
+import org.infinispan.container.versioning.NumericVersion;
+import org.infinispan.functional.FunctionalMap.ReadWriteMap;
+import org.infinispan.functional.FunctionalMap.WriteOnlyMap;
+import org.infinispan.functional.MetaParam.MetaEntryVersion;
 import org.infinispan.distribution.rehash.NonTxBackupOwnerBecomingPrimaryOwnerTest;
 import org.infinispan.distribution.rehash.TestWriteOperation;
 import org.infinispan.functional.FunctionalTestUtils;
@@ -48,9 +42,7 @@ public class FunctionalNonTxBackupOwnerBecomingPrimaryOwnerTest extends NonTxBac
    public void testPrimaryOwnerChangingDuringReplaceBasedOnMeta() throws Exception {
       // TODO: Move initial set and replace with meta logic to TestWriteOperation
       WriteOnlyMap<String, String> wo0 = wo(0);
-      Consumer<WriteEntryView<String>> f = (Consumer<WriteEntryView<String>> & Serializable) wo ->
-         wo.set("v0", new MetaEntryVersion<>(new NumericEntryVersion(1)));
-      wo0.eval("testkey", f);
+      wo0.eval("testkey", wo -> wo.set("v0", new MetaEntryVersion(new NumericVersion(1))));
       doTest(TestWriteOperation.REPLACE_META_FUNCTIONAL);
    }
 
@@ -61,17 +53,15 @@ public class FunctionalNonTxBackupOwnerBecomingPrimaryOwnerTest extends NonTxBac
       } catch (IllegalArgumentException e) {
          switch (op) {
             case REPLACE_META_FUNCTIONAL:
-               BiFunction<Object, ReadWriteEntryView<Object, Object>, Boolean> f =
-                  (BiFunction<Object, ReadWriteEntryView<Object, Object>, Boolean> & Serializable) (v, rw) -> {
-                     Class<MetaEntryVersion<Long>> type = MetaEntryVersion.type();
-                     return rw.findMetaParam(type)
-                        .filter(ver -> ver.get().compareTo(new NumericEntryVersion(1)) == EQUAL)
+               return FunctionalTestUtils.await(rw(cache0).eval(key, "v1", (v, rw) -> {
+
+                     return rw.findMetaParam(MetaEntryVersion.class)
+                        .filter(ver -> ver.get().compareTo(new NumericVersion(1)) == EQUAL)
                         .map(ver -> {
-                           rw.set(v, new MetaEntryVersion<>(new NumericEntryVersion(2)));
+                           rw.set(v, new MetaEntryVersion(new NumericVersion(2)));
                            return true;
                         }).orElse(false);
-                  };
-               return FunctionalTestUtils.await(rw(cache0).eval(key, "v1", f));
+                  }));
             default:
                throw new AssertionError("Unknown operation: " + op);
          }
@@ -100,8 +90,7 @@ public class FunctionalNonTxBackupOwnerBecomingPrimaryOwnerTest extends NonTxBac
 
    @Override
    public void testPrimaryOwnerChangingDuringRemove() throws Exception {
-      // To be fixed in ISPN-6040
-      // doTest(TestWriteOperation.REMOVE_FUNCTIONAL);
+      doTest(TestWriteOperation.REMOVE_FUNCTIONAL);
    }
 
    @Override

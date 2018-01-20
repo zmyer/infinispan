@@ -7,9 +7,9 @@ import java.util.Collection;
 import java.util.Collections;
 
 import org.infinispan.commands.AbstractTopologyAffectedCommand;
+import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.Visitor;
 import org.infinispan.container.DataContainer;
-import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
@@ -45,9 +45,8 @@ public class ClearCommand extends AbstractTopologyAffectedCommand implements Wri
 
    @Override
    public Object perform(InvocationContext ctx) throws Throwable {
-      for (CacheEntry e : dataContainer.entrySet()) {
-         notifier.notifyCacheEntryRemoved(e.getKey(), e.getValue(), e.getMetadata(), true, ctx, this);
-      }
+      dataContainer.iterator().forEachRemaining(e ->
+            notifier.notifyCacheEntryRemoved(e.getKey(), e.getValue(), e.getMetadata(), true, ctx, this));
       return null;
    }
 
@@ -101,8 +100,13 @@ public class ClearCommand extends AbstractTopologyAffectedCommand implements Wri
    }
 
    @Override
-   public void updateStatusFromRemoteResponse(Object remoteResponse) {
-      // Do nothing
+   public void fail() {
+      throw new UnsupportedOperationException();
+   }
+
+   @Override
+   public CommandInvocationId getCommandInvocationId() {
+      return null;
    }
 
    @Override

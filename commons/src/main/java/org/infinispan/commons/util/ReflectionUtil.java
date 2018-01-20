@@ -2,7 +2,6 @@ package org.infinispan.commons.util;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,7 +29,6 @@ public class ReflectionUtil {
    private static final Class<?>[] primitiveArrays = {int[].class, byte[].class, short[].class, long[].class,
                                                       float[].class, double[].class, boolean[].class, char[].class};
    public static final Class<?>[] EMPTY_CLASS_ARRAY = new Class[0];
-
 
    /**
     * Returns a set of Methods that contain the given method annotation.  This includes all public, protected, package
@@ -61,6 +59,12 @@ public class ReflectionUtil {
             annotated.add(m);
       }
 
+      return annotated;
+   }
+
+   public static List<Field> getAllFields(Class<?> c, Class<? extends Annotation> annotationType) {
+      List<Field> annotated = new LinkedList<>();
+      inspectFieldsRecursively(c, annotated, annotationType);
       return annotated;
    }
 
@@ -129,6 +133,21 @@ public class ReflectionUtil {
       }
    }
 
+   private static void inspectFieldsRecursively(Class<?> c, List<Field> s, Class<? extends Annotation> annotationType) {
+      if (c == null || c.isInterface()) {
+         return;
+      }
+      for (Field f : c.getDeclaredFields()) {
+         if (f.isAnnotationPresent(annotationType)) {
+            s.add(f);
+         }
+      }
+
+      if (!c.equals(Object.class)) {
+         inspectFieldsRecursively(c.getSuperclass(), s, annotationType);
+      }
+   }
+
    /**
     * Tests whether a method has already been found, i.e., overridden.
     *
@@ -163,16 +182,16 @@ public class ReflectionUtil {
     * @param parameters parameters
     */
    public static Object invokeAccessibly(Object instance, Method method, Object[] parameters) {
+      return SecurityActions.invokeAccessibly(instance, method, parameters);
+   }
+
+   public static void setAccessibly(Object instance, Field field, Object value) {
       try {
-         method.setAccessible(true);
-         return method.invoke(instance, parameters);
-      } catch (InvocationTargetException e) {
-         Throwable cause = e.getCause() != null ? e.getCause() : e;
-         throw new CacheException("Unable to invoke method " + method + " on object of type " + (instance == null ? "null" : instance.getClass().getSimpleName()) +
-                                        (parameters != null ? " with parameters " + Arrays.asList(parameters) : ""), cause);
+         field.setAccessible(true);
+         field.set(instance, value);
       } catch (Exception e) {
-         throw new CacheException("Unable to invoke method " + method + " on object of type " + (instance == null ? "null" : instance.getClass().getSimpleName()) +
-               (parameters != null ? " with parameters " + Arrays.asList(parameters) : ""), e);
+         throw new CacheException("Unable to set field " + field + " on object of type " +
+               (instance == null ? "null" : instance.getClass().getSimpleName()) + "to " + value, e);
       }
    }
 

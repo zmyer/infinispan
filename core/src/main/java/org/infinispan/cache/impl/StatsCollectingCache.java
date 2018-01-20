@@ -9,6 +9,7 @@ import org.infinispan.AdvancedCache;
 import org.infinispan.commons.util.ByRef;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
+import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.stats.Stats;
@@ -22,17 +23,15 @@ import org.infinispan.util.TimeService;
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public class StatsCollectingCache<K, V> extends SimpleCacheImpl<K, V> {
-   private StatsCollector statsCollector;
-   private TimeService timeService;
+   @Inject private StatsCollector statsCollector;
+   @Inject private TimeService timeService;
 
    public StatsCollectingCache(String cacheName) {
       super(cacheName);
    }
 
-   @Inject
-   public void injectDependencies(StatsCollector statsCollector, TimeService timeService) {
-      this.statsCollector = statsCollector;
-      this.timeService = timeService;
+   public StatsCollectingCache(String cacheName, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      super(cacheName, keyDataConversion, valueDataConversion);
    }
 
    @Override
@@ -136,6 +135,21 @@ public class StatsCollectingCache<K, V> extends SimpleCacheImpl<K, V> {
          if (misses > 0) {
             statsCollector.recordMisses(misses, misses * (end - start) / requests);
          }
+      }
+      return map;
+   }
+
+   @Override
+   public Map<K, V> getAndPutAll(Map<? extends K, ? extends V> entries) {
+      boolean statisticsEnabled = statsCollector.getStatisticsEnabled();
+      long start = 0;
+      if (statisticsEnabled) {
+         start = timeService.time();
+      }
+      Map<K, V> map = super.getAndPutAll(entries);
+      if (statisticsEnabled) {
+         long end = timeService.time();
+         statsCollector.recordStores(entries.size(), end - start);
       }
       return map;
    }
@@ -314,13 +328,13 @@ public class StatsCollectingCache<K, V> extends SimpleCacheImpl<K, V> {
    }
 
    @Override
-   protected V mergeInternal(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, CacheEntryChange<K, V> ref) {
+   protected V mergeInternal(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, CacheEntryChange<K, V> ref, Metadata metadata) {
       boolean statisticsEnabled = statsCollector.getStatisticsEnabled();
       long start = 0;
       if (statisticsEnabled) {
          start = timeService.time();
       }
-      V ret = super.mergeInternal(key, value, remappingFunction, ref);
+      V ret = super.mergeInternal(key, value, remappingFunction, ref, metadata);
       if (statisticsEnabled) {
          long end = timeService.time();
          if (ref.getNewValue() != null) {

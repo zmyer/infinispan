@@ -51,7 +51,9 @@ public class ClusterWideMetricKeys {
    public static final String HITS = "clusterwide-hits";
    public static final String MISSES = "clusterwide-misses";
    public static final String NUMBER_OF_ENTRIES = "clusterwide-number-of-entries";
+   public static final String NUMBER_OF_ENTRIES_IN_MEMORY = "clusterwide-number-of-entries-in-memory";
    public static final String OFF_HEAP_MEMORY_USED = "clusterwide-off-heap-memory-used";
+   public static final String MINIMUM_REQUIRED_NODES = "clusterwide-minimum-required-nodes";
    public static final String READ_WRITE_RATIO = "clusterwide-read-write-ratio";
    public static final String REMOVE_HITS = "clusterwide-remove-hits";
    public static final String REMOVE_MISSES = "clusterwide-remove-misses";
@@ -68,4 +70,10 @@ public class ClusterWideMetricKeys {
    public static final String CACHE_LOADER_MISSES = "clusterwide-cache-loader-misses";
    public static final String CACHE_LOADER_STORES = "clusterwide-cache-loader-stores";
 
+   public static final String MEMORY_AVAILABLE = "clusterwide-memory-available";
+   public static final String MEMORY_MAX = "clusterwide-memory-max";
+   public static final String MEMORY_TOTAL = "clusterwide-memory-total";
+   public static final String MEMORY_USED = "clusterwide-memory-used";
+
+   public static final String STALE_STATS_THRESHOLD = "clusterwide-stale-stats-threshold";
 }

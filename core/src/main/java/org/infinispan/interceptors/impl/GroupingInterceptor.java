@@ -5,14 +5,15 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
-import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.distribution.group.GroupFilter;
-import org.infinispan.distribution.group.GroupManager;
+import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.group.impl.GroupFilter;
+import org.infinispan.distribution.group.impl.GroupManager;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
@@ -28,24 +29,23 @@ import org.infinispan.notifications.cachelistener.event.CacheEntryActivatedEvent
  */
 public class GroupingInterceptor extends DDAsyncInterceptor {
 
-   private CacheNotifier<?, ?> cacheNotifier;
-   private GroupManager groupManager;
-   private InternalEntryFactory factory;
+   @Inject private CacheNotifier<?, ?> cacheNotifier;
+   @Inject private GroupManager groupManager;
+   @Inject private InternalEntryFactory factory;
+   @Inject private DistributionManager distributionManager;
+
    private boolean isPassivationEnabled;
 
-   @Inject
-   public void injectDependencies(CacheNotifier<?, ?> cacheNotifier, GroupManager groupManager,
-                                  InternalEntryFactory factory, Configuration configuration) {
-      this.cacheNotifier = cacheNotifier;
-      this.groupManager = groupManager;
-      this.factory = factory;
-      this.isPassivationEnabled = configuration.persistence().passivation();
+   @Start
+   public void start() {
+      this.isPassivationEnabled = cacheConfiguration.persistence().passivation();
    }
 
    @Override
    public Object visitGetKeysInGroupCommand(InvocationContext ctx, GetKeysInGroupCommand command) throws Throwable {
-      final String groupName = command.getGroupName();
-      command.setGroupOwner(isGroupOwner(groupName));
+      final Object groupName = command.getGroupName();
+      //no need to contact the primary owner if we are a backup owner.
+      command.setGroupOwner(distributionManager == null || distributionManager.getCacheTopology().isWriteOwner(groupName));
       if (!command.isGroupOwner() || !isPassivationEnabled) {
          return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
             if (rv instanceof List) {
@@ -84,11 +84,6 @@ public class GroupingInterceptor extends DDAsyncInterceptor {
       }
    }
 
-   private boolean isGroupOwner(String groupName) {
-      //no need to contact the primary owner if we are a backup owner.
-      return groupManager.isOwner(groupName);
-   }
-
    @Listener
    public static class KeyListener {
 
@@ -96,7 +91,7 @@ public class GroupingInterceptor extends DDAsyncInterceptor {
       private final GroupFilter<Object> filter;
       private final InternalEntryFactory factory;
 
-      public KeyListener(String groupName, GroupManager groupManager, InternalEntryFactory factory) {
+      public KeyListener(Object groupName, GroupManager groupManager, InternalEntryFactory factory) {
          this.factory = factory;
          filter = new GroupFilter<>(groupName, groupManager);
          activatedKeys = new ConcurrentLinkedQueue<>();

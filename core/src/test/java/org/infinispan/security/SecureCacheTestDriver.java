@@ -1,5 +1,7 @@
 package org.infinispan.security;
 
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT_TYPE;
+
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
@@ -8,6 +10,9 @@ import javax.transaction.SystemException;
 
 import org.infinispan.atomic.Delta;
 import org.infinispan.atomic.DeltaAware;
+import org.infinispan.commons.dataconversion.ByteArrayWrapper;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
+import org.infinispan.conflict.ConflictManagerFactory;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.context.Flag;
 import org.infinispan.filter.KeyFilter;
@@ -18,7 +23,6 @@ import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
-import org.infinispan.notifications.cachelistener.filter.EventType;
 import org.infinispan.partitionhandling.AvailabilityMode;
 
 public class SecureCacheTestDriver {
@@ -33,24 +37,9 @@ public class SecureCacheTestDriver {
    public SecureCacheTestDriver() {
       interceptor = new CommandInterceptor() {
       };
-      keyFilter = new KeyFilter<String>() {
-         @Override
-         public boolean accept(String key) {
-            return true;
-         }
-      };
-      keyValueFilter = new CacheEventFilter<String, String>() {
-         @Override
-         public boolean accept(String key, String oldValue, Metadata oldMetadata, String newValue, Metadata newMetadata, EventType eventType) {
-            return true;
-         }
-      };
-      converter = new CacheEventConverter<String, String, String>() {
-         @Override
-         public String convert(String key, String oldValue, Metadata oldMetadata, String newValue, Metadata newMetadata, EventType eventType) {
-            return null;
-         }
-      };
+      keyFilter = key -> true;
+      keyValueFilter = (key, oldValue, oldMetadata, newValue, newMetadata, eventType) -> true;
+      converter = (key, oldValue, oldMetadata, newValue, newMetadata, eventType) -> null;
       listener = new NullListener();
       metadata = new Metadata() {
 
@@ -160,7 +149,7 @@ public class SecureCacheTestDriver {
       cache.putAsync("a", "a", metadata);
    }
 
-   @TestCachePermission(value=AuthorizationPermission.LIFECYCLE, needsSecurityManager=true)
+   @TestCachePermission(value = AuthorizationPermission.LIFECYCLE, needsSecurityManager = true)
    public void testStop(SecureCache<String, String> cache) {
       cache.stop();
       cache.start();
@@ -589,6 +578,11 @@ public class SecureCacheTestDriver {
    }
 
    @TestCachePermission(AuthorizationPermission.ADMIN)
+   public void testGetConflictResolutionManager(SecureCache<String, String> cache) {
+      ConflictManagerFactory.get(cache);
+   }
+
+   @TestCachePermission(AuthorizationPermission.ADMIN)
    public void testGetInterceptorChain(SecureCache<String, String> cache) {
       cache.getInterceptorChain();
    }
@@ -642,12 +636,17 @@ public class SecureCacheTestDriver {
    @TestCachePermission(AuthorizationPermission.WRITE)
    public void testPutAll_Map_Metadata(SecureCache<String, String> cache) {
       cache.putAll(Collections.singletonMap("a", "a"), new EmbeddedMetadata.Builder().
-              lifespan(10, TimeUnit.SECONDS).maxIdle(5, TimeUnit.SECONDS).build());
+            lifespan(10, TimeUnit.SECONDS).maxIdle(5, TimeUnit.SECONDS).build());
    }
 
    @TestCachePermission(AuthorizationPermission.BULK_READ)
    public void testGetAll_Set(SecureCache<String, String> cache) {
       cache.getAll(Collections.emptySet());
+   }
+
+   @TestCachePermission(AuthorizationPermission.BULK_WRITE)
+   public void testGetAndPutAll_Map(SecureCache<String, String> cache) {
+      cache.getAndPutAll(Collections.emptyMap());
    }
 
    @TestCachePermission(AuthorizationPermission.BULK_READ)
@@ -674,6 +673,120 @@ public class SecureCacheTestDriver {
    @TestCachePermission(AuthorizationPermission.LISTEN)
    public void testAddFilteredListener_Object_CacheEventFilter_CacheEventConverter_Set(SecureCache<String, String> cache) {
       cache.addFilteredListener(listener, keyValueFilter, converter, Collections.emptySet());
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testWithSubject_Subject(SecureCache<String, String> cache) {
+   }
+
+   @TestCachePermission(AuthorizationPermission.BULK_WRITE)
+   public void testLockedStream(SecureCache<String, String> cache) {
+      cache.lockedStream();
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testLockAs_Object(SecureCache<String, String> cache) {
+      cache.lockAs(new Object());
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testWithEncoding_Class(SecureCache<String, String> cache) {
+      cache.withEncoding(IdentityEncoder.class);
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testGetKeyEncoder(SecureCache<String, String> cache) {
+      cache.getKeyEncoder();
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testGetValueEncoder(SecureCache<String, String> cache) {
+      cache.getValueEncoder();
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testGetKeyWrapper(SecureCache<String, String> cache) {
+      cache.getKeyWrapper();
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testGetValueWrapper(SecureCache<String, String> cache) {
+      cache.getValueWrapper();
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testGetKeyDataConversion(SecureCache<String, String> cache) {
+      cache.getKeyDataConversion();
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testGetValueDataConversion(SecureCache<String, String> cache) {
+      cache.getValueDataConversion();
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testWithEncoding_Class_Class(SecureCache<String, String> cache) {
+      cache.withEncoding(IdentityEncoder.class, IdentityEncoder.class);
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testWithWrapping_Class(SecureCache<String, String> cache) {
+      cache.withWrapping(ByteArrayWrapper.class);
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testWithWrapping_Class_Class(SecureCache<String, String> cache) {
+      cache.withWrapping(ByteArrayWrapper.class, ByteArrayWrapper.class);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testCompute_Object_SerializableBiFunction(SecureCache<String, String> cache) {
+      cache.compute("a", (k, v) -> "yes");
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testCompute_Object_SerializableBiFunction_Metadata(SecureCache<String, String> cache) {
+      cache.compute("a", (k, v) -> "yes", metadata);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfPresent_Object_SerializableBiFunction(SecureCache<String, String> cache) {
+      cache.computeIfPresent("a", (k, v) -> "yes");
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfPresent_Object_SerializableBiFunction_Metadata(SecureCache<String, String> cache) {
+      cache.computeIfPresent("a", (k, v) -> "yes", metadata);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfAbsent_Object_SerializableFunction_Metadata(SecureCache<String, String> cache) {
+      cache.computeIfAbsent("b", k -> "no", metadata);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfAbsent_Object_SerializableFunction(SecureCache<String, String> cache) {
+      cache.computeIfAbsent("b", k -> "no");
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testMerge_Object_Object_SerializableBiFunction(SecureCache<String, String> cache) {
+      cache.merge("a", "b", (k, v) -> "no");
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testMerge_Object_Object_SerializableBiFunction_Metadata(SecureCache<String, String> cache) {
+      cache.merge("a", "b", (k, v) -> "no", metadata);
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testWithKeyEncoding_Class(SecureCache<String, String> cache) {
+      cache.withKeyEncoding(IdentityEncoder.class);
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
+   public void testWithMediaType_String_String(SecureCache<String, String> cache) {
+      cache.withMediaType(APPLICATION_OBJECT_TYPE, APPLICATION_OBJECT_TYPE);
    }
 
 }

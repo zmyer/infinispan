@@ -19,7 +19,15 @@ public class RpcOptions {
    private final DeliverOrder deliverOrder;
 
    /**
-    * @deprecated Since 8.3, use {@link #RpcOptions(long, TimeUnit, ResponseFilter, ResponseMode, DeliverOrder)} instead.
+    * @since 9.2
+    */
+   @SuppressWarnings("deprecation")
+   public RpcOptions(DeliverOrder deliverOrder, long timeout, TimeUnit unit) {
+      this(timeout, unit, null, ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, deliverOrder);
+   }
+
+   /**
+    * @deprecated Since 9.0, use {@link #RpcOptions(long, TimeUnit, ResponseFilter, ResponseMode, DeliverOrder)} instead.
     */
    @Deprecated
    public RpcOptions(long timeout, TimeUnit unit, ResponseFilter responseFilter, ResponseMode responseMode,
@@ -27,6 +35,10 @@ public class RpcOptions {
       this(timeout, unit, responseFilter, responseMode, deliverOrder);
    }
 
+   /**
+    * @deprecated Since 9.2, use {@link #RpcOptions(DeliverOrder, long, TimeUnit)} instead.
+    */
+   @Deprecated
    public RpcOptions(long timeout, TimeUnit unit, ResponseFilter responseFilter, ResponseMode responseMode,
          DeliverOrder deliverOrder) {
       if (unit == null) {
@@ -67,6 +79,7 @@ public class RpcOptions {
    /**
     * @return the {@link ResponseFilter} to be used. Default is {@code null} meaning waiting for all or none responses
     * depending if the remote invocation is synchronous or asynchronous respectively.
+    * @deprecated Since 9.2, ignored by {@code RpcManager.invokeCommand*()}.
     */
    public ResponseFilter responseFilter() {
       return responseFilter;
@@ -74,14 +87,17 @@ public class RpcOptions {
 
    /**
     * @return the {@link ResponseMode} to handle with the responses.
+    * @deprecated Since 9.2, ignored by {@code RpcManager.invokeCommand*()}.
     */
+   @Deprecated
    public ResponseMode responseMode() {
       return responseMode;
    }
 
    /**
-    * @deprecated Since 8.3, always returns {@code false}.
+    * @deprecated Since 9.0, always returns {@code false}.
     */
+   @Deprecated
    public boolean skipReplicationQueue() {
       return false;
    }

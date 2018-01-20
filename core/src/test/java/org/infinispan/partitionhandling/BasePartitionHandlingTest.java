@@ -1,12 +1,17 @@
 package org.infinispan.partitionhandling;
 
+import static org.infinispan.test.Exceptions.expectException;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.fail;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -15,12 +20,14 @@ import java.util.stream.Stream;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.conflict.EntryMergePolicy;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
 import org.infinispan.notifications.cachemanagerlistener.event.ViewChangedEvent;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
 import org.infinispan.remoting.transport.AbstractDelegatingTransport;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.remoting.transport.jgroups.JGroupsAddress;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -42,24 +49,33 @@ import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "partitionhandling.BasePartitionHandlingTest")
 public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
-   private static Log log = LogFactory.getLog(BasePartitionHandlingTest.class);
+   protected static Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
    private final AtomicInteger viewId = new AtomicInteger(5);
    protected int numMembersInCluster = 4;
-   protected CacheMode cacheMode = CacheMode.DIST_SYNC;
    protected volatile Partition[] partitions;
-   protected boolean partitionHandling = true;
+   protected PartitionHandling partitionHandling = PartitionHandling.DENY_READ_WRITES;
+   protected EntryMergePolicy mergePolicy = null;
 
    public BasePartitionHandlingTest() {
+      this.cacheMode = CacheMode.DIST_SYNC;
       this.cleanup = CleanupPhase.AFTER_METHOD;
    }
 
    @Override
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder dcc = cacheConfiguration();
-      dcc.clustering().cacheMode(cacheMode).partitionHandling().enabled(partitionHandling);
+      dcc.clustering().cacheMode(cacheMode).partitionHandling().whenSplit(partitionHandling).mergePolicy(mergePolicy);
+      if (biasAcquisition != null) {
+         dcc.clustering().biasAcquisition(biasAcquisition);
+      }
       createClusteredCaches(numMembersInCluster, dcc, new TransportFlags().withFD(true).withMerge(true));
       waitForClusterToForm();
+   }
+
+   protected BasePartitionHandlingTest partitionHandling(PartitionHandling partitionHandling) {
+      this.partitionHandling = partitionHandling;
+      return this;
    }
 
    protected ConfigurationBuilder cacheConfiguration() {
@@ -67,9 +83,17 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
    }
 
    @Listener
-   static class ViewChangedHandler {
+   public static class ViewChangedHandler {
 
-      volatile boolean notified = false;
+      private volatile boolean notified = false;
+
+      public boolean isNotified() {
+         return notified;
+      }
+
+      public void setNotified(boolean notified) {
+         this.notified = notified;
+      }
 
       @ViewChanged
       public void viewChanged(ViewChangedEvent vce) {
@@ -79,8 +103,14 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
 
    public static class PartitionDescriptor {
       int[] nodes;
+      AvailabilityMode expectedMode;
 
       public PartitionDescriptor(int... nodes) {
+         this(null, nodes);
+      }
+
+      public PartitionDescriptor(AvailabilityMode expectedMode, int... nodes) {
+         this.expectedMode = expectedMode;
          this.nodes = nodes;
       }
 
@@ -90,6 +120,19 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
 
       public int node(int i) {
          return nodes[i];
+      }
+
+      public void assertAvailabilityMode(Partition partition) {
+         partition.assertAvailabilityMode(expectedMode);
+      }
+
+      public AvailabilityMode getExpectedMode() {
+         return expectedMode;
+      }
+
+      @Override
+      public String toString() {
+         return Arrays.toString(nodes);
       }
    }
 
@@ -200,6 +243,10 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
       }
 
       public void merge(Partition partition) {
+         merge(partition, true);
+      }
+
+      public void merge(Partition partition, boolean waitForNoRebalance) {
          observeMembers(partition);
          partition.observeMembers(this);
          ArrayList<JChannel> view1 = new ArrayList<>(channels);
@@ -208,7 +255,7 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
 //         System.out.println("view2 = " + printView(view2));
          partition.channels.stream().filter(c -> !channels.contains(c)).forEach(c -> channels.add(c));
          installMergeView(view1, view2);
-         waitForPartitionToForm();
+         waitForPartitionToForm(waitForNoRebalance);
          List<Partition> tmp = new ArrayList<>(Arrays.asList(BasePartitionHandlingTest.this.partitions));
          if (!tmp.remove(partition)) throw new AssertionError();
          BasePartitionHandlingTest.this.partitions = tmp.toArray(new Partition[tmp.size()]);
@@ -220,7 +267,7 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
          return sb.insert(0, "[ ").append(" ]").toString();
       }
 
-      private void waitForPartitionToForm() {
+      private void waitForPartitionToForm(boolean waitForNoRebalance) {
          List<Cache<Object, Object>> caches = new ArrayList<>(getCaches(null));
          Iterator<Cache<Object, Object>> i = caches.iterator();
          while (i.hasNext()) {
@@ -229,8 +276,11 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
          }
          Cache<Object, Object> cache = caches.get(0);
          TestingUtil.blockUntilViewsReceived(10000, caches);
-         if (cache.getCacheConfiguration().clustering().cacheMode().isClustered()) {
-            TestingUtil.waitForRehashToComplete(caches);
+
+         if (waitForNoRebalance) {
+            if (cache.getCacheConfiguration().clustering().cacheMode().isClustered()) {
+               TestingUtil.waitForNoRebalance(caches);
+            }
          }
       }
 
@@ -264,14 +314,17 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
       }
 
       public void assertDegradedMode() {
-         if (partitionHandling) {
+         if (partitionHandling != PartitionHandling.ALLOW_READ_WRITES) {
             assertAvailabilityMode(AvailabilityMode.DEGRADED_MODE);
          }
       }
 
       public void assertKeyAvailableForRead(Object k, Object expectedValue) {
          for (Cache c : cachesInThisPartition()) {
-            assertEquals(c.get(k), expectedValue, "Cache " + c.getAdvancedCache().getRpcManager().getAddress() + " doesn't see the right value: ");
+            BasePartitionHandlingTest.this.assertKeyAvailableForRead(c, k, expectedValue);
+            // While we keep the null values in the map inside interceptor stack, these are removed in CacheImpl.getAll
+            Map<Object, Object> expectedMap = expectedValue == null ? Collections.emptyMap() : Collections.singletonMap(k, expectedValue);
+            assertEquals(c.getAdvancedCache().getAll(Collections.singleton(k)), expectedMap, "Cache " + c.getAdvancedCache().getRpcManager().getAddress() + " doesn't see the right value: ");
          }
       }
 
@@ -287,14 +340,9 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
             assertKeyNotAvailableForRead(k);
       }
 
-      protected void assertKeyNotAvailableForRead(Object key) {
+      public void assertKeyNotAvailableForRead(Object key) {
          for (Cache<Object, ?> c : cachesInThisPartition()) {
-            try {
-               c.get(key);
-               fail("Key " + key + " available in cache " + address(c));
-            } catch (AvailabilityException ae) {
-               //expected!
-            }
+            BasePartitionHandlingTest.this.assertKeyNotAvailableForRead(c, key);
          }
       }
 
@@ -331,6 +379,30 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
             eventuallyEquals(state, () -> partitionHandlingManager(c).getAvailabilityMode());
          }
       }
+
+      public void assertConsistentHashMembers(List<org.infinispan.remoting.transport.Address> expectedMembers) {
+         for (Cache c : cachesInThisPartition()) {
+            assertEquals(new HashSet<>(c.getAdvancedCache().getDistributionManager().getConsistentHash().getMembers()), new HashSet<>(expectedMembers));
+         }
+      }
+
+      public List<org.infinispan.remoting.transport.Address> getAddresses() {
+         return channels.stream().map(ch -> new JGroupsAddress(ch.getAddress())).collect(Collectors.toList());
+      }
+   }
+
+   protected void assertKeyAvailableForRead(Cache c, Object k, Object expectedValue) {
+      assertEquals(c.get(k), expectedValue, "Cache " + c.getAdvancedCache().getRpcManager().getAddress() + " doesn't see the right value: ");
+   }
+
+   protected void assertKeyNotAvailableForRead(Cache<Object, ?> c, Object key) {
+      expectException(AvailabilityException.class, () -> c.get(key));
+      expectException(AvailabilityException.class, () -> c.getAdvancedCache().getAll(Collections.singleton(key)));
+   }
+
+
+   protected void splitCluster(PartitionDescriptor... partitions) {
+      splitCluster(Arrays.stream(partitions).map(p -> p.getNodes()).toArray(int[][]::new));
    }
 
    protected void splitCluster(int[]... parts) {

@@ -3,12 +3,6 @@ package org.infinispan.server.test.configs;
 import static org.infinispan.server.test.client.rest.RESTHelper.KEY_A;
 import static org.infinispan.server.test.client.rest.RESTHelper.KEY_B;
 import static org.infinispan.server.test.client.rest.RESTHelper.KEY_C;
-import static org.infinispan.server.test.client.rest.RESTHelper.delete;
-import static org.infinispan.server.test.client.rest.RESTHelper.fullPathKey;
-import static org.infinispan.server.test.client.rest.RESTHelper.get;
-import static org.infinispan.server.test.client.rest.RESTHelper.head;
-import static org.infinispan.server.test.client.rest.RESTHelper.post;
-import static org.infinispan.server.test.client.rest.RESTHelper.put;
 import static org.infinispan.server.test.util.ITestUtils.SERVER1_MGMT_PORT;
 import static org.infinispan.server.test.util.ITestUtils.SERVER2_MGMT_PORT;
 import static org.infinispan.server.test.util.ITestUtils.eventually;
@@ -50,14 +44,12 @@ import org.infinispan.arquillian.core.WithRunningServer;
 import org.infinispan.arquillian.utils.MBeanServerConnectionProvider;
 import org.infinispan.client.hotrod.Flag;
 import org.infinispan.client.hotrod.RemoteCache;
-import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
 import org.infinispan.client.hotrod.exceptions.TransportException;
 import org.infinispan.server.infinispan.spi.InfinispanSubsystem;
 import org.infinispan.server.test.client.memcached.MemcachedClient;
 import org.infinispan.server.test.client.rest.RESTHelper;
 import org.infinispan.server.test.util.ITestUtils;
-import org.infinispan.server.test.util.ITestUtils.Condition;
 import org.infinispan.server.test.util.RemoteCacheManagerFactory;
 import org.infinispan.server.test.util.RemoteInfinispanMBeans;
 import org.jboss.arquillian.container.test.api.Config;
@@ -65,7 +57,6 @@ import org.jboss.arquillian.container.test.api.ContainerController;
 import org.jboss.arquillian.junit.Arquillian;
 import org.jboss.arquillian.test.api.ArquillianResource;
 import org.junit.After;
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -88,7 +79,6 @@ public class ExampleConfigsIT {
 
     static final String DEFAULT_CACHE_NAME = "default";
     static final String NAMED_CACHE_NAME = "namedCache";
-    static final String MEMCACHED_CACHE_NAME = "memcachedCache";
 
     @ArquillianResource
     ContainerController controller;
@@ -108,20 +98,15 @@ public class ExampleConfigsIT {
         rcmFactory = null;
     }
 
-    @AfterClass
-    public static void clearServers() {
-        RESTHelper.clearServers();
-    }
-
     @Test
-    @WithRunningServer({@RunningServer(name = "hotrod-rolling-upgrade-2"),@RunningServer(name = "hotrod-rolling-upgrade-1")})
+    @WithRunningServer({@RunningServer(name = "example-hotrod-rolling-upgrade-2"),@RunningServer(name = "example-hotrod-rolling-upgrade-1")})
     public void testHotRodRollingUpgrades() throws Exception {
         // Target node
         MBeanServerConnectionProvider provider1;
         // Source node
         MBeanServerConnectionProvider provider2;
 
-        RemoteInfinispanMBeans s2 = createRemotes("hotrod-rolling-upgrade-2", "local", DEFAULT_CACHE_NAME);
+        RemoteInfinispanMBeans s2 = createRemotes("example-hotrod-rolling-upgrade-2", "local", DEFAULT_CACHE_NAME);
         final RemoteCache<Object, Object> c2 = createCache(s2);
 
         c2.put("key1", "value1");
@@ -131,9 +116,9 @@ public class ExampleConfigsIT {
             c2.put("keyLoad" + i, "valueLoad" + i);
         }
 
-        controller.start("hotrod-rolling-upgrade-1");
+        controller.start("example-hotrod-rolling-upgrade-1");
 
-        RemoteInfinispanMBeans s1 = createRemotes("hotrod-rolling-upgrade-1", "local", DEFAULT_CACHE_NAME);
+        RemoteInfinispanMBeans s1 = createRemotes("example-hotrod-rolling-upgrade-1", "local", DEFAULT_CACHE_NAME);
         final RemoteCache<Object, Object> c1 = createCache(s1);
 
         assertEquals("Can't access etries stored in source node (target's RemoteCacheStore).", "value1", c1.get("key1"));
@@ -145,8 +130,6 @@ public class ExampleConfigsIT {
 
         final ObjectName rollMan = new ObjectName("jboss." + InfinispanSubsystem.SUBSYSTEM_NAME + ":type=Cache," + "name=\"default(local)\","
                 + "manager=\"local\"," + "component=RollingUpgradeManager");
-
-        invokeOperation(provider2, rollMan.toString(), "recordKnownGlobalKeyset", new Object[]{}, new String[]{});
 
         invokeOperation(provider1, rollMan.toString(), "synchronizeData", new Object[]{"hotrod"},
                 new String[]{"java.lang.String"});
@@ -176,34 +159,33 @@ public class ExampleConfigsIT {
         // Source node
         MBeanServerConnectionProvider provider2;
 
+        RESTHelper rest = new RESTHelper();
+
         controller.start("rest-rolling-upgrade-2");
+        // Source server is in compat mode
         try {
             RemoteInfinispanMBeans s2 = createRemotes("rest-rolling-upgrade-2", "local", DEFAULT_CACHE_NAME);
-            RESTHelper.addServer(s2.server.getRESTEndpoint().getInetAddress().getHostName(), s2.server.getRESTEndpoint().getContextPath());
+            rest.addServer(s2.server.getRESTEndpoint().getInetAddress().getHostName(), s2.server.getRESTEndpoint().getContextPath());
 
-            post(fullPathKey(0, DEFAULT_CACHE_NAME, "key1", PORT_OFFSET), "data", "text/html");
-            get(fullPathKey(0, DEFAULT_CACHE_NAME, "key1", PORT_OFFSET), "data");
+            rest.post(rest.fullPathKey(0, DEFAULT_CACHE_NAME, "key1", PORT_OFFSET), "data", "text/plain");
+            rest.get(rest.fullPathKey(0, DEFAULT_CACHE_NAME, "key1", PORT_OFFSET), "data", 200, false, "Accept", "text/plain");
 
             for (int i = 0; i < 50; i++) {
-                post(fullPathKey(0, DEFAULT_CACHE_NAME, "keyLoad" + i, PORT_OFFSET), "valueLoad" + i, "text/html");
+                rest.post(rest.fullPathKey(0, DEFAULT_CACHE_NAME, "keyLoad" + i, PORT_OFFSET), "valueLoad" + i, "text/plain");
             }
 
             controller.start("rest-rolling-upgrade-1");
 
             RemoteInfinispanMBeans s1 = createRemotes("rest-rolling-upgrade-1", "local", DEFAULT_CACHE_NAME);
-            RESTHelper.addServer(s1.server.getRESTEndpoint().getInetAddress().getHostName(), s1.server.getRESTEndpoint().getContextPath());
+            rest.addServer(s1.server.getRESTEndpoint().getInetAddress().getHostName(), s1.server.getRESTEndpoint().getContextPath());
 
-            get(fullPathKey(1, DEFAULT_CACHE_NAME, "key1", 0), "data");
+            rest.get(rest.fullPathKey(1, DEFAULT_CACHE_NAME, "key1", 0), "data", 200, false, "Accept", "text/plain");
 
             provider1 = new MBeanServerConnectionProvider(s1.server.getRESTEndpoint().getInetAddress().getHostName(),
                                                           SERVER1_MGMT_PORT);
-            provider2 = new MBeanServerConnectionProvider(s2.server.getRESTEndpoint().getInetAddress().getHostName(),
-                                                          SERVER2_MGMT_PORT);
 
             final ObjectName rollMan = new ObjectName("jboss." + InfinispanSubsystem.SUBSYSTEM_NAME + ":type=Cache," + "name=\"default(local)\","
                                                             + "manager=\"local\"," + "component=RollingUpgradeManager");
-
-            invokeOperation(provider2, rollMan.toString(), "recordKnownGlobalKeyset", new Object[]{}, new String[]{});
 
             invokeOperation(provider1, rollMan.toString(), "synchronizeData", new Object[]{"rest"},
                             new String[]{"java.lang.String"});
@@ -211,14 +193,14 @@ public class ExampleConfigsIT {
             invokeOperation(provider1, rollMan.toString(), "disconnectSource", new Object[]{"rest"},
                             new String[]{"java.lang.String"});
 
-            post(fullPathKey(0, DEFAULT_CACHE_NAME, "disconnected", PORT_OFFSET), "source", "application/text");
+            rest.post(rest.fullPathKey(0, DEFAULT_CACHE_NAME, "disconnected", PORT_OFFSET), "source", "text/plain");
 
             //Source node entries should NOT be accessible from target node
-            get(fullPathKey(1, DEFAULT_CACHE_NAME, "disconnected", 0), HttpStatus.SC_NOT_FOUND);
+            rest.get(rest.fullPathKey(1, DEFAULT_CACHE_NAME, "disconnected", 0), HttpStatus.SC_NOT_FOUND);
 
             //All remaining entries migrated?
             for (int i = 0; i < 50; i++) {
-                get(fullPathKey(1, DEFAULT_CACHE_NAME, "keyLoad" + i, 0), "valueLoad" + i);
+                rest.get(rest.fullPathKey(1, DEFAULT_CACHE_NAME, "keyLoad" + i, 0), "valueLoad" + i);
             }
         } finally {
             if (controller.isStarted("rest-rolling-upgrade-1")) {
@@ -251,6 +233,7 @@ public class ExampleConfigsIT {
 
             // 2. Get with REST
             HttpGet get = new HttpGet(restUrl + "/" + key);
+            get.addHeader("Accept", ContentType.APPLICATION_OCTET_STREAM.toString());
             HttpResponse getResponse = restClient.execute(get);
             assertEquals(HttpStatus.SC_OK, getResponse.getStatusLine().getStatusCode());
             assertArrayEquals("v1".getBytes(), EntityUtils.toByteArray(getResponse.getEntity()));
@@ -285,7 +268,6 @@ public class ExampleConfigsIT {
     @WithRunningServer({@RunningServer(name = "standalone-fcs-local")})
     public void testFileCacheStoreConfig() throws Exception {
         doPutGetCheckPath(createRemotes("standalone-fcs-local", "local", DEFAULT_CACHE_NAME), "dc", -1.0);
-        doPutGetCheckPath(createRemotes("standalone-fcs-local", "local", MEMCACHED_CACHE_NAME), "mc", -1.0);
         doPutGetCheckPath(createRemotes("standalone-fcs-local", "local", NAMED_CACHE_NAME), "nc", 2.1);
     }
 
@@ -314,7 +296,6 @@ public class ExampleConfigsIT {
     @WithRunningServer({@RunningServer(name = "standalone-rocksdb-cs-local")})
     public void testRocksDBCacheStoreConfig() throws Exception {
         doPutGetCheckPath(createRemotes("standalone-rocksdb-cs-local", "local", DEFAULT_CACHE_NAME), "rocksdb-dcdefault", -1.0);
-        doPutGetCheckPath(createRemotes("standalone-rocksdb-cs-local", "local", MEMCACHED_CACHE_NAME), "rocksdb-mcmemcachedCache", -1.0);
         doPutGetCheckPath(createRemotes("standalone-rocksdb-cs-local", "local", NAMED_CACHE_NAME), "rocksdb-ncnamedCache", 2.1);
     }
 
@@ -340,14 +321,11 @@ public class ExampleConfigsIT {
     @WithRunningServer({@RunningServer(name = "standalone-rcs-local-2"),@RunningServer(name = "standalone-rcs-local-1")})
     public void testRemoteCacheStoreConfig() throws Exception {
         RemoteInfinispanMBeans sRemoteStoreDefault = createRemotes("standalone-rcs-local-2", "local", DEFAULT_CACHE_NAME);
-        RemoteInfinispanMBeans sRemoteStoreMemcached = createRemotes("standalone-rcs-local-2", "local", MEMCACHED_CACHE_NAME);
         RemoteInfinispanMBeans sRemoteStoreNamed = createRemotes("standalone-rcs-local-2", "local", NAMED_CACHE_NAME);
         RemoteInfinispanMBeans s1Default = createRemotes("standalone-rcs-local-1", "local", DEFAULT_CACHE_NAME);
-        RemoteInfinispanMBeans s1Memcached = createRemotes("standalone-rcs-local-1", "local", MEMCACHED_CACHE_NAME);
         RemoteInfinispanMBeans s1Named = createRemotes("standalone-rcs-local-1", "local", NAMED_CACHE_NAME);
 
         doPutGetRemove(s1Default, sRemoteStoreDefault);
-        doPutGetRemove(s1Memcached, sRemoteStoreMemcached);
         doPutGetWithExpiration(s1Named, sRemoteStoreNamed);
     }
 
@@ -355,17 +333,11 @@ public class ExampleConfigsIT {
     @WithRunningServer({@RunningServer(name = "standalone-hotrod-ssl")})
     public void testSSLHotRodConfig() throws Exception {
         RemoteInfinispanMBeans s = createRemotes("standalone-hotrod-ssl", "local", DEFAULT_CACHE_NAME);
-        RemoteCache<Object, Object> c = createCache(s, securityConfig("keystore_client.jks", "truststore_client.jks", s.server));
+        RemoteCache<Object, Object> c = createCache(s, securityConfig("keystore_client.jks", "ca.jks", s.server));
         doPutGet(s, c);
         try {
-            doPutGet(s, createCache(s, securityConfig("keystore_server.jks", "truststore_client.jks", s.server)));
-            Assert.fail();
-        } catch (TransportException e) {
-            // ok
-        }
-        try {
-            doPutGet(s, createCache(s, securityConfig("keystore_client.jks", "truststore_server.jks", s.server)));
-            Assert.fail();
+            doPutGet(s, createCache(s, securityConfig("keystore_server_no_ca.jks", "ca.jks", s.server)));
+            Assert.fail("Should have failed to write");
         } catch (TransportException e) {
             // ok
         }
@@ -455,8 +427,8 @@ public class ExampleConfigsIT {
         long s0Entries = 0;
         long s1Entries = 0;
         long s2Entries = 0;
-        List<String> s1Bulk = new ArrayList<String>();
-        List<String> s2Bulk = new ArrayList<String>();
+        List<String> s1Bulk = new ArrayList<>();
+        List<String> s2Bulk = new ArrayList<>();
 
         // By using topology information we divide our 3 nodes into 2 groups and generate enough elements so there
         // is at least 1 element in each group and at least 5 elements total,
@@ -507,17 +479,14 @@ public class ExampleConfigsIT {
         RemoteInfinispanMBeans s2 = createRemotes("clustered-2", "clustered", DEFAULT_CACHE_NAME);
         RemoteCache<Object, Object> s1Cache = createCache(s1);
         RemoteCache<Object, Object> s2Cache = createCache(s2);
-        addServer(s1.server);
-        addServer(s2.server);
-        setUpREST(s1.server, s2.server);
+        RESTHelper rest = new RESTHelper();
+
+        addServer(rest, s1.server);
+        addServer(rest, s2.server);
+        cleanRESTServer(rest);
         assertEquals(0, s1.cache.getNumberOfEntries());
         assertEquals(0, s2.cache.getNumberOfEntries());
-        eventually(new Condition() {
-            @Override
-            public boolean isSatisfied() throws Exception {
-                return s1.manager.getClusterSize() == 2;
-            }
-        }, 30000, 300);
+        eventually(() -> s1.manager.getClusterSize() == 2, 30000, 300);
         Assert.assertEquals(2, s1.manager.getClusterSize());
         Assert.assertEquals(2, s2.manager.getClusterSize());
         s1Cache.put("k", "v");
@@ -533,33 +502,33 @@ public class ExampleConfigsIT {
         assertEquals("v2", s2Cache.get("k2"));
         assertEquals("v3", s1Cache.get("k3"));
         assertEquals("v3", s2Cache.get("k3"));
-        setUpREST(s1.server, s2.server);
-        put(fullPathKey(0, KEY_A), "data", "text/plain");
-        get(fullPathKey(1, KEY_A), "data");
-        setUpREST(s1.server, s2.server);
-        post(fullPathKey(0, KEY_A), "data", "text/plain");
-        get(fullPathKey(1, KEY_A), "data");
-        setUpREST(s1.server, s2.server);
-        post(fullPathKey(0, KEY_A), "data", "text/plain");
-        get(fullPathKey(1, KEY_A), "data");
-        delete(fullPathKey(0, KEY_A));
-        head(fullPathKey(1, KEY_A), HttpStatus.SC_NOT_FOUND);
-        setUpREST(s1.server, s2.server);
-        post(fullPathKey(0, KEY_A), "data", "text/plain");
-        post(fullPathKey(0, KEY_B), "data", "text/plain");
-        head(fullPathKey(0, KEY_A));
-        head(fullPathKey(0, KEY_B));
-        delete(fullPathKey(0, null));
-        head(fullPathKey(1, KEY_A), HttpStatus.SC_NOT_FOUND);
-        head(fullPathKey(1, KEY_B), HttpStatus.SC_NOT_FOUND);
-        setUpREST(s1.server, s2.server);
-        post(fullPathKey(0, KEY_A), "data", "application/text", HttpStatus.SC_OK,
+        cleanRESTServer(rest);
+        rest.put(rest.fullPathKey(0, KEY_A), "data", "text/plain");
+        rest.get(rest.fullPathKey(1, KEY_A), "data");
+        cleanRESTServer(rest);
+        rest.post(rest.fullPathKey(0, KEY_A), "data", "text/plain");
+        rest.get(rest.fullPathKey(1, KEY_A), "data");
+        cleanRESTServer(rest);
+        rest.post(rest.fullPathKey(0, KEY_A), "data", "text/plain");
+        rest.get(rest.fullPathKey(1, KEY_A), "data");
+        rest.delete(rest.fullPathKey(0, KEY_A));
+        rest.head(rest.fullPathKey(1, KEY_A), HttpStatus.SC_NOT_FOUND);
+        cleanRESTServer(rest);
+        rest.post(rest.fullPathKey(0, KEY_A), "data", "text/plain");
+        rest.post(rest.fullPathKey(0, KEY_B), "data", "text/plain");
+        rest.head(rest.fullPathKey(0, KEY_A));
+        rest.head(rest.fullPathKey(0, KEY_B));
+        rest.delete(rest.fullPathKey(0, null));
+        rest.head(rest.fullPathKey(1, KEY_A), HttpStatus.SC_NOT_FOUND);
+        rest.head(rest.fullPathKey(1, KEY_B), HttpStatus.SC_NOT_FOUND);
+        cleanRESTServer(rest);
+        rest.post(rest.fullPathKey(0, KEY_A), "data", "text/plain", HttpStatus.SC_OK,
                 // headers
-                "Content-Type", "application/text", "timeToLiveSeconds", "2");
-        head(fullPathKey(1, KEY_A));
+                "Content-Type", "text/plain", "timeToLiveSeconds", "2");
+        rest.head(rest.fullPathKey(1, KEY_A));
         sleepForSecs(2.1);
         // should be evicted
-        head(fullPathKey(1, KEY_A), HttpStatus.SC_NOT_FOUND);
+        rest.head(rest.fullPathKey(1, KEY_A), HttpStatus.SC_NOT_FOUND);
     }
 
     @Test
@@ -592,23 +561,23 @@ public class ExampleConfigsIT {
         assertEquals(s3Cache.get("k2"), "v2");
     }
 
-    private void setUpREST(RemoteInfinispanServer server1, RemoteInfinispanServer server2) throws Exception {
-        delete(fullPathKey(KEY_A));
-        delete(fullPathKey(KEY_B));
-        delete(fullPathKey(KEY_C));
+    private static void cleanRESTServer(RESTHelper rest) throws Exception {
+        rest.delete(rest.fullPathKey(KEY_A));
+        rest.delete(rest.fullPathKey(KEY_B));
+        rest.delete(rest.fullPathKey(KEY_C));
 
-        head(fullPathKey(KEY_A), HttpStatus.SC_NOT_FOUND);
-        head(fullPathKey(KEY_B), HttpStatus.SC_NOT_FOUND);
-        head(fullPathKey(KEY_C), HttpStatus.SC_NOT_FOUND);
+        rest.head(rest.fullPathKey(KEY_A), HttpStatus.SC_NOT_FOUND);
+        rest.head(rest.fullPathKey(KEY_B), HttpStatus.SC_NOT_FOUND);
+        rest.head(rest.fullPathKey(KEY_C), HttpStatus.SC_NOT_FOUND);
     }
 
-    private void addServer(RemoteInfinispanServer server) {
+    private static void addServer(RESTHelper rest, RemoteInfinispanServer server) {
         RESTEndpoint endpoint = server.getRESTEndpoint();
         // IPv6 addresses should be in square brackets, otherwise http client does not understand it
         // otherwise should be IPv4
         String inetHostName = endpoint.getInetAddress().getHostName();
         String realHostName = endpoint.getInetAddress() instanceof Inet6Address ? "[" + inetHostName + "]" : inetHostName;
-        RESTHelper.addServer(realHostName, endpoint.getContextPath());
+        rest.addServer(realHostName, endpoint.getContextPath());
     }
 
     private ConfigurationBuilder securityConfig(final String keystoreName, final String truststoreName,
@@ -618,7 +587,7 @@ public class ExampleConfigsIT {
         builder.security().ssl().enable().keyStoreFileName(ITestUtils.SERVER_CONFIG_DIR + File.separator + keystoreName)
                 .keyStorePassword("secret".toCharArray())
                 .trustStoreFileName(ITestUtils.SERVER_CONFIG_DIR + File.separator + truststoreName)
-                .trustStorePassword("secret".toCharArray());
+                .trustStorePassword("secret".toCharArray()).maxRetries(3);
         return builder;
     }
 
@@ -631,15 +600,12 @@ public class ExampleConfigsIT {
         for (int i = 0; i < 1100; i++) {
             sMainCache.put("key" + i, "value" + i);
         }
-        assertTrue(sMain.cache.getNumberOfEntries() <= 1000);
-        eventually(new Condition() {
-            @Override
-            public boolean isSatisfied() throws Exception {
-                log.debug("Num entries: Main cache: " + sMain.cache.getNumberOfEntries() + " Remote store: "
-                        + sRemoteStore.cache.getNumberOfEntries() + " Total: "
-                        + (sMain.cache.getNumberOfEntries() + sRemoteStore.cache.getNumberOfEntries()));
-                return sMain.cache.getNumberOfEntries() + sRemoteStore.cache.getNumberOfEntries() == 1100;
-            }
+        assertTrue(sMain.cache.getNumberOfEntriesInMemory() <= 1000);
+        eventually(() -> {
+            log.debug("Num entries: Main cache: " + sMain.cache.getNumberOfEntries() + " Remote store: "
+                  + sRemoteStore.cache.getNumberOfEntriesInMemory() + " Total: "
+                  + (sMain.cache.getNumberOfEntriesInMemory() + sRemoteStore.cache.getNumberOfEntriesInMemory()));
+            return sMain.cache.getNumberOfEntriesInMemory() + sRemoteStore.cache.getNumberOfEntriesInMemory() == 1100;
         }, 10000);
 
         for (int i = 0; i < 1100; i++) {
@@ -653,33 +619,34 @@ public class ExampleConfigsIT {
         sRemoteStoreCache.clear();
     }
 
-    private void doPutGetWithExpiration(RemoteInfinispanMBeans s1, RemoteInfinispanMBeans s2) throws Exception {
-        assertEquals(0, s2.cache.getNumberOfEntries());
+    private void doPutGetWithExpiration(RemoteInfinispanMBeans s1, RemoteInfinispanMBeans s2) {
+        assertEquals(0, s2.cache.getNumberOfEntriesInMemory());
         RemoteCache<Object, Object> s1Cache = createCache(s1);
         doPutGet(s1, s1Cache);
         // all entries are in store (passivation=false)
-        assertEquals(10, s2.cache.getNumberOfEntries());
+        assertEquals(10, s2.cache.getNumberOfEntriesInMemory());
 
-        sleepForSecs(2.1); // the lifespan is 2000ms so we need to wait more
+        sleepForSecs(3.1); // the lifespan is 3000ms so we need to wait more
 
         // entries expired
         for (int i = 0; i < 10; i++) {
             assertNull(s1Cache.get("key" + i));
         }
+        assertEquals(0, s2.cache.getNumberOfEntriesInMemory());
     }
 
     private void doPutGet(RemoteInfinispanMBeans s, RemoteCache<Object, Object> c) {
-        assertEquals(0, s.cache.getNumberOfEntries());
+        assertEquals(0, s.cache.getNumberOfEntriesInMemory());
         for (int i = 0; i < 10; i++) {
             c.put("k" + i, "v" + i);
         }
         for (int i = 0; i < 10; i++) {
             assertEquals("v" + i, c.get("k" + i));
         }
-        assertEquals(10, s.cache.getNumberOfEntries());
+        assertEquals(10, s.cache.getNumberOfEntriesInMemory());
     }
 
-    private void doPutGetCheckPath(RemoteInfinispanMBeans s, String filePath, double sleepTime) throws Exception {
+    private void doPutGetCheckPath(RemoteInfinispanMBeans s, String filePath, double sleepTime) {
         RemoteCache<Object, Object> sCache = createCache(s);
         doPutGet(s, sCache);
         if (sleepTime >= 0) {
@@ -709,10 +676,6 @@ public class ExampleConfigsIT {
 
     protected RemoteCache<Object, Object> createCache(RemoteInfinispanMBeans cacheBeans) {
         return rcmFactory.createCache(cacheBeans);
-    }
-
-    protected RemoteCacheManager createCacheManager(RemoteInfinispanMBeans cacheBeans) {
-        return rcmFactory.createManager(cacheBeans);
     }
 
     protected RemoteInfinispanMBeans createRemotes(String serverName, String managerName, String cacheName) {

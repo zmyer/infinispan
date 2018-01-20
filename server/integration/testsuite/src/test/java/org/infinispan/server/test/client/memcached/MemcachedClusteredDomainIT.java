@@ -9,7 +9,6 @@ import java.util.List;
 import org.infinispan.arquillian.core.InfinispanResource;
 import org.infinispan.arquillian.core.RemoteInfinispanServer;
 import org.infinispan.server.test.category.MemcachedClusteredDomain;
-import org.infinispan.server.test.category.Smoke;
 import org.infinispan.server.test.util.ManagementClient;
 import org.jboss.arquillian.junit.Arquillian;
 import org.junit.AfterClass;
@@ -24,7 +23,7 @@ import org.junit.runner.RunWith;
  * @author Martin Gencur
  */
 @RunWith(Arquillian.class)
-@Category({ MemcachedClusteredDomain.class, Smoke.class })
+@Category(MemcachedClusteredDomain.class)
 public class MemcachedClusteredDomainIT extends AbstractMemcachedClusteredIT {
 
     private static final int MEMCACHED_PORT1 = 11213;

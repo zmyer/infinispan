@@ -1,12 +1,13 @@
 package org.infinispan.hibernate.search;
 
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.hibernate.cfg.Environment;
 import org.hibernate.search.engine.spi.EntityIndexBinding;
 import org.hibernate.search.indexes.spi.DirectoryBasedIndexManager;
+import org.hibernate.search.spi.IndexedTypeIdentifier;
+import org.hibernate.search.spi.IndexedTypeSet;
 import org.hibernate.search.spi.SearchIntegrator;
 import org.hibernate.search.test.util.FullTextSessionBuilder;
 import org.infinispan.hibernate.search.impl.DefaultCacheManagerService;
@@ -22,6 +23,56 @@ import org.infinispan.remoting.transport.Address;
  */
 public final class ClusterTestHelper {
 
+   public enum ExclusiveIndexUse {
+      EXCLUSIVE {
+         void apply(FullTextSessionBuilder node) {
+            node.setProperty(key, "true");
+         }
+      },
+      SHARED {
+         void apply(FullTextSessionBuilder node) {
+            node.setProperty(key, "false");
+         }
+      };
+      private static final String key = "hibernate.search.default." + org.hibernate.search.cfg.Environment.EXCLUSIVE_INDEX_USE;
+      abstract void apply(FullTextSessionBuilder node);
+   }
+
+   public enum IndexManagerType {
+      TRADITIONAL_DIRECTORYPROVIDER {
+         void apply(FullTextSessionBuilder node) {
+            node.setProperty("hibernate.search.default.directory_provider", "infinispan");
+         }
+      },
+      DEDICATED_INDEXMANAGER {
+         void apply(FullTextSessionBuilder node) {
+            node.setProperty("hibernate.search.default.indexmanager", "infinispan");
+         }
+      };
+      abstract void apply(FullTextSessionBuilder node);
+   }
+
+   public enum IndexingFlushMode {
+      ASYNC_PERIODIC {
+         void apply(FullTextSessionBuilder node) {
+            node.setProperty("hibernate.search.default.index_flush_interval", "1000");
+            node.setProperty("hibernate.search.default.worker.execution", "async");
+         }
+      },
+      ASYNC { // Does this even make sense to allow? ASYNC_PERIODIC seems superior in every aspect.
+         void apply(FullTextSessionBuilder node) {
+            node.setProperty("hibernate.search.default.worker.execution", "async");
+         }
+      },
+      SYNC {
+         void apply(FullTextSessionBuilder node) {
+            // It also happens to be the default, but things might change:
+            node.setProperty("hibernate.search.default.worker.execution", "sync");
+         }
+      };
+      abstract void apply(FullTextSessionBuilder node);
+   }
+
    private ClusterTestHelper() {
       //not allowed
    }
@@ -35,12 +86,12 @@ public final class ClusterTestHelper {
     * @param exclusiveIndexUse set to true to enable the EXCLUSIVE_INDEX_USE configuration option
     * @return a started FullTextSessionBuilder
     */
-   public static FullTextSessionBuilder createClusterNode(Set<Class<?>> entityTypes, boolean exclusiveIndexUse) {
-      return createClusterNode(entityTypes, exclusiveIndexUse, true, false);
+   public static FullTextSessionBuilder createClusterNode(IndexedTypeSet entityTypes, ExclusiveIndexUse exclusiveIndexUse, IndexingFlushMode flushMode) {
+      return createClusterNode(entityTypes, exclusiveIndexUse, IndexManagerType.TRADITIONAL_DIRECTORYPROVIDER, flushMode);
    }
 
    /**
-    * As {@link #createClusterNode(Set, boolean)} but allows more options
+    * As {@link #createClusterNode(IndexedTypeSet, boolean)} but allows more options
     *
     * @param entityTypes               the set of indexed classes
     * @param exclusiveIndexUse         set to true to enable the EXCLUSIVE_INDEX_USE configuration option
@@ -48,15 +99,12 @@ public final class ClusterTestHelper {
     * @param setInfinispanIndexManager set to true to enable the indexmanager setting to 'infinispan'
     * @return
     */
-   public static FullTextSessionBuilder createClusterNode(Set<Class<?>> entityTypes, boolean exclusiveIndexUse,
-                                                          boolean setInfinispanDirectory, boolean setInfinispanIndexManager) {
+   public static FullTextSessionBuilder createClusterNode(IndexedTypeSet entityTypes, ExclusiveIndexUse exclusiveIndexUse, IndexManagerType storageType, IndexingFlushMode flushMode) {
       FullTextSessionBuilder node = new FullTextSessionBuilder();
-      if (setInfinispanDirectory) {
-         node.setProperty("hibernate.search.default.directory_provider", "infinispan");
-      }
-      if (setInfinispanIndexManager) {
-         node.setProperty("hibernate.search.default.indexmanager", "infinispan");
-      }
+      // Set the DirectoryProvider or the IndexManager:
+      storageType.apply(node);
+      // Set async / synch, with or without a periodic flush:
+      flushMode.apply(node);
       // fragment on every 13 bytes: don't use this on a real case!
       // only done to make sure we generate lots of small fragments.
       node.setProperty("hibernate.search.default.indexwriter.chunk_size", "13");
@@ -65,24 +113,23 @@ public final class ClusterTestHelper {
       // this schema is shared across nodes, so don't drop it on shutdown:
       node.setProperty(Environment.HBM2DDL_AUTO, "create");
       // if we should allow aggressive index locking:
-      node.setProperty("hibernate.search.default." + org.hibernate.search.cfg.Environment.EXCLUSIVE_INDEX_USE,
-                       String.valueOf(exclusiveIndexUse));
+      exclusiveIndexUse.apply(node);
       // share the same in-memory database connection pool
       node.setProperty(
             Environment.CONNECTION_PROVIDER,
             org.infinispan.hibernate.search.ClusterSharedConnectionProvider.class.getName()
       );
-      for (Class<?> entityType : entityTypes) {
-         node.addAnnotatedClass(entityType);
+      for (IndexedTypeIdentifier entityType : entityTypes) {
+         node.addAnnotatedClass(entityType.getPojoType());
       }
 
       return node.build();
    }
 
    /**
-    * delegates {@link #waitMembersCount(FullTextSessionBuilder, Class, int, long, TimeUnit)} with 10s.
+    * delegates {@link #waitMembersCount(FullTextSessionBuilder, IndexedTypeIdentifier, int, long, TimeUnit)} with 10s.
     */
-   public static void waitMembersCount(FullTextSessionBuilder node, Class<?> entityType, int expectedSize) {
+   public static void waitMembersCount(FullTextSessionBuilder node, IndexedTypeIdentifier entityType, int expectedSize) {
       waitMembersCount(node, entityType, expectedSize, 10, TimeUnit.SECONDS);
    }
 
@@ -95,7 +142,7 @@ public final class ClusterTestHelper {
     * @param timeout Desired timeout
     * @param timeoutUnit Timeout units
      */
-   public static void waitMembersCount(FullTextSessionBuilder node, Class<?> entityType, int expectedSize, long timeout, TimeUnit timeoutUnit) {
+   public static void waitMembersCount(FullTextSessionBuilder node, IndexedTypeIdentifier entityType, int expectedSize, long timeout, TimeUnit timeoutUnit) {
       long endTime = System.currentTimeMillis() + TimeUnit.MILLISECONDS.convert(timeout, timeoutUnit);
       int currentSize = 0;
       do {
@@ -113,10 +160,10 @@ public final class ClusterTestHelper {
     * @param node the FullTextSessionBuilder representing the current node
     * @return the number of nodes as seen by the current node
     */
-   public static int clusterSize(FullTextSessionBuilder node, Class<?> entityType) {
+   public static int clusterSize(FullTextSessionBuilder node, IndexedTypeIdentifier entityType) {
       SearchIntegrator integrator = node.getSearchFactory().unwrap(SearchIntegrator.class);
       EntityIndexBinding indexBinding = integrator.getIndexBinding(entityType);
-      DirectoryBasedIndexManager indexManager = (DirectoryBasedIndexManager) indexBinding.getIndexManagers()[0];
+      DirectoryBasedIndexManager indexManager = (DirectoryBasedIndexManager) indexBinding.getIndexManagerSelector().all().iterator().next();
       InfinispanDirectoryProvider directoryProvider = (InfinispanDirectoryProvider) indexManager.getDirectoryProvider();
       EmbeddedCacheManager cacheManager = directoryProvider.getCacheManager();
       List<Address> members = cacheManager.getMembers();

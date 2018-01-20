@@ -1,13 +1,13 @@
 package org.infinispan.partitionhandling.impl;
 
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.infinispan.commands.DataCommand;
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
@@ -15,50 +15,42 @@ import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.KeySetCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.interceptors.DDAsyncInterceptor;
+import org.infinispan.interceptors.InvocationFinallyAction;
+import org.infinispan.interceptors.InvocationSuccessAction;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.remoting.RpcException;
-import org.infinispan.remoting.transport.Address;
-import org.infinispan.remoting.transport.Transport;
-import org.infinispan.statetransfer.OutdatedTopologyException;
-import org.infinispan.statetransfer.StateTransferManager;
-import org.infinispan.topology.CacheTopology;
+import org.infinispan.statetransfer.AllOwnersLostException;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
    private static final Log log = LogFactory.getLog(PartitionHandlingInterceptor.class);
 
-   private PartitionHandlingManager partitionHandlingManager;
-   private Transport transport;
-   private StateTransferManager stateTransferManager;
+   @Inject private PartitionHandlingManager partitionHandlingManager;
 
-   @Inject
-   void init(PartitionHandlingManager partitionHandlingManager, Transport transport,
-             StateTransferManager stateTransferManager) {
-      this.partitionHandlingManager = partitionHandlingManager;
-      this.transport = transport;
-      this.stateTransferManager = stateTransferManager;
-   }
+   private InvocationFinallyAction handleDataReadReturn = this::handleDataReadReturn;
+   private InvocationFinallyAction handleGetAllCommandReturn = this::handleGetAllCommandReturn;
+   private InvocationSuccessAction postTxCommandCheck = this::postTxCommandCheck;
 
    private boolean performPartitionCheck(InvocationContext ctx, FlagAffectedCommand command) {
       // We always perform partition check if this is a remote command
       if (!ctx.isOriginLocal()) {
-         return true;
+         return !command.hasAnyFlag(FlagBitSets.SKIP_OWNERSHIP_CHECK | FlagBitSets.PUT_FOR_STATE_TRANSFER);
       }
-      return !command.hasAnyFlag(FlagBitSets.CACHE_MODE_LOCAL);
+      return !command.hasAnyFlag(FlagBitSets.CACHE_MODE_LOCAL | FlagBitSets.SKIP_OWNERSHIP_CHECK | FlagBitSets.PUT_FOR_STATE_TRANSFER);
    }
 
    @Override
@@ -74,6 +66,21 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return handleSingleWrite(ctx, command);
+   }
+
+   @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return handleSingleWrite(ctx, command);
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+      return handleSingleWrite(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
       return handleSingleWrite(ctx, command);
    }
 
@@ -99,12 +106,6 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
          partitionHandlingManager.checkClear();
       }
       return handleDefault(ctx, command);
-   }
-
-   @Override
-   public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command)
-         throws Throwable {
-      return handleSingleWrite(ctx, command);
    }
 
    @Override
@@ -136,37 +137,30 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
    }
 
    private Object handleDataReadCommand(InvocationContext ctx, DataCommand command) {
-      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
-         DataCommand dataCommand = (DataCommand) rCommand;
-         if (t != null) {
-            if (t instanceof RpcException && performPartitionCheck(rCtx, dataCommand)) {
-               // We must have received an AvailabilityException from one of the owners.
-               // There is no way to verify the cause here, but there isn't any other way to get an invalid
-               // get response.
+      return invokeNextAndFinally(ctx, command, handleDataReadReturn);
+   }
+
+   private void handleDataReadReturn(InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable t) throws Throwable {
+      DataCommand dataCommand = (DataCommand) rCommand;
+      if (t != null) {
+         if (t instanceof RpcException && performPartitionCheck(rCtx, dataCommand)) {
+            // We must have received an AvailabilityException from one of the owners.
+            // There is no way to verify the cause here, but there isn't any other way to get an invalid
+            // get response.
+            throw log.degradedModeKeyUnavailable(dataCommand.getKey());
+         } else if (t instanceof AllOwnersLostException && performPartitionCheck(rCtx, dataCommand)) {
+            // Scattered cache throws AllOwnersException even if there's no need to fail with AvailabilityException
+            if (!cacheConfiguration.clustering().cacheMode().isScattered()) {
                throw log.degradedModeKeyUnavailable(dataCommand.getKey());
-            } else {
-               // If all owners left and we still haven't received the availability update yet,
-               // we get OutdatedTopologyException from BaseDistributionInterceptor.retrieveFromProperSource
-               if (t instanceof OutdatedTopologyException && performPartitionCheck(rCtx, dataCommand)) {
-                  // Unlike in PartitionHandlingManager.checkRead(), here we ignore the availability status
-                  // and we only fail the operation if _all_ owners have left the cluster.
-                  // TODO Move this to the availability strategy when implementing ISPN-4624
-                  CacheTopology cacheTopology = stateTransferManager.getCacheTopology();
-                  if (cacheTopology == null || cacheTopology.getTopologyId() != dataCommand.getTopologyId()) {
-                     // just rethrow the exception
-                     throw t;
-                  }
-                  List<Address> owners = cacheTopology.getReadConsistentHash().locateOwners(dataCommand.getKey());
-                  if (!InfinispanCollections.containsAny(transport.getMembers(), owners)) {
-                     throw log.degradedModeKeyUnavailable(dataCommand.getKey());
-                  }
-               }
-               throw t;
             }
          }
+      }
 
-         postOperationPartitionCheck(rCtx, dataCommand, dataCommand.getKey());
-      });
+      if (performPartitionCheck(rCtx, dataCommand)) {
+         // We do the availability check after the read, because the cache may have entered degraded mode
+         // while we were reading from a remote node.
+         partitionHandlingManager.checkRead(dataCommand.getKey());
+      }
    }
 
    @Override
@@ -174,7 +168,15 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
       if (!ctx.isOriginLocal()) {
          return invokeNext(ctx, command);
       }
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> postTxCommandCheck(((TxInvocationContext) rCtx)));
+
+      // Don't send a 2PC prepare at all if the cache is in degraded mode
+      if (partitionHandlingManager.getAvailabilityMode() != AvailabilityMode.AVAILABLE &&
+            !command.isOnePhaseCommit() && ctx.hasModifications()) {
+         for (Object key : ctx.getAffectedKeys()) {
+            partitionHandlingManager.checkWrite(key);
+         }
+      }
+      return invokeNextThenAccept(ctx, command, postTxCommandCheck);
    }
 
    @Override
@@ -182,70 +184,54 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
       if (!ctx.isOriginLocal()) {
          return invokeNext(ctx, command);
       }
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> postTxCommandCheck(((TxInvocationContext) rCtx)));
+      return invokeNextThenAccept(ctx, command, postTxCommandCheck);
    }
 
-   protected void postTxCommandCheck(TxInvocationContext ctx) {
-      if (ctx.hasModifications() && partitionHandlingManager.getAvailabilityMode() != AvailabilityMode.AVAILABLE && !partitionHandlingManager.isTransactionPartiallyCommitted(ctx.getGlobalTransaction())) {
+   protected void postTxCommandCheck(InvocationContext rCtx, VisitableCommand rCommand, Object rv) {
+      TxInvocationContext ctx = (TxInvocationContext) rCtx;
+      if (partitionHandlingManager.getAvailabilityMode() != AvailabilityMode.AVAILABLE &&
+            !partitionHandlingManager.isTransactionPartiallyCommitted(ctx.getGlobalTransaction()) &&
+            ctx.hasModifications()) {
          for (Object key : ctx.getAffectedKeys()) {
             partitionHandlingManager.checkWrite(key);
          }
       }
    }
 
-   private void postOperationPartitionCheck(InvocationContext ctx, DataCommand command, Object key) throws Throwable {
-      if (performPartitionCheck(ctx, command)) {
-         // We do the availability check after the read, because the cache may have entered degraded mode
-         // while we were reading from a remote node.
-         partitionHandlingManager.checkRead(key);
-      }
-      // TODO We can still return a stale value if the other partition stayed active without us and we haven't entered degraded mode yet.
-   }
-
    @Override
    public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
-      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
-         GetAllCommand getAllCommand = (GetAllCommand) rCommand;
-         if (t != null) {
-            if (t instanceof RpcException && performPartitionCheck(rCtx, getAllCommand)) {
-               // We must have received an AvailabilityException from one of the owners.
-               // There is no way to verify the cause here, but there isn't any other way to get an invalid
-               // get response.
-               throw log.degradedModeKeysUnavailable(((GetAllCommand) rCommand).getKeys());
-            } else {
-               throw t;
-            }
+      return invokeNextAndFinally(ctx, command, handleGetAllCommandReturn);
+   }
+
+   private void handleGetAllCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable t) throws Throwable {
+      GetAllCommand getAllCommand = (GetAllCommand) rCommand;
+      if (t != null) {
+         if (t instanceof RpcException && performPartitionCheck(rCtx, getAllCommand)) {
+            // We must have received an AvailabilityException from one of the owners.
+            // There is no way to verify the cause here, but there isn't any other way to get an invalid
+            // get response.
+            throw log.degradedModeKeysUnavailable(((GetAllCommand) rCommand).getKeys());
+         }
+      }
+
+      if (performPartitionCheck(rCtx, getAllCommand)) {
+         // We do the availability check after the read, because the cache may have entered degraded mode
+         // while we were reading from a remote node.
+         for (Object key : getAllCommand.getKeys()) {
+            partitionHandlingManager.checkRead(key);
          }
 
-         if (performPartitionCheck(rCtx, getAllCommand)) {
-            // We do the availability check after the read, because the cache may have entered degraded mode
-            // while we were reading from a remote node.
-            for (Object key : getAllCommand.getKeys()) {
-               partitionHandlingManager.checkRead(key);
-            }
-
+         // Scattered cache throws AllOwnersLostException instead of returning map with only a subset of keys
+         // because the owners might be unknown even if there's no data loss and then the command has to be retried.
+         if (t == null && rv instanceof Map) {
+            // rv could be UnsureResponse
             Map<Object, Object> result = ((Map<Object, Object>) rv);
-            // If all owners left and we still haven't received the availability update yet, we could return
-            // an incorrect value. So we need a special check for missing results.
             if (result.size() != getAllCommand.getKeys().size()) {
-               // Unlike in PartitionHandlingManager.checkRead(), here we ignore the availability status
-               // and we only fail the operation if _all_ owners have left the cluster.
-               // TODO Move this to the availability strategy when implementing ISPN-4624
                Set<Object> missingKeys = new HashSet<>(getAllCommand.getKeys());
                missingKeys.removeAll(result.keySet());
-               for (Iterator<Object> it = missingKeys.iterator(); it.hasNext(); ) {
-                  Object key = it.next();
-                  if (InfinispanCollections.containsAny(transport.getMembers(), stateTransferManager.getCacheTopology().getReadConsistentHash().locateOwners(key))) {
-                     it.remove();
-                  }
-               }
-               if (!missingKeys.isEmpty()) {
-                  throw log.degradedModeKeysUnavailable(missingKeys);
-               }
+               throw log.degradedModeKeysUnavailable(missingKeys);
             }
          }
-
-         // TODO We can still return a stale value if the other partition stayed active without us and we haven't entered degraded mode yet.
-      });
+      }
    }
 }

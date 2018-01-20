@@ -6,7 +6,6 @@ import java.util.List;
 import org.hibernate.search.annotations.Analyze;
 import org.hibernate.search.annotations.DocumentId;
 import org.hibernate.search.annotations.Field;
-import org.hibernate.search.annotations.Fields;
 import org.hibernate.search.annotations.Indexed;
 import org.hibernate.search.annotations.IndexedEmbedded;
 
@@ -35,11 +34,9 @@ public class Employee {
    @Field(analyze = Analyze.NO)
    public String title;
 
-   @Fields({
-         @Field(name = "analyzedInfo", analyze = Analyze.YES),
-         @Field(name = "someMoreInfo", analyze = Analyze.NO),
-         @Field(name = "sameInfo", analyze = Analyze.NO)
-   })
+   @Field(name = "analyzedInfo", analyze = Analyze.YES)
+   @Field(name = "someMoreInfo", analyze = Analyze.NO)
+   @Field(name = "sameInfo", analyze = Analyze.NO)
    public String otherInfo;
 
    @IndexedEmbedded(indexNullAs = Field.DEFAULT_NULL_TOKEN)

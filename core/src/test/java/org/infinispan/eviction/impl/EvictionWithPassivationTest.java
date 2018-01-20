@@ -1,24 +1,41 @@
 package org.infinispan.eviction.impl;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
 
 import java.util.Collections;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
+import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.eviction.EvictionStrategy;
-import org.infinispan.eviction.EvictionThreadPolicy;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.marshall.core.GlobalMarshaller;
+import org.infinispan.marshall.core.MarshalledEntry;
+import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.notifications.Listener;
+import org.infinispan.notifications.cachelistener.annotation.CacheEntriesEvicted;
+import org.infinispan.notifications.cachelistener.event.CacheEntriesEvictedEvent;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
+import org.infinispan.persistence.spi.CacheLoader;
+import org.infinispan.persistence.spi.CacheWriter;
 import org.infinispan.test.SingleCacheManagerTest;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
+import org.testng.annotations.Factory;
 import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "eviction.EvictionWithPassivationTest")
 public class EvictionWithPassivationTest extends SingleCacheManagerTest {
+
+   private static final String CACHE_NAME = "testCache";
+   private final int EVICTION_MAX_ENTRIES = 2;
+   private StorageType storage;
+   private EvictionListener evictionListener;
 
    public EvictionWithPassivationTest() {
       // Cleanup needs to be after method, else LIRS can cause failures due to it not caching values due to hot
@@ -26,233 +43,53 @@ public class EvictionWithPassivationTest extends SingleCacheManagerTest {
       cleanup = CleanupPhase.AFTER_METHOD;
    }
 
-   private final int EVICTION_MAX_ENTRIES = 2;
+   @Factory
+   public Object[] factory() {
+      return new Object[] {
+            new EvictionWithPassivationTest().withStorage(StorageType.BINARY),
+            new EvictionWithPassivationTest().withStorage(StorageType.OBJECT),
+            new EvictionWithPassivationTest().withStorage(StorageType.OFF_HEAP)
+      };
+   }
 
-   private ConfigurationBuilder buildCfg(EvictionThreadPolicy threadPolicy, EvictionStrategy strategy) {
+   @Override
+   protected String parameters() {
+      return "[" + storage + "]";
+   }
+
+   private ConfigurationBuilder buildCfg() {
       ConfigurationBuilder cfg = new ConfigurationBuilder();
       cfg
-         .persistence().passivation(true).addStore(DummyInMemoryStoreConfigurationBuilder.class).purgeOnStartup(true)
-         .invocationBatching().enable();
-      cfg.eviction().strategy(strategy);
-      // If the strategy is NONE then don't use thread policy or strategy or max entries (forces default strategy)
-      if (strategy != EvictionStrategy.NONE) {
-         cfg.eviction().threadPolicy(threadPolicy).maxEntries(EVICTION_MAX_ENTRIES);
-      }
+            .persistence()
+               .passivation(true)
+               .addStore(DummyInMemoryStoreConfigurationBuilder.class).purgeOnStartup(true)
+            .invocationBatching().enable()
+            .memory().storageType(storage);
+      cfg.memory().size(EVICTION_MAX_ENTRIES);
       return cfg;
+   }
+
+   public EvictionWithPassivationTest withStorage(StorageType storage) {
+      this.storage = storage;
+      return this;
    }
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
       cacheManager = TestCacheManagerFactory.createCacheManager(getDefaultStandaloneCacheConfig(true));
-
-      for (EvictionStrategy s : EvictionStrategy.values()) {
-         for (EvictionThreadPolicy p : EvictionThreadPolicy.values()) {
-            cacheManager.defineConfiguration("test-" + p + "-" + s, buildCfg(p, s).build());
-         }
-      }
-
+      cacheManager.defineConfiguration(CACHE_NAME, buildCfg().build());
+      evictionListener = new EvictionListener();
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
+      testCache.addListener(evictionListener);
       return cacheManager;
    }
 
-   public void testNONE() {
-      // None doesn't use eviction policy so just using DEFAULT
-      runTest(EvictionThreadPolicy.DEFAULT, EvictionStrategy.NONE);
-   }
-
-   public void testPiggybackLRU() {
-      runTest(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LRU);
-   }
-
-
-   public void testPiggybackLIRS() {
-      runTest(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LIRS);
-   }
-
-   public void testPiggybackUNORDERED() {
-      runTest(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.UNORDERED);
-   }
-
-   public void testDefaultLRU() {
-      runTest(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LRU);
-   }
-
-
-   public void testDefaultLIRS() {
-      runTest(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LIRS);
-   }
-
-   public void testDefaultUNORDERED() {
-      runTest(EvictionThreadPolicy.DEFAULT, EvictionStrategy.UNORDERED);
-   }
-
-   public void testActivationInBatchRolledBackNONE() {
-      testActivationInBatchRolledBack(EvictionThreadPolicy.DEFAULT, EvictionStrategy.NONE);
-   }
-
-   public void testActivationInBatchRolledBackPiggybackLRU() {
-      testActivationInBatchRolledBack(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LRU);
-   }
-
-   public void testActivationInBatchRolledBackPiggybackLIRS() {
-      testActivationInBatchRolledBack(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LIRS);
-   }
-
-   public void testActivationInBatchRolledBackPiggybackUNORDERED() {
-      testActivationInBatchRolledBack(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.UNORDERED);
-   }
-
-   public void testActivationInBatchRolledBackDefaultLRU() {
-      testActivationInBatchRolledBack(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LRU);
-   }
-
-   public void testActivationInBatchRolledBackDefaultLIRS() {
-      testActivationInBatchRolledBack(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LIRS);
-   }
-
-   public void testActivationInBatchRolledBackDefaultUNORDERED() {
-      testActivationInBatchRolledBack(EvictionThreadPolicy.DEFAULT, EvictionStrategy.UNORDERED);
-   }
-
-   public void testActivationWithAnotherConcurrentRequestNONE() throws Exception {
-      testActivationWithAnotherConcurrentRequest(EvictionThreadPolicy.DEFAULT, EvictionStrategy.NONE);
-   }
-
-   public void testActivationWithAnotherConcurrentRequestPiggybackLRU() throws Exception {
-      testActivationWithAnotherConcurrentRequest(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LRU);
-   }
-
-
-   public void testActivationWithAnotherConcurrentRequestPiggybackLIRS() throws Exception {
-      testActivationWithAnotherConcurrentRequest(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LIRS);
-   }
-
-   public void testActivationWithAnotherConcurrentRequestPiggybackUNORDERED() throws Exception {
-      testActivationWithAnotherConcurrentRequest(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.UNORDERED);
-   }
-
-   public void testActivationWithAnotherConcurrentRequestDefaultLRU() throws Exception {
-      testActivationWithAnotherConcurrentRequest(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LRU);
-   }
-
-
-   public void testActivationWithAnotherConcurrentRequestDefaultLIRS() throws Exception {
-      testActivationWithAnotherConcurrentRequest(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LIRS);
-   }
-
-   public void testActivationWithAnotherConcurrentRequestDefaultUNORDERED() throws Exception {
-      testActivationWithAnotherConcurrentRequest(EvictionThreadPolicy.DEFAULT, EvictionStrategy.UNORDERED);
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersNONE() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.DEFAULT, EvictionStrategy.NONE,
-                                                          "prev-value");
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersPiggybackLRU() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LRU,
-                                                          "prev-value");
-   }
-
-
-   public void testActivationPendingTransactionDoesNotAffectOthersPiggybackLIRS() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LIRS,
-                                                          "prev-value");
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersPiggybackUNORDERED() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.UNORDERED,
-                                                          "prev-value");
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersDefaultLRU() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LRU,
-                                                          "prev-value");
-   }
-
-
-   public void testActivationPendingTransactionDoesNotAffectOthersDefaultLIRS() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LIRS,
-                                                          "prev-value");
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersDefaultUNORDERED() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.DEFAULT, EvictionStrategy.UNORDERED,
-                                                          "prev-value");
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersEmptyValueNONE() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.DEFAULT, EvictionStrategy.NONE, null);
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersEmptyValuePiggybackLRU() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LRU, null);
-   }
-
-
-   public void testActivationPendingTransactionDoesNotAffectOthersEmptyValuePiggybackLIRS() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LIRS, null);
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersEmptyValuePiggybackUNORDERED() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.UNORDERED, null);
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersEmptyValueDefaultLRU() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LRU, null);
-   }
-
-
-   public void testActivationPendingTransactionDoesNotAffectOthersEmptyValueDefaultLIRS() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LIRS, null);
-   }
-
-   public void testActivationPendingTransactionDoesNotAffectOthersEmptyValueDefaultUNORDERED() throws Throwable {
-      testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy.DEFAULT, EvictionStrategy.UNORDERED, null);
-   }
-
-   public void testActivationPutAllInBatchRolledBackNONE() throws Throwable {
-      testActivationPutAllInBatchRolledBack(EvictionThreadPolicy.DEFAULT, EvictionStrategy.NONE);
-   }
-
-   public void testActivationPutAllInBatchRolledBackPiggybackLRU() throws Throwable {
-      testActivationPutAllInBatchRolledBack(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LRU);
-   }
-
-
-   public void testActivationPutAllInBatchRolledBackPiggybackLIRS() throws Throwable {
-      testActivationPutAllInBatchRolledBack(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.LIRS);
-   }
-
-   public void testActivationPutAllInBatchRolledBackPiggybackUNORDERED() throws Throwable {
-      testActivationPutAllInBatchRolledBack(EvictionThreadPolicy.PIGGYBACK, EvictionStrategy.UNORDERED);
-   }
-
-   public void testActivationPutAllInBatchRolledBackDefaultLRU() throws Throwable {
-      testActivationPutAllInBatchRolledBack(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LRU);
-   }
-
-
-   public void testActivationPutAllInBatchRolledBackDefaultLIRS() throws Throwable {
-      testActivationPutAllInBatchRolledBack(EvictionThreadPolicy.DEFAULT, EvictionStrategy.LIRS);
-   }
-
-   public void testActivationPutAllInBatchRolledBackDefaultUNORDERED() throws Throwable {
-      testActivationPutAllInBatchRolledBack(EvictionThreadPolicy.DEFAULT, EvictionStrategy.UNORDERED);
-   }
-
-   private void runTest(EvictionThreadPolicy p, EvictionStrategy s) {
-      String name = "test-" + p + "-" + s;
-      Cache<String, String> testCache = cacheManager.getCache(name);
+   public void testBasicStore() {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
       testCache.clear();
       testCache.put("X", "4567");
       testCache.put("Y", "4568");
       testCache.put("Z", "4569");
-
-      if (!s.equals(EvictionStrategy.NONE)) {
-         assertEquals(EVICTION_MAX_ENTRIES, testCache.getAdvancedCache().getDataContainer().size());
-         assertEquals("4567", testCache.get("X"));
-         assertEquals(EVICTION_MAX_ENTRIES, testCache.getAdvancedCache().getDataContainer().size());
-      }
 
       assertEquals("4567", testCache.get("X"));
       assertEquals("4568", testCache.get("Y"));
@@ -275,9 +112,8 @@ public class EvictionWithPassivationTest extends SingleCacheManagerTest {
       }
    }
 
-   private void testActivationInBatchRolledBack(EvictionThreadPolicy p, EvictionStrategy s) {
-      String name = "test-" + p + "-" + s;
-      Cache<String, String> testCache = cacheManager.getCache(name);
+   public void testActivationInBatchRolledBack() {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
 
       final String key = "X";
       final String value = "4567";
@@ -297,9 +133,8 @@ public class EvictionWithPassivationTest extends SingleCacheManagerTest {
    }
 
 
-   private void testActivationWithAnotherConcurrentRequest(EvictionThreadPolicy p, EvictionStrategy s) throws Exception {
-      String name = "test-" + p + "-" + s;
-      final Cache<String, String> testCache = cacheManager.getCache(name);
+   public void testActivationWithAnotherConcurrentRequest() throws Exception {
+      final Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
 
       final String key = "Y";
       final String value = "4568";
@@ -326,10 +161,9 @@ public class EvictionWithPassivationTest extends SingleCacheManagerTest {
       assertEquals(value, testCache.get(key));
    }
 
-   private void testActivationPendingTransactionDoesNotAffectOthers(EvictionThreadPolicy p, EvictionStrategy s,
-                                                                 String previousValue) throws Throwable {
-      String name = "test-" + p + "-" + s;
-      final Cache<String, String> testCache = cacheManager.getCache(name);
+   public void testActivationPendingTransactionDoesNotAffectOthers() throws Throwable {
+      final String previousValue = "prev-value";
+      final Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
 
       testCache.clear();
 
@@ -359,7 +193,7 @@ public class EvictionWithPassivationTest extends SingleCacheManagerTest {
          assertEquals(value, testCache.get(key));
 
          // The spawned thread shouldn't see the new value yet, should see the old one still
-         Future<String> future = testCache.getAsync(key);
+         Future<String> future = fork(() -> testCache.get(key));
 
          if (previousValue != null) {
             assertEquals(previousValue, future.get(10000, TimeUnit.SECONDS));
@@ -376,9 +210,8 @@ public class EvictionWithPassivationTest extends SingleCacheManagerTest {
       assertEquals(value, testCache.get(key));
    }
 
-   private void testActivationPutAllInBatchRolledBack(EvictionThreadPolicy p, EvictionStrategy s) throws Exception {
-      String name = "test-" + p + "-" + s;
-      Cache<String, String> testCache = cacheManager.getCache(name);
+   public void testActivationPutAllInBatchRolledBack() throws Exception {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
 
       final String key = "X";
       final String value = "4567";
@@ -396,4 +229,91 @@ public class EvictionWithPassivationTest extends SingleCacheManagerTest {
       // The data should still be present even if a rollback occurred
       assertEquals(value, testCache.get(key));
    }
+
+   public void testRemovalOfEvictedEntry() throws Exception {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
+      for (int i = 0; i < EVICTION_MAX_ENTRIES + 1; i++) {
+         testCache.put("key" + i, "value" + i);
+      }
+
+      String evictedKey = evictionListener.getEvictedKey();
+      assertTrue(isEntryInStore(evictedKey));
+      testCache.remove(evictedKey);
+      assertFalse(testCache.containsKey(evictedKey));
+      assertNull(testCache.get(evictedKey));
+   }
+
+   public void testComputeOnEvictedEntry() throws Exception {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
+      for (int i = 0; i < EVICTION_MAX_ENTRIES + 1; i++) {
+         testCache.put("key" + i, "value" + i);
+      }
+
+      String evictedKey = evictionListener.getEvictedKey();
+      assertTrue(isEntryInStore(evictedKey));
+      testCache.compute(evictedKey, (k ,v) -> v + "-modfied");
+      assertFalse(isEntryInStore(evictedKey));
+   }
+
+   public void testRemoveViaComputeOnEvictedEntry() throws Exception {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
+      for (int i = 0; i < EVICTION_MAX_ENTRIES + 1; i++) {
+         testCache.put("key" + i, "value" + i);
+      }
+
+      String evictedKey = evictionListener.getEvictedKey();
+      assertTrue(isEntryInStore(evictedKey));
+      testCache.compute(evictedKey, (k ,v) -> null);
+      assertFalse(testCache.containsKey(evictedKey));
+      assertFalse(isEntryInStore(evictedKey));
+   }
+
+   public void testCleanStoreOnPut() throws Exception {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
+      testCache.clear();
+      putIntoStore("key", "oldValue");
+      testCache.put("key", "value");
+      assertFalse(isEntryInStore("key"));
+   }
+
+   private boolean isEntryInStore(String key) throws Exception {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
+      CacheLoader<String, String> loader = TestingUtil.getFirstLoader(testCache);
+      Object loaderKey = key;
+      if (storage == StorageType.OFF_HEAP) {
+         GlobalMarshaller gm = TestingUtil.extractGlobalMarshaller(testCache.getCacheManager());
+         loaderKey = new WrappedByteArray(gm.objectToByteBuffer(key));
+      }
+      return loader.contains(loaderKey);
+   }
+
+   private void putIntoStore(String key, String value) throws Exception {
+      Cache<String, String> testCache = cacheManager.getCache(CACHE_NAME);
+      CacheWriter<String, String> writer = TestingUtil.getFirstWriter(testCache);
+      Object writerKey = key;
+      Object writerValue = value;
+      if (storage == StorageType.OFF_HEAP) {
+         GlobalMarshaller gm = TestingUtil.extractGlobalMarshaller(testCache.getCacheManager());
+         writerKey = new WrappedByteArray(gm.objectToByteBuffer(key));
+         writerValue = new WrappedByteArray(gm.objectToByteBuffer(value));
+      }
+      MarshalledEntry entry = new MarshalledEntryImpl(writerKey, writerValue, null, null);
+      writer.write(entry);
+   }
+
+   @Listener
+   public static class EvictionListener {
+
+      private String evictedKey;
+
+      @CacheEntriesEvicted
+      public void entryEvicted(CacheEntriesEvictedEvent e) {
+         evictedKey = (String) e.getEntries().keySet().iterator().next();
+      }
+
+      public String getEvictedKey() {
+         return evictedKey;
+      }
+   }
+
 }

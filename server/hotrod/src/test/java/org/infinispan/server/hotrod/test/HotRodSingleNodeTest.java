@@ -1,9 +1,9 @@
 package org.infinispan.server.hotrod.test;
 
 import static org.infinispan.server.core.test.ServerTestingUtil.killServer;
-import static org.infinispan.server.hotrod.test.HotRodTestingUtils.hotRodCacheConfiguration;
-import static org.infinispan.server.hotrod.test.HotRodTestingUtils.killClient;
-import static org.infinispan.server.hotrod.test.HotRodTestingUtils.startHotRodServer;
+import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheConfiguration;
+import static org.infinispan.server.hotrod.test.HotRodTestingUtil.killClient;
+import static org.infinispan.server.hotrod.test.HotRodTestingUtil.startHotRodServer;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
@@ -12,12 +12,11 @@ import org.infinispan.server.hotrod.HotRodServer;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.AfterClass;
-import org.testng.annotations.Test;
 
-import io.netty.channel.ChannelFuture;
+import io.netty.util.concurrent.Future;
 
 public abstract class HotRodSingleNodeTest extends SingleCacheManagerTest {
-   public static final String cacheName = "HotRodCache";
+   public final String cacheName = "HotRodCache";
    protected HotRodServer hotRodServer;
    HotRodClient hotRodClient;
    AdvancedCache<byte[], byte[]> advancedCache;
@@ -31,7 +30,6 @@ public abstract class HotRodSingleNodeTest extends SingleCacheManagerTest {
       return cacheManager;
    }
 
-   @Test(enabled = false) // Disable explicitly to avoid TestNG thinking this is a test!!
    @Override
    protected void setup() throws Exception {
       super.setup();
@@ -51,7 +49,7 @@ public abstract class HotRodSingleNodeTest extends SingleCacheManagerTest {
    public void destroyAfterClass() {
       log.debug("Test finished, close cache, client and Hot Rod server");
       super.destroyAfterClass();
-      shutdownClient();
+      shutdownClient().awaitUninterruptibly();
       killServer(hotRodServer);
    }
 
@@ -67,7 +65,7 @@ public abstract class HotRodSingleNodeTest extends SingleCacheManagerTest {
       return hotRodJmxDomain;
    }
 
-   protected ChannelFuture shutdownClient() {
+   protected Future<?> shutdownClient() {
       return killClient(hotRodClient);
    }
 

@@ -39,6 +39,7 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.ServerChannel;
+import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.group.ChannelGroup;
@@ -47,9 +48,10 @@ import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.util.concurrent.DefaultThreadFactory;
+import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import io.netty.util.internal.logging.InternalLoggerFactory;
-import io.netty.util.internal.logging.Log4JLoggerFactory;
+import io.netty.util.internal.logging.Log4J2LoggerFactory;
 
 /**
  * A Netty based transport.
@@ -63,28 +65,41 @@ public class NettyTransport implements Transport {
    static private final Log log = LogFactory.getLog(NettyTransport.class, Log.class);
    static private final boolean isLog4jAvailable;
 
+   private static final String USE_EPOLL_PROPERTY = "infinispan.server.channel.epoll";
+   private static final boolean IS_LINUX = System.getProperty("os.name").toLowerCase().startsWith("linux");
+   private static final boolean EPOLL_DISABLED = System.getProperty(USE_EPOLL_PROPERTY, "true").equalsIgnoreCase("false");
+   private static final boolean USE_NATIVE_EPOLL;
+
    static {
       boolean exception;
       try {
-         Util.loadClassStrict("org.apache.log4j.Logger", Thread.currentThread().getContextClassLoader());
+         Util.loadClassStrict("org.apache.logging.log4j.Logger", Thread.currentThread().getContextClassLoader());
          exception = false;
       } catch (ClassNotFoundException e) {
          exception = true;
       }
       isLog4jAvailable = !exception;
+
+      if (Epoll.isAvailable()) {
+         USE_NATIVE_EPOLL = !EPOLL_DISABLED && IS_LINUX;
+      } else {
+         if (IS_LINUX) {
+            log.epollNotAvailable(Epoll.unavailabilityCause().toString());
+         }
+         USE_NATIVE_EPOLL = false;
+      }
    }
 
    public NettyTransport(InetSocketAddress address, ProtocolServerConfiguration configuration, String threadNamePrefix,
-           EmbeddedCacheManager cacheManager, boolean useNativeEpoll) {
+           EmbeddedCacheManager cacheManager) {
       this.address = address;
       this.configuration = configuration;
       this.threadNamePrefix = threadNamePrefix;
       this.cacheManager = cacheManager;
-      this.useNativeEpoll = useNativeEpoll;
 
       // Need to initialize these in constructor since they require configuration
-      masterGroup = buildEventLoop(1, new DefaultThreadFactory(threadNamePrefix + "ServerMaster"));
-      workerGroup = buildEventLoop(0, new DefaultThreadFactory(threadNamePrefix + "ServerWorker"));
+      masterGroup = buildEventLoop(1, new DefaultThreadFactory(threadNamePrefix + "-ServerMaster"));
+      workerGroup = buildEventLoop(0, new DefaultThreadFactory(threadNamePrefix + "-ServerWorker"));
 
       isGlobalStatsEnabled = cacheManager.getCacheManagerConfiguration().globalJmxStatistics().enabled();
       serverChannels = new DefaultChannelGroup(threadNamePrefix + "-Channels", ImmediateEventExecutor.INSTANCE);
@@ -103,7 +118,6 @@ public class NettyTransport implements Transport {
 
    private final ChannelGroup serverChannels;
    final ChannelGroup acceptedChannels;
-   private final boolean useNativeEpoll;
 
    private final EventLoopGroup masterGroup;
    private final EventLoopGroup workerGroup;
@@ -118,7 +132,7 @@ public class NettyTransport implements Transport {
    public void start() {
       // Make netty use log4j, otherwise it goes to JDK logging.
       if (isLog4jAvailable)
-         InternalLoggerFactory.setDefaultFactory(new Log4JLoggerFactory());
+         InternalLoggerFactory.setDefaultFactory(Log4J2LoggerFactory.INSTANCE);
 
       ServerBootstrap bootstrap = new ServerBootstrap();
       bootstrap.group(masterGroup, workerGroup);
@@ -143,8 +157,17 @@ public class NettyTransport implements Transport {
 
    @Override
    public void stop() {
-      // We *pause* the acceptor so no new connections are made
-      ChannelGroupFuture future = serverChannels.close().awaitUninterruptibly();
+      Future<?> masterTerminationFuture = masterGroup.shutdownGracefully(100, 1000, TimeUnit.MILLISECONDS);
+      Future<?> workerTerminationFuture = workerGroup.shutdownGracefully(100, 1000, TimeUnit.MILLISECONDS);
+
+      masterTerminationFuture.awaitUninterruptibly();
+      workerTerminationFuture.awaitUninterruptibly();
+
+      // This is probably not necessary, all Netty resources should have been freed already
+      ChannelGroupFuture serverChannelsTerminationFuture = serverChannels.close();
+      ChannelGroupFuture acceptedChannelsTerminationFuture = acceptedChannels.close();
+
+      ChannelGroupFuture future = serverChannelsTerminationFuture.awaitUninterruptibly();
       if (!future.isSuccess()) {
          log.serverDidNotUnbind();
 
@@ -156,7 +179,7 @@ public class NettyTransport implements Transport {
          });
       }
 
-      future = acceptedChannels.close().awaitUninterruptibly();
+      future = acceptedChannelsTerminationFuture.awaitUninterruptibly();
       if (!future.isSuccess()) {
          log.serverDidNotClose();
          future.forEach(fut -> {
@@ -167,9 +190,7 @@ public class NettyTransport implements Transport {
          });
       }
       if (log.isDebugEnabled())
-         log.debug("Channel group completely closed, release external resources");
-      masterGroup.shutdownGracefully();
-      workerGroup.shutdownGracefully();
+         log.debug("Channel group completely closed, external resources released");
       nettyPort = Optional.empty();
    }
 
@@ -254,13 +275,13 @@ public class NettyTransport implements Transport {
    }
 
    private Class<? extends ServerChannel> getServerSocketChannel() {
-      Class<? extends ServerChannel> channel = useNativeEpoll ? EpollServerSocketChannel.class : NioServerSocketChannel.class;
+      Class<? extends ServerChannel> channel = USE_NATIVE_EPOLL ? EpollServerSocketChannel.class : NioServerSocketChannel.class;
       log.createdSocketChannel(channel.getName(), configuration.toString());
       return channel;
    }
 
    private EventLoopGroup buildEventLoop(int nThreads, DefaultThreadFactory threadFactory) {
-      EventLoopGroup eventLoop = useNativeEpoll ? new EpollEventLoopGroup(nThreads, threadFactory) :
+      EventLoopGroup eventLoop = USE_NATIVE_EPOLL ? new EpollEventLoopGroup(nThreads, threadFactory) :
               new NioEventLoopGroup(nThreads, threadFactory);
       log.createdNettyEventLoop(eventLoop.getClass().getName(), configuration.toString());
       return eventLoop;

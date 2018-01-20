@@ -1,6 +1,6 @@
 package org.infinispan.query.impl;
 
-import static org.mockito.Matchers.anyObject;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -11,11 +11,10 @@ import java.util.List;
 import java.util.Map;
 
 import org.hibernate.search.query.engine.spi.EntityInfo;
+import org.hibernate.search.spi.IndexedTypeIdentifier;
 import org.infinispan.AdvancedCache;
 import org.infinispan.query.ResultIterator;
 import org.infinispan.query.backend.KeyTransformationHandler;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -54,13 +53,9 @@ public class EagerIteratorTest {
       // create the instance of the iterator.
       cache = mock(AdvancedCache.class);
 
-      when(cache.get(anyObject())).thenAnswer(new Answer<String>() {
-         @Override
-         public String answer(InvocationOnMock invocation) throws Throwable {
-            String k = invocation.getArguments()[0].toString();
-            return dummyResults.get(k);
-         }
-
+      when(cache.get(any())).thenAnswer(invocation -> {
+         String k = invocation.getArguments()[0].toString();
+         return dummyResults.get(k);
       });
 
       iterator = new EagerIterator<>(entityInfos, new EntityLoader(cache, keyTransformationHandler), getFetchSize());
@@ -101,11 +96,6 @@ public class EagerIteratorTest {
       }
 
       @Override
-      public Class<?> getClazz() {
-         return null;
-      }
-
-      @Override
       public Serializable getId() {
          return key;
       }
@@ -127,6 +117,11 @@ public class EagerIteratorTest {
 
       @Override
       public void populateWithEntityInstance(Object entity) {
+      }
+
+      @Override
+      public IndexedTypeIdentifier getType() {
+         return null;
       }
    }
 }

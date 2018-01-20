@@ -13,8 +13,12 @@ import org.infinispan.commands.remote.ClusteredGetAllCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.commons.CacheException;
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.annotations.Stop;
+import org.infinispan.remoting.inboundhandler.action.ReadyAction;
+import org.infinispan.remoting.responses.CacheNotFoundResponse;
 import org.infinispan.remoting.responses.ExceptionResponse;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.ResponseGenerator;
@@ -34,11 +38,16 @@ import org.infinispan.util.logging.Log;
  */
 public abstract class BasePerCacheInboundInvocationHandler implements PerCacheInboundInvocationHandler {
    private static final int NO_TOPOLOGY_COMMAND = Integer.MIN_VALUE;
+
+   @Inject @ComponentName(REMOTE_COMMAND_EXECUTOR)
    protected BlockingTaskAwareExecutorService remoteCommandsExecutor;
-   private StateTransferLock stateTransferLock;
-   protected StateTransferManager stateTransferManager;
-   private ResponseGenerator responseGenerator;
-   private CancellationService cancellationService;
+   @Inject private StateTransferLock stateTransferLock;
+   @Inject protected StateTransferManager stateTransferManager;
+   @Inject private ResponseGenerator responseGenerator;
+   @Inject private CancellationService cancellationService;
+   @Inject protected Configuration configuration;
+
+   private volatile boolean stopped = false;
 
    private static int extractCommandTopologyId(SingleRpcCommand command) {
       ReplicableCommand innerCmd = command.getCommand();
@@ -48,7 +57,7 @@ public abstract class BasePerCacheInboundInvocationHandler implements PerCacheIn
       return NO_TOPOLOGY_COMMAND;
    }
 
-   protected static int extractCommandTopologyId(CacheRpcCommand command) {
+   static int extractCommandTopologyId(CacheRpcCommand command) {
       switch (command.getCommandId()) {
          case SingleRpcCommand.COMMAND_ID:
             return extractCommandTopologyId((SingleRpcCommand) command);
@@ -65,17 +74,13 @@ public abstract class BasePerCacheInboundInvocationHandler implements PerCacheIn
       return NO_TOPOLOGY_COMMAND;
    }
 
-   @Inject
-   public void injectDependencies(@ComponentName(REMOTE_COMMAND_EXECUTOR) BlockingTaskAwareExecutorService remoteCommandsExecutor,
-                                  ResponseGenerator responseGenerator,
-                                  CancellationService cancellationService,
-                                  StateTransferLock stateTransferLock,
-                                  StateTransferManager stateTransferManager) {
-      this.remoteCommandsExecutor = remoteCommandsExecutor;
-      this.responseGenerator = responseGenerator;
-      this.cancellationService = cancellationService;
-      this.stateTransferLock = stateTransferLock;
-      this.stateTransferManager = stateTransferManager;
+   @Stop
+   public void stop() {
+      this.stopped = true;
+   }
+
+   public boolean isStopped() {
+      return stopped;
    }
 
    final CompletableFuture<Response> invokeCommand(CacheRpcCommand cmd) throws Throwable {
@@ -117,20 +122,20 @@ public abstract class BasePerCacheInboundInvocationHandler implements PerCacheIn
    }
 
    final ExceptionResponse outdatedTopology(OutdatedTopologyException exception) {
-      getLog().outdatedTopology(exception);
+      getLog().tracef("Topology changed, retrying: %s", exception);
       return new ExceptionResponse(exception);
    }
 
-   final ExceptionResponse interruptedException(CacheRpcCommand command) {
+   final Response interruptedException(CacheRpcCommand command) {
       getLog().shutdownHandlingCommand(command);
-      return new ExceptionResponse(new CacheException("Cache is shutting down"));
+      return CacheNotFoundResponse.INSTANCE;
    }
 
-   protected final void unexpectedDeliverMode(ReplicableCommand command, DeliverOrder deliverOrder) {
+   final void unexpectedDeliverMode(ReplicableCommand command, DeliverOrder deliverOrder) {
       throw new IllegalArgumentException(String.format("Unexpected deliver mode %s for command%s", deliverOrder, command));
    }
 
-   protected final void handleRunnable(BlockingRunnable runnable, boolean onExecutorService) {
+   final void handleRunnable(BlockingRunnable runnable, boolean onExecutorService) {
       if (onExecutorService) {
          remoteCommandsExecutor.execute(runnable);
       } else {
@@ -148,17 +153,17 @@ public abstract class BasePerCacheInboundInvocationHandler implements PerCacheIn
       return false;
    }
 
-   protected final BlockingRunnable createDefaultRunnable(CacheRpcCommand command, Reply reply, int commandTopologyId,
-                                                          boolean waitTransactionalData, boolean onExecutorService,
-                                                          boolean sync) {
+   final BlockingRunnable createDefaultRunnable(CacheRpcCommand command, Reply reply, int commandTopologyId,
+         boolean waitTransactionalData, boolean onExecutorService,
+         boolean sync) {
       return new DefaultTopologyRunnable(this, command, reply,
                                          TopologyMode.create(onExecutorService, waitTransactionalData),
                                          commandTopologyId, sync);
    }
 
-   protected final BlockingRunnable createDefaultRunnable(final CacheRpcCommand command, final Reply reply,
-                                                          final int commandTopologyId, TopologyMode topologyMode,
-                                                          boolean sync) {
+   final BlockingRunnable createDefaultRunnable(final CacheRpcCommand command, final Reply reply,
+         final int commandTopologyId, TopologyMode topologyMode,
+         boolean sync) {
       return new DefaultTopologyRunnable(this, command, reply, topologyMode, commandTopologyId, sync);
    }
 
@@ -166,7 +171,39 @@ public abstract class BasePerCacheInboundInvocationHandler implements PerCacheIn
 
    protected abstract boolean isTraceEnabled();
 
-   protected final boolean executeOnExecutorService(DeliverOrder order, CacheRpcCommand command) {
+   final boolean executeOnExecutorService(DeliverOrder order, CacheRpcCommand command) {
       return !order.preserveOrder() && command.canBlock();
+   }
+
+   final BlockingRunnable createReadyActionRunnable(CacheRpcCommand command, Reply reply, int commandTopologyId,
+         boolean sync, ReadyAction readyAction) {
+      if (readyAction != null) {
+         return createNonNullReadyActionRunnable(command, reply, commandTopologyId, sync, readyAction);
+      } else {
+         return new DefaultTopologyRunnable(this, command, reply, TopologyMode.READY_TX_DATA, commandTopologyId, sync);
+      }
+   }
+
+   final BlockingRunnable createNonNullReadyActionRunnable(CacheRpcCommand command, Reply reply, int commandTopologyId,
+         boolean sync, ReadyAction readyAction) {
+      readyAction.addListener(remoteCommandsExecutor::checkForReadyTasks);
+      return new DefaultTopologyRunnable(this, command, reply, TopologyMode.READY_TX_DATA, commandTopologyId, sync) {
+         @Override
+         public boolean isReady() {
+            return super.isReady() && readyAction.isReady();
+         }
+
+         @Override
+         protected void onException(Throwable throwable) {
+            super.onException(throwable);
+            readyAction.onException();
+         }
+
+         @Override
+         protected void onFinally() {
+            super.onFinally();
+            readyAction.onFinally();
+         }
+      };
    }
 }

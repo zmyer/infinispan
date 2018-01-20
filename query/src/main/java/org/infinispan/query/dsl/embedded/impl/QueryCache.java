@@ -7,7 +7,6 @@ import java.util.concurrent.TimeUnit;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -57,17 +56,10 @@ public class QueryCache {
     */
    private static final long ENTRY_LIFESPAN = 300;  // seconds
 
-   private EmbeddedCacheManager cacheManager;
-
-   private InternalCacheRegistry internalCacheRegistry;
+   @Inject private EmbeddedCacheManager cacheManager;
+   @Inject private InternalCacheRegistry internalCacheRegistry;
 
    private volatile Cache<QueryCacheKey, Object> lazyCache;
-
-   @Inject
-   public void init(EmbeddedCacheManager cacheManager, InternalCacheRegistry internalCacheRegistry) {
-      this.cacheManager = cacheManager;
-      this.internalCacheRegistry = internalCacheRegistry;
-   }
 
    /**
     * Gets the cached query object. The key used for lookup is an object pair containing the query string and a
@@ -112,8 +104,7 @@ public class QueryCache {
             .clustering().cacheMode(CacheMode.LOCAL)
             .transaction().transactionMode(TransactionMode.NON_TRANSACTIONAL)
             .expiration().maxIdle(ENTRY_LIFESPAN, TimeUnit.SECONDS)
-            .eviction().type(EvictionType.COUNT).size(MAX_ENTRIES)
-            .strategy(EvictionStrategy.LIRS);
+            .memory().evictionType(EvictionType.COUNT).size(MAX_ENTRIES);
       return cfgBuilder;
    }
 

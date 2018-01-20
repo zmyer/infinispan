@@ -4,10 +4,7 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static org.infinispan.stats.container.ExtendedStatistic.ABORT_RATE;
 import static org.infinispan.stats.container.ExtendedStatistic.ALL_GET_EXECUTION;
 import static org.infinispan.stats.container.ExtendedStatistic.ARRIVAL_RATE;
-import static org.infinispan.stats.container.ExtendedStatistic.ASYNC_COMMIT_TIME;
 import static org.infinispan.stats.container.ExtendedStatistic.ASYNC_COMPLETE_NOTIFY_TIME;
-import static org.infinispan.stats.container.ExtendedStatistic.ASYNC_PREPARE_TIME;
-import static org.infinispan.stats.container.ExtendedStatistic.ASYNC_ROLLBACK_TIME;
 import static org.infinispan.stats.container.ExtendedStatistic.CLUSTERED_GET_COMMAND_SIZE;
 import static org.infinispan.stats.container.ExtendedStatistic.COMMIT_COMMAND_SIZE;
 import static org.infinispan.stats.container.ExtendedStatistic.COMMIT_EXECUTION_TIME;
@@ -77,16 +74,20 @@ import java.io.PrintStream;
 import java.util.Arrays;
 import java.util.Collection;
 
+import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.tx.TransactionBoundaryCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
@@ -145,6 +146,21 @@ public class ExtendedStatisticInterceptor extends BaseCustomAsyncInterceptor {
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return visitWriteCommand(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return visitWriteCommand(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+      return visitWriteCommand(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
       return visitWriteCommand(ctx, command, command.getKey());
    }
 
@@ -307,28 +323,10 @@ public class ExtendedStatisticInterceptor extends BaseCustomAsyncInterceptor {
       return getAttribute(SYNC_ROLLBACK_TIME);
    }
 
-   @ManagedAttribute(description = "Average asynchronous Prepare duration (in microseconds)",
-                     displayName = "Average Prepare Async")
-   public double getAvgPrepareAsync() {
-      return getAttribute(ASYNC_PREPARE_TIME);
-   }
-
-   @ManagedAttribute(description = "Average asynchronous Commit duration (in microseconds)",
-                     displayName = "Average Commit Async")
-   public double getAvgCommitAsync() {
-      return getAttribute(ASYNC_COMMIT_TIME);
-   }
-
    @ManagedAttribute(description = "Average asynchronous Complete Notification duration (in microseconds)",
                      displayName = "Average Complete Notification Async")
    public double getAvgCompleteNotificationAsync() {
       return getAttribute(ASYNC_COMPLETE_NOTIFY_TIME);
-   }
-
-   @ManagedAttribute(description = "Average asynchronous Rollback duration (in microseconds)",
-                     displayName = "Average Rollback Async")
-   public double getAvgRollbackAsync() {
-      return getAttribute(ASYNC_ROLLBACK_TIME);
    }
 
    @ManagedAttribute(description = "Average number of nodes in Commit destination set",
@@ -677,15 +675,16 @@ public class ExtendedStatisticInterceptor extends BaseCustomAsyncInterceptor {
    @ManagedAttribute(description = "Number of replicas for each key",
                      displayName = "Replication Degree")
    public double getReplicationDegree() {
-      if (distributionManager != null) {
-         //distributed mode
-         return distributionManager.getConsistentHash().getNumOwners();
-      } else if (rpcManager != null) {
-         //replicated or other clustered mode
-         return this.rpcManager.getTransport().getMembers().size();
+      switch (cacheConfiguration.clustering().cacheMode()) {
+         case DIST_SYNC:
+         case DIST_ASYNC:
+            return cacheConfiguration.clustering().hash().numOwners();
+         case REPL_ASYNC:
+         case REPL_SYNC:
+            return rpcManager.getMembers().size();
+         default:
+            return 1;
       }
-      //local mode
-      return 1;
    }
 
    @ManagedAttribute(description = "Number of concurrent transactions executing on the current node",
@@ -828,7 +827,7 @@ public class ExtendedStatisticInterceptor extends BaseCustomAsyncInterceptor {
    }
 
    private boolean isRemote(Object key) {
-      return distributionManager != null && !distributionManager.getLocality(key).isLocal();
+      return distributionManager != null && !distributionManager.getCacheTopology().isWriteOwner(key);
    }
 
    private void replace() {
@@ -849,11 +848,12 @@ public class ExtendedStatisticInterceptor extends BaseCustomAsyncInterceptor {
 
    private void replaceRpcManager(ComponentRegistry componentRegistry) {
       RpcManager oldRpcManager = componentRegistry.getComponent(RpcManager.class);
+      StreamingMarshaller marshaller = componentRegistry.getCacheMarshaller();
       if (oldRpcManager == null) {
          //local mode
          return;
       }
-      RpcManager newRpcManager = new ExtendedStatisticRpcManager(oldRpcManager, cacheStatisticManager, timeService);
+      RpcManager newRpcManager = new ExtendedStatisticRpcManager(oldRpcManager, cacheStatisticManager, timeService, marshaller);
       log.replaceComponent("RpcManager", oldRpcManager, newRpcManager);
       componentRegistry.registerComponent(newRpcManager, RpcManager.class);
       this.rpcManager = newRpcManager;

@@ -18,6 +18,7 @@ import org.infinispan.notifications.cachelistener.event.DataRehashedEvent;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
+import org.infinispan.test.fwk.InCacheMode;
 import org.testng.annotations.Test;
 
 /**
@@ -26,14 +27,18 @@ import org.testng.annotations.Test;
  */
 @Test(groups = "functional", testName = "statetransfer.DataRehashedEventTest")
 @CleanupAfterMethod
+@InCacheMode({ CacheMode.DIST_SYNC, CacheMode.SCATTERED_SYNC })
 public class DataRehashedEventTest extends MultipleCacheManagersTest {
 
-   private ConfigurationBuilder defaultConfig = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, false);
    private DataRehashedListener rehashListener;
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      createClusteredCaches(1, defaultConfig);
+      createClusteredCaches(1, getDefaultConfig());
+   }
+
+   protected ConfigurationBuilder getDefaultConfig() {
+      return getDefaultClusteredCacheConfig(cacheMode, false);
    }
 
    public void testJoinAndLeave() {
@@ -45,9 +50,9 @@ public class DataRehashedEventTest extends MultipleCacheManagersTest {
       assertEquals(rehashListener.removeEvents().size(), 0);
 
       // start a second node and wait for the rebalance to end
-      addClusterEnabledCacheManager(defaultConfig);
+      addClusterEnabledCacheManager(getDefaultConfig());
       cache(1);
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1));
 
       ConsistentHash ch2Nodes = advancedCache(0).getDistributionManager().getReadConsistentHash();
       rehashListener.waitForEvents(2);
@@ -67,9 +72,9 @@ public class DataRehashedEventTest extends MultipleCacheManagersTest {
       assertEquals(post.getConsistentHashAtEnd(), ch2Nodes);
 
       // start a third node and wait for the rebalance to end
-      addClusterEnabledCacheManager(defaultConfig);
+      addClusterEnabledCacheManager(getDefaultConfig());
       cache(2);
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1), cache(2));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1), cache(2));
 
       ConsistentHash ch3Nodes = advancedCache(0).getDistributionManager().getReadConsistentHash();
       rehashListener.waitForEvents(2);
@@ -112,9 +117,16 @@ public class DataRehashedEventTest extends MultipleCacheManagersTest {
       // stop cache 1 and wait for the rebalance to end
       killMember(1);
 
-      // cache 0 was already an owner for all the segments, so there shouldn't be any rebalance
-      events = rehashListener.removeEvents();
-      assertEquals(events.size(), 0);
+      if (cacheMode.isScattered()) {
+         // cache 0 has to become owner of the segments owned by the leaving node, so there will be a rebalance
+         rehashListener.waitForEvents(2);
+         events = rehashListener.removeEvents();
+         assertEquals(events.size(), 2);
+      } else {
+         // cache 0 was already an owner for all the segments, so there shouldn't be any rebalance
+         events = rehashListener.removeEvents();
+         assertEquals(events.size(), 0);
+      }
    }
 
    public void testPostOnlyEvent() {
@@ -122,13 +134,12 @@ public class DataRehashedEventTest extends MultipleCacheManagersTest {
       rehashListener = new DataRehashedListenerPostOnly();
       c1.addListener(rehashListener);
 
-      ConsistentHash ch1Node = advancedCache(0).getDistributionManager().getReadConsistentHash();
       assertEquals(rehashListener.removeEvents().size(), 0);
 
       // start a second node and wait for the rebalance to end
-      addClusterEnabledCacheManager(defaultConfig);
+      addClusterEnabledCacheManager(getDefaultConfig());
       cache(1);
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1));
 
       rehashListener.waitForEvents(1);
    }

@@ -7,7 +7,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.fwk.CleanupAfterMethod;
@@ -25,13 +24,13 @@ public class EvictionDuringBatchTest extends SingleCacheManagerTest {
 
    protected EmbeddedCacheManager createCacheManager() throws Exception {
       ConfigurationBuilder cfgBuilder = new ConfigurationBuilder();
-      cfgBuilder.eviction().strategy(EvictionStrategy.LRU).maxEntries(128) // 128 max entries
+      cfgBuilder.memory().size(128) // 128 max entries
             .expiration().wakeUpInterval(100L)
             .locking().useLockStriping(false) // to minimize chances of deadlock in the unit test
             .invocationBatching().enable(true);
       EmbeddedCacheManager cm = TestCacheManagerFactory.createCacheManager(cfgBuilder);
       cache = cm.getCache();
-      cache.addListener(new BaseEvictionFunctionalTest.EvictionListener());
+      cache.addListener(new EvictionFunctionalTest.EvictionListener());
       return cm;
    }
 

@@ -1,5 +1,6 @@
 package org.infinispan.all.embeddedquery.testdomain;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
@@ -29,6 +30,10 @@ public interface User {
 
    void setSurname(String surname);
 
+   String getSalutation();
+
+   void setSalutation(String salutation);
+
    Integer getAge();
 
    void setAge(Integer age);
@@ -44,4 +49,12 @@ public interface User {
    String getNotes();
 
    void setNotes(String notes);
+
+   Instant getCreationDate();
+
+   void setCreationDate(Instant creationDate);
+
+   Instant getPasswordExpirationDate();
+
+   void setPasswordExpirationDate(Instant passwordExpirationDate);
 }

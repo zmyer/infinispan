@@ -2,9 +2,14 @@
 The Infinispan Server distribution contains a server module that implements Infinispan's custom binary protocol called Hot Rod. The protocol was designed to enable faster client/server interactions compared to other existing text based protocols and to allow clients to make more intelligent decisions with regards to load balancing, failover and even data location operations.
 Please refer to Infinispan Server's link:../infinispan_server_guide/infinispan_server_guide.html[documentation] for instructions on how to configure and run a HotRod server.
 
+To connect to Infinispan over this highly efficient Hot Rod protocol you can
+either use one of the clients described in this chapter, or use higher level
+tools such as <<integrations:hibernate-ogm,Hibernate OGM>>.
+
 include::server_protocols_hotrod_wire.adoc[]
 
-===  Java Hot Rod client
+
+===  Java Hot Rod client [[hotrod:java-client]]
 Hot Rod is a binary, language neutral protocol. This article explains how a Java client can interact with a server via the Hot Rod protocol. A reference implementation of the protocol written in Java can be found in all Infinispan distributions, and this article focuses on the capabilities of this java client.
 
 TIP: Looking for more clients?  Visit link:http://infinispan.org/hotrod-clients[this website] for clients written in a variety of different languages.
@@ -49,6 +54,7 @@ infinispan.client.hotrod.key_size_estimate = 64
 infinispan.client.hotrod.value_size_estimate = 512
 infinispan.client.hotrod.force_return_values = false
 infinispan.client.hotrod.client_intelligence = HASH_DISTRIBUTION_AWARE
+infinispan.client.hotrod.batch_Size = 10000
 
 ## below is connection pooling config
 maxActive=-1
@@ -100,11 +106,54 @@ assert !cache.containsKey("car") : "Value must have been removed!";
 
 The client API maps the local API: link:{javadocroot}/org/infinispan/client/hotrod/RemoteCacheManager.html[RemoteCacheManager] corresponds to link:{javadocroot}/org/infinispan/manager/DefaultCacheManager.html[DefaultCacheManager] (both implement link:{javadocroot}/org/infinispan/manager/CacheContainer.html[CacheContainer] ). This common API facilitates an easy migration from local calls to remote calls through Hot Rod: all one needs to do is switch between link:{javadocroot}/org/infinispan/manager/DefaultCacheManager.html[DefaultCacheManager] and link:{javadocroot}/org/infinispan/client/hotrod/RemoteCacheManager.html[RemoteCacheManager] - which is further simplified by the common link:{javadocroot}/org/infinispan/manager/CacheContainer.html[CacheContainer] interface that both inherit.
 
-All keys can be retrieved from the remote cache (whether it's local, replicated, or
-distributed) by using +keySet()+ method. If the remote cache is a distributed cache,
-the server will perform a distributed stream operation to retrieve all keys from
-clustered nodes, and return all keys to the client.  Please use this method with
-care if there are large number of keys.
+==== RemoteCache(.keySet|.entrySet|.values)
+
+The collection methods `keySet`, `entrySet` and `values` are backed by the remote cache.
+That is that every method is called back into the `RemoteCache`. This is useful as
+it allows for the various keys, entries or values to be retrieved lazily, and not
+requiring them all be stored in the client memory at once if the user does not want.
+These collections adhere to the `Map` specification being that `add` and `addAll`
+are not supported but all other methods are supported.
+
+One thing to note is the `Iterator.remove` and `Set.remove` or `Collection.remove`
+methods require more than 1 round trip to the server to operate. You can check
+out the link:{javadocroot}/org/infinispan/client/hotrod/RemoteCache.html[RemoteCache]
+Javadoc to see more details about these and the other methods.
+
+*Iterator Usage*
+
+The iterator method of these collections uses `retrieveEntries` internally, which
+is described below. If you notice `retrieveEntries` takes an argument for the batch
+size. There is no way to provide this to the iterator. As such the batch size can be
+configured via system property `infinispan.client.hotrod.batch_size` or through
+the link:{javadocroot}/org/infinispan/client/hotrod/configuraion/ConfigurationBuilder.html#batchSize-int-[ConfigurationBuilder]
+when configuring the `RemoteCacheManager`.
+
+Also the `retrieveEntries` iterator returned is `Closeable` as such the iterators
+from `keySet`, `entrySet` and `values` return an `AutoCloseable` variant. Therefore
+you should always close these `Iterator`s when you are done with them.
+
+[source,java]
+----
+try (CloseableIterator<Entry<K, V>> iterator = remoteCache.entrySet().iterator) {
+ ...
+}
+----
+
+*What if I want a deep copy and not a backing collection?*
+
+Previous version of `RemoteCache` allowed for the retrieval of a deep copy
+of the `keySet`. This is still possible with the new backing map, you just
+have to copy the contents yourself. Also you can do this with `entrySet` and
+`values`, which we didn't support before.
+
+[source,java]
+----
+Set<K> keysCopy = remoteCache.keySet().stream().collect(Collectors.toSet());
+----
+
+Please use extreme cautiong with this as a large number of keys can and will cause
+OutOfMemoryError in the client.
 
 [source,java]
 ----
@@ -112,7 +161,12 @@ Set keys = remoteCache.keySet();
 
 ----
 
-Alternatively, if memory is a concern, use the remote iterator api to retrieve entries from the server:
+==== Remote Iterator
+
+Alternatively, if memory is a concern (different batch size) or you wish to do server side
+filtering or conversion), use the remote iterator api to retrieve entries from the server.
+With this method you can limit the entries that are retrieved or even returned a converted
+value if you dont' need all properties of your entry.
 
 [source,java]
 ----
@@ -916,6 +970,9 @@ The number of connections per server, total number of connections, how long shou
 ==== Marshalling data
 The Hot Rod client allows one to plug in a custom marshaller for transforming user objects into byte arrays and the other way around. This transformation is needed because of Hot Rod's binary nature - it doesn't know about objects.
 
+.WARNING: If developing your own custom marshaller, take care of potential injection attacks.
+To avoid such attacks, make the marshaller verify that any class names read, before instantiating it, is amongst the expected/allowed class names.
+
 The marshaller can be plugged through the "marshaller" configuration element (see Configuration section): the value should be the fully qualified name of a class implementing the link:{javadocroot}/org/infinispan/marshall/Marshaller.html[Marshaller] interface. This is a optional parameter, if not specified it defaults to the link:{javadocroot}/org/infinispan/marshall/jboss/GenericJBossMarshaller.html[GenericJBossMarshaller] - a highly optimized implementation based on the link:http://www.jboss.org/jbossmarshalling[JBoss Marshalling] library.
 
 Since version 6.0, there's a new marshaller available to Java Hot Rod clients based on Protostream which generates portable payloads. You can find more information about it <<_querying_via_the_java_hot_rod_client,here>>
@@ -1025,207 +1082,9 @@ When the ATMs wanted to modify the balance, instead of just calling put, they co
 
 image::images/server_modules_10.png[align="center", title="Replace if versions match"]
 
-====  Querying
-While previous Infinispan versions were already providing <<querying_infinispan,indexing and searching>> of Java
-entities to embedded clients, starting with Infinispan 6.0 and the introduction of the new
-<<hot_rod_protocol_1_3,Hot Rod protocol version 1.3>> we add support for remote, language neutral, querying.
-
-This leap required two major changes:
-
-
-* Since non-JVM clients cannot benefit from directly using link:http://lucene.apache.org/[Apache Lucene]'s Java
-API, Infinispan defines its own new link:#infinispan_s_query_dsl[query language], based on an internal DSL that is easily
-implementable in all languages for which we currently have an implementation of the Hot Rod client.
-* In order to enable indexing, the entities put in the cache by clients can no longer be opaque binary blobs understood
-solely by the client. Their structure has to be known to both server and client, so a common way of
-encoding structured data had to be adopted. Furthermore, allowing multi-language clients to access the data requires a
-language and platform-neutral encoding. Google's link:http://code.google.com/p/protobuf/[Protocol Buffers] was
-elected as an encoding format for both over-the-wire and storage due to its efficiency, robustness, good multi-language
-support and support for schema evolution.
-
-===== Storing Protobuf encoded entities
-Remote clients that want to be able to index and query their stored entities must do so using the Protobuf encoding
-format. This is _key_ for the search capability to work. But it's also possible to store Protobuf entities just for
-gaining the benefit of platform independence and not enable indexing if you do not need it.
-
-Protobuf is all about structured data, so first thing you do to use it is define the structure of your data. This is
-accomplished by declaring protocol buffer message types in .proto files, like in the following example. Protobuf is a
-broad subject, we will not detail it here, so please consult the Protobuf
-link:https://developers.google.com/protocol-buffers/docs/overview[Developer Guide] for an in-depth
-explanation. It suffices to say for now that our example defines an entity (message type in protobuf speak) named _Book_,
-placed in a package named _book_sample_. Our entity declares several fields of primitive types and a repeatable field (an
-array basically) named _authors_. The _Author_ message instances are embedded in the _Book_ message instance.
-
-.library.proto
-[source,proto]
-----
-package book_sample;
-
-message Book {
-  required string title = 1;
-  required string description = 2;
-  required int32 publicationYear = 3; // no native Date type available in Protobuf
-
-  repeated Author authors = 4;
-}
-
-message Author {
-  required string name = 1;
-  required string surname = 2;
-}
-----
-
-There are a few important notes we need to make about Protobuf messages:
-
-* nesting of messages is possible, but the resulting structure is strictly a tree, never a graph
-* there is no concept of type inheritance
-* collections are not supported but arrays can be easily emulated using repeated fields
-
-Using Protobuf with the Java Hot Rod client is a two step process. First, the client must be configured to use a
-dedicated marshaller, link:{javadocroot}/org/infinispan/client/hotrod/marshall/ProtoStreamMarshaller.html[_ProtoStreamMarshaller_].
-This marshaller uses the link:https://github.com/infinispan/protostream[_ProtoStream_] library to assist you in
-encoding your objects. The second step is instructing _ProtoStream_ library on how to marshall your message types. The
-following example highlights this process.
-
-[source,java,numbered]
-----
-import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
-import org.infinispan.client.hotrod.marshall.ProtoStreamMarshaller;
-import org.infinispan.protostream.SerializationContext;
-...
-
-ConfigurationBuilder clientBuilder = new ConfigurationBuilder();
-clientBuilder.addServer()
-    .host("127.0.0.1").port(11234)
-    .marshaller(new ProtoStreamMarshaller());
-
-RemoteCacheManager remoteCacheManager = new RemoteCacheManager(clientBuilder.build());
-
-SerializationContext serCtx = ProtoStreamMarshaller.getSerializationContext(remoteCacheManager);
-
-FileDescriptorSource fds = new FileDescriptorSource();
-fds.addProtoFiles("/library.proto");
-serCtx.registerProtoFiles(fds);
-serCtx.registerMarshaller(new BookMarshaller());
-serCtx.registerMarshaller(new AuthorMarshaller());
-
-// Book and Author classes omitted for brevity
-----
-
-The interesting part in this sample is obtaining the _SerializationContext_ associated to the _RemoteCacheManager_ and
-then instructing ProtoStream about the protobuf types we want to marshall. The _SerializationContext_ is provided by the
-library for this purpose. The `SerializationContext.registerProtoFiles` method receives the name of one or more
-classpath resources that is expected to be a protobuf definition containing our type declarations.
-
-NOTE: A _RemoteCacheManager_ has no _SerializationContext_ associated with it unless it was configured to use
-a _ProtoStreamMarshaller_.
-
-The next relevant part is the registration of per entity marshallers for our domain model types. They must be
-provided by the user for each type or marshalling will fail. Writing marshallers is a simple process. The
-_BookMarshaller_ example should get you started. The most important thing you need to consider is they need to be
-stateless and threadsafe as a single instance of them is being used.
-
-.BookMarshaller.java
-[source,java]
-----
-import org.infinispan.protostream.MessageMarshaller;
-...
-
-public class BookMarshaller implements MessageMarshaller<Book> {
-
-   @Override
-   public String getTypeName() {
-      return "book_sample.Book";
-   }
-
-   @Override
-   public Class<? extends Book> getJavaClass() {
-      return Book.class;
-   }
-
-   @Override
-   public void writeTo(ProtoStreamWriter writer, Book book) throws IOException {
-      writer.writeString("title", book.getTitle());
-      writer.writeString("description", book.getDescription());
-      writer.writeInt("publicationYear", book.getPublicationYear());
-      writer.writeCollection("authors", book.getAuthors(), Author.class);
-   }
-
-   @Override
-   public Book readFrom(ProtoStreamReader reader) throws IOException {
-      String title = reader.readString("title");
-      String description = reader.readString("description");
-      int publicationYear = reader.readInt("publicationYear");
-      Set<Author> authors = reader.readCollection("authors", new HashSet<Author>(), Author.class);
-      return new Book(title, description, publicationYear, authors);
-   }
-}
-----
-
-Once you've followed these steps to setup your client you can start reading and writing Java objects to the remote cache
-and the actual data stored in the cache will be protobuf encoded provided that marshallers were registered with the
-remote client for all involved types (_Book_ and _Author_ in our example). Keeping your objects stored in protobuf
-format has the benefit of being able to consume them with compatible clients written in different languages.
-
-TODO Add reference to sample in C++ client user guide
-
-===== Indexing of Protobuf encoded entries
-After configuring the client as described in the previous section you can start configuring indexing for your caches on
-the server side. Activating indexing and the various indexing specific configurations is identical to embedded mode and
-is detailed in the <<query:configuration,Querying Infinispan>> chapter.
-
-There is however an extra configuration step involved. While in embedded mode the indexing metadata is obtained via Java
-reflection by analyzing the presence of various Hibernate Search annotations on the entry's class, this is obviously not
-possible if the entry is protobuf encoded.
-The server needs to extract the relevant metadata from the same descriptor (.proto file) as the client.
-The descriptors are stored in a dedicated cache on the server _'___protobuf_metadata'_.
-Registering a new schema is therefore as simple as performing a _put_ operation on that cache using the schema's name as
-a key and the schema itself as the value.
-Alternatively you can use the CLI (via the cache-container=*:register-proto-schemas() operation), the Console or the
-_ProtobufMetadataManager_ MBean via JMX.
-Be aware that, when security is enabled, access to the schema cache via the remote protocols requires
-that the user belongs to the pass:['___schema_manager'] role.
-NOTE: Once indexing is enabled for a cache all fields of Protobuf encoded entries are going to be indexed.
-Future versions will allow you to select which fields to index (see link:https://issues.jboss.org/browse/ISPN-3718[ISPN-3718]).
-
-===== A remote query example
-You've managed to configure both client and server to talk protobuf and you've enabled indexing. Let's put some data in
-the cache and try to search for it then!
-
-[source,java]
-----
-import org.infinispan.client.hotrod.*;
-import org.infinispan.query.dsl.*;
-...
-
-RemoteCacheManager remoteCacheManager = ...;
-RemoteCache<Integer, Book> remoteCache = remoteCacheManager.getCache();
-
-Book book1 = new Book();
-book1.setTitle("Hibernate in Action");
-remoteCache.put(1, book1);
-
-Book book2 = new Book();
-book2.setTile("Infinispan Data Grid Platform");
-remoteCache.put(2, book2);
-
-QueryFactory qf = Search.getQueryFactory(remoteCache);
-Query query = qf.from(Book.class)
-            .having("title").like("%Infinispan%").toBuilder()
-            .build();
-
-List<Book> list = query.list(); // Voila! We have our book back from the cache!
-----
-
-The key part of creating a query is obtaining the _QueryFactory_ for the remote cache using the
-_org.infinispan.client.hotrod.Search.getQueryFactory()_ method. Once you have this creating the query is similar to
-embedded mode which is covered in link:#infinispan_s_query_dsl[this] section.
-
 ==== Javadocs
 It is highly recommended to read the following Javadocs (this is pretty much all the public API of the client):
 
 *  link:{javadocroot}/org/infinispan/client/hotrod/RemoteCacheManager.html[RemoteCacheManager]
 *  link:{javadocroot}/org/infinispan/client/hotrod/RemoteCache.html[RemoteCache]
-
-include::scripting.adoc[]
 

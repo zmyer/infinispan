@@ -3,7 +3,10 @@ package org.infinispan.api;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertTrue;
 
+import java.lang.invoke.MethodHandles;
+
 import org.infinispan.AdvancedCache;
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
@@ -11,7 +14,7 @@ import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
@@ -26,7 +29,7 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "api.ClearTest")
 public class ClearTest extends MultipleCacheManagersTest {
 
-   protected final Log log = LogFactory.getLog(getClass());
+   protected static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
    protected AdvancedCache<Integer, String> c0;
    protected AdvancedCache<Integer, String> c1;
@@ -38,6 +41,8 @@ public class ClearTest extends MultipleCacheManagersTest {
          new ClearTest().cacheMode(CacheMode.DIST_SYNC).transactional(false),
          new ClearTest().cacheMode(CacheMode.DIST_SYNC).transactional(true).lockingMode(LockingMode.OPTIMISTIC),
          new ClearTest().cacheMode(CacheMode.DIST_SYNC).transactional(true).lockingMode(LockingMode.PESSIMISTIC),
+         new ClearTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.NEVER).transactional(false),
+         new ClearTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.ON_WRITE).transactional(false),
       };
    }
 
@@ -50,9 +55,11 @@ public class ClearTest extends MultipleCacheManagersTest {
 
       if (transactional) {
          builder.transaction().transactionMode(TransactionMode.TRANSACTIONAL)
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
-            .syncCommitPhase(true).syncRollbackPhase(true)
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup())
             .lockingMode(lockingMode);
+      }
+      if (biasAcquisition != null) {
+         builder.clustering().biasAcquisition(biasAcquisition);
       }
       createCluster(builder, 3);
       waitForClusterToForm();

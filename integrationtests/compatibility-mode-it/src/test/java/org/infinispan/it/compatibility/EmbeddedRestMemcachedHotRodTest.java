@@ -17,9 +17,8 @@ import org.apache.commons.httpclient.methods.PutMethod;
 import org.infinispan.client.hotrod.Flag;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.VersionedValue;
-import org.infinispan.commons.io.ByteBuffer;
-import org.infinispan.commons.io.ByteBufferImpl;
-import org.infinispan.commons.marshall.AbstractMarshaller;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
+import org.infinispan.commons.dataconversion.UTF8Encoder;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.testng.annotations.AfterClass;
@@ -27,9 +26,6 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import net.spy.memcached.CASValue;
-import net.spy.memcached.CachedData;
-import net.spy.memcached.transcoders.SerializingTranscoder;
-import net.spy.memcached.transcoders.Transcoder;
 
 /**
  * Test compatibility between embedded caches, Hot Rod, REST and Memcached endpoints.
@@ -47,7 +43,7 @@ public class EmbeddedRestMemcachedHotRodTest extends AbstractInfinispanTest {
    @BeforeClass
    protected void setup() throws Exception {
       cacheFactory = new CompatibilityCacheFactory<String, Object>(
-            CACHE_NAME, new SpyMemcachedCompatibleMarshaller(), CacheMode.LOCAL).setup();
+            CACHE_NAME, new SpyMemcachedCompatibleMarshaller(), CacheMode.LOCAL, new MemcachedEncoder()).setup();
    }
 
    @AfterClass
@@ -67,9 +63,9 @@ public class EmbeddedRestMemcachedHotRodTest extends AbstractInfinispanTest {
 
       // 3. Get with REST
       HttpMethod get = new GetMethod(cacheFactory.getRestUrl() + "/" + key);
+      get.setRequestHeader("Accept", "text/plain");
       cacheFactory.getRestClient().executeMethod(get);
       assertEquals(HttpStatus.SC_OK, get.getStatusCode());
-      assertEquals("text/plain", get.getResponseHeader("Content-Type").getValue());
       assertEquals("v1", get.getResponseBodyAsString());
 
       // 4. Get with Hot Rod
@@ -87,6 +83,7 @@ public class EmbeddedRestMemcachedHotRodTest extends AbstractInfinispanTest {
 
       // 3. Get with REST
       HttpMethod get = new GetMethod(cacheFactory.getRestUrl() + "/" + key);
+      get.setRequestHeader("Accept", "text/plain");
       cacheFactory.getRestClient().executeMethod(get);
       assertEquals(HttpStatus.SC_OK, get.getStatusCode());
       assertEquals("v1", get.getResponseBodyAsString());
@@ -101,7 +98,7 @@ public class EmbeddedRestMemcachedHotRodTest extends AbstractInfinispanTest {
       // 1. Put with REST
       EntityEnclosingMethod put = new PutMethod(cacheFactory.getRestUrl() + "/" + key);
       put.setRequestEntity(new ByteArrayRequestEntity(
-            "<hey>ho</hey>".getBytes(), "application/octet-stream"));
+            "<hey>ho</hey>".getBytes(), "text/plain"));
       HttpClient restClient = cacheFactory.getRestClient();
       restClient.executeMethod(put);
       assertEquals(HttpStatus.SC_OK, put.getStatusCode());
@@ -109,7 +106,7 @@ public class EmbeddedRestMemcachedHotRodTest extends AbstractInfinispanTest {
 
       // 2. Get with Embedded (given a marshaller, it can unmarshall the result)
       assertEquals("<hey>ho</hey>",
-            cacheFactory.getEmbeddedCache().get(key));
+            cacheFactory.getEmbeddedCache().getAdvancedCache().withEncoding(IdentityEncoder.class, UTF8Encoder.class).get(key));
 
       // 3. Get with Memcached (given a marshaller, it can unmarshall the result)
       assertEquals("<hey>ho</hey>",
@@ -135,6 +132,7 @@ public class EmbeddedRestMemcachedHotRodTest extends AbstractInfinispanTest {
 
       // 4. Get with REST
       HttpMethod get = new GetMethod(cacheFactory.getRestUrl() + "/" + key);
+      get.setRequestHeader("Accept", "text/plain");
       cacheFactory.getRestClient().executeMethod(get);
       assertEquals(HttpStatus.SC_OK, get.getStatusCode());
       assertEquals("v1", get.getResponseBodyAsString());
@@ -155,7 +153,7 @@ public class EmbeddedRestMemcachedHotRodTest extends AbstractInfinispanTest {
       CASValue newValue = cacheFactory.getMemcachedClient().gets(key1);
       assertEquals("v2", newValue.getValue());
       assertNotSame("The version (CAS) should have changed, " +
-            "oldCase=" + oldValue.getCas() + ", newCas=" + newValue.getCas(),
+                  "oldCase=" + oldValue.getCas() + ", newCas=" + newValue.getCas(),
             oldValue.getCas(), newValue.getCas());
    }
 
@@ -196,32 +194,6 @@ public class EmbeddedRestMemcachedHotRodTest extends AbstractInfinispanTest {
       CASValue newValue = cacheFactory.getMemcachedClient().gets(key1);
       assertEquals("v3", newValue.getValue());
       assertTrue("The version (CAS) should have changed", oldValue.getCas() != newValue.getCas());
-   }
-
-   static class SpyMemcachedCompatibleMarshaller extends AbstractMarshaller {
-
-      private final Transcoder<Object> transcoder = new SerializingTranscoder();
-
-      @Override
-      protected ByteBuffer objectToBuffer(Object o, int estimatedSize) {
-         CachedData encoded = transcoder.encode(o);
-         return new ByteBufferImpl(encoded.getData(), 0, encoded.getData().length);
-      }
-
-      @Override
-      public Object objectFromByteBuffer(byte[] buf, int offset, int length) {
-         return transcoder.decode(new CachedData(0, buf, length));
-      }
-
-      @Override
-      public boolean isMarshallable(Object o) throws Exception {
-         try {
-            transcoder.encode(o);
-            return true;
-         } catch (Throwable t) {
-            return false;
-         }
-      }
    }
 
 }

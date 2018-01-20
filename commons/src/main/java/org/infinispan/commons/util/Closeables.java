@@ -4,7 +4,9 @@ import java.util.Iterator;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.function.Consumer;
+import java.util.stream.BaseStream;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /**
  * This class consists exclusively of static methods that operate on or return closeable interfaces.  This is helpful
@@ -45,7 +47,7 @@ public class Closeables {
     * @param <R> The type of the stream
     * @return A spliterator that when closed will also close the underlying stream
     */
-   public static <R> CloseableSpliterator<R> spliterator(Stream<R> stream) {
+   public static <R> CloseableSpliterator<R> spliterator(BaseStream<R, Stream<R>> stream) {
       return new StreamToCloseableSpliterator<>(stream);
    }
 
@@ -55,7 +57,7 @@ public class Closeables {
     * @param <R> The type of the stream
     * @return An iterator that when closed will also close the underlying stream
     */
-   public static <R> CloseableIterator<R> iterator(Stream<? extends R> stream) {
+   public static <R> CloseableIterator<R> iterator(BaseStream<R, Stream<R>> stream) {
       return new StreamToCloseableIterator<>(stream);
    }
 
@@ -67,6 +69,34 @@ public class Closeables {
     */
    public static <E> CloseableIterator<E> iterator(Iterator<? extends E> iterator) {
       return new IteratorAsCloseableIterator<>(iterator);
+   }
+
+   /**
+    * Creates a stream that when closed will also close the underlying spliterator
+    * @param spliterator spliterator to back the stream and subsequently close
+    * @param parallel whether or not the returned stream is parallel or not
+    * @param <E> the type of the stream
+    * @return the stream to use
+    */
+   public static <E> Stream<E> stream(CloseableSpliterator<E> spliterator, boolean parallel) {
+      Stream<E> stream = StreamSupport.stream(spliterator, parallel);
+      stream.onClose(spliterator::close);
+      return stream;
+   }
+
+   /**
+    * Creates a stream that when closed will also close the underlying iterator
+    * @param iterator iterator to back the stream and subsequently close
+    * @param parallel whether or not the returned stream is parallel or not
+    * @param size the size of the iterator if known, otherwise {@link Long#MAX_VALUE} should be passed.
+    * @param characteristics the characteristics of the iterator to be used
+    * @param <E> the type of the stream
+    * @return the stream to use
+    */
+   public static <E> Stream<E> stream(CloseableIterator<E> iterator, boolean parallel, long size, int characteristics) {
+      Stream<E> stream = StreamSupport.stream(Spliterators.spliterator(iterator, size, characteristics), parallel);
+      stream.onClose(iterator::close);
+      return stream;
    }
 
    private static class IteratorAsCloseableIterator<E> implements CloseableIterator<E> {
@@ -145,9 +175,9 @@ public class Closeables {
    }
 
    private static class StreamToCloseableIterator<E> extends IteratorAsCloseableIterator<E> {
-      private final Stream<? extends E> stream;
+      private final BaseStream<E, Stream<E>> stream;
 
-      public StreamToCloseableIterator(Stream<? extends E> stream) {
+      public StreamToCloseableIterator(BaseStream<E, Stream<E>> stream) {
          super(stream.iterator());
          this.stream = stream;
       }
@@ -159,9 +189,9 @@ public class Closeables {
    }
 
    private static class StreamToCloseableSpliterator<T> extends SpliteratorAsCloseableSpliterator<T> {
-      private final Stream<T> stream;
+      private final BaseStream<T, Stream<T>> stream;
 
-      public StreamToCloseableSpliterator(Stream<T> stream) {
+      public StreamToCloseableSpliterator(BaseStream<T, Stream<T>> stream) {
          super(stream.spliterator());
          this.stream = stream;
       }

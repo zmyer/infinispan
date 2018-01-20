@@ -5,7 +5,6 @@ import static org.testng.AssertJUnit.assertEquals;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
-import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.persistence.PersistenceUtil;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
@@ -30,7 +29,8 @@ public class ReplDeltaAwarePassivationTest extends ReplDeltaAwareEvictionTest {
       builder.transaction()
             .transactionMode(TransactionMode.TRANSACTIONAL).lockingMode(LockingMode.PESSIMISTIC)
             .transactionManagerLookup(new JBossStandaloneJTAManagerLookup())
-            .eviction().maxEntries(1).strategy(EvictionStrategy.LRU)
+            .memory().size(1)
+            .clustering().hash().groups().enabled()
             .persistence().passivation(true)
             .addStore(DummyInMemoryStoreConfigurationBuilder.class)
             .fetchPersistentState(false);
@@ -46,9 +46,9 @@ public class ReplDeltaAwarePassivationTest extends ReplDeltaAwareEvictionTest {
    }
 
    @Override
-   protected void assertNumberOfEntries(int cacheIndex) throws Exception {
+   protected void assertNumberOfEntries(int cacheIndex, DeltaAwareAccessor daa) throws Exception {
       AdvancedCacheLoader cacheStore = (AdvancedCacheLoader) TestingUtil.getCacheLoader(cache(cacheIndex));
-      assertEquals(1, PersistenceUtil.count(cacheStore, null)); // one entry in store
+      assertEquals(daa.isFineGrained() ? 5 : 1, PersistenceUtil.count(cacheStore, null)); // one entry in store
 
       DataContainer dataContainer = cache(cacheIndex).getAdvancedCache().getDataContainer();
       assertEquals(1, dataContainer.size());        // only one entry in memory (the other one was evicted)

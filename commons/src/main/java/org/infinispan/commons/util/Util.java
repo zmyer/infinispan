@@ -1,7 +1,6 @@
 package org.infinispan.commons.util;
 
 import java.io.ByteArrayOutputStream;
-import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -32,6 +31,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import javax.naming.Context;
 import javax.security.auth.Subject;
@@ -53,9 +53,11 @@ import org.infinispan.commons.marshall.Marshaller;
 public final class Util {
 
    private static final boolean IS_ARRAYS_DEBUG = Boolean.getBoolean("infinispan.arrays.debug");
+   private static final int COLLECTIONS_LIMIT = Integer.getInteger("infinispan.collections.limit", 8);
    private static final boolean IS_OSGI_CONTEXT;
 
    public static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
+   public static final String[] EMPTY_STRING_ARRAY = new String[0];
    public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
 
    private static final Log log = LogFactory.getLog(Util.class);
@@ -128,33 +130,11 @@ public final class Util {
 
    public static ClassLoader[] getClassLoaders(ClassLoader appClassLoader) {
       if (isOSGiContext()) {
-         return new ClassLoader[] { appClassLoader,   // User defined classes
-               getOSGiClassLoader(), // OSGi bundle context needs to be on top of TCCL, system CL, etc.
-               Util.class.getClassLoader(),           // Infinispan classes (not always on TCCL [modular env])
-               ClassLoader.getSystemClassLoader(),    // Used when load time instrumentation is in effect
-               Thread.currentThread().getContextClassLoader() //Used by jboss-as stuff
-         };
+         return SecurityActions.getOSGIContextClassLoaders(appClassLoader);
       } else {
-         return new ClassLoader[] { appClassLoader,   // User defined classes
-               Util.class.getClassLoader(),           // Infinispan classes (not always on TCCL [modular env])
-               ClassLoader.getSystemClassLoader(),    // Used when load time instrumentation is in effect
-               Thread.currentThread().getContextClassLoader() //Used by jboss-as stuff
-         };
+         return SecurityActions.getClassLoaders(appClassLoader);
       }
    }
-
-    private static ClassLoader getOSGiClassLoader() {
-        // Make loading class optional
-        try {
-            Class<?> osgiClassLoader = Class.forName("org.infinispan.commons.util.OsgiClassLoader");
-            return (ClassLoader) osgiClassLoader.getMethod("getInstance", null).invoke(null);
-        } catch (ClassNotFoundException e) {
-            // fall back option - it can't hurt if we scan ctx class loader 2 times.
-            return Thread.currentThread().getContextClassLoader();
-        } catch (Exception e) {
-            throw new RuntimeException("Unable to call getInstance on OsgiClassLoader", e);
-        }
-    }
 
    /**
     * <p>
@@ -188,12 +168,14 @@ public final class Util {
                ne = ce;
             }
          }
-
+         if (ne != null) {
+            //Always log the NoClassDefFoundError errors first:
+            //if one happened they will contain critically useful details.
+            log.unableToLoadClass(classname, Arrays.toString(cls), ne);
+         }
          if (e != null)
             throw e;
          else if (ne != null) {
-            // Before we wrap this, make sure we appropriately log this.
-            log.unableToLoadClass(classname, Arrays.toString(cls), ne);
             throw new ClassNotFoundException(classname, ne);
          }
          else
@@ -216,6 +198,10 @@ public final class Util {
       return is;
    }
 
+   public static String getResourceAsString(String resourcePath, ClassLoader userClassLoader) throws IOException {
+      return read(getResourceAsStream(resourcePath, userClassLoader));
+   }
+
    private static Method getFactoryMethod(Class<?> c) {
       for (Method m : c.getMethods()) {
          if (m.getName().equals("getInstance") && m.getParameterTypes().length == 0 && Modifier.isStatic(m.getModifiers()))
@@ -236,10 +222,8 @@ public final class Util {
    public static <T> T getInstance(Class<T> clazz) {
       try {
          return getInstanceStrict(clazz);
-      } catch (IllegalAccessException iae) {
+      } catch (IllegalAccessException | InstantiationException iae) {
          throw new CacheConfigurationException("Unable to instantiate class " + clazz.getName(), iae);
-      } catch (InstantiationException ie) {
-         throw new CacheConfigurationException("Unable to instantiate class " + clazz.getName(), ie);
       }
    }
 
@@ -323,6 +307,31 @@ public final class Util {
       }
    }
 
+   /**
+    * Given two Runnables, return a Runnable that executes both in sequence,
+    * even if the first throws an exception, and if both throw exceptions, add
+    * any exceptions thrown by the second as suppressed exceptions of the first.
+    */
+   public static Runnable composeWithExceptions(Runnable a, Runnable b) {
+      return () -> {
+         try {
+            a.run();
+         }
+         catch (Throwable e1) {
+            try {
+               b.run();
+            }
+            catch (Throwable e2) {
+               try {
+                  e1.addSuppressed(e2);
+               } catch (Throwable ignore) {}
+            }
+            throw e1;
+         }
+         b.run();
+      };
+   }
+
 
    /**
     * Prevent instantiation
@@ -351,7 +360,7 @@ public final class Util {
     * with the time of other nodes.
     * @return the value of {@link System#nanoTime()}, but converted in Milliseconds.
     */
-   public static final long currentMillisFromNanotime() {
+   public static long currentMillisFromNanotime() {
       return TimeUnit.MILLISECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS);
    }
 
@@ -424,7 +433,7 @@ public final class Util {
        }
     }
 
-   public static void close(Closeable cl) {
+   public static void close(AutoCloseable cl) {
       if (cl == null) return;
       try {
          cl.close();
@@ -440,8 +449,8 @@ public final class Util {
       }
    }
 
-   public static void close(Closeable... cls) {
-      for (Closeable cl : cls) {
+   public static void close(AutoCloseable... cls) {
+      for (AutoCloseable cl : cls) {
          close(cl);
       }
    }
@@ -491,10 +500,30 @@ public final class Util {
    }
 
    public static String toStr(Object o) {
-      if (o instanceof byte[]) {
-         return printArray((byte[]) o, false);
-      } else if (o == null) {
+      if (o == null) {
          return "null";
+      } else if (o.getClass().isArray()) {
+         // as Java arrays are covariant, this cast is safe unless it's primitive
+         if (o.getClass().getComponentType().isPrimitive()) {
+            if (o instanceof byte[]) {
+               return printArray((byte[]) o, false);
+            } else if (o instanceof int[]) {
+               return Arrays.toString((int[]) o);
+            } else if (o instanceof long[]) {
+               return Arrays.toString((long[]) o);
+            } else if (o instanceof short[]) {
+               return Arrays.toString((short[]) o);
+            } else if (o instanceof double[]) {
+               return Arrays.toString((double[]) o);
+            } else if (o instanceof float[]) {
+               return Arrays.toString((float[]) o);
+            } else if (o instanceof char[]) {
+               return Arrays.toString((char[]) o);
+            } else if (o instanceof boolean[]) {
+               return Arrays.toString((boolean[]) o);
+            }
+         }
+         return Arrays.toString((Object[]) o);
       } else {
          return o.toString();
       }
@@ -510,11 +539,16 @@ public final class Util {
 
       StringBuilder sb = new StringBuilder();
       sb.append('[');
-      for (;;) {
+      for (int counter = 0;;) {
          E e = i.next();
          sb.append(e == collection ? "(this Collection)" : toStr(e));
          if (! i.hasNext())
             return sb.append(']').toString();
+         if (++counter >= COLLECTIONS_LIMIT) {
+            return sb.append("...<")
+                  .append(collection.size() - COLLECTIONS_LIMIT)
+                  .append(" other elements>]").toString();
+         }
          sb.append(", ");
       }
    }
@@ -573,6 +607,22 @@ public final class Util {
       return String.valueOf(result);
    }
 
+   public static String toHexString(byte input[], int offset, int limit) {
+      if (input == null || input.length <= 0)
+         return "null";
+
+      int length = limit - offset;
+      char[] result = new char[length * 2];
+
+      int i = 0;
+      while ((i + offset) < limit && (i + offset) < input.length) {
+         result[2*i] = HEX_VALUES.charAt((input[i + offset] >> 4) & 0x0F);
+         result[2*i+1] = HEX_VALUES.charAt((input[i + offset] & 0x0F));
+         i++;
+      }
+      return String.valueOf(result);
+   }
+
    public static String padString(String s, int minWidth) {
       if (s.length() < minWidth) {
          StringBuilder sb = new StringBuilder(s);
@@ -582,7 +632,7 @@ public final class Util {
       return s;
    }
 
-   private static String INDENT = "    ";
+   private final static String INDENT = "    ";
 
    public static String threadDump() {
       StringBuilder threadDump = new StringBuilder();
@@ -627,12 +677,12 @@ public final class Util {
       MonitorInfo[] monitors = threadInfo.getLockedMonitors();
       for (int i = 0; i < stacktrace.length; i++) {
           StackTraceElement ste = stacktrace[i];
-          threadDump.append(INDENT + "at " + ste.toString());
+          threadDump.append(INDENT).append("at ").append(ste.toString());
           threadDump.append("\n");
           for (int j = 1; j < monitors.length; j++) {
               MonitorInfo mi = monitors[j];
               if (mi.getLockedStackDepth() == i) {
-                  threadDump.append(INDENT + "  - locked " + mi);
+                  threadDump.append(INDENT).append("  - locked ").append(mi);
                   threadDump.append("\n");
               }
           }
@@ -641,10 +691,10 @@ public final class Util {
    }
 
    private static void printLockInfo(LockInfo[] locks, StringBuilder threadDump) {
-      threadDump.append(INDENT + "Locked synchronizers: count = " + locks.length);
+      threadDump.append(INDENT).append("Locked synchronizers: count = ").append(locks.length);
       threadDump.append("\n");
       for (LockInfo li : locks) {
-         threadDump.append(INDENT + "  - " + li);
+         threadDump.append(INDENT).append("  - ").append(li);
          threadDump.append("\n");
       }
       threadDump.append("\n");
@@ -657,11 +707,14 @@ public final class Util {
             threadInfo.getThreadState());
       if (threadInfo.getLockName() != null && threadInfo.getThreadState() != Thread.State.BLOCKED) {
           String[] lockInfo = threadInfo.getLockName().split("@");
-          sb.append("\n" + INDENT +"- waiting on <0x" + lockInfo[1] + "> (a " + lockInfo[0] + ")");
-          sb.append("\n" + INDENT +"- locked <0x" + lockInfo[1] + "> (a " + lockInfo[0] + ")");
+          sb.append("\n").append(INDENT).append("- waiting on <0x").append(lockInfo[1]).append("> (a ")
+                .append(lockInfo[0]).append(")");
+          sb.append("\n").append(INDENT).append("- locked <0x").append(lockInfo[1]).append("> (a ").append(lockInfo[0])
+                .append(")");
       } else if (threadInfo.getLockName() != null && threadInfo.getThreadState() == Thread.State.BLOCKED) {
           String[] lockInfo = threadInfo.getLockName().split("@");
-          sb.append("\n" + INDENT +"- waiting to lock <0x" + lockInfo[1] + "> (a " + lockInfo[0] + ")");
+          sb.append("\n").append(INDENT).append("- waiting to lock <0x").append(lockInfo[1]).append("> (a ")
+                .append(lockInfo[0]).append(")");
       }
       if (threadInfo.isSuspended())
           sb.append(" (suspended)");
@@ -672,8 +725,8 @@ public final class Util {
       threadDump.append(sb.toString());
       threadDump.append("\n");
       if (threadInfo.getLockOwnerName() != null) {
-           threadDump.append(INDENT + " owned by " + threadInfo.getLockOwnerName() +
-                              " id=" + threadInfo.getLockOwnerId());
+           threadDump.append(INDENT).append(" owned by ").append(threadInfo.getLockOwnerName()).append(" id=")
+                 .append(threadInfo.getLockOwnerId());
            threadDump.append("\n");
       }
    }
@@ -685,9 +738,10 @@ public final class Util {
          return new CacheException(t);
    }
 
+   @SafeVarargs
    public static <T> Set<T> asSet(T... a) {
       if (a.length > 1)
-         return new HashSet<T>(Arrays.<T>asList(a));
+         return new HashSet<>(Arrays.asList(a));
       else
          return Collections.singleton(a[0]);
    }
@@ -700,7 +754,7 @@ public final class Util {
       return Integer.toHexString(System.identityHashCode(o));
    }
 
-   static final String HEX_VALUES = "0123456789ABCDEF";
+   private static final String HEX_VALUES = "0123456789ABCDEF";
 
    public static String hexDump(byte[] buffer) {
       StringBuilder buf = new StringBuilder(buffer.length << 1);
@@ -728,9 +782,14 @@ public final class Util {
       return sb.toString();
    }
 
-   private static void addHexByte(StringBuilder buf, byte b) {
-      buf.append(HEX_VALUES.charAt((b & 0xF0) >> 4))
-         .append(HEX_VALUES.charAt((b & 0x0F)));
+   public static void addHexByte(StringBuilder buf, byte b) {
+      if (0x20 <= b && b <= 0x7e) {
+         buf.append('\\');
+         buf.append((char) b);
+      } else {
+         buf.append(HEX_VALUES.charAt((b & 0xF0) >> 4))
+            .append(HEX_VALUES.charAt((b & 0x0F)));
+      }
    }
 
    private static void addSingleHexByte(StringBuilder buf, byte b) {
@@ -796,7 +855,11 @@ public final class Util {
     * an argument.  The smallest number returned will be 1, not 0.
     */
    public static int findNextHighestPowerOfTwo(int num) {
-      if (num <= 0) return 1;
+      if (num <= 1) {
+         return 1;
+      } else if (num >= 0x40000000) {
+         return 0x40000000;
+      }
       int highestBit = Integer.highestOneBit(num);
       return num <= highestBit ? highestBit : highestBit << 1;
    }
@@ -964,6 +1027,14 @@ public final class Util {
       return out.toString();
    }
 
+   public static <T> Supplier<T> getInstanceSupplier(Class<T> klass) {
+      return () -> getInstance(klass);
+   }
+
+   public static <T> Supplier<T> getInstanceSupplier(String className, ClassLoader classLoader) {
+      return () -> getInstance(className, classLoader);
+   }
+
   /**
     * Deletes directory recursively.
     *
@@ -1003,7 +1074,6 @@ public final class Util {
       return BASIC_TYPES.contains(type);
    }
 
-
    public static String xmlify(String s) {
       StringBuilder sb = new StringBuilder();
       for(int i=0; i < s.length(); i++) {
@@ -1016,5 +1086,17 @@ public final class Util {
          }
       }
       return sb.toString();
+   }
+
+   public static char[] toCharArray(String s) {
+      return s == null ? null : s.toCharArray();
+   }
+
+   public static Object[] objectArray(int length) {
+      return length == 0 ? EMPTY_OBJECT_ARRAY : new Object[length];
+   }
+
+   public static String[] stringArray(int length) {
+      return length == 0 ? EMPTY_STRING_ARRAY : new String[length];
    }
 }

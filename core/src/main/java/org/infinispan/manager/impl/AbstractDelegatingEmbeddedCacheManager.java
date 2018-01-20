@@ -1,5 +1,6 @@
 package org.infinispan.manager.impl;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 
@@ -8,6 +9,7 @@ import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.health.Health;
 import org.infinispan.lifecycle.ComponentStatus;
+import org.infinispan.manager.EmbeddedCacheManagerAdmin;
 import org.infinispan.manager.ClusterExecutor;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.transport.Address;
@@ -130,6 +132,16 @@ public class AbstractDelegatingEmbeddedCacheManager implements EmbeddedCacheMana
    }
 
    @Override
+   public EmbeddedCacheManagerAdmin administration() {
+      return cm.administration();
+   }
+
+   @Override
+   public <K, V> Cache<K, V> createCache(String name, Configuration configuration) {
+      return cm.createCache(name, configuration);
+   }
+
+   @Override
    public <K, V> Cache<K, V> getCache(String cacheName, boolean createIfAbsent) {
       return cm.getCache(cacheName, createIfAbsent);
    }
@@ -207,5 +219,10 @@ public class AbstractDelegatingEmbeddedCacheManager implements EmbeddedCacheMana
    @Override
    public CacheContainerStats getStats() {
       return cm.getStats();
+   }
+
+   @Override
+   public void close() throws IOException {
+      cm.close();
    }
 }

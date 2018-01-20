@@ -6,8 +6,8 @@ import java.util.function.Predicate;
 import org.infinispan.InvalidCacheUsageException;
 import org.infinispan.commands.DataCommand;
 import org.infinispan.commands.FlagAffectedCommand;
-import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.write.DataWriteCommand;
+import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -40,13 +40,13 @@ public class NonTransactionalLockingInterceptor extends AbstractLockingIntercept
    }
 
    @Override
-   public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
+   protected Object handleReadManyCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys) {
       assertNonTransactional(ctx);
       return invokeNext(ctx, command);
    }
 
    @Override
-   protected <K> Object handleWriteManyCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<K> keys, boolean forwarded) throws Throwable {
+   protected <K> Object handleWriteManyCommand(InvocationContext ctx, WriteCommand command, Collection<K> keys, boolean forwarded) throws Throwable {
       assertNonTransactional(ctx);
       if (forwarded || hasSkipLocking(command)) {
          return invokeNext(ctx, command);

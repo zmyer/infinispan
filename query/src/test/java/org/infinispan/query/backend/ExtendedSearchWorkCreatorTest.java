@@ -32,7 +32,7 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "query.backend.ExtendedSearchWorkCreatorTest")
 public class ExtendedSearchWorkCreatorTest extends SingleCacheManagerTest {
 
-   private static class ExtraValuesSearchWorkCreator extends DefaultSearchWorkCreator<Object> implements ExtendedSearchWorkCreator<Object> {
+   private static class ExtraValuesSearchWorkCreator extends DefaultSearchWorkCreator implements ExtendedSearchWorkCreator {
 
       @Override
       public Collection<Work> createPerEntityWorks(Object value, Serializable id, WorkType workType) {
@@ -99,7 +99,7 @@ public class ExtendedSearchWorkCreatorTest extends SingleCacheManagerTest {
       ConfigurationBuilder cfg = getDefaultStandaloneCacheConfig(false);
       cfg.indexing().index(Index.ALL)
               .addIndexedEntity(Entity.class)
-              .addProperty("default.directory_provider", "ram")
+              .addProperty("default.directory_provider", "local-heap")
               .addProperty("lucene_version", "LUCENE_CURRENT");
       return TestCacheManagerFactory.createCacheManager(cfg);
    }

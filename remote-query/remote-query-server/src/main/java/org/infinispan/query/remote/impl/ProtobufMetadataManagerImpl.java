@@ -14,6 +14,7 @@ import javax.management.ObjectName;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
@@ -50,7 +51,7 @@ import org.infinispan.util.concurrent.IsolationLevel;
       description = "Component that acts as a manager and container for Protocol Buffers message type definitions in the scope of a CacheManger.")
 public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManager {
 
-   private Cache<String, String> protobufSchemaCache;
+   private volatile Cache<String, String> protobufSchemaCache;
 
    private ObjectName objectName;
 
@@ -69,6 +70,9 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
       }
    }
 
+   /**
+    * Defines the configuration of the ___protobuf_metadata internal cache.
+    */
    @Inject
    protected void init(EmbeddedCacheManager cacheManager, InternalCacheRegistry internalCacheRegistry) {
       this.cacheManager = cacheManager;
@@ -78,11 +82,22 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
    }
 
    /**
+    * Starts the ___protobuf_metadata when needed. This method must be invoked for each cache that uses protobuf.
+    *
+    * @param dependantCacheName the name of the cache depending on the protobuf metadata cache
+    */
+   protected void addCacheDependency(String dependantCacheName) {
+      protobufSchemaCache = (Cache<String, String>) SecurityActions.getCache(cacheManager, PROTOBUF_METADATA_CACHE_NAME).getAdvancedCache().withEncoding(IdentityEncoder.class);
+      // add stop dependency
+      cacheManager.addCacheDependency(dependantCacheName, ProtobufMetadataManagerImpl.PROTOBUF_METADATA_CACHE_NAME);
+   }
+
+   /**
     * Obtain the cache, lazily.
     */
-   Cache<String, String> getCache() {
+   private Cache<String, String> getCache() {
       if (protobufSchemaCache == null) {
-         protobufSchemaCache = cacheManager.getCache(PROTOBUF_METADATA_CACHE_NAME);
+         throw new IllegalStateException("Not started yet");
       }
       return protobufSchemaCache;
    }
@@ -94,7 +109,7 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
       ConfigurationBuilder cfg = new ConfigurationBuilder();
       cfg.transaction()
             .transactionMode(TransactionMode.TRANSACTIONAL).invocationBatching().enable()
-            .transaction().lockingMode(LockingMode.PESSIMISTIC).syncCommitPhase(true).syncRollbackPhase(true)
+            .transaction().lockingMode(LockingMode.PESSIMISTIC)
             .locking().isolationLevel(IsolationLevel.READ_COMMITTED).useLockStriping(false)
             .clustering().cacheMode(cacheMode).sync()
             .stateTransfer().fetchInMemoryState(true).awaitInitialTransfer(false)
@@ -147,14 +162,18 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
    @ManagedOperation(description = "Unregisters a Protobuf definition files", displayName = "Unregister a Protofiles")
    @Override
    public void unregisterProtofile(@Parameter(name = "fileName", description = "the name of the .proto file") String fileName) {
-      getCache().remove(fileName);
+      if (getCache().remove(fileName) == null) {
+         throw new IllegalArgumentException("File does not exist : " + fileName);
+      }
    }
 
    @ManagedOperation(description = "Unregisters multiple Protobuf definition files", displayName = "Unregister Protofiles")
    @Override
    public void unregisterProtofiles(@Parameter(name = "fileNames", description = "names of the protofiles") String[] fileNames) {
       for (String fileName : fileNames) {
-         getCache().remove(fileName);
+         if (getCache().remove(fileName) == null) {
+            throw new IllegalArgumentException("File does not exist : " + fileName);
+         }
       }
    }
 
@@ -177,7 +196,11 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
       if (!fileName.endsWith(PROTO_KEY_SUFFIX)) {
          throw new IllegalArgumentException("The file name must have \".proto\" suffix");
       }
-      return getCache().get(fileName);
+      String fileContents = getCache().get(fileName);
+      if (fileContents == null) {
+         throw new IllegalArgumentException("File does not exist : " + fileName);
+      }
+      return fileContents;
    }
 
    @ManagedAttribute(description = "The names of the files that have errors, if any", displayName = "Files With Errors")
@@ -197,6 +220,9 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
    public String getFileErrors(@Parameter(name = "fileName", description = "the name of the .proto file") String fileName) {
       if (!fileName.endsWith(PROTO_KEY_SUFFIX)) {
          throw new IllegalArgumentException("The file name must have \".proto\" suffix");
+      }
+      if (!getCache().containsKey(fileName)) {
+         throw new IllegalArgumentException("File does not exist : " + fileName);
       }
       return getCache().get(fileName + ERRORS_KEY_SUFFIX);
    }

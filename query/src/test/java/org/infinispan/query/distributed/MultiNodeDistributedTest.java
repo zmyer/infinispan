@@ -40,6 +40,7 @@ public class MultiNodeDistributedTest extends AbstractInfinispanTest {
       if (transactionsEnabled()) transactionManager.commit();
    }
 
+   @Test(groups = "unstable", description = "ISPN-8076")
    public void testIndexingWorkDistribution() throws Exception {
       try {
          cluster.startNewNode();

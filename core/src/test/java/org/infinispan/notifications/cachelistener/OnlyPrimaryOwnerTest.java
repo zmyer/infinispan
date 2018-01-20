@@ -6,14 +6,18 @@ import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.util.Collection;
+import java.util.Arrays;
 import java.util.List;
 
-import org.infinispan.Cache;
+import org.infinispan.cache.impl.EncoderCache;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
-import org.infinispan.compat.TypeConverter;
+import org.infinispan.commons.dataconversion.Encoder;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
+import org.infinispan.commons.hash.MurmurHash3;
+import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.versioning.EntryVersionsMap;
@@ -23,24 +27,28 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.NonTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
-import org.infinispan.interceptors.impl.WrappedByteArrayConverter;
+import org.infinispan.distribution.LocalizedCacheTopology;
+import org.infinispan.distribution.TestAddress;
+import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
+import org.infinispan.encoding.DataConversion;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.lifecycle.ComponentStatus;
-import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.cluster.ClusterEventManager;
 import org.infinispan.notifications.cachelistener.event.CacheEntryCreatedEvent;
 import org.infinispan.notifications.cachelistener.event.Event;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.test.TestingUtil;
+import org.infinispan.topology.CacheTopology;
 import org.mockito.Mockito;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 @Test(testName = "notifications.cachelistener.OnlyPrimaryOwnerTest", groups = "unit")
 public class OnlyPrimaryOwnerTest {
    CacheNotifierImpl n;
-   Cache mockCache;
+   EncoderCache mockCache;
    PrimaryOwnerCacheListener cl;
    InvocationContext ctx;
    MockCDL cdl = new MockCDL();
@@ -48,21 +56,20 @@ public class OnlyPrimaryOwnerTest {
    @BeforeMethod
    public void setUp() {
       n = new CacheNotifierImpl();
-      mockCache = mock(Cache.class, RETURNS_DEEP_STUBS);
+      mockCache = mock(EncoderCache.class, RETURNS_DEEP_STUBS);
+      when(mockCache.getAdvancedCache().getKeyDataConversion()).thenReturn(DataConversion.DEFAULT_KEY);
+      when(mockCache.getAdvancedCache().getValueDataConversion()).thenReturn(DataConversion.DEFAULT_VALUE);
       Configuration config = mock(Configuration.class, RETURNS_DEEP_STUBS);
+      when(config.memory().storageType()).thenReturn(StorageType.OBJECT);
       when(mockCache.getAdvancedCache().getStatus()).thenReturn(ComponentStatus.INITIALIZING);
-      Answer answer = new Answer<Object>() {
-         @Override
-         public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-            return Mockito.mock((Class) invocationOnMock.getArguments()[0]);
-         }
-      };
-      when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class))).then(answer);
-      when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(TypeConverter.class)).thenReturn(
-            new WrappedByteArrayConverter());
-      when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class), anyString())).then(answer);
-      n.injectDependencies(mockCache, cdl, null, config, mock(DistributionManager.class),
-                           mock(InternalEntryFactory.class), mock(ClusterEventManager.class));
+      when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class))).then(
+            invocationOnMock -> Mockito.mock((Class<?>) invocationOnMock.getArguments()[0]));
+      when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class), anyString())).then(
+            invocationOnMock -> Mockito.mock((Class<?>) invocationOnMock.getArguments()[0]));
+      when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(Encoder.class)).thenReturn(new IdentityEncoder());
+
+      TestingUtil.inject(n, mockCache, cdl, config, mock(DistributionManager.class),
+            mock(InternalEntryFactory.class), mock(ClusterEventManager.class), mock(ComponentRegistry.class));
       cl = new PrimaryOwnerCacheListener();
       n.start();
       n.addListener(cl);
@@ -70,24 +77,23 @@ public class OnlyPrimaryOwnerTest {
    }
 
    private static class MockCDL implements ClusteringDependentLogic {
+      private static final TestAddress PRIMARY = new TestAddress(0);
+      private static final TestAddress BACKUP = new TestAddress(1);
+      private static final TestAddress NON_OWNER = new TestAddress(2);
       boolean isOwner, isPrimaryOwner;
+
       @Override
-      public boolean localNodeIsOwner(Object key) {
-         return isOwner;
+      public LocalizedCacheTopology getCacheTopology() {
+         List<Address> members = Arrays.asList(PRIMARY, BACKUP, NON_OWNER);
+         List<Address>[] ownership = new List[]{Arrays.asList(PRIMARY, BACKUP)};
+         ConsistentHash ch = new DefaultConsistentHash(MurmurHash3.getInstance(), 2, 1, members, null, ownership);
+         CacheTopology cacheTopology = new CacheTopology(0, 0, ch, null, CacheTopology.Phase.NO_REBALANCE, null, null);
+         Address localAddress = isPrimaryOwner ? PRIMARY : (isOwner ? BACKUP : NON_OWNER);
+         return new LocalizedCacheTopology(CacheMode.DIST_SYNC, cacheTopology, key -> 0, localAddress);
       }
 
       @Override
-      public boolean localNodeIsPrimaryOwner(Object key) {
-         return isPrimaryOwner;
-      }
-
-      @Override
-      public Address getPrimaryOwner(Object key) {
-         throw new UnsupportedOperationException();
-      }
-
-      @Override
-      public void commitEntry(CacheEntry entry, Metadata metadata, FlagAffectedCommand command, InvocationContext ctx,
+      public void commitEntry(CacheEntry entry, FlagAffectedCommand command, InvocationContext ctx,
                               Flag trackFlag, boolean l1Invalidation) {
          throw new UnsupportedOperationException();
       }
@@ -98,27 +104,12 @@ public class OnlyPrimaryOwnerTest {
       }
 
       @Override
-      public List<Address> getOwners(Collection<Object> keys) {
-         throw new UnsupportedOperationException();
-      }
-
-      @Override
-      public List<Address> getOwners(Object key) {
-         throw new UnsupportedOperationException();
-      }
-
-      @Override
       public EntryVersionsMap createNewVersionsAndCheckForWriteSkews(VersionGenerator versionGenerator, TxInvocationContext context, VersionedPrepareCommand prepareCommand) {
          throw new UnsupportedOperationException();
       }
 
       @Override
       public Address getAddress() {
-         throw new UnsupportedOperationException();
-      }
-
-      @Override
-      public int getSegmentForKey(Object key) {
          throw new UnsupportedOperationException();
       }
    }

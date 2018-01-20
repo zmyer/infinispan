@@ -50,6 +50,9 @@ public class MarshalledEntryImpl<K,V> implements MarshalledEntry<K,V> {
    @Override
    public K getKey() {
       if (key == null) {
+         if (keyBytes == null) {
+            return null;
+         }
          key = unmarshall(keyBytes);
       }
       return key;
@@ -58,6 +61,9 @@ public class MarshalledEntryImpl<K,V> implements MarshalledEntry<K,V> {
    @Override
    public V getValue() {
       if (value == null) {
+         if (valueBytes == null) {
+            return null;
+         }
          value = unmarshall(valueBytes);
       }
       return value;
@@ -77,6 +83,9 @@ public class MarshalledEntryImpl<K,V> implements MarshalledEntry<K,V> {
    @Override
    public ByteBuffer getKeyBytes() {
       if (keyBytes == null) {
+         if (key == null) {
+            return null;
+         }
          keyBytes = marshall(key);
       }
       return keyBytes;
@@ -85,6 +94,9 @@ public class MarshalledEntryImpl<K,V> implements MarshalledEntry<K,V> {
    @Override
    public ByteBuffer getValueBytes() {
       if (valueBytes == null) {
+         if (value == null) {
+            return null;
+         }
          valueBytes = marshall(value);
       }
       return valueBytes;
@@ -141,15 +153,24 @@ public class MarshalledEntryImpl<K,V> implements MarshalledEntry<K,V> {
 
    @Override
    public String toString() {
-      return "MarshalledEntryImpl{" +
-            "keyBytes=" + keyBytes +
-            ", valueBytes=" + valueBytes +
-            ", metadataBytes=" + metadataBytes +
-            ", key=" + key +
-            ", value=" + value +
-            ", metadata=" + metadata +
-            ", marshaller=" + marshaller +
-            '}';
+      StringBuilder sb = new StringBuilder().append("MarshalledEntryImpl{")
+            .append("keyBytes=").append(keyBytes)
+            .append(", valueBytes=").append(valueBytes)
+            .append(", metadataBytes=").append(metadataBytes)
+            .append(", key=").append(key);
+      if (key == null && keyBytes != null && marshaller != null) {
+         sb.append('/').append(this.<Object>unmarshall(keyBytes));
+      }
+      sb.append(", value=").append(value);
+      if (value == null && valueBytes != null && marshaller != null) {
+         sb.append('/').append(this.<Object>unmarshall(valueBytes));
+      }
+      sb.append(", metadata=").append(metadata);
+      if (metadata == null && metadataBytes != null && marshaller != null) {
+         sb.append('/').append(this.<Object>unmarshall(metadataBytes));
+      }
+      sb.append(", marshaller=").append(marshaller).append('}');
+      return sb.toString();
    }
 
    public static class Externalizer extends AbstractExternalizer<MarshalledEntryImpl> {

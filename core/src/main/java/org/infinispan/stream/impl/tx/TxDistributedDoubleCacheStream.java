@@ -5,6 +5,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.impl.LocalTxInvocationContext;
 import org.infinispan.distribution.ch.ConsistentHash;
@@ -33,12 +34,13 @@ public class TxDistributedDoubleCacheStream extends DistributedDoubleCacheStream
    }
 
    @Override
-   protected Supplier<Stream<CacheEntry>> supplierForSegments(ConsistentHash ch, Set<Integer> targetSegments,
+   protected Supplier<Stream<CacheEntry>> supplierForSegments(ConsistentHash ch, IntSet targetSegments,
            Set<Object> excludedKeys, boolean primaryOnly) {
       return () -> {
          Supplier<Stream<CacheEntry>> supplier = super.supplierForSegments(ch, targetSegments, excludedKeys, primaryOnly);
-         Set<CacheEntry> set = ctx.getLookedUpEntries().values().stream().filter(
-                 e -> !localAddress.equals(ch.locatePrimaryOwner(e.getKey()))).collect(Collectors.toSet());
+         Set<CacheEntry> set = ctx.getLookedUpEntries().values().stream()
+                                  .filter(e -> !isPrimaryOwner(ch, e))
+                                  .collect(Collectors.toSet());
          Stream<CacheEntry> suppliedStream = supplier.get();
          if (!set.isEmpty()) {
             return Stream.concat(set.stream(), suppliedStream);

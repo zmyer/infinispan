@@ -1,6 +1,8 @@
 package org.infinispan.interceptors;
 
+import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commons.util.Experimental;
@@ -19,14 +21,9 @@ import org.infinispan.interceptors.impl.SimpleAsyncInvocationStage;
 public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
    private final InvocationSuccessFunction invokeNextFunction = (rCtx, rCommand, rv) -> invokeNext(rCtx, rCommand);
 
-   protected Configuration cacheConfiguration;
+   @Inject protected Configuration cacheConfiguration;
    private AsyncInterceptor nextInterceptor;
    private DDAsyncInterceptor nextDDInterceptor;
-
-   @Inject
-   public void inject(Configuration cacheConfiguration) {
-      this.cacheConfiguration = cacheConfiguration;
-   }
 
    /**
     * Used internally to set up the interceptor.
@@ -209,9 +206,9 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
     * <p>The caller can add a callback that will run when {@code valueFuture} completes, e.g.
     * {@code asyncValue(v).thenApply(ctx, command, (rCtx, rCommand, rv, t) -> invokeNext(rCtx, rCommand))}.
     * For this particular scenario, however, it's simpler to use
-    * {@link #asyncInvokeNext(InvocationContext, VisitableCommand, CompletableFuture)}.</p>
+    * {@link #asyncInvokeNext(InvocationContext, VisitableCommand, CompletionStage)}.</p>
     */
-   public static InvocationStage asyncValue(CompletableFuture<?> valueFuture) {
+   public static InvocationStage asyncValue(CompletionStage<?> valueFuture) {
       return new SimpleAsyncInvocationStage(valueFuture);
    }
 
@@ -223,8 +220,30 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
     * <p>You need to wrap the result with {@link #makeStage(Object)} if you need to add another handler.</p>
     */
    public final Object asyncInvokeNext(InvocationContext ctx, VisitableCommand command,
-                                                CompletableFuture<?> delay) {
+                                       CompletionStage<?> delay) {
       return asyncValue(delay).thenApply(ctx, command, invokeNextFunction);
+   }
+
+   /**
+    * Suspend invocation until all {@code delays} complete, then if successful invoke the next interceptor.
+    * If the list is empty or null, invoke the next interceptor immediately.
+    *
+    * <p>If any of {@code delays} completes exceptionally, skip the next interceptor and continue with the exception.</p>
+    *
+    * <p>You need to wrap the result with {@link #makeStage(Object)} if you need to add another handler.</p>
+    */
+   public final Object asyncInvokeNext(InvocationContext ctx, VisitableCommand command,
+                                       Collection<? extends CompletionStage<?>> delays) {
+      if (delays == null || delays.isEmpty()) {
+         return invokeNext(ctx, command);
+      } else if (delays.size() == 1) {
+         return asyncInvokeNext(ctx, command, delays.iterator().next());
+      } else {
+         CompletableFuture<Void> delay = CompletableFuture.allOf(delays.stream()
+                                                                       .map(CompletionStage::toCompletableFuture)
+                                                                       .toArray(CompletableFuture[]::new));
+         return asyncInvokeNext(ctx, command, delay);
+      }
    }
 
    /**
@@ -249,5 +268,13 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
       } else {
          return new SyncInvocationStage(rv);
       }
+   }
+
+   protected static boolean isSuccessfullyDone(Object maybeStage) {
+      if (maybeStage instanceof InvocationStage) {
+         InvocationStage stage = (InvocationStage) maybeStage;
+         return stage.isDone() && !stage.toCompletableFuture().isCompletedExceptionally();
+      }
+      return true;
    }
 }

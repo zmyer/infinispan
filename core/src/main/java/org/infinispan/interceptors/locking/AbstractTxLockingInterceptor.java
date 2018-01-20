@@ -7,20 +7,16 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
-import org.infinispan.commands.read.GetAllCommand;
+import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.factories.annotations.Start;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.statetransfer.OutdatedTopologyException;
-import org.infinispan.util.concurrent.locks.LockUtil;
 import org.infinispan.util.concurrent.locks.PendingLockManager;
 import org.infinispan.util.logging.Log;
 
@@ -30,26 +26,11 @@ import org.infinispan.util.logging.Log;
  * @author Mircea.Markus@jboss.com
  */
 public abstract class AbstractTxLockingInterceptor extends AbstractLockingInterceptor {
-   protected boolean trace = getLog().isTraceEnabled();
+   protected final boolean trace = getLog().isTraceEnabled();
 
-   protected RpcManager rpcManager;
-   private PartitionHandlingManager partitionHandlingManager;
-   private PendingLockManager pendingLockManager;
-   private boolean secondPhaseAsync;
-
-   @Inject
-   public void setDependencies(RpcManager rpcManager,
-                               PartitionHandlingManager partitionHandlingManager,
-                               PendingLockManager pendingLockManager) {
-      this.rpcManager = rpcManager;
-      this.partitionHandlingManager = partitionHandlingManager;
-      this.pendingLockManager = pendingLockManager;
-   }
-
-   @Start
-   public void start() {
-      secondPhaseAsync = Configurations.isSecondPhaseAsync(cacheConfiguration);
-   }
+   @Inject protected RpcManager rpcManager;
+   @Inject private PartitionHandlingManager partitionHandlingManager;
+   @Inject private PendingLockManager pendingLockManager;
 
    @Override
    public Object visitRollbackCommand(TxInvocationContext ctx, RollbackCommand command) throws Throwable {
@@ -57,16 +38,7 @@ public abstract class AbstractTxLockingInterceptor extends AbstractLockingInterc
    }
 
    @Override
-   public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
-      if (command.hasAnyFlag(FlagBitSets.PUT_FOR_EXTERNAL_READ)) {
-         // Cache.putForExternalRead() is non-transactional
-         return visitNonTxDataWriteCommand(ctx, command);
-      }
-      return visitDataWriteCommand(ctx, command);
-   }
-
-   @Override
-   public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
+   protected Object handleReadManyCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys) throws Throwable {
       if (ctx.isInTxScope())
          return invokeNext(ctx, command);
 
@@ -94,7 +66,7 @@ public abstract class AbstractTxLockingInterceptor extends AbstractLockingInterc
     */
    protected final boolean lockOrRegisterBackupLock(TxInvocationContext<?> ctx, Object key, long lockTimeout)
          throws InterruptedException {
-      switch (LockUtil.getLockOwnership(key, cdl)) {
+      switch (cdl.getCacheTopology().getDistribution(key).writeOwnership()) {
          case PRIMARY:
             if (trace) {
                getLog().tracef("Acquiring locks on %s.", toStr(key));
@@ -126,8 +98,9 @@ public abstract class AbstractTxLockingInterceptor extends AbstractLockingInterc
       final Log log = getLog();
       Collection<Object> keysToLock = new ArrayList<>(keys.size());
 
+      LocalizedCacheTopology cacheTopology = cdl.getCacheTopology();
       for (Object key : keys) {
-         switch (LockUtil.getLockOwnership(key, cdl)) {
+         switch (cacheTopology.getDistribution(key).writeOwnership()) {
             case PRIMARY:
                if (trace) {
                   log.tracef("Acquiring locks on %s.", toStr(key));
@@ -188,8 +161,7 @@ public abstract class AbstractTxLockingInterceptor extends AbstractLockingInterc
 
    protected void releaseLockOnTxCompletion(TxInvocationContext ctx) {
       boolean shouldReleaseLocks = ctx.isOriginLocal() &&
-            !partitionHandlingManager.isTransactionPartiallyCommitted(ctx.getGlobalTransaction()) ||
-            (!ctx.isOriginLocal() && secondPhaseAsync);
+            !partitionHandlingManager.isTransactionPartiallyCommitted(ctx.getGlobalTransaction());
       if (shouldReleaseLocks) {
          lockManager.unlockAll(ctx);
       }

@@ -1,6 +1,7 @@
 package org.infinispan.interceptors.impl;
 
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.VersionedCommitCommand;
@@ -13,6 +14,7 @@ import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.util.logging.Log;
@@ -25,18 +27,15 @@ import org.infinispan.util.logging.LogFactory;
  * @since 9.0
  */
 public class VersionedEntryWrappingInterceptor extends EntryWrappingInterceptor {
-
-   protected VersionGenerator versionGenerator;
    private static final Log log = LogFactory.getLog(VersionedEntryWrappingInterceptor.class);
+
+   @Inject protected VersionGenerator versionGenerator;
+
+   private final InvocationSuccessFunction prepareHandler = this::prepareHandler;
 
    @Override
    protected Log getLog() {
       return log;
-   }
-
-   @Inject
-   public void initialize(VersionGenerator versionGenerator) {
-      this.versionGenerator = versionGenerator;
    }
 
    @Override
@@ -45,17 +44,22 @@ public class VersionedEntryWrappingInterceptor extends EntryWrappingInterceptor 
       if (ctx.isOriginLocal()) {
          versionedPrepareCommand.setVersionsSeen(ctx.getCacheTransaction().getVersionsRead());
       }
-      wrapEntriesForPrepare(ctx, command);
+      return wrapEntriesForPrepareAndApply(ctx, command, prepareHandler);
+   }
+
+   private Object prepareHandler(InvocationContext nonTxCtx, VisitableCommand command, Object nil) {
+      TxInvocationContext ctx = (TxInvocationContext) nonTxCtx;
       EntryVersionsMap originVersionData;
       if (ctx.isOriginLocal() && !ctx.getCacheTransaction().isFromStateTransfer()) {
          originVersionData =
-               cdl.createNewVersionsAndCheckForWriteSkews(versionGenerator, ctx, versionedPrepareCommand);
+               cdl.createNewVersionsAndCheckForWriteSkews(versionGenerator, ctx, (VersionedPrepareCommand) command);
       } else {
          originVersionData = null;
       }
 
       return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
          TxInvocationContext txInvocationContext = (TxInvocationContext) rCtx;
+         VersionedPrepareCommand versionedPrepareCommand = (VersionedPrepareCommand) rCommand;
          EntryVersionsMap newVersionData;
          if (txInvocationContext.isOriginLocal()) {
             newVersionData = originVersionData;
@@ -71,12 +75,9 @@ public class VersionedEntryWrappingInterceptor extends EntryWrappingInterceptor 
          }
 
          if (onePhaseCommit) {
-            commitContextEntries(txInvocationContext, null, null);
+            commitContextEntries(txInvocationContext, null);
          }
-         if (newVersionData != null)
-            return newVersionData;
-
-         return rv;
+         return newVersionData;
       });
    }
 
@@ -96,32 +97,31 @@ public class VersionedEntryWrappingInterceptor extends EntryWrappingInterceptor 
          ((TxInvocationContext<?>) rCtx).getCacheTransaction().setUpdatedEntryVersions(
                versionedCommitCommand.getUpdatedVersions());
       }
-      commitContextEntries(rCtx, null, null);
+      commitContextEntries(rCtx, null);
    }
 
    @Override
    protected void commitContextEntry(CacheEntry entry, InvocationContext ctx, FlagAffectedCommand command,
-                                     Metadata metadata, Flag stateTransferFlag, boolean l1Invalidation) {
+                                     Flag stateTransferFlag, boolean l1Invalidation) {
       if (ctx.isInTxScope() && stateTransferFlag == null) {
          EntryVersion updatedEntryVersion = ((TxInvocationContext) ctx)
                .getCacheTransaction().getUpdatedEntryVersions().get(entry.getKey());
          Metadata commitMetadata;
          if (updatedEntryVersion != null) {
-            if (metadata == null && entry.getMetadata() == null) {
+            if (entry.getMetadata() == null) {
                commitMetadata = new EmbeddedMetadata.Builder().version(updatedEntryVersion).build();
-            } else if (metadata != null) {
-               commitMetadata = metadata.builder().version(updatedEntryVersion).build();
             } else {
                commitMetadata = entry.getMetadata().builder().version(updatedEntryVersion).build();
             }
          } else {
-            commitMetadata = metadata != null ? metadata : entry.getMetadata();
+            commitMetadata = entry.getMetadata();
          }
 
-         cdl.commitEntry(entry, commitMetadata, command, ctx, null, l1Invalidation);
+         entry.setMetadata(commitMetadata);
+         cdl.commitEntry(entry, command, ctx, null, l1Invalidation);
       } else {
          // This could be a state transfer call!
-         cdl.commitEntry(entry, entry.getMetadata(), command, ctx, stateTransferFlag, l1Invalidation);
+         cdl.commitEntry(entry, command, ctx, stateTransferFlag, l1Invalidation);
       }
    }
 

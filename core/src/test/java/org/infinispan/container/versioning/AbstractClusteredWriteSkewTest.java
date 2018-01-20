@@ -1,7 +1,7 @@
 package org.infinispan.container.versioning;
 
 import static org.testng.AssertJUnit.assertEquals;
-import static org.testng.AssertJUnit.assertTrue;
+import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.fail;
 
 import javax.transaction.HeuristicRollbackException;
@@ -13,17 +13,13 @@ import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
-import org.infinispan.container.DataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.test.MultipleCacheManagersTest;
-import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.util.concurrent.IsolationLevel;
-import org.testng.AssertJUnit;
 import org.testng.annotations.Test;
 
 @Test(testName = "container.versioning.AbstractClusteredWriteSkewTest", groups = "functional")
@@ -224,6 +220,36 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
       doTestWriteSkewWithPassivation(false, Operation.CONDITIONAL_REPLACE, true);
    }
 
+   public final void testIgnorePreviousValueAndReadOnPrimary() throws Exception {
+      doTestIgnoreReturnValueAndRead(false);
+   }
+
+   public final void testIgnorePreviousValueAndReadOnNonOwner() throws Exception {
+      doTestIgnoreReturnValueAndRead(true);
+   }
+
+   protected void doTestIgnoreReturnValueAndRead(boolean executeOnPrimaryOwner) throws Exception {
+      final Object key = new MagicKey("ignore-previous-value", cache(0));
+      final AdvancedCache<Object, Object> c = executeOnPrimaryOwner ? advancedCache(0) : advancedCache(1);
+      final TransactionManager tm = executeOnPrimaryOwner ? tm(0) : tm(1);
+
+      for (Cache cache : caches()) {
+         assertNull("wrong initial value for " + address(cache) + ".", cache.get(key));
+      }
+
+      c.put("k", "init");
+
+      tm.begin();
+      c.getAdvancedCache().withFlags(Flag.IGNORE_RETURN_VALUES).put("k", "v1");
+      assertEquals("v1", c.put("k", "v2"));
+      Transaction tx = tm.suspend();
+
+      assertEquals("init", c.put("k", "other"));
+
+      tm.resume(tx);
+      tm.commit();
+   }
+
    @Override
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder builder = defaultConfigurationBuilder();
@@ -234,7 +260,7 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
 
       builder = defaultConfigurationBuilder();
       builder.persistence().passivation(true).addStore(DummyInMemoryStoreConfigurationBuilder.class);
-      builder.eviction().maxEntries(MAX_ENTRIES);
+      builder.memory().size(MAX_ENTRIES);
       decorate(builder);
       defineConfigurationOnAllManagers(PASSIVATION_CACHE, builder);
       waitForClusterToForm(PASSIVATION_CACHE);
@@ -258,7 +284,7 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
       final TransactionManager tm = executeOnPrimaryOwner ? tm(0, PASSIVATION_CACHE) : tm(1, PASSIVATION_CACHE);
 
       for (Cache cache : caches(PASSIVATION_CACHE)) {
-         AssertJUnit.assertNull("wrong initial value for " + address(cache) + ".", cache.get(key));
+         assertNull("wrong initial value for " + address(cache) + ".", cache.get(key));
       }
 
       switch (operation) {
@@ -300,20 +326,7 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
          primaryOwner.put(key, "v2");
       }
 
-      DataContainer dataContainer = TestingUtil.extractComponent(primaryOwner, DataContainer.class);
-      MagicKey[] keys = new MagicKey[MAX_ENTRIES];
-      int insertCount = 10;
-      for (int i = 0; i < insertCount; ++i) {
-         for (int j = 0; j < MAX_ENTRIES; ++j) {
-            MagicKey tempKey = keys[j];
-            if (tempKey == null) {
-               tempKey = new MagicKey("other-key-" + j, primaryOwner);
-               keys[j] = tempKey;
-            }
-            primaryOwner.put(tempKey, "value");
-         }
-      }
-      assertTrue("The key was not evicted after " + insertCount + " inserts", dataContainer.peek(key) == null);
+      primaryOwner.evict(key);
 
       log.debugf("It is going to try to commit the suspended transaction");
       try {
@@ -349,18 +362,9 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
 
    private ConfigurationBuilder defaultConfigurationBuilder() {
       ConfigurationBuilder builder = TestCacheManagerFactory.getDefaultCacheConfiguration(true);
-      builder
-            .clustering()
-            .cacheMode(getCacheMode())
-            .versioning()
-            .enable()
-            .scheme(VersioningScheme.SIMPLE)
-            .locking()
-            .isolationLevel(IsolationLevel.REPEATABLE_READ)
-            .writeSkewCheck(true)
-            .transaction()
-            .lockingMode(LockingMode.OPTIMISTIC)
-            .syncCommitPhase(true);
+      builder.clustering().cacheMode(getCacheMode())
+            .locking().isolationLevel(IsolationLevel.REPEATABLE_READ)
+            .transaction().lockingMode(LockingMode.OPTIMISTIC);
       return builder;
    }
 
@@ -371,7 +375,7 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
       final TransactionManager tm = executeOnPrimaryOwner ? tm(0) : tm(1);
 
       for (Cache cache : caches()) {
-         AssertJUnit.assertNull("wrong initial value for " + address(cache) + ".", cache.get(key));
+         assertNull("wrong initial value for " + address(cache) + ".", cache.get(key));
       }
 
       log.debugf("Initialize the key? %s", initKey);
@@ -450,7 +454,7 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
       }
    }
 
-   private static enum Operation {
+   private enum Operation {
       PUT, REMOVE, REPLACE,
       CONDITIONAL_PUT, CONDITIONAL_REMOVE, CONDITIONAL_REPLACE
    }

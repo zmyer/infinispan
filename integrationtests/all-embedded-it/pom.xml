@@ -5,7 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-integrationtests-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-embedded-it</artifactId>
@@ -18,10 +19,16 @@
          <artifactId>infinispan-embedded</artifactId>
       </dependency>
       <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-commons-test</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
          <groupId>javax.cache</groupId>
          <artifactId>cache-api</artifactId>
          <scope>provided</scope>
       </dependency>
+      <!-- JPA test dependencies -->
       <dependency>
          <groupId>org.hibernate.javax.persistence</groupId>
          <artifactId>hibernate-jpa-2.1-api</artifactId>
@@ -31,7 +38,7 @@
          <groupId>org.hibernate</groupId>
          <artifactId>hibernate-core</artifactId>
       </dependency>
-
+      <!-- JDBC test dependecies -->
        <dependency>
            <groupId>com.mchange</groupId>
            <artifactId>c3p0</artifactId>
@@ -45,7 +52,7 @@
        <dependency>
           <groupId>junit</groupId>
           <artifactId>junit</artifactId>
-          <version>4.11</version>
+          <version>4.12</version>
           <scope>test</scope>
        </dependency>
    </dependencies>
@@ -69,7 +76,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
-                        <version>2.18.1</version>
+                        <version>2.20</version>
                         <configuration>
                             <systemPropertyVariables>
                                 <connection.url>jdbc:h2:mem:test;DB_CLOSE_DELAY=-1</connection.url>
@@ -77,10 +84,53 @@
                                 <jgroups.bind_addr>127.0.0.1</jgroups.bind_addr>
                                 <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
                             </systemPropertyVariables>
+                           <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
                         </configuration>
                     </plugin>
                 </plugins>
             </build>
         </profile>
+        <profile>
+            <id>smoke</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>default-test</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration combine.self="override">
+                    <groups combine.self="override">${defaultJUnitGroups}</groups>
+                    <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
+                    <systemPropertyVariables>
+                        <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
+                        <build.directory>${project.build.directory}</build.directory>
+                    </systemPropertyVariables>
+                    <trimStackTrace>false</trimStackTrace>
+                    <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.apache.maven.surefire</groupId>
+                        <artifactId>surefire-junit47</artifactId>
+                        <version>${version.maven.surefire}</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
+        </plugins>
+    </build>
 </project>

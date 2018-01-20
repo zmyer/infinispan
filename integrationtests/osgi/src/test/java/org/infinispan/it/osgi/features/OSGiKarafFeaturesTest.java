@@ -7,12 +7,10 @@ import java.net.URI;
 import java.util.Properties;
 
 import org.apache.karaf.features.FeaturesService;
-import org.infinispan.commons.test.skip.SkipOnOs;
-import org.infinispan.commons.test.skip.SkipOnOsRule;
+import org.infinispan.it.osgi.util.CustomPaxExamRunner;
 import org.infinispan.it.osgi.util.MavenUtils;
 import org.infinispan.it.osgi.util.PaxExamUtils;
 import org.junit.Assert;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -20,7 +18,7 @@ import org.ops4j.pax.exam.Configuration;
 import org.ops4j.pax.exam.Option;
 import org.ops4j.pax.exam.ProbeBuilder;
 import org.ops4j.pax.exam.TestProbeBuilder;
-import org.ops4j.pax.exam.junit.PaxExam;
+import org.ops4j.pax.exam.karaf.options.KarafDistributionOption;
 import org.ops4j.pax.exam.spi.reactors.ExamReactorStrategy;
 import org.ops4j.pax.exam.spi.reactors.PerClass;
 import org.osgi.framework.Bundle;
@@ -31,20 +29,20 @@ import org.osgi.framework.ServiceReference;
 /**
  * Tests features.xml definitions for OSGi bundles.
  */
-@RunWith(PaxExam.class)
+@RunWith(CustomPaxExamRunner.class)
 @ExamReactorStrategy(PerClass.class)
 @Category(PerClass.class)
 public class OSGiKarafFeaturesTest {
-
-   @Rule
-   public final SkipOnOsRule skipOnOsRule = new SkipOnOsRule();
 
    private static final String PROP_PROJECT_VERSION = "project.version";
 
 
    @Configuration
    public Option[] config() throws Exception {
-      return options(commonOptions());
+      return options(
+            commonOptions(),
+            KarafDistributionOption.editConfigurationFileExtend("etc/config.properties", "org.osgi.framework.executionenvironment", "JavaSE-1.8")
+      );
    }
 
    @ProbeBuilder
@@ -56,7 +54,6 @@ public class OSGiKarafFeaturesTest {
     * Verifies that Karaf Features install correctly on clean containers.
     */
    @Test
-   @SkipOnOs({SkipOnOs.OS.WINDOWS, SkipOnOs.OS.SOLARIS})
    public void testCleanInstall() throws Exception {
       Bundle bundle = FrameworkUtil.getBundle(getClass());
       Assert.assertNotNull("Failed to find class bundle.", bundle);
@@ -94,7 +91,7 @@ public class OSGiKarafFeaturesTest {
       try {
          service.installFeature(feature, version);
          Assert.fail("Feature install should fail before the repository is added.");
-      } catch (Exception ex) {
+      } catch (Exception ignored) {
       }
 
       URI repoUri = new URI(String.format("mvn:org.infinispan/%s/%s/xml/features", artifactId, version));

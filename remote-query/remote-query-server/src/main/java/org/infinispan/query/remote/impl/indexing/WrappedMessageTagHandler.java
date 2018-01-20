@@ -11,6 +11,7 @@ import org.infinispan.protostream.TagHandler;
 import org.infinispan.protostream.WrappedMessage;
 import org.infinispan.protostream.descriptors.Descriptor;
 import org.infinispan.protostream.descriptors.FieldDescriptor;
+import org.infinispan.protostream.descriptors.GenericDescriptor;
 
 /**
  * @author anistor@redhat.com
@@ -18,6 +19,7 @@ import org.infinispan.protostream.descriptors.FieldDescriptor;
  */
 final class WrappedMessageTagHandler implements TagHandler {
 
+   private final ProtobufValueWrapper valueWrapper;
    private final Document document;
    private final LuceneOptions luceneOptions;
    private final SerializationContext serCtx;
@@ -27,14 +29,15 @@ final class WrappedMessageTagHandler implements TagHandler {
    private Number numericValue;
    private String stringValue;
 
-   public WrappedMessageTagHandler(Document document, LuceneOptions luceneOptions, SerializationContext serCtx) {
+   WrappedMessageTagHandler(ProtobufValueWrapper valueWrapper, Document document, LuceneOptions luceneOptions, SerializationContext serCtx) {
+      this.valueWrapper = valueWrapper;
       this.document = document;
       this.luceneOptions = luceneOptions;
       this.serCtx = serCtx;
    }
 
    @Override
-   public void onStart() {
+   public void onStart(GenericDescriptor descriptor) {
    }
 
    @Override
@@ -89,12 +92,14 @@ final class WrappedMessageTagHandler implements TagHandler {
    @Override
    public void onEnd() {
       if (bytes != null) {
+         // it's a message, not a primitive value
          if (messageDescriptor == null) {
             throw new IllegalStateException("Type name/id is missing");
          }
          IndexingMetadata indexingMetadata = messageDescriptor.getProcessedAnnotation(IndexingMetadata.INDEXED_ANNOTATION);
          // if the message definition is not annotated at all we consider all fields indexed and stored, just to be backwards compatible
          if (indexingMetadata == null || indexingMetadata.isIndexed()) {
+            valueWrapper.setMessageDescriptor(messageDescriptor);
             try {
                ProtobufParser.INSTANCE.parse(new IndexingTagHandler(messageDescriptor, document), messageDescriptor, bytes);
             } catch (IOException e) {

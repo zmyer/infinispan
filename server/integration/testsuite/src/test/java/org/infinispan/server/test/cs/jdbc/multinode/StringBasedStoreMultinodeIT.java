@@ -8,9 +8,12 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.util.List;
+
 import org.infinispan.arquillian.core.RunningServer;
 import org.infinispan.arquillian.core.WithRunningServer;
 import org.infinispan.server.test.category.CacheStore;
+import org.infinispan.server.test.category.Unstable;
 import org.infinispan.server.test.cs.jdbc.AbstractJdbcStoreMultinodeIT;
 import org.infinispan.server.test.util.ITestUtils.Condition;
 import org.junit.Test;
@@ -42,6 +45,7 @@ public class StringBasedStoreMultinodeIT extends AbstractJdbcStoreMultinodeIT {
      * attribute.
      */
     @Test
+    @Category(Unstable.class)
     @WithRunningServer({@RunningServer(name = CONTAINER1, config = CONFIG_FETCH_STATE_1)})
     public void testFetchState() throws Exception {
         try {
@@ -50,14 +54,22 @@ public class StringBasedStoreMultinodeIT extends AbstractJdbcStoreMultinodeIT {
             mc1.set("k1", "v1");
             mc1.set("k2", "v2");
             mc1.set("k3", "v3");
-            assertNotNull(dbServer1.stringTable.getValueByKey("k1"));
+
+            // Just check number that a single entry has been passivated as we cannot guarantee which entry it will be
+            List<String> keys = dbServer1.stringTable.getAllKeys();
+            assertEquals(1, keys.size());
+            String evictedKey = keys.get(0);
+            assertNotNull(dbServer1.stringTable.getValueByKey(evictedKey));
 
             startContainer(controller, CONTAINER2, CONFIG_FETCH_STATE_2);
             mc2 = createMemcachedClient(server2);
-            assertEquals(2, server2.getCacheManager(MANAGER_NAME).getCache(CACHE_NAME).getNumberOfEntries());
+            assertEquals(3, server2.getCacheManager(MANAGER_NAME).getCache(CACHE_NAME).getNumberOfEntries());
+            assertEquals(2, server2.getCacheManager(MANAGER_NAME).getCache(CACHE_NAME).getNumberOfEntriesInMemory());
             assertEquals(1, dbServer2.stringTable.getAllKeys().size());
 
-            String evictedKey = dbServer2.stringTable.getAllKeys().get(0);
+            keys = dbServer2.stringTable.getAllKeys();
+            assertEquals(1, keys.size());
+            evictedKey = keys.get(0);
             assertEquals("v" + evictedKey.charAt(1), mc2.get(evictedKey));
             assertNull(dbServer2.stringTable.getValueByKey(evictedKey));
             assertCleanCacheAndStore2();

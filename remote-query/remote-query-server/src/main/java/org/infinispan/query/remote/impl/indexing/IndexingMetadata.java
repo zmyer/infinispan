@@ -1,6 +1,9 @@
 package org.infinispan.query.remote.impl.indexing;
 
+import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.hibernate.search.annotations.Field;
 import org.infinispan.protostream.config.Configuration;
@@ -9,14 +12,15 @@ import org.infinispan.protostream.descriptors.AnnotationElement;
 /**
  * All fields of Protobuf types are indexed and stored by default if no indexing annotations are present. This behaviour
  * exists only for compatibility with first release of remote query; it is deprecated and will be removed in Infinispan
- * 10.0 (the lack of annotations will imply no indexing support in this future release). Indexing all fields is
- * sometimes acceptable but it can become a performance problem if there are many or very large fields. To avoid such
- * problems Infinispan allows and encourages you to specify which fields to index and store by means of two annotations
- * ({@literal @}Indexed and {@literal @}Field) that behave very similarly to the identically named Hibernate Search
- * annotations and which can be directly added to your Protobuf schema files in the documentation comments of your
- * message type definitions as demonstrated in the example below:
+ * 10.0 (the lack of annotations on your message/field definition will imply no indexing support in this future release,
+ * but you will still be able to perform unindexed query). Indexing all fields is sometimes acceptable but it can become
+ * a performance problem if there are many or very large fields. To avoid such problems Infinispan allows and encourages
+ * you to specify which fields to index and store by means of two annotations ({@literal @}Indexed and
+ * {@literal @}Field) that behave very similarly to the identically named Hibernate Search annotations and which can be
+ * directly added to your Protobuf schema files in the documentation comments of your message type definitions as
+ * demonstrated in the example below:
  * <p/>
- * <b>Example:<b/>
+ * <b>Example:</b>
  * <p/>
  * <pre>
  * /**
@@ -46,8 +50,8 @@ import org.infinispan.protostream.descriptors.AnnotationElement;
  * }
  * </pre>
  * <p>
- * Documentation annotations can be added after the human-readable documentation text on the last lines of the
- * documentation comment that precedes the element to be annotated (a message type definition or a field definition).
+ * Documentation annotations can be added after the human-readable text on the last lines of the documentation comment
+ * that precedes the element to be annotated (a message type definition or a field definition).
  * The syntax for defining these pseudo-annotations is identical to the one use by the Java language.
  * <p>
  * The '{@literal @}Indexed' annotation applies to message types only, has a boolean value that defaults to 'true', so
@@ -68,6 +72,7 @@ import org.infinispan.protostream.descriptors.AnnotationElement;
  * The '{@literal @}Analyzer' annotation applies to messages and fields and allows you to specify which analyzer to use
  * if analysis was enabled. If has a single attribute name 'definition' which must contain a valid analyzer definition
  * name specified as a String.
+ * <p>
  * <b>NOTE:</b>
  * <ul>
  * <li>1. The {@literal @}Field and {@literal @}Analyzer annotations have effect only if the containing message
@@ -98,22 +103,26 @@ public final class IndexingMetadata {
    //TODO [anistor] remove in Infinispan 10.0
    /**
     * Deprecated since 9.0. Replaced by @Field.
+    * This annotation does not have a plural.
     * @deprecated
     */
+   @Deprecated
    public static final String INDEXED_FIELD_ANNOTATION = "IndexedField";
 
    /**
     * @deprecated
     */
+   @Deprecated
    public static final String INDEXED_FIELD_INDEX_ATTRIBUTE = "index";
 
    /**
     * @deprecated
     */
+   @Deprecated
    public static final String INDEXED_FIELD_STORE_ATTRIBUTE = "store";
 
    /**
-    * Similar to org.hibernate.search.annotations.Field.
+    * Similar to org.hibernate.search.annotations.Fields/Field.
     */
    public static final String FIELDS_ANNOTATION = "Fields";
    public static final String FIELD_ANNOTATION = "Field";
@@ -134,6 +143,16 @@ public final class IndexingMetadata {
    public static final String STORE_YES = "Store.YES";
    public static final String STORE_NO = "Store.NO";
 
+   /**
+    * A special placeholder value that is indexed if the actual field value is {@code null} and no explicit indexing
+    * options were defined via protobuf annotations. This placeholder is needed because Lucene does not index actual null
+    * values.
+    */
+   public static final String DEFAULT_NULL_TOKEN = "_null_";
+
+   /**
+    * A marker value that indicates nulls should not be indexed. Same string as in Hibernate Search.
+    */
    public static final String DO_NOT_INDEX_NULL = Field.DO_NOT_INDEX_NULL;
 
    /**
@@ -142,27 +161,39 @@ public final class IndexingMetadata {
    public static final String ANALYZER_ANNOTATION = "Analyzer";
    public static final String ANALYZER_DEFINITION_ATTRIBUTE = "definition";
 
+   public static final String SORTABLE_FIELD_ANNOTATION = "SortableField";
+   public static final String SORTABLE_FIELDS_ANNOTATION = "SortableFields";
+
    public static final IndexingMetadata NO_INDEXING = new IndexingMetadata(false, null, null, null);
 
    private final boolean isIndexed;
    private final String indexName;
    private final String analyzer;
    private final Map<String, FieldMapping> fields;
+   private final Set<String> sortableFields;
 
    IndexingMetadata(boolean isIndexed, String indexName, String analyzer, Map<String, FieldMapping> fields) {
       this.isIndexed = isIndexed;
       this.indexName = indexName;
       this.analyzer = analyzer;
       this.fields = fields;
+      this.sortableFields = fields == null ? Collections.emptySet() : fields.values().stream()
+            .filter(FieldMapping::sortable)
+            .map(FieldMapping::name)
+            .collect(Collectors.toSet());
    }
 
    public boolean isIndexed() {
       return isIndexed;
    }
 
-   // TODO [anistor] The index name is not used yet!
-   public String getIndexName() {
+   // TODO [anistor] The index name is ignored for now because all types get indexed in the same index of ProtobufValueWrapper
+   public String indexName() {
       return indexName;
+   }
+
+   public String analyzer() {
+      return analyzer;
    }
 
    public boolean isFieldIndexed(String fieldName) {
@@ -189,8 +220,20 @@ public final class IndexingMetadata {
       return fieldMapping != null && fieldMapping.store();
    }
 
+   public Object getNullMarker(String fieldName) {
+      if (fields == null) {
+         return null;
+      }
+      FieldMapping fieldMapping = fields.get(fieldName);
+      return fieldMapping != null ? fieldMapping.indexNullAs() : null;
+   }
+
    public FieldMapping getFieldMapping(String name) {
       return fields.get(name);
+   }
+
+   public Set<String> getSortableFields() {
+      return sortableFields;
    }
 
    @Override
@@ -200,6 +243,7 @@ public final class IndexingMetadata {
             ", indexName='" + indexName + '\'' +
             ", analyzer='" + analyzer + '\'' +
             ", fields=" + fields +
+            ", sortableFields=" + sortableFields +
             '}';
    }
 
@@ -254,6 +298,9 @@ public final class IndexingMetadata {
                   .defaultValue("@Analyzer(definition=\"\")")
                .attribute(FIELD_INDEX_NULL_AS_ATTRIBUTE)
                   .type(AnnotationElement.AttributeType.STRING)
-                  .defaultValue(DO_NOT_INDEX_NULL);
+                  .defaultValue(DO_NOT_INDEX_NULL)
+               .parentBuilder()
+            .annotation(SORTABLE_FIELD_ANNOTATION, AnnotationElement.AnnotationTarget.FIELD)
+               .repeatable(SORTABLE_FIELDS_ANNOTATION);
    }
 }

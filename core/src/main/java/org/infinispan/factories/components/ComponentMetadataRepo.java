@@ -9,8 +9,11 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.util.FileLookup;
 import org.infinispan.commons.util.FileLookupFactory;
 import org.infinispan.factories.annotations.DefaultFactoryFor;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 /**
  * This is a repository of component metadata, which is populated when the Infinispan core jar is loaded up.  Actual
@@ -21,6 +24,7 @@ import org.infinispan.factories.annotations.DefaultFactoryFor;
  * @see ComponentMetadata
  */
 public class ComponentMetadataRepo {
+   private static final Log log = LogFactory.getLog(ComponentMetadataRepo.class);
    final Map<String, ComponentMetadata> componentMetadataMap = new HashMap<String, ComponentMetadata>(128);
    final Map<String, String> factories = new HashMap<String, String>(16);
    private final ComponentMetadata dependencyFreeComponent = new ComponentMetadata();
@@ -29,26 +33,20 @@ public class ComponentMetadataRepo {
    public synchronized void readMetadata(URL metadataFile) throws IOException, ClassNotFoundException {
       Map<String, ComponentMetadata> comp;
       Map<String, String> fact;
-      InputStream inputStream = metadataFile.openStream();
-      try {
-         BufferedInputStream bis = new BufferedInputStream(inputStream);
-         try {
-            ObjectInputStream ois = new ObjectInputStream(bis);
-            try {
+      try (InputStream inputStream = metadataFile.openStream()) {
+         try (BufferedInputStream bis = new BufferedInputStream(inputStream)) {
+            try (ObjectInputStream ois = new ObjectInputStream(bis)){
                comp = (Map<String, ComponentMetadata>) ois.readObject();
                fact = (Map<String, String>) ois.readObject();
-            } finally {
-               ois.close();
             }
-         } finally {
-            bis.close();
          }
-      } finally {
-         inputStream.close();
       }
 
       componentMetadataMap.putAll(comp);
       factories.putAll(fact);
+      if (log.isTraceEnabled()) {
+         log.tracef("Loaded metadata from '%s': %d components, %d factories", metadataFile, comp.size(), fact.size());
+      }
    }
 
    /**
@@ -104,8 +102,9 @@ public class ComponentMetadataRepo {
     */
    public void initialize(Iterable<ModuleMetadataFileFinder> moduleMetadataFiles, ClassLoader cl) {
       // First init core module metadata
+      FileLookup fileLookup = FileLookupFactory.newInstance();
       try {
-         readMetadata(FileLookupFactory.newInstance().lookupFileLocation("infinispan-core-component-metadata.dat", cl));
+         readMetadata(fileLookup.lookupFileLocation("infinispan-core-component-metadata.dat", cl));
       } catch (Exception e) {
          throw new CacheException("Unable to load component metadata!", e);
       }
@@ -113,7 +112,7 @@ public class ComponentMetadataRepo {
       // Now the modules
       for (ModuleMetadataFileFinder finder: moduleMetadataFiles) {
          try {
-            readMetadata(FileLookupFactory.newInstance().lookupFileLocation(finder.getMetadataFilename(), cl));
+            readMetadata(fileLookup.lookupFileLocation(finder.getMetadataFilename(), cl));
          } catch (Exception e) {
             throw new CacheException("Unable to load component metadata in file " + finder.getMetadataFilename(), e);
          }
@@ -128,6 +127,10 @@ public class ComponentMetadataRepo {
     */
    public void injectFactoryForComponent(Class<?> componentType, Class<?> factoryType) {
       factories.put(componentType.getName(), factoryType.getName());
+   }
+
+   public boolean hasFactory(String name) {
+      return factories.containsKey(name);
    }
 
 }

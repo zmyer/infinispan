@@ -2,8 +2,8 @@ package org.infinispan.partitionhandling;
 
 import static org.infinispan.test.TestingUtil.extractComponent;
 import static org.infinispan.test.TestingUtil.extractLockManager;
-import static org.infinispan.test.TestingUtil.waitForRehashToComplete;
-import static org.infinispan.test.TestingUtil.wrapPerCacheInboundInvocationHandler;
+import static org.infinispan.test.TestingUtil.waitForNoRebalance;
+import static org.infinispan.test.TestingUtil.wrapInboundInvocationHandler;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -17,11 +17,13 @@ import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
 import org.infinispan.remoting.inboundhandler.Reply;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.concurrent.ReclosableLatch;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 import org.testng.AssertJUnit;
 
 /**
@@ -31,9 +33,10 @@ import org.testng.AssertJUnit;
  * @since 8.0
  */
 public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingTest {
+   private static final Log log = LogFactory.getLog(BaseTxPartitionAndMergeTest.class);
 
-   protected static final String INITIAL_VALUE = "init-value";
-   protected static final String FINAL_VALUE = "final-value";
+   static final String INITIAL_VALUE = "init-value";
+   static final String FINAL_VALUE = "final-value";
 
    private static NotifierFilter notifyCommandOn(Cache<?, ?> cache, Class<? extends CacheRpcCommand> blockClass) {
       NotifierFilter filter = new NotifierFilter(blockClass);
@@ -54,11 +57,12 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
    }
 
    private static void wrapAndApplyFilter(Cache<?, ?> cache, Filter filter) {
-      ControlledInboundHandler controlledInboundHandler = wrapPerCacheInboundInvocationHandler(cache, (wrapOn, current) -> new ControlledInboundHandler(current), true);
+      ControlledInboundHandler controlledInboundHandler = wrapInboundInvocationHandler(cache, ControlledInboundHandler::new);
       controlledInboundHandler.filter = filter;
    }
 
-   protected FilterCollection createFilters(String cacheName, boolean discard, Class<? extends CacheRpcCommand> commandClass, SplitMode splitMode) {
+   FilterCollection createFilters(String cacheName, boolean discard, Class<? extends CacheRpcCommand> commandClass,
+         SplitMode splitMode) {
       Collection<AwaitAndUnblock> collection = new ArrayList<>(2);
       if (splitMode == SplitMode.ORIGINATOR_ISOLATED) {
          if (discard) {
@@ -81,10 +85,10 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
 
    protected abstract Log getLog();
 
-   protected void mergeCluster(String cacheName) {
+   void mergeCluster(String cacheName) {
       getLog().debugf("Merging cluster");
       partition(0).merge(partition(1));
-      waitForRehashToComplete(caches(cacheName));
+      waitForNoRebalance(caches(cacheName));
       for (int i = 0; i < numMembersInCluster; i++) {
          PartitionHandlingManager phmI = partitionHandlingManager(cache(i, cacheName));
          eventuallyEquals(AvailabilityMode.AVAILABLE, phmI::getAvailabilityMode);
@@ -92,13 +96,13 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
       getLog().debugf("Cluster merged");
    }
 
-   protected void finalAsserts(String cacheName, KeyInfo keyInfo, String value) {
+   void finalAsserts(String cacheName, KeyInfo keyInfo, String value) {
       assertNoTransactions(cacheName);
       assertNoTransactionsInPartitionHandler(cacheName);
       assertNoLocks(cacheName);
 
-      assertValue(keyInfo.getKey1(), value, this.<Object, String>caches(cacheName));
-      assertValue(keyInfo.getKey2(), value, this.<Object, String>caches(cacheName));
+      assertValue(keyInfo.getKey1(), value, this.caches(cacheName));
+      assertValue(keyInfo.getKey2(), value, this.caches(cacheName));
    }
 
    protected void assertNoLocks(String cacheName) {
@@ -121,7 +125,7 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
       }
    }
 
-   protected KeyInfo createKeys(String cacheName) {
+   KeyInfo createKeys(String cacheName) {
       final Object key1 = new MagicKey("k1", cache(1, cacheName), cache(2, cacheName));
       final Object key2 = new MagicKey("k2", cache(2, cacheName), cache(1, cacheName));
       cache(1, cacheName).put(key1, INITIAL_VALUE);
@@ -148,6 +152,8 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
          public void split(BaseTxPartitionAndMergeTest test) {
             test.getLog().debug("Splitting cluster isolating the originator.");
             test.splitCluster(new int[]{0}, new int[]{1, 2, 3});
+            assertDegradedPartition(test, 0);
+            TestingUtil.waitForNoRebalance(test.cache(1), test.cache(2), test.cache(3));
             test.getLog().debug("Cluster split.");
          }
       },
@@ -156,6 +162,7 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
          public void split(BaseTxPartitionAndMergeTest test) {
             test.getLog().debug("Splitting cluster in equal partition");
             test.splitCluster(new int[]{0, 1}, new int[]{2, 3});
+            assertDegradedPartition(test, 0, 1);
             test.getLog().debug("Cluster split.");
          }
       },
@@ -164,11 +171,18 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
          public void split(BaseTxPartitionAndMergeTest test) {
             test.getLog().debug("Splitting cluster isolating a primary owner.");
             test.splitCluster(new int[]{2}, new int[]{0, 1, 3});
+            assertDegradedPartition(test, 0);
+            TestingUtil.waitForNoRebalance(test.cache(0), test.cache(1), test.cache(3));
             test.getLog().debug("Cluster split.");
          }
       };
 
       public abstract void split(BaseTxPartitionAndMergeTest test);
+
+      private static void assertDegradedPartition(BaseTxPartitionAndMergeTest test, int... partitionIndexes) {
+         for (int i = 0; i < partitionIndexes.length; i++)
+            test.partition(i).assertDegradedMode();
+      }
    }
 
    private interface AwaitAndUnblock {
@@ -195,6 +209,8 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
          final Filter currentFilter = filter;
          if (currentFilter != null && currentFilter.before(command, reply, order)) {
             delegate.handle(command, reply, order);
+         } else {
+            log.debugf("Ignoring command %s", command);
          }
       }
    }
@@ -213,13 +229,16 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
 
       @Override
       public boolean before(CacheRpcCommand command, Reply reply, DeliverOrder order) {
+         log.tracef("[Blocking] Checking command %s.", command);
          if (aClass.isAssignableFrom(command.getClass())) {
+            log.tracef("[Blocking] Blocking command %s", command);
             notifier.open();
             try {
                blocker.await(30, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                Thread.currentThread().interrupt();
             }
+            log.tracef("[Blocking] Unblocking command %s", command);
          }
          return true;
       }
@@ -247,7 +266,9 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
 
       @Override
       public boolean before(CacheRpcCommand command, Reply reply, DeliverOrder order) {
+         log.tracef("[Notifier] Checking command %s.", command);
          if (aClass.isAssignableFrom(command.getClass())) {
+            log.tracef("[Notifier] Notifying command %s.", command);
             notifier.countDown();
          }
          return true;
@@ -269,15 +290,19 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
 
       private final Class<? extends CacheRpcCommand> aClass;
       private final ReclosableLatch notifier;
+      private volatile boolean discard;
 
       private DiscardFilter(Class<? extends CacheRpcCommand> aClass) {
          this.aClass = aClass;
          notifier = new ReclosableLatch(false);
+         discard = true; //discard everything by default. change if needed in the future.
       }
 
       @Override
       public boolean before(CacheRpcCommand command, Reply reply, DeliverOrder order) {
-         if (!notifier.isOpened() && aClass.isAssignableFrom(command.getClass())) {
+         log.tracef("[Discard] Checking command %s. (discard enabled=%s)", command, discard);
+         if (discard && aClass.isAssignableFrom(command.getClass())) {
+            log.tracef("[Discard] Discarding command %s.", command);
             notifier.open();
             return false;
          }
@@ -294,18 +319,22 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
       public void unblock() {
          /*no-op*/
       }
+
+      private void stopDiscard() {
+         discard = false;
+      }
    }
 
    protected static class KeyInfo {
       private final Object key1;
       private final Object key2;
 
-      public KeyInfo(Object key1, Object key2) {
+      KeyInfo(Object key1, Object key2) {
          this.key1 = key1;
          this.key2 = key2;
       }
 
-      public void putFinalValue(Cache<Object, String> cache) {
+      void putFinalValue(Cache<Object, String> cache) {
          cache.put(key1, FINAL_VALUE);
          cache.put(key2, FINAL_VALUE);
       }
@@ -322,7 +351,7 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
    protected static class FilterCollection implements AwaitAndUnblock {
       private final Collection<AwaitAndUnblock> collection;
 
-      public FilterCollection(Collection<AwaitAndUnblock> collection) {
+      FilterCollection(Collection<AwaitAndUnblock> collection) {
          this.collection = collection;
       }
 
@@ -335,6 +364,13 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
 
       public void unblock() {
          collection.forEach(BaseTxPartitionAndMergeTest.AwaitAndUnblock::unblock);
+      }
+
+      public void stopDiscard() {
+         collection.stream()
+               .filter(DiscardFilter.class::isInstance)
+               .map(DiscardFilter.class::cast)
+               .forEach(DiscardFilter::stopDiscard);
       }
    }
 }

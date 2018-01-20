@@ -9,12 +9,13 @@ import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeInitializer;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.attributes.CollectionAttributeCopier;
+import org.infinispan.commons.configuration.attributes.Matchable;
 import org.infinispan.commons.util.TypedProperties;
 
 /**
  * Configures indexing of entries in the cache for searching.
  */
-public class IndexingConfiguration extends AbstractTypedPropertiesConfiguration {
+public class IndexingConfiguration extends AbstractTypedPropertiesConfiguration implements Matchable<IndexingConfiguration> {
    public static final AttributeDefinition<Index> INDEX = AttributeDefinition.builder("index", Index.NONE).immutable().build();
    public static final AttributeDefinition<Boolean> AUTO_CONFIG = AttributeDefinition.builder("autoConfig", false).immutable().build();
    public static final AttributeDefinition<Set<Class<?>>> INDEXED_ENTITIES = AttributeDefinition.builder("indexed-entities", null, (Class<Set<Class<?>>>) (Class<?>) Set.class)
@@ -31,7 +32,14 @@ public class IndexingConfiguration extends AbstractTypedPropertiesConfiguration 
    }
 
    private static final String DIRECTORY_PROVIDER_KEY = "directory_provider";
+
+   /**
+    * Legacy name "ram" was replaced by "local-heap"
+    */
+   @Deprecated
    private static final String RAM_DIRECTORY_PROVIDER = "ram";
+   private static final String LOCAL_HEAP_DIRECTORY_PROVIDER = "local-heap";
+   private static final String LOCAL_HEAP_DIRECTORY_PROVIDER_FQN = "org.hibernate.search.store.impl.RAMDirectoryProvider";
 
    private final Attribute<Index> index;
    private final Attribute<Boolean> autoConfig;
@@ -116,7 +124,10 @@ public class IndexingConfiguration extends AbstractTypedPropertiesConfiguration 
       for (Object objKey : properties.keySet()) {
          String key = (String) objKey;
          if (key.endsWith(DIRECTORY_PROVIDER_KEY)) {
-            if (properties.get(key).equals(RAM_DIRECTORY_PROVIDER)) {
+            String directoryImplementationName = String.valueOf(properties.get(key)).trim();
+            if (LOCAL_HEAP_DIRECTORY_PROVIDER.equalsIgnoreCase(directoryImplementationName)
+                  || RAM_DIRECTORY_PROVIDER.equalsIgnoreCase(directoryImplementationName)
+                  || LOCAL_HEAP_DIRECTORY_PROVIDER_FQN.equals(directoryImplementationName)) {
                hasRamDirectoryProvider = true;
             } else {
                return true;

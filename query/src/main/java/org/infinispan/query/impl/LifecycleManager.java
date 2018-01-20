@@ -5,23 +5,28 @@ import static org.infinispan.query.impl.IndexPropertyInspector.getLockingCacheNa
 import static org.infinispan.query.impl.IndexPropertyInspector.getMetadataCacheName;
 import static org.infinispan.query.impl.IndexPropertyInspector.hasInfinispanDirectory;
 
-import java.util.Iterator;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
-import org.hibernate.search.cfg.Environment;
-import org.hibernate.search.cfg.SearchMapping;
+import org.hibernate.search.analyzer.definition.LuceneAnalysisDefinitionProvider;
 import org.hibernate.search.cfg.spi.SearchConfiguration;
+import org.hibernate.search.engine.service.classloading.spi.ClassLoaderService;
 import org.hibernate.search.spi.SearchIntegrator;
 import org.hibernate.search.spi.SearchIntegratorBuilder;
+import org.hibernate.search.spi.impl.PojoIndexedTypeIdentifier;
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
+import org.infinispan.commons.util.AggregatedClassLoader;
 import org.infinispan.commons.util.ServiceFinder;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -33,13 +38,13 @@ import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.components.ManageableComponentMetadata;
+import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.locking.NonTransactionalLockingInterceptor;
-import org.infinispan.interceptors.locking.OptimisticLockingInterceptor;
-import org.infinispan.interceptors.locking.PessimisticLockingInterceptor;
+import org.infinispan.interceptors.impl.CacheLoaderInterceptor;
+import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
 import org.infinispan.jmx.JmxUtil;
 import org.infinispan.jmx.ResourceDMBean;
-import org.infinispan.lifecycle.AbstractModuleLifecycle;
+import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.objectfilter.impl.ReflectionMatcher;
 import org.infinispan.objectfilter.impl.syntax.parser.ReflectionEntityNamesResolver;
@@ -50,20 +55,24 @@ import org.infinispan.query.backend.IndexModificationStrategy;
 import org.infinispan.query.backend.QueryInterceptor;
 import org.infinispan.query.backend.QueryKnownClasses;
 import org.infinispan.query.backend.SearchableCacheConfiguration;
+import org.infinispan.query.backend.TxQueryInterceptor;
 import org.infinispan.query.clustered.QueryBox;
+import org.infinispan.query.clustered.QueryDefinitionExternalizer;
 import org.infinispan.query.continuous.impl.ContinuousQueryResult;
-import org.infinispan.query.continuous.impl.JPAContinuousQueryCacheEventFilterConverter;
+import org.infinispan.query.continuous.impl.IckleContinuousQueryCacheEventFilterConverter;
+import org.infinispan.query.dsl.embedded.impl.EmbeddedQueryEngine;
 import org.infinispan.query.dsl.embedded.impl.HibernateSearchPropertyHelper;
-import org.infinispan.query.dsl.embedded.impl.JPACacheEventFilterConverter;
-import org.infinispan.query.dsl.embedded.impl.JPAFilterAndConverter;
+import org.infinispan.query.dsl.embedded.impl.IckleCacheEventFilterConverter;
+import org.infinispan.query.dsl.embedded.impl.IckleFilterAndConverter;
 import org.infinispan.query.dsl.embedded.impl.QueryCache;
-import org.infinispan.query.dsl.embedded.impl.QueryEngine;
 import org.infinispan.query.impl.externalizers.ClusteredTopDocsExternalizer;
 import org.infinispan.query.impl.externalizers.ExternalizerIds;
 import org.infinispan.query.impl.externalizers.LuceneBooleanQueryExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneBytesRefExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneFieldDocExternalizer;
+import org.infinispan.query.impl.externalizers.LuceneFuzzyQueryExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneMatchAllQueryExternalizer;
+import org.infinispan.query.impl.externalizers.LucenePrefixQueryExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneScoreDocExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneSortExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneSortFieldExternalizer;
@@ -71,13 +80,14 @@ import org.infinispan.query.impl.externalizers.LuceneTermExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneTermQueryExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneTopDocsExternalizer;
 import org.infinispan.query.impl.externalizers.LuceneTopFieldDocsExternalizer;
+import org.infinispan.query.impl.externalizers.LuceneWildcardQueryExternalizer;
 import org.infinispan.query.impl.massindex.DistributedExecutorMassIndexer;
 import org.infinispan.query.impl.massindex.IndexWorker;
 import org.infinispan.query.logging.Log;
 import org.infinispan.query.spi.ProgrammaticSearchMappingProvider;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.registry.InternalCacheRegistry.Flag;
-import org.infinispan.transaction.LockingMode;
+import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.logging.LogFactory;
 import org.kohsuke.MetaInfServices;
 
@@ -88,7 +98,8 @@ import org.kohsuke.MetaInfServices;
  * @author Sanne Grinovero <sanne@hibernate.org> (C) 2011 Red Hat Inc.
  */
 @MetaInfServices(org.infinispan.lifecycle.ModuleLifecycle.class)
-public class LifecycleManager extends AbstractModuleLifecycle {
+@SuppressWarnings("unused")
+public class LifecycleManager implements ModuleLifecycle {
 
    private static final Log log = LogFactory.getLog(LifecycleManager.class, Log.class);
 
@@ -128,8 +139,8 @@ public class LifecycleManager extends AbstractModuleLifecycle {
 
          registerMatcher(cr, searchFactory);
 
-         QueryEngine<Class<?>> queryEngine = new QueryEngine<>(cache, isIndexed);
-         cr.registerComponent(queryEngine, QueryEngine.class);
+         EmbeddedQueryEngine queryEngine = new EmbeddedQueryEngine(cache, isIndexed);
+         cr.registerComponent(queryEngine, EmbeddedQueryEngine.class);
       }
    }
 
@@ -147,7 +158,7 @@ public class LifecycleManager extends AbstractModuleLifecycle {
 
    private void addCacheDependencyIfNeeded(String cacheStarting, EmbeddedCacheManager cacheManager, IndexingConfiguration indexingConfiguration) {
       if (indexingConfiguration.indexedEntities().isEmpty()) {
-         // todo [anistor] remove dependency on QueryKnownClasses in infinispan 9.0
+         // todo [anistor] remove dependency on QueryKnownClasses in Infinispan 10.0
          // indexed classes are autodetected and propagated across cluster via this cache
          cacheManager.addCacheDependency(cacheStarting, QueryKnownClasses.QUERY_KNOWN_CLASSES_CACHE_NAME);
       }
@@ -166,37 +177,44 @@ public class LifecycleManager extends AbstractModuleLifecycle {
    private void createQueryInterceptorIfNeeded(ComponentRegistry cr, Configuration cfg, SearchIntegrator searchFactory) {
       QueryInterceptor queryInterceptor = cr.getComponent(QueryInterceptor.class);
       if (queryInterceptor == null) {
-         queryInterceptor = buildQueryInterceptor(cfg, searchFactory);
+         ConcurrentMap<GlobalTransaction, Map<Object, Object>> txOldValues = new ConcurrentHashMap<>();
+         IndexModificationStrategy indexingStrategy = IndexModificationStrategy.configuredStrategy(searchFactory, cfg);
+         queryInterceptor = new QueryInterceptor(searchFactory, indexingStrategy, txOldValues, cr.getComponent(Cache.class));
 
          // Interceptor registration not needed, core configuration handling
          // already does it for all custom interceptors - UNLESS the InterceptorChain already exists in the component registry!
          AsyncInterceptorChain ic = cr.getComponent(AsyncInterceptorChain.class);
 
          ConfigurationBuilder builder = new ConfigurationBuilder().read(cfg);
-         InterceptorConfigurationBuilder interceptorBuilder = builder.customInterceptors().addInterceptor();
-         interceptorBuilder.interceptor(queryInterceptor);
 
-         if (!cfg.transaction().transactionMode().isTransactional()) {
-            if (ic != null) ic.addInterceptorAfter(queryInterceptor, NonTransactionalLockingInterceptor.class);
-            interceptorBuilder.after(NonTransactionalLockingInterceptor.class);
-         } else if (cfg.transaction().lockingMode() == LockingMode.OPTIMISTIC) {
-            if (ic != null) ic.addInterceptorAfter(queryInterceptor, OptimisticLockingInterceptor.class);
-            interceptorBuilder.after(OptimisticLockingInterceptor.class);
-         } else {
-            if (ic != null) ic.addInterceptorAfter(queryInterceptor, PessimisticLockingInterceptor.class);
-            interceptorBuilder.after(PessimisticLockingInterceptor.class);
+         EntryWrappingInterceptor wrappingInterceptor = ic.findInterceptorExtending(EntryWrappingInterceptor.class);
+         AsyncInterceptor lastLoadingInterceptor = ic.findInterceptorExtending(CacheLoaderInterceptor.class);
+         if (lastLoadingInterceptor == null) {
+            lastLoadingInterceptor = wrappingInterceptor;
          }
+
+         InterceptorConfigurationBuilder queryInterceptorBuilder = builder.customInterceptors().addInterceptor();
+         queryInterceptorBuilder.interceptor(queryInterceptor);
+         queryInterceptorBuilder.after(lastLoadingInterceptor.getClass());
+
          if (ic != null) {
+            ic.addInterceptorAfter(queryInterceptor, lastLoadingInterceptor.getClass());
             cr.registerComponent(queryInterceptor, QueryInterceptor.class);
             cr.registerComponent(queryInterceptor, queryInterceptor.getClass().getName(), true);
          }
+
+         if (cfg.transaction().transactionMode().isTransactional()) {
+            TxQueryInterceptor txQueryInterceptor = new TxQueryInterceptor(txOldValues, queryInterceptor);
+            if (ic != null) {
+               ic.addInterceptorBefore(txQueryInterceptor, wrappingInterceptor.getClass());
+            }
+            InterceptorConfigurationBuilder txQueryInterceptorBuilder = builder.customInterceptors().addInterceptor();
+            txQueryInterceptorBuilder.interceptor(txQueryInterceptor);
+            txQueryInterceptorBuilder.before(wrappingInterceptor.getClass());
+         }
+
          cfg.customInterceptors().interceptors(builder.build().customInterceptors().interceptors());
       }
-   }
-
-   private QueryInterceptor buildQueryInterceptor(Configuration cfg, SearchIntegrator searchFactory) {
-      IndexModificationStrategy indexingStrategy = IndexModificationStrategy.configuredStrategy(searchFactory, cfg);
-      return new QueryInterceptor(searchFactory, indexingStrategy);
    }
 
    @Override
@@ -236,11 +254,11 @@ public class LifecycleManager extends AbstractModuleLifecycle {
    }
 
    /**
-    * Check that the classes declared by the user are really indexable.
+    * Check that the indexable classes declared by the user are really indexable.
     */
    private void checkIndexableClasses(SearchIntegrator searchFactory, Set<Class<?>> indexedEntities) {
       for (Class<?> c : indexedEntities) {
-         if (searchFactory.getIndexBinding(c) == null) {
+         if (searchFactory.getIndexBinding(new PojoIndexedTypeIdentifier(c)) == null) {
             throw log.classNotIndexable(c.getName());
          }
       }
@@ -302,48 +320,61 @@ public class LifecycleManager extends AbstractModuleLifecycle {
       }
       //defend against multiple initialization:
       if (searchFactory == null) {
-         GlobalComponentRegistry globalComponentRegistry = cr.getGlobalComponentRegistry();
-         EmbeddedCacheManager uninitializedCacheManager = globalComponentRegistry.getComponent(EmbeddedCacheManager.class);
-         Properties indexingProperties = addProgrammaticMappings(indexingConfiguration.properties(), cr);
-         Class<?>[] indexedEntities = indexingConfiguration.indexedEntities().toArray(new Class<?>[indexingConfiguration.indexedEntities().size()]);
-         if (indexedEntities.length > 0 && hasInfinispanDirectory(indexingProperties)) {
-            String metadataCacheName = getMetadataCacheName(indexingProperties);
-            String lockingCacheName = getLockingCacheName(indexingProperties);
-            String dataCacheName = getDataCacheName(indexingProperties);
-            if (cacheName.equals(dataCacheName) || cacheName.equals(metadataCacheName) || cacheName.equals(lockingCacheName)) {
-               // Infinispan Directory causes runtime circular dependencies so we need to postpone creation of indexes until all components are initialised
-               indexedEntities = new Class[0];
-            }
-         }
+         ClassLoader aggregatedClassLoader = makeAggregatedClassLoader(cr.getGlobalComponentRegistry().getGlobalConfiguration().classLoader());
+         Collection<ProgrammaticSearchMappingProvider> programmaticSearchMappingProviders = ServiceFinder.load(ProgrammaticSearchMappingProvider.class, aggregatedClassLoader);
+         Collection<LuceneAnalysisDefinitionProvider> analyzerDefProviders = ServiceFinder.load(LuceneAnalysisDefinitionProvider.class, aggregatedClassLoader);
          // Set up the search factory for Hibernate Search first.
-         SearchConfiguration config = new SearchableCacheConfiguration(indexedEntities, indexingProperties, uninitializedCacheManager, cr);
+         SearchConfiguration config = new SearchableCacheConfiguration(indexingConfiguration.indexedEntities(),
+               indexingConfiguration.properties(), programmaticSearchMappingProviders, analyzerDefProviders, cr, aggregatedClassLoader);
+
          searchFactory = new SearchIntegratorBuilder().configuration(config).buildSearchIntegrator();
          cr.registerComponent(searchFactory, SearchIntegrator.class);
       }
       return searchFactory;
    }
 
-   private Properties addProgrammaticMappings(Properties indexingProperties, ComponentRegistry cr) {
-      Iterator<ProgrammaticSearchMappingProvider> providers = ServiceFinder.load(ProgrammaticSearchMappingProvider.class).iterator();
-      if (providers.hasNext()) {
-         SearchMapping mapping = (SearchMapping) indexingProperties.get(Environment.MODEL_MAPPING);
-         if (mapping == null) {
-            mapping = new SearchMapping();
-            Properties amendedProperties = new Properties();
-            amendedProperties.putAll(indexingProperties);
-            amendedProperties.put(Environment.MODEL_MAPPING, mapping);
-            indexingProperties = amendedProperties;
-         }
-         Cache cache = cr.getComponent(Cache.class);
-         while (providers.hasNext()) {
-            ProgrammaticSearchMappingProvider provider = providers.next();
-            if (log.isDebugEnabled()) {
-               log.debugf("Loading programmatic search mappings for cache %s from provider : %s", cache.getName(), provider.getClass().getName());
-            }
-            provider.defineMappings(cache, mapping);
-         }
+   /**
+    * Create a class loader that delegates loading to an ordered set of class loaders.
+    *
+    * @param globalClassLoader the cache manager's global ClassLoader
+    * @return the aggreated ClassLoader
+    */
+   private ClassLoader makeAggregatedClassLoader(ClassLoader globalClassLoader) {
+      Set<ClassLoader> classLoaders = new LinkedHashSet<>();  // use an ordered set to deduplicate possible duplicates!
+
+      // add the cache manager's CL
+      if (globalClassLoader != null) {
+         classLoaders.add(globalClassLoader);
       }
-      return indexingProperties;
+
+      // add Infinispan core's CL
+      classLoaders.add(ClassLoaderService.class.getClassLoader());
+
+      // add this module's CL
+      classLoaders.add(getClass().getClassLoader());
+
+      // add the TCCL
+      try {
+         ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+         if (tccl != null) {
+            classLoaders.add(tccl);
+         }
+      } catch (Exception e) {
+         // ignored
+      }
+
+      // add the system CL
+      try {
+         ClassLoader syscl = ClassLoader.getSystemClassLoader();
+         if (syscl != null) {
+            classLoaders.add(syscl);
+         }
+
+      } catch (Exception e) {
+         // ignored
+      }
+
+      return new AggregatedClassLoader(classLoaders);
    }
 
    @Override
@@ -393,11 +424,11 @@ public class LifecycleManager extends AbstractModuleLifecycle {
       gcr.registerComponent(queryCache, QueryCache.class);
 
       Map<Integer, AdvancedExternalizer<?>> externalizerMap = globalCfg.serialization().advancedExternalizers();
-      externalizerMap.put(ExternalizerIds.JPA_FILTER_AND_CONVERTER, new JPAFilterAndConverter.JPAFilterAndConverterExternalizer());
-      externalizerMap.put(ExternalizerIds.JPA_FILTER_RESULT, new JPAFilterAndConverter.FilterResultExternalizer());
-      externalizerMap.put(ExternalizerIds.JPA_CACHE_EVENT_FILTER_CONVERTER, new JPACacheEventFilterConverter.Externalizer());
-      externalizerMap.put(ExternalizerIds.JPA_CONTINUOUS_QUERY_CACHE_EVENT_FILTER_CONVERTER, new JPAContinuousQueryCacheEventFilterConverter.Externalizer());
-      externalizerMap.put(ExternalizerIds.JPA_CONTINUOUS_QUERY_RESULT, new ContinuousQueryResult.Externalizer());
+      externalizerMap.put(ExternalizerIds.ICKLE_FILTER_AND_CONVERTER, new IckleFilterAndConverter.IckleFilterAndConverterExternalizer());
+      externalizerMap.put(ExternalizerIds.ICKLE_FILTER_RESULT, new IckleFilterAndConverter.FilterResultExternalizer());
+      externalizerMap.put(ExternalizerIds.ICKLE_CACHE_EVENT_FILTER_CONVERTER, new IckleCacheEventFilterConverter.Externalizer());
+      externalizerMap.put(ExternalizerIds.ICKLE_CONTINUOUS_QUERY_CACHE_EVENT_FILTER_CONVERTER, new IckleContinuousQueryCacheEventFilterConverter.Externalizer());
+      externalizerMap.put(ExternalizerIds.ICKLE_CONTINUOUS_QUERY_RESULT, new ContinuousQueryResult.Externalizer());
       externalizerMap.put(ExternalizerIds.LUCENE_QUERY_BOOLEAN, new LuceneBooleanQueryExternalizer());
       externalizerMap.put(ExternalizerIds.LUCENE_QUERY_TERM, new LuceneTermQueryExternalizer());
       externalizerMap.put(ExternalizerIds.LUCENE_TERM, new LuceneTermExternalizer());
@@ -411,6 +442,10 @@ public class LifecycleManager extends AbstractModuleLifecycle {
       externalizerMap.put(ExternalizerIds.LUCENE_QUERY_MATCH_ALL, new LuceneMatchAllQueryExternalizer());
       externalizerMap.put(ExternalizerIds.INDEX_WORKER, new IndexWorker.Externalizer());
       externalizerMap.put(ExternalizerIds.LUCENE_BYTES_REF, new LuceneBytesRefExternalizer());
+      externalizerMap.put(ExternalizerIds.LUCENE_QUERY_PREFIX, new LucenePrefixQueryExternalizer());
+      externalizerMap.put(ExternalizerIds.LUCENE_QUERY_WILDCARD, new LuceneWildcardQueryExternalizer());
+      externalizerMap.put(ExternalizerIds.LUCENE_QUERY_FUZZY, new LuceneFuzzyQueryExternalizer());
+      externalizerMap.put(ExternalizerIds.QUERY_DEFINITION, new QueryDefinitionExternalizer());
    }
 
 }

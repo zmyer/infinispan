@@ -31,24 +31,9 @@ import org.infinispan.util.logging.LogFactory;
 @SurvivesRestarts
 public class RollingUpgradeManager {
    private static final Log log = LogFactory.getLog(RollingUpgradeManager.class);
-   private final Set<SourceMigrator> sourceMigrators = new HashSet<SourceMigrator>(2);
-   private Cache<Object, Object> cache;
-   private TimeService timeService;
-
-   @Inject
-   public void initialize(final Cache<Object, Object> cache, TimeService timeService) {
-      this.cache = cache;
-      this.timeService = timeService;
-   }
-
-   @ManagedOperation(
-         description = "Dumps the global known keyset to a well-known key for retrieval by the upgrade process",
-         displayName = "Dumps the global known keyset"
-   )
-   public void recordKnownGlobalKeyset() {
-      for (SourceMigrator m : sourceMigrators)
-         m.recordKnownGlobalKeyset();
-   }
+   private final Set<SourceMigrator> sourceMigrators = new HashSet<>(2);
+   @Inject private Cache<Object, Object> cache;
+   @Inject private TimeService timeService;
 
    @ManagedOperation(
          description = "Synchronizes data from the old cluster to this using the specified migrator",

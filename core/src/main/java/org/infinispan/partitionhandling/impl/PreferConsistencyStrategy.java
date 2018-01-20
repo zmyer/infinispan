@@ -3,12 +3,11 @@ package org.infinispan.partitionhandling.impl;
 import static org.infinispan.util.logging.events.Messages.MESSAGES;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
-import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.remoting.transport.Address;
@@ -24,10 +23,12 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
    private static final Log log = LogFactory.getLog(PreferConsistencyStrategy.class);
    private final EventLogManager eventLogManager;
    private final PersistentUUIDManager persistentUUIDManager;
+   private final LostDataCheck lostDataCheck;
 
-   public PreferConsistencyStrategy(EventLogManager eventLogManager, PersistentUUIDManager persistentUUIDManager) {
+   public PreferConsistencyStrategy(EventLogManager eventLogManager, PersistentUUIDManager persistentUUIDManager, LostDataCheck lostDataCheck) {
       this.eventLogManager = eventLogManager;
       this.persistentUUIDManager = persistentUUIDManager;
+      this.lostDataCheck = lostDataCheck;
    }
 
    @Override
@@ -57,7 +58,7 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
          return;
       }
 
-      if (isDataLost(context.getStableTopology().getCurrentCH(), newMembers)) {
+      if (lostDataCheck.test(context.getStableTopology().getCurrentCH(), newMembers)) {
          eventLogManager.getEventLogger().context(context.getCacheName()).warn(EventLogCategory.CLUSTER, MESSAGES.enteringDegradedModeGracefulLeaver(leaver));
          context.updateAvailabilityMode(newMembers, AvailabilityMode.DEGRADED_MODE, true);
          return;
@@ -88,7 +89,7 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
       List<Address> stableMembers = stableTopology.getMembers();
       List<Address> lostMembers = new ArrayList<>(stableMembers);
       lostMembers.removeAll(newMembers);
-      if (isDataLost(stableTopology.getCurrentCH(), newMembers)) {
+      if (lostDataCheck.test(stableTopology.getCurrentCH(), newMembers)) {
          eventLogManager.getEventLogger().context(context.getCacheName()).error(EventLogCategory.CLUSTER, MESSAGES.enteringDegradedModeLostData(lostMembers));
          context.updateAvailabilityMode(newMembers, AvailabilityMode.DEGRADED_MODE, true);
          return;
@@ -109,19 +110,19 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
    }
 
    @Override
-   public void onPartitionMerge(AvailabilityStrategyContext context,
-         Collection<CacheStatusResponse> statusResponses) {
+   public void onPartitionMerge(AvailabilityStrategyContext context, Map<Address, CacheStatusResponse> statusResponseMap) {
       // Because of the majority check in onAbruptLeave, we assume that at most one partition was able to evolve
       // and install new cache topologies. The other(s) would have entered degraded mode, and they would keep
       // the original topology.
       // One scenario not covered is if two partitions started separately and they have completely different topologies.
       // In that case, there is no way to prevent the two partitions from having inconsistent data.
       int maxTopologyId = 0;
+      int maxRebalanceId = 0;
       CacheTopology maxStableTopology = null;
       CacheTopology maxActiveTopology = null;
       Set<CacheTopology> degradedTopologies = new HashSet<>();
       CacheTopology maxDegradedTopology = null;
-      for (CacheStatusResponse response : statusResponses) {
+      for (CacheStatusResponse response : statusResponseMap.values()) {
          CacheTopology partitionStableTopology = response.getStableTopology();
          if (partitionStableTopology == null) {
             // The node hasn't properly joined yet.
@@ -138,6 +139,9 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
          }
          if (partitionTopology.getTopologyId() > maxTopologyId) {
             maxTopologyId = partitionTopology.getTopologyId();
+         }
+         if (partitionTopology.getRebalanceId() > maxRebalanceId) {
+            maxRebalanceId = partitionTopology.getRebalanceId();
          }
          if (response.getAvailabilityMode() == AvailabilityMode.AVAILABLE) {
             if (maxActiveTopology == null || maxActiveTopology.getTopologyId() < partitionTopology.getTopologyId()) {
@@ -176,13 +180,15 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
          // Once a partition enters degraded mode its CH won't change, but it could be that a partition managed to
          // rebalance before losing another member and entering degraded mode.
          mergedTopology = maxDegradedTopology;
-         actualMembers.retainAll(mergedTopology.getMembers());
+         if (maxStableTopology != null) {
+            actualMembers.retainAll(maxStableTopology.getMembers());
+         } else {
+            actualMembers.retainAll(mergedTopology.getMembers());
+         }
          mergedAvailabilityMode = AvailabilityMode.DEGRADED_MODE;
       } else {
-         log.debugf("No current topology, recovered only joiners for cache %s", context.getCacheName());
-         mergedTopology = null;
-         actualMembers = null;
-         mergedAvailabilityMode = AvailabilityMode.AVAILABLE;
+         log.debugf("No current topology, recovered only joiners for cache %s. Skipping availability update.", context.getCacheName());
+         return;
       }
 
       // Increment the topology id so that it's bigger than any topology that might have been sent by the old
@@ -191,15 +197,36 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
       // status request, and then they can't process topology updates from the old view.
       // Also cancel any pending rebalance by removing the pending CH, because we don't recover the rebalance
       // confirmation status (yet).
+      AvailabilityMode newAvailabilityMode = computeAvailabilityAfterMerge(context, maxStableTopology, actualMembers);
       if (mergedTopology != null) {
-         mergedTopology = new CacheTopology(maxTopologyId + 1, mergedTopology.getRebalanceId(),
-               mergedTopology.getCurrentCH(), null, actualMembers, persistentUUIDManager.mapAddresses(actualMembers));
-      }
-      context.updateTopologiesAfterMerge(mergedTopology, maxStableTopology, mergedAvailabilityMode);
 
-      // Now check if the availability mode should change
-      AvailabilityMode newAvailabilityMode = computeAvailabilityAfterMerge(context, maxStableTopology, actualMembers,
-            mergedAvailabilityMode);
+         boolean resolveConflicts = context.resolveConflictsOnMerge() && !degradedTopologies.isEmpty() && newAvailabilityMode == AvailabilityMode.AVAILABLE;
+         if (resolveConflicts) {
+            // Record all distinct read owners and hashes
+            Set<ConsistentHash> distinctHashes = new HashSet<>();
+            for (CacheStatusResponse response : statusResponseMap.values()) {
+               CacheTopology cacheTopology = response.getCacheTopology();
+               if (cacheTopology != null) {
+                  ConsistentHash hash = cacheTopology.getCurrentCH();
+                  if (hash != null && !hash.getMembers().isEmpty()) {
+                     distinctHashes.add(hash);
+                  }
+               }
+            }
+            ConsistentHash conflictHash = context.calculateConflictHash(distinctHashes);
+            mergedTopology = new CacheTopology(++maxTopologyId, maxRebalanceId + 1, mergedTopology.getCurrentCH(),
+                  conflictHash, conflictHash, CacheTopology.Phase.CONFLICT_RESOLUTION, actualMembers, persistentUUIDManager.mapAddresses(actualMembers));
+
+            // Update the currentTopology and try to resolve conflicts
+            context.updateTopologiesAfterMerge(mergedTopology, null, mergedAvailabilityMode, true);
+         }
+         // There's no pendingCH, therefore the topology is in stable phase
+         mergedTopology = new CacheTopology(maxTopologyId + 1, mergedTopology.getRebalanceId(),
+               mergedTopology.getCurrentCH(), null, CacheTopology.Phase.NO_REBALANCE, actualMembers,
+               persistentUUIDManager.mapAddresses(actualMembers));
+      }
+
+      context.updateTopologiesAfterMerge(mergedTopology, maxStableTopology, mergedAvailabilityMode, false);
 
       // It shouldn't be possible to recover from unavailable mode without user action
       if (newAvailabilityMode == AvailabilityMode.DEGRADED_MODE) {
@@ -211,13 +238,13 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
       }
    }
 
-   protected AvailabilityMode computeAvailabilityAfterMerge(AvailabilityStrategyContext context,
-         CacheTopology maxStableTopology, List<Address> newMembers, AvailabilityMode initialMode) {
+   private AvailabilityMode computeAvailabilityAfterMerge(AvailabilityStrategyContext context,
+         CacheTopology maxStableTopology, List<Address> newMembers) {
       if (maxStableTopology != null) {
          List<Address> stableMembers = maxStableTopology.getMembers();
          List<Address> lostMembers = new ArrayList<>(stableMembers);
          lostMembers.removeAll(context.getExpectedMembers());
-         if (isDataLost(maxStableTopology.getCurrentCH(), newMembers)) {
+         if (lostDataCheck.test(maxStableTopology.getCurrentCH(), newMembers)) {
             eventLogManager.getEventLogger().context(context.getCacheName()).error(EventLogCategory.CLUSTER, MESSAGES.keepingDegradedModeAfterMergeDataLost(newMembers, lostMembers, stableMembers));
             return AvailabilityMode.DEGRADED_MODE;
          }
@@ -262,13 +289,5 @@ public class PreferConsistencyStrategy implements AvailabilityStrategy {
       context.updateCurrentTopology(newMembers);
       // Then queue a rebalance to include the joiners as well
       context.queueRebalance(context.getExpectedMembers());
-   }
-
-   private boolean isDataLost(ConsistentHash currentCH, List<Address> newMembers) {
-      for (int i = 0; i < currentCH.getNumSegments(); i++) {
-         if (!InfinispanCollections.containsAny(newMembers, currentCH.locateOwnersForSegment(i)))
-            return true;
-      }
-      return false;
    }
 }

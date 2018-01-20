@@ -15,7 +15,7 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.ch.impl.HashFunctionPartitioner;
-import org.infinispan.distribution.group.PartitionerConsistentHash;
+import org.infinispan.distribution.group.impl.PartitionerConsistentHash;
 import org.infinispan.distribution.group.impl.GroupingPartitioner;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.server.hotrod.transport.ExtendedByteBuf;
@@ -29,7 +29,7 @@ import io.netty.buffer.ByteBuf;
  * @author Galder Zamarreño
  * @since 5.2
  */
-abstract class AbstractTopologyAwareEncoder1x extends AbstractEncoder1x {
+public abstract class AbstractTopologyAwareEncoder1x extends AbstractEncoder1x {
 
    @Override
    protected AbstractHashDistAwareResponse createHashDistAwareResp(int topologyId,

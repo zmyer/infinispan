@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-persistence-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
+      <version>9.2.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -63,14 +63,16 @@
                   <Export-Package>
                      ${project.groupId}.persistence.jpa.*;version=${project.version};-split-package:=error
                   </Export-Package>
-                  <Import-Package>
+                  <Import-Package><![CDATA[
                   *
+                  ]]>
                   </Import-Package>
                   <Include-Resource>
                      {maven-resources},
                      /META-INF/services=${project.basedir}/target/classes/META-INF/services,
                      /OSGI-INF/blueprint/blueprint.xml=${project.basedir}/target/classes/OSGI-INF/blueprint/blueprint.xml
                   </Include-Resource>
+                  <!-- Required for driver loading. -->
                   <DynamicImport-Package>*</DynamicImport-Package>
                </instructions>
             </configuration>
@@ -101,12 +103,12 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration>
-
+               <!-- Tests against single database cannot be executed in paralllel -->
                <threadCount>1</threadCount>
             </configuration>
          </plugin>
          <plugin>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-defaults-maven-plugin</artifactId>
             <version>${project.version}</version>
             <executions>
@@ -118,6 +120,15 @@
                   </goals>
                </execution>
             </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.karaf.tooling</groupId>
+            <artifactId>karaf-maven-plugin</artifactId>
+            <configuration>
+               <features>
+                  <feature>${project.artifactId}</feature>
+               </features>
+            </configuration>
          </plugin>
       </plugins>
    </build>
@@ -134,7 +145,7 @@
       </dependency>
       <dependency>
          <groupId>org.mockito</groupId>
-         <artifactId>mockito-all</artifactId>
+         <artifactId>mockito-core</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -151,6 +162,12 @@
          <groupId>org.osgi</groupId>
          <artifactId>org.osgi.compendium</artifactId>
          <scope>provided</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.karaf.features</groupId>
+        <artifactId>framework</artifactId>
+        <type>kar</type>
+        <scope>provided</scope>
       </dependency>
       <dependency>
          <groupId>org.kohsuke.metainf-services</groupId>

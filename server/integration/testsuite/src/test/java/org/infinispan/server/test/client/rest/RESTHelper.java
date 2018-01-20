@@ -4,23 +4,23 @@ import static org.junit.Assert.assertEquals;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.text.SimpleDateFormat;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
-import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 
 import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.auth.AuthScope;
@@ -32,6 +32,7 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpHead;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.entity.InputStreamEntity;
 import org.apache.http.entity.StringEntity;
@@ -53,53 +54,58 @@ public class RESTHelper {
     public static final String KEY_B = "b";
     public static final String KEY_C = "c";
 
-    private static final String DATE_PATTERN_RFC1123 = "EEE, dd MMM yyyy HH:mm:ss zzz";
+    public static final String DEFAULT_CACHE = "default";
+    private final String cache;
 
-    private static int port = 8080;
-    private static List<Server> servers = new ArrayList<Server>();
-    private static CredentialsProvider credsProvider = new BasicCredentialsProvider();
-    public static CloseableHttpClient client = HttpClients.custom().setDefaultCredentialsProvider(credsProvider).build();
+    public RESTHelper(String cache) {
+        this.cache = cache;
+    }
 
+    public RESTHelper() {
+        cache = DEFAULT_CACHE;
+    }
 
-    public static void addServer(String hostname, String restServerPath) {
+    private int port = 8080;
+    private List<Server> servers = new ArrayList<Server>();
+    private CredentialsProvider credsProvider = new BasicCredentialsProvider();
+    public CloseableHttpClient client = HttpClients.custom().setDefaultCredentialsProvider(credsProvider).build();
+
+    public void addServer(String hostname, String restServerPath) {
         servers.add(new Server(hostname, restServerPath));
     }
 
-    public static void clearServers() {
+    public void clearServers() {
         servers.clear();
     }
 
-    public static void addServer(String hostname, int port, String restServerPath) {
-        RESTHelper.port = port;
+    public void addServer(String hostname, int port, String restServerPath) {
+        this.port = port;
         servers.add(new Server(hostname, restServerPath));
     }
 
     public static String addDay(String aDate, int days) throws Exception {
-        SimpleDateFormat format = new SimpleDateFormat(DATE_PATTERN_RFC1123, Locale.US);
-        Date date = format.parse(aDate);
-        Calendar cal = Calendar.getInstance();
-        cal.setTime(date);
-        cal.add(Calendar.DATE, days);
-        return format.format(cal.getTime());
+        ZonedDateTime date = ZonedDateTime.from(DateTimeFormatter.RFC_1123_DATE_TIME.parse(aDate));
+        date = date.plusDays(days);
+        return DateTimeFormatter.RFC_1123_DATE_TIME.format(date);
     }
 
-    public static HttpResponse head(URI uri) throws Exception {
+    public HttpResponse head(URI uri) throws Exception {
         return head(uri, HttpStatus.SC_OK);
     }
 
-    public static HttpResponse headWithoutClose(URI uri) throws Exception {
+    public HttpResponse headWithoutClose(URI uri) throws Exception {
         return head(uri, HttpStatus.SC_OK);
     }
 
-    public static HttpResponse head(URI uri, int expectedCode) throws Exception {
+    public HttpResponse head(URI uri, int expectedCode) throws Exception {
         return head(uri, expectedCode, new String[0][0]);
     }
 
-    public static HttpResponse headWithoutClose(URI uri, int expectedCode) throws Exception {
+    public HttpResponse headWithoutClose(URI uri, int expectedCode) throws Exception {
         return head(uri, expectedCode, new String[0][0]);
     }
 
-    public static HttpResponse headWithout(URI uri, int expectedCode, String[][] headers) throws Exception {
+    public HttpResponse headWithout(URI uri, int expectedCode, String[][] headers) throws Exception {
         HttpHead head = new HttpHead(uri);
         for (String[] eachHeader : headers) {
             head.setHeader(eachHeader[0], eachHeader[1]);
@@ -109,7 +115,7 @@ public class RESTHelper {
         return resp;
     }
 
-    public static HttpResponse head(URI uri, int expectedCode, String[][] headers) throws Exception {
+    public HttpResponse head(URI uri, int expectedCode, String[][] headers) throws Exception {
         HttpHead head = new HttpHead(uri);
         HttpResponse resp = null;
         try {
@@ -124,31 +130,31 @@ public class RESTHelper {
         return resp;
     }
 
-    public static HttpResponse get(URI uri) throws Exception {
+    public HttpResponse get(URI uri) throws Exception {
         return get(uri, HttpStatus.SC_OK);
     }
 
-    public static HttpResponse getWithoutClose(URI uri) throws Exception {
+    public HttpResponse getWithoutClose(URI uri) throws Exception {
         return getWithoutClose(uri, HttpStatus.SC_OK);
     }
 
-    public static HttpResponse get(URI uri, String expectedResponseBody) throws Exception {
+    public HttpResponse get(URI uri, String expectedResponseBody) throws Exception {
         return get(uri, expectedResponseBody, HttpStatus.SC_OK, true);
     }
 
-    public static HttpResponse getWithoutClose(URI uri, String expectedResponseBody) throws Exception {
+    public HttpResponse getWithoutClose(URI uri, String expectedResponseBody) throws Exception {
         return get(uri, expectedResponseBody, HttpStatus.SC_OK, false);
     }
 
-    public static HttpResponse get(URI uri, int expectedCode) throws Exception {
+    public HttpResponse get(URI uri, int expectedCode) throws Exception {
         return get(uri, null, expectedCode, true, new Object[0]);
     }
 
-    public static HttpResponse getWithoutClose(URI uri, int expectedCode) throws Exception {
+    public HttpResponse getWithoutClose(URI uri, int expectedCode) throws Exception {
         return get(uri, null, expectedCode, false, new Object[0]);
     }
 
-    public static HttpResponse get(URI uri, String expectedResponseBody, int expectedCode, boolean closeConnection, Object... headers) throws Exception {
+    public HttpResponse get(URI uri, String expectedResponseBody, int expectedCode, boolean closeConnection, Object... headers) throws Exception {
         HttpGet get = new HttpGet(uri);
         if (headers.length % 2 != 0)
             throw new IllegalArgumentException("bad headers argument");
@@ -170,7 +176,7 @@ public class RESTHelper {
     }
 
     // the same as the normal get, without the asserts, so the caller can decide what to do in case the request fails
-    public static boolean getWithoutAssert(URI uri, String expectedResponseBody, int expectedCode, boolean closeConnection, Object... headers) throws Exception {
+    public boolean getWithoutAssert(URI uri, String expectedResponseBody, int expectedCode, boolean closeConnection, Object... headers) throws Exception {
         HttpGet get = new HttpGet(uri);
         if (headers.length % 2 != 0)
             throw new IllegalArgumentException("bad headers argument");
@@ -195,15 +201,15 @@ public class RESTHelper {
         return true;
     }
 
-    public static HttpResponse put(URI uri, Object data, String contentType) throws Exception {
+    public HttpResponse put(URI uri, Object data, String contentType) throws Exception {
         return put(uri, data, contentType, HttpStatus.SC_OK);
     }
 
-    public static HttpResponse put(URI uri, Object data, String contentType, int expectedCode) throws Exception {
+    public HttpResponse put(URI uri, Object data, String contentType, int expectedCode) throws Exception {
         return put(uri, data, contentType, expectedCode, new Object[0]);
     }
 
-    public static HttpResponse put(URI uri, Object data, String contentType, int expectedCode, Object... headers)
+    public HttpResponse put(URI uri, Object data, String contentType, int expectedCode, Object... headers)
             throws Exception {
         HttpPut put = new HttpPut(uri);
         if (data instanceof String) {
@@ -222,19 +228,19 @@ public class RESTHelper {
             put.setHeader((String) headers[i], (String) headers[i + 1]);
         }
         HttpResponse resp = client.execute(put);
+        String responseBody = IOUtils.toString(new InputStreamReader(resp.getEntity().getContent()));
         EntityUtils.consume(resp.getEntity());
-        assertEquals(expectedCode, resp.getStatusLine().getStatusCode());
+        assertEquals(responseBody + " [URI=" + uri + "]", expectedCode, resp.getStatusLine().getStatusCode());
         return resp;
     }
 
-    public static void setCredentials(String username, String password) {
+    public void setCredentials(String username, String password) {
         Credentials credentials = new UsernamePasswordCredentials(username, password);
-        credsProvider.setCredentials(
-                new AuthScope(servers.get(0).getHostname(), port), credentials);
+        credsProvider.setCredentials(AuthScope.ANY, credentials);
     }
 
-    public static void setSni(SSLContext sslContext, java.util.Optional<String> sniHostName) {
-        client = HttpClients.custom().setSSLSocketFactory(new SSLConnectionSocketFactory(sslContext, SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER) {
+    public void setSni(SSLContext sslContext, java.util.Optional<String> sniHostName) {
+        client = HttpClients.custom().setSSLSocketFactory(new SSLConnectionSocketFactory(sslContext, NoopHostnameVerifier.INSTANCE) {
             @Override
             protected void prepareSocket(SSLSocket socket) throws IOException {
                 if(sniHostName.isPresent()) {
@@ -246,19 +252,19 @@ public class RESTHelper {
         }).build();
     }
 
-    public static void clearCredentials() {
+    public void clearCredentials() {
         credsProvider.clear();
     }
 
-    public static HttpResponse post(URI uri, Object data, String contentType) throws Exception {
+    public HttpResponse post(URI uri, Object data, String contentType) throws Exception {
         return post(uri, data, contentType, HttpStatus.SC_OK);
     }
 
-    public static HttpResponse post(URI uri, Object data, String contentType, int expectedCode) throws Exception {
+    public HttpResponse post(URI uri, Object data, String contentType, int expectedCode) throws Exception {
         return post(uri, data, contentType, expectedCode, new Object[0]);
     }
 
-    public static HttpResponse post(URI uri, Object data, String contentType, int expectedCode, Object... headers)
+    public HttpResponse post(URI uri, Object data, String contentType, int expectedCode, Object... headers)
             throws Exception {
         HttpPost post = new HttpPost(uri);
         if (data instanceof String) {
@@ -283,14 +289,14 @@ public class RESTHelper {
         return resp;
     }
 
-    public static HttpResponse delete(URI uri) throws Exception {
+    public HttpResponse delete(URI uri) throws Exception {
         HttpDelete delete = new HttpDelete(uri);
         HttpResponse resp = client.execute(delete);
         EntityUtils.consume(resp.getEntity());
         return resp;
     }
 
-    public static HttpResponse delete(URI uri, int expectedCode, Object... headers) throws Exception {
+    public HttpResponse delete(URI uri, int expectedCode, Object... headers) throws Exception {
         HttpDelete delete = new HttpDelete(uri);
         if (headers.length % 2 != 0)
             throw new IllegalArgumentException("bad headers argument");
@@ -299,14 +305,14 @@ public class RESTHelper {
         }
         HttpResponse resp = client.execute(delete);
         EntityUtils.consume(resp.getEntity());
-        assertEquals(expectedCode, resp.getStatusLine().getStatusCode());
+        assertEquals("URI=" + uri, expectedCode, resp.getStatusLine().getStatusCode());
         return resp;
     }
 
     /**
      * returns full uri for given server number cache name and key if key is null the key part is ommited
      */
-    public static URI fullPathKey(int server, String cache, String key, int offset) {
+    public URI fullPathKey(int server, String cache, String key, int offset) {
         final StringBuilder queryBuilder = new StringBuilder(servers.get(server).getRestServerPath() + "/" + cache);
         if (key != null) {
             queryBuilder.append("/").append(key);
@@ -327,7 +333,7 @@ public class RESTHelper {
         }
     }
 
-    public static URI toSsl(URI uri) {
+    public URI toSsl(URI uri) {
         try {
             return new URI(uri.toString().replaceFirst("http", "https"));
         } catch (URISyntaxException e) {
@@ -335,27 +341,31 @@ public class RESTHelper {
         }
     }
 
-    public static URI fullPathKey(int server, String key) {
-        return fullPathKey(server, "___defaultcache", key, 0);
+    public URI fullPathKey(int server, String key) {
+        return fullPathKey(server, cache, key, 0);
     }
 
-    public static URI fullPathKey(int server, String key, int portOffset) {
-        return fullPathKey(server, "___defaultcache", key, portOffset);
+    public URI fullPathKey(int server, String key, int portOffset) {
+        return fullPathKey(server, cache, key, portOffset);
     }
 
-    public static URI fullPathKey(String key) {
+    public URI fullPathKey(String cache, int server, String key, int portOffset) {
+        return fullPathKey(server, cache, key, portOffset);
+    }
+
+    public URI fullPathKey(String key) {
         return fullPathKey(0, key);
     }
 
-    public static URI fullPathKey(String cache, String key) {
+    public URI fullPathKey(String cache, String key) {
         return fullPathKey(0, cache, key, 0);
     }
 
-    public static URI fullPathKey(String cache, String key, int portOffset) {
+    public URI fullPathKey(String cache, String key, int portOffset) {
         return fullPathKey(0, cache, key, portOffset);
     }
 
-    public static List<Server> getServers() {
+    public List<Server> getServers() {
         return servers;
     }
 

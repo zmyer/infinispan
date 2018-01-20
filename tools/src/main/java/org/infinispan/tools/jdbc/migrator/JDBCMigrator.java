@@ -10,14 +10,13 @@ import javax.transaction.Status;
 import javax.transaction.TransactionManager;
 
 import org.infinispan.AdvancedCache;
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.configuration.global.SerializationConfigurationBuilder;
 import org.infinispan.context.Flag;
 import org.infinispan.manager.DefaultCacheManager;
-import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.MarshalledEntry;
 
 /**
@@ -27,18 +26,14 @@ import org.infinispan.marshall.core.MarshalledEntry;
 public class JDBCMigrator {
 
    private static final int DEFAULT_BATCH_SIZE = 1000;
-
-   private final GlobalConfiguration globalConfiguration = new GlobalConfigurationBuilder()
-         .globalJmxStatistics()
-         .allowDuplicateDomains(true)
-         .build();
+   private final String defaultCacheName = this.getClass().getName();
    private final Properties properties;
 
-   private JDBCMigrator(Properties properties) {
+   JDBCMigrator(Properties properties) {
       this.properties = properties;
    }
 
-   private void run() throws Exception {
+   void run() throws Exception {
       String batchSizeProp = properties.getProperty(BATCH + "." + SIZE);
       int batchLimit = batchSizeProp != null ? new Integer(batchSizeProp) : DEFAULT_BATCH_SIZE;
 
@@ -64,25 +59,20 @@ public class JDBCMigrator {
 
    private JdbcStoreReader initAndGetSourceReader() {
       MigratorConfiguration config = new MigratorConfiguration(true, properties);
-      if (!config.hasCustomMarshaller()) {
-         EmbeddedCacheManager manager = new DefaultCacheManager(globalConfiguration);
-         StreamingMarshaller marshaller = manager.getCache().getAdvancedCache().getComponentRegistry().getComponent(StreamingMarshaller.class);
-         config.setMarshaller(marshaller);
-      }
       return new JdbcStoreReader(config);
    }
 
    private AdvancedCache initAndGetTargetCache() {
       MigratorConfiguration config = new MigratorConfiguration(false, properties);
-      GlobalConfiguration globalConfig = globalConfiguration;
-      if (config.hasCustomMarshaller()) {
-         globalConfig = new GlobalConfigurationBuilder()
-               .globalJmxStatistics().allowDuplicateDomains(true)
-               .serialization().marshaller(config.getMarshaller())
-               .build();
-      }
+      GlobalConfigurationBuilder builder = new GlobalConfigurationBuilder();
+      builder.defaultCacheName(defaultCacheName);
+
+      SerializationConfigurationBuilder serialBuilder = builder.serialization().marshaller(config.getMarshaller());
+      config.addExternalizersToConfig(serialBuilder);
+      GlobalConfiguration globalConfig = builder.build();
+
       Configuration cacheConfig = new ConfigurationBuilder().persistence().addStore(config.getJdbcConfigBuilder()).build();
-      DefaultCacheManager targetCacheManager = new DefaultCacheManager(globalConfig);
+      DefaultCacheManager targetCacheManager = new DefaultCacheManager(globalConfig, new ConfigurationBuilder().build());
       targetCacheManager.defineConfiguration(config.cacheName, cacheConfig);
       return targetCacheManager.getCache(config.cacheName).getAdvancedCache().withFlags(Flag.SKIP_CACHE_LOAD);
    }

@@ -2,6 +2,7 @@ package org.infinispan.objectfilter.impl.predicateindex;
 
 import java.io.IOException;
 
+import org.infinispan.objectfilter.impl.logging.Log;
 import org.infinispan.protostream.MessageContext;
 import org.infinispan.protostream.ProtobufParser;
 import org.infinispan.protostream.SerializationContext;
@@ -9,13 +10,17 @@ import org.infinispan.protostream.TagHandler;
 import org.infinispan.protostream.WrappedMessage;
 import org.infinispan.protostream.descriptors.Descriptor;
 import org.infinispan.protostream.descriptors.FieldDescriptor;
+import org.infinispan.protostream.descriptors.GenericDescriptor;
 import org.infinispan.protostream.descriptors.JavaType;
+import org.jboss.logging.Logger;
 
 /**
  * @author anistor@redhat.com
  * @since 7.0
  */
 public final class ProtobufMatcherEvalContext extends MatcherEvalContext<Descriptor, FieldDescriptor, Integer> implements TagHandler {
+
+   private static final Log log = Logger.getMessageLogger(Log.class, ProtobufMatcherEvalContext.class.getName());
 
    private boolean payloadStarted = false;
    private int skipping = 0;
@@ -33,7 +38,7 @@ public final class ProtobufMatcherEvalContext extends MatcherEvalContext<Descrip
       try {
          ProtobufParser.INSTANCE.parse(this, wrappedMessageDescriptor, (byte[]) getInstance());
       } catch (IOException e) {
-         throw new RuntimeException(e);  // TODO [anistor] proper exception handling needed
+         throw log.errorParsingProtobuf(e);
       }
    }
 
@@ -43,7 +48,7 @@ public final class ProtobufMatcherEvalContext extends MatcherEvalContext<Descrip
    }
 
    @Override
-   public void onStart() {
+   public void onStart(GenericDescriptor descriptor) {
    }
 
    //todo [anistor] missing tags need to be fired with default value defined in proto schema or null if they admit null; missing messages need to be fired with null at end of the nesting level. BTW, seems like this is better to be included in Protostream as a feature

@@ -1,26 +1,23 @@
 package org.infinispan.functional;
 
+import static org.infinispan.test.Exceptions.assertException;
+import static org.infinispan.test.Exceptions.assertExceptionNonStrict;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
-import java.io.Serializable;
 import java.util.NoSuchElementException;
-import java.util.function.BiConsumer;
-import java.util.function.Function;
+import java.util.concurrent.CompletionException;
 
 import javax.transaction.RollbackException;
 import javax.transaction.xa.XAException;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.api.functional.EntryView.ReadEntryView;
-import org.infinispan.commons.api.functional.EntryView.WriteEntryView;
-import org.infinispan.commons.api.functional.FunctionalMap;
-import org.infinispan.commons.api.functional.Param;
 import org.infinispan.functional.impl.ReadOnlyMapImpl;
 import org.infinispan.remoting.RemoteException;
+import org.infinispan.test.TestException;
 import org.testng.annotations.Test;
 
 /**
@@ -35,31 +32,30 @@ public class FunctionalInMemoryTest extends AbstractFunctionalOpTest {
 
    @Test(dataProvider = "owningModeAndWriteMethod")
    public void testWriteLoad(boolean isOwner, WriteMethod method) {
-      Object key = getKey(isOwner);
+      Object key = getKey(isOwner, DIST);
 
-      method.action.eval(key, wo, rw,
-            (Function<ReadEntryView<Object, String>, Void> & Serializable) view -> { assertFalse(view.find().isPresent()); return null; },
-            (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> view.set("value"), getClass());
+      method.eval(key, wo, rw,
+            view -> { assertFalse(view.find().isPresent()); return null; },
+            (view, nil) -> view.set("value"), getClass());
 
       assertInvocations(Boolean.TRUE.equals(transactional) && !isOwner && !method.doesRead ? 3 : 2);
 
       caches(DIST).forEach(cache -> assertEquals(cache.get(key), "value", getAddress(cache).toString()));
       caches(DIST).forEach(cache -> {
          if (cache.getAdvancedCache().getDistributionManager().getLocality(key).isLocal()) {
-            assertTrue(cache.getAdvancedCache().getDataContainer().containsKey(key), getAddress(cache).toString());
+            assertTrue(cacheContainsKey(key, cache), getAddress(cache).toString());
          } else {
-            assertFalse(cache.getAdvancedCache().getDataContainer().containsKey(key), getAddress(cache).toString());
+            assertFalse(cacheContainsKey(key, cache), getAddress(cache).toString());
          }
       });
 
-      method.action.eval(key, wo, rw,
-            (Function<ReadEntryView<Object, String>, Void> & Serializable) view -> {
+      method.eval(key, wo, rw,
+            view -> {
                assertTrue(view.find().isPresent());
                assertEquals(view.get(), "value");
                return null;
             },
-            (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> {
-            }, getClass());
+            (view, nil) -> {}, getClass());
 
       assertInvocations(Boolean.TRUE.equals(transactional) && !isOwner && !method.doesRead ? 6 : 4);
    }
@@ -68,35 +64,35 @@ public class FunctionalInMemoryTest extends AbstractFunctionalOpTest {
    public void testWriteLoadLocal(WriteMethod method) {
       Integer key = 1;
 
-      method.action.eval(key, lwo, lrw,
-            (Function<ReadEntryView<Integer, String>, Void> & Serializable) view -> { assertFalse(view.find().isPresent()); return null; },
-            (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> view.set("value"), getClass());
+      method.eval(key, lwo, lrw,
+            view -> { assertFalse(view.find().isPresent()); return null; },
+            (view, nil) -> view.set("value"), getClass());
 
       assertInvocations(1);
       assertEquals(cacheManagers.get(0).getCache().get(key), "value");
 
-      method.action.eval(key, lwo, lrw,
-            (Function<ReadEntryView<Integer, String>, Void> & Serializable) view -> {
+      method.eval(key, lwo, lrw,
+            view -> {
                assertTrue(view.find().isPresent());
                assertEquals(view.get(), "value");
                return null;
             },
-            (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> {}, getClass());
+            (view, nil) -> {}, getClass());
 
       assertInvocations(2);
    }
 
    @Test(dataProvider = "owningModeAndWriteMethod")
    public void testExceptionPropagation(boolean isOwner, WriteMethod method) {
-      Object key = getKey(isOwner);
+      Object key = getKey(isOwner, DIST);
       try {
-         method.action.eval(key, wo, rw,
-               (Function<ReadEntryView<Object, String>, Void> & Serializable) view -> null,
-               (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> {
+         method.eval(key, wo, rw,
+               view -> null,
+               (view, nil) -> {
                   throw new TestException();
                }, getClass());
-         fail("Should throw CacheException:TestException");
-      } catch (CacheException e) { // catches RemoteExceptions, too
+         fail("Should throw CompletionException:CacheException:[RemoteException:]*TestException");
+      } catch (CacheException | CompletionException e) { // catches RemoteExceptions, too
          Throwable t = e;
          if (Boolean.TRUE.equals(transactional) && t.getCause() instanceof RollbackException) {
             Throwable[] suppressed = t.getCause().getSuppressed();
@@ -106,36 +102,41 @@ public class FunctionalInMemoryTest extends AbstractFunctionalOpTest {
                t = t.getCause();
             }
          }
+         assertException(CompletionException.class, t);
+         t = t.getCause();
+         assertExceptionNonStrict(CacheException.class, t);
          while (t.getCause() instanceof RemoteException && t != t.getCause()) {
             t = t.getCause();
          }
-         assertEquals(t.getCause().getClass(), TestException.class);
+         assertException(TestException.class, t.getCause());
       }
    }
 
    @Test(dataProvider = "owningModeAndReadWrites")
    public void testWriteOnMissingValue(boolean isOwner, WriteMethod method) {
-      Object key = getKey(isOwner);
+      Object key = getKey(isOwner, DIST);
       try {
-         method.action.eval(key, null, rw,
-               (Function<ReadEntryView<Object, String>, Object> & Serializable) view -> view.get(),
-               (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> {}, getClass());
-         fail("Should throw CacheException:NoSuchElem entException");
-      } catch (CacheException e) { // catches RemoteExceptions, too
+         method.eval(key, null, rw,
+               view -> view.get(),
+               (view, nil) -> {}, getClass());
+         fail("Should throw CompletionException:CacheException:[RemoteException:]*NoSuchElementException");
+      } catch (CompletionException e) { // catches RemoteExceptions, too
          Throwable t = e;
-         while (t.getCause() instanceof RemoteException) {
+         assertException(CompletionException.class, t);
+         t = t.getCause();
+         assertExceptionNonStrict(CacheException.class, t);
+         while (t.getCause() instanceof RemoteException && t != t.getCause()) {
             t = t.getCause();
          }
-         assertEquals(t.getCause().getClass(), NoSuchElementException.class);
+         assertException(NoSuchElementException.class, t.getCause());
       }
    }
 
    @Test(dataProvider = "owningModeAndReadMethod")
    public void testReadLoad(boolean isOwner, ReadMethod method) {
-      Object key = getKey(isOwner);
+      Object key = getKey(isOwner, DIST);
 
-      assertTrue((Boolean) method.action.eval(key, ro,
-            (Function<ReadEntryView<Object, String>, Boolean> & Serializable) view -> { assertFalse(view.find().isPresent()); return true; }));
+      assertTrue(method.eval(key, ro, view -> { assertFalse(view.find().isPresent()); return true; }));
 
       // we can't add from read-only cache, so we put manually:
       cache(0, DIST).put(key, "value");
@@ -143,14 +144,14 @@ public class FunctionalInMemoryTest extends AbstractFunctionalOpTest {
       caches(DIST).forEach(cache -> assertEquals(cache.get(key), "value", getAddress(cache).toString()));
       caches(DIST).forEach(cache -> {
          if (cache.getAdvancedCache().getDistributionManager().getLocality(key).isLocal()) {
-            assertTrue(cache.getAdvancedCache().getDataContainer().containsKey(key), getAddress(cache).toString());
+            assertTrue(cacheContainsKey(key, cache), getAddress(cache).toString());
          } else {
-            assertFalse(cache.getAdvancedCache().getDataContainer().containsKey(key), getAddress(cache).toString());
+            assertFalse(cacheContainsKey(key, cache), getAddress(cache).toString());
          }
       });
 
-      assertEquals(method.action.eval(key, ro,
-            (Function<ReadEntryView<Object, String>, String> & Serializable) view -> {
+      assertEquals(method.eval(key, ro,
+            view -> {
                assertTrue(view.find().isPresent());
                assertEquals(view.get(), "value");
                return "OK";
@@ -161,8 +162,8 @@ public class FunctionalInMemoryTest extends AbstractFunctionalOpTest {
    public void testReadLoadLocal(ReadMethod method) {
       Integer key = 1;
 
-      assertTrue((Boolean) method.action.eval(key, lro,
-            (Function<ReadEntryView<Object, String>, Boolean> & Serializable) view -> { assertFalse(view.find().isPresent()); return true; }));
+      assertTrue((Boolean) method.eval(key, lro,
+            view -> { assertFalse(view.find().isPresent()); return true; }));
 
       // we can't add from read-only cache, so we put manually:
       Cache<Integer, String> cache = cacheManagers.get(0).getCache();
@@ -170,8 +171,8 @@ public class FunctionalInMemoryTest extends AbstractFunctionalOpTest {
 
       assertEquals(cache.get(key), "value");
 
-      assertEquals(method.action.eval(key, lro,
-            (Function<ReadEntryView<Object, String>, String> & Serializable) view -> {
+      assertEquals(method.eval(key, lro,
+            view -> {
                assertTrue(view.find().isPresent());
                assertEquals(view.get(), "value");
                return "OK";
@@ -180,25 +181,15 @@ public class FunctionalInMemoryTest extends AbstractFunctionalOpTest {
 
    @Test(dataProvider = "owningModeAndReadMethod")
    public void testReadOnMissingValue(boolean isOwner, ReadMethod method) {
-      testReadOnMissingValue(getKey(isOwner), ro, method);
+      testReadOnMissingValue(getKey(isOwner, DIST), ro, method);
    }
 
    @Test(dataProvider = "methods")
    public void testOnMissingValueLocal(ReadMethod method) {
-      testReadOnMissingValue(0, ReadOnlyMapImpl.create(fmapL1).withParams(Param.FutureMode.COMPLETED), method);
+      testReadOnMissingValue(0, ReadOnlyMapImpl.create(fmapL1), method);
    }
 
-   private <K> void testReadOnMissingValue(K key, FunctionalMap.ReadOnlyMap<K, String> ro, ReadMethod method) {
-      assertEquals(ro.eval(key,
-            (Function<ReadEntryView<K, String>, Boolean> & Serializable) (view -> view.find().isPresent())).join(), Boolean.FALSE);
-      try {
-         method.action.eval(key, ro, (Function<ReadEntryView<K, String>, Object> & Serializable) view -> view.get());
-         fail("Should throw CacheException:NoSuchElementException");
-      } catch (CacheException e) { // catches RemoteException, too
-         assertEquals(e.getCause().getClass(), NoSuchElementException.class);
-      }
-   }
-
-   private static class TestException extends RuntimeException {
+   protected boolean cacheContainsKey(Object key, Cache<Object, Object> cache) {
+      return cache.getAdvancedCache().getDataContainer().containsKey(key);
    }
 }

@@ -3,11 +3,13 @@ package org.infinispan.expiration.impl;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNull;
 
+import java.lang.invoke.MethodHandles;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.context.Flag;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -25,10 +27,10 @@ import org.testng.annotations.Test;
  * @since 8.0
  */
 @Test(groups = "functional", testName = "expiration.impl.ClusterExpirationFunctionalTest")
-@InCacheMode({CacheMode.DIST_SYNC, CacheMode.REPL_SYNC})
+@InCacheMode({CacheMode.DIST_SYNC, CacheMode.REPL_SYNC, CacheMode.SCATTERED_SYNC})
 public class ClusterExpirationFunctionalTest extends MultipleCacheManagersTest {
 
-   protected final Log log = LogFactory.getLog(getClass());
+   protected static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
    protected ControlledTimeService ts0;
    protected ControlledTimeService ts1;
@@ -52,11 +54,12 @@ public class ClusterExpirationFunctionalTest extends MultipleCacheManagersTest {
    }
 
    protected void injectTimeServices() {
-      ts0 = new ControlledTimeService(0);
+      long now = System.currentTimeMillis();
+      ts0 = new ControlledTimeService(now);
       TestingUtil.replaceComponent(manager(0), TimeService.class, ts0, true);
-      ts1 = new ControlledTimeService(0);
+      ts1 = new ControlledTimeService(now);
       TestingUtil.replaceComponent(manager(1), TimeService.class, ts1, true);
-      ts2 = new ControlledTimeService(0);
+      ts2 = new ControlledTimeService(now);
       TestingUtil.replaceComponent(manager(2), TimeService.class, ts2, true);
    }
 
@@ -70,7 +73,7 @@ public class ClusterExpirationFunctionalTest extends MultipleCacheManagersTest {
 
    private void testExpiredEntryRetrieval(Cache<Object, String> primaryOwner, Cache<Object, String> backupOwner,
            ControlledTimeService timeService, boolean expireOnPrimary) throws Exception {
-      MagicKey key = new MagicKey(primaryOwner, backupOwner);
+      MagicKey key = createKey(primaryOwner, backupOwner);
       primaryOwner.put(key, key.toString(), 10, TimeUnit.MINUTES);
 
       assertEquals(key.toString(), primaryOwner.get(key));
@@ -89,18 +92,38 @@ public class ClusterExpirationFunctionalTest extends MultipleCacheManagersTest {
          otherCache = primaryOwner;
       }
 
-      assertEquals(key.toString(), otherCache.get(key));
+      Cache<?, ?> other;
+      if (cacheMode.isScattered()) {
+         // In scattered cache the read would go
+         other = otherCache.getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL, Flag.SKIP_OWNERSHIP_CHECK);
+      } else {
+         other = otherCache;
+      }
+      assertEquals(key.toString(), other.get(key));
 
       // By calling get on an expired key it will remove it all over
       Object expiredValue = expiredCache.get(key);
-      assertNull(expiredValue);
-      // This should be expired on the other node soon - note expiration is done asynchronously on a get
-      eventually(() -> !otherCache.containsKey(key), 10, TimeUnit.SECONDS);
+      // In scattered mode, the get goes from backup to remote node where the time has not passed yet,
+      // therefore it is not expired. We don't check expiration on local node after receiving the response.
+      if (cacheMode.isScattered() && !expireOnPrimary) {
+         assertEquals(key.toString(), expiredValue);
+      }  else {
+         assertNull(expiredValue);
+         // This should be expired on the other node soon - note expiration is done asynchronously on a get
+         eventually(() -> !other.containsKey(key), 10, TimeUnit.SECONDS);
+      }
+   }
 
+   private MagicKey createKey(Cache<Object, String> primaryOwner, Cache<Object, String> backupOwner) {
+      if (cacheMode.isScattered()) {
+         return new MagicKey(primaryOwner);
+      } else {
+         return new MagicKey(primaryOwner, backupOwner);
+      }
    }
 
    public void testExpiredOnBoth() {
-      MagicKey key = new MagicKey(cache0, cache1);
+      MagicKey key = createKey(cache0, cache1);
       cache0.put(key, key.toString(), 10, TimeUnit.MINUTES);
 
       assertEquals(key.toString(), cache0.get(key));

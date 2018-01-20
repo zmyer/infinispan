@@ -1,17 +1,25 @@
 package org.infinispan.manager;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.infinispan.test.Exceptions.expectException;
 import static org.infinispan.test.TestingUtil.k;
 import static org.infinispan.test.TestingUtil.killCacheManagers;
 import static org.infinispan.test.TestingUtil.v;
 import static org.infinispan.test.TestingUtil.withCacheManager;
 import static org.infinispan.test.TestingUtil.withCacheManagers;
 import static org.infinispan.test.fwk.TestCacheManagerFactory.createCacheManager;
+import static org.infinispan.test.fwk.TestCacheManagerFactory.createClusteredCacheManager;
 import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertFalse;
+import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
 import java.lang.reflect.Method;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeoutException;
 
 import org.infinispan.Cache;
 import org.infinispan.IllegalLifecycleStateException;
@@ -29,19 +37,26 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.InterceptorConfiguration;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
 import org.infinispan.configuration.cache.SingletonStoreConfiguration;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.container.DataContainer;
-import org.infinispan.eviction.EvictionStrategy;
-import org.infinispan.interceptors.base.BaseCustomInterceptor;
+import org.infinispan.interceptors.BaseCustomAsyncInterceptor;
 import org.infinispan.lifecycle.ComponentStatus;
+import org.infinispan.marshall.core.GlobalMarshaller;
 import org.infinispan.marshall.core.MarshalledEntry;
+import org.infinispan.notifications.Listener;
+import org.infinispan.notifications.cachemanagerlistener.annotation.CacheStarted;
+import org.infinispan.notifications.cachemanagerlistener.annotation.CacheStopped;
+import org.infinispan.notifications.cachemanagerlistener.event.CacheStartedEvent;
+import org.infinispan.notifications.cachemanagerlistener.event.CacheStoppedEvent;
 import org.infinispan.persistence.dummy.DummyInMemoryStore;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.persistence.spi.ExternalStore;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.CacheManagerCallable;
+import org.infinispan.test.Exceptions;
 import org.infinispan.test.MultiCacheManagerCallable;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
@@ -53,20 +68,18 @@ import org.testng.annotations.Test;
  */
 @Test(groups = {"functional", "smoke"}, testName = "manager.CacheManagerTest")
 public class CacheManagerTest extends AbstractInfinispanTest {
+   private static final java.lang.String CACHE_NAME = "name";
+
    public void testDefaultCache() {
       EmbeddedCacheManager cm = createCacheManager(false);
 
       try {
-         assert cm.getCache().getStatus() == ComponentStatus.RUNNING;
-         assert cm.getCache().getName().equals(CacheContainer.DEFAULT_CACHE_NAME);
+         assertEquals(ComponentStatus.RUNNING, cm.getCache().getStatus());
+         assertTrue(cm.getCache().getName().equals(CacheContainer.DEFAULT_CACHE_NAME));
 
-         try {
-            cm.defineConfiguration(CacheContainer.DEFAULT_CACHE_NAME, new ConfigurationBuilder().build());
-            assert false : "Should fail";
-         }
-         catch (IllegalArgumentException e) {
-            assert true; // ok
-         }
+         expectException(IllegalArgumentException.class,
+                         () -> cm.defineConfiguration(CacheContainer.DEFAULT_CACHE_NAME,
+                                                      new ConfigurationBuilder().build()));
       } finally {
          TestingUtil.killCacheManagers(cm);
       }
@@ -76,22 +89,22 @@ public class CacheManagerTest extends AbstractInfinispanTest {
       withCacheManager(new CacheManagerCallable(createCacheManager(false)){
          @Override
          public void call() {
-            assert cm.getStatus().equals(ComponentStatus.INSTANTIATED);
-            assert !cm.getStatus().allowInvocations();
+            assertTrue(cm.getStatus().equals(ComponentStatus.INSTANTIATED));
+            assertFalse(cm.getStatus().allowInvocations());
             Cache<Object, Object> cache = cm.getCache();
             cache.put("k","v");
-            assert cache.get("k").equals("v");
+            assertTrue(cache.get("k").equals("v"));
          }
       });
    }
 
+   @Test(expectedExceptions = CacheConfigurationException.class)
    public void testClashingNames() {
       EmbeddedCacheManager cm = createCacheManager(false);
       try {
          ConfigurationBuilder c = new ConfigurationBuilder();
-         Configuration firstDef = cm.defineConfiguration("aCache", c.build());
-         Configuration secondDef = cm.defineConfiguration("aCache", c.build());
-         assert firstDef.equals(secondDef);
+         cm.defineConfiguration("aCache", c.build());
+         cm.defineConfiguration("aCache", c.build());
       } finally {
          TestingUtil.killCacheManagers(cm);
       }
@@ -107,15 +120,15 @@ public class CacheManagerTest extends AbstractInfinispanTest {
          Cache<?, ?> c2 = cm.getCache("cache2");
          Cache<?, ?> c3 = cm.getCache("cache3");
 
-         assert c1.getStatus() == ComponentStatus.RUNNING;
-         assert c2.getStatus() == ComponentStatus.RUNNING;
-         assert c3.getStatus() == ComponentStatus.RUNNING;
+         assertEquals(ComponentStatus.RUNNING, c1.getStatus());
+         assertEquals(ComponentStatus.RUNNING, c2.getStatus());
+         assertEquals(ComponentStatus.RUNNING, c3.getStatus());
 
          cm.stop();
 
-         assert c1.getStatus() == ComponentStatus.TERMINATED;
-         assert c2.getStatus() == ComponentStatus.TERMINATED;
-         assert c3.getStatus() == ComponentStatus.TERMINATED;
+         assertEquals(ComponentStatus.TERMINATED, c1.getStatus());
+         assertEquals(ComponentStatus.TERMINATED, c2.getStatus());
+         assertEquals(ComponentStatus.TERMINATED, c3.getStatus());
       } finally {
          TestingUtil.killCacheManagers(cm);
       }
@@ -123,53 +136,42 @@ public class CacheManagerTest extends AbstractInfinispanTest {
 
    public void testDefiningConfigurationValidation() {
       EmbeddedCacheManager cm = createCacheManager(false);
-      try {
-         cm.defineConfiguration("cache1", (Configuration) null);
-         assert false : "Should fail";
-      } catch(NullPointerException npe) {
-         assert npe.getMessage() != null;
-      }
 
-      try {
-         cm.defineConfiguration(null, (Configuration) null);
-         assert false : "Should fail";
-      } catch(NullPointerException npe) {
-         assert npe.getMessage() != null;
-      }
+      expectException(NullPointerException.class,
+                      () -> cm.defineConfiguration("cache1", null));
 
-      try {
-         cm.defineConfiguration(null, new ConfigurationBuilder().build());
-         assert false : "Should fail";
-      } catch(NullPointerException npe) {
-         assert npe.getMessage() != null;
-      }
+      expectException(NullPointerException.class,
+                      () -> cm.defineConfiguration(null, null));
+
+      expectException(NullPointerException.class,
+                      () -> cm.defineConfiguration(null, new ConfigurationBuilder().build()));
    }
 
    public void testDefiningConfigurationOverridingBooleans() {
       EmbeddedCacheManager cm = createCacheManager(false);
       ConfigurationBuilder c = new ConfigurationBuilder();
-      c.storeAsBinary().enable();
+      c.memory().storageType(StorageType.BINARY);
       Configuration lazy = cm.defineConfiguration("storeAsBinary", c.build());
-      assert lazy.storeAsBinary().enabled();
+      assertEquals(StorageType.BINARY, lazy.memory().storageType());
 
       c = new ConfigurationBuilder().read(lazy);
-      c.eviction().strategy(EvictionStrategy.LRU).maxEntries(1);
-      Configuration lazyLru = cm.defineConfiguration("lazyDeserializationWithLRU", c.build());
-      assert lazy.storeAsBinary().enabled();
-      assert lazyLru.eviction().strategy() == EvictionStrategy.LRU;
+      c.memory().storageType(StorageType.OFF_HEAP).size(1);
+      Configuration lazyOffHeap = cm.defineConfiguration("lazyDeserializationWithOffHeap", c.build());
+      assertEquals(StorageType.OFF_HEAP, lazyOffHeap.memory().storageType());
+      assertEquals(1, lazyOffHeap.memory().size());
    }
 
    public void testDefineConfigurationTwice() {
       EmbeddedCacheManager cm = createCacheManager(false);
       try {
          Configuration override = new ConfigurationBuilder().invocationBatching().enable().build();
-         assert override.invocationBatching().enabled();
-         assert cm.defineConfiguration("test1", override).invocationBatching().enabled();
+         assertTrue(override.invocationBatching().enabled());
+         assertTrue(cm.defineConfiguration("test1", override).invocationBatching().enabled());
          ConfigurationBuilder cb = new ConfigurationBuilder();
          cb.read(override);
          Configuration config = cb.build();
-         assert config.invocationBatching().enabled();
-         assert cm.defineConfiguration("test2", config).invocationBatching().enabled();
+         assertTrue(config.invocationBatching().enabled());
+         assertTrue(cm.defineConfiguration("test2", config).invocationBatching().enabled());
       } finally {
          cm.stop();
       }
@@ -185,42 +187,6 @@ public class CacheManagerTest extends AbstractInfinispanTest {
       } finally {
          cm.stop();
       }
-   }
-
-   public void testGetCacheConfigurationAfterDefiningSameOldConfigurationTwice() {
-      withCacheManager(new CacheManagerCallable(createCacheManager(false)) {
-         @Override
-         public void call() {
-            ConfigurationBuilder c = new ConfigurationBuilder();
-            c.invocationBatching().enable(false);
-            Configuration newConfig = cm.defineConfiguration("new-cache", c.build());
-            assert !newConfig.invocationBatching().enabled();
-
-            c = new ConfigurationBuilder();
-            c.invocationBatching().enable();
-            Configuration newConfig2 = cm.defineConfiguration("new-cache", c.build());
-            assert newConfig2.invocationBatching().enabled();
-            assert cm.getCache("new-cache").getCacheConfiguration().invocationBatching().enabled();
-         }
-      });
-   }
-
-   public void testGetCacheConfigurationAfterDefiningSameNewConfigurationTwice() {
-      withCacheManager(new CacheManagerCallable(createCacheManager(false)) {
-         @Override
-         public void call() {
-            ConfigurationBuilder builder = new ConfigurationBuilder();
-            builder.invocationBatching().disable();
-            Configuration newConfig = cm.defineConfiguration("new-cache", builder.build());
-            assert !newConfig.invocationBatching().enabled();
-
-            builder = new ConfigurationBuilder();
-            builder.invocationBatching().enable();
-            Configuration newConfig2 = cm.defineConfiguration("new-cache", builder.build());
-            assert newConfig2.invocationBatching().enabled();
-            assert cm.getCache("new-cache").getCacheConfiguration().invocationBatching().enabled();
-         }
-      });
    }
 
    public void testGetCacheNames() {
@@ -292,12 +258,55 @@ public class CacheManagerTest extends AbstractInfinispanTest {
       }
    }
 
+   public void testConcurrentCacheManagerStopAndGetCache() throws Exception {
+      EmbeddedCacheManager manager = createCacheManager(false);
+      CompletableFuture<Void> cacheStartBlocked = new CompletableFuture<>();
+      CompletableFuture<Void> cacheStartResumed = new CompletableFuture<>();
+      CompletableFuture<Void> managerStopBlocked = new CompletableFuture<>();
+      CompletableFuture<Void> managerStopResumed = new CompletableFuture<>();
+      try {
+         manager.addListener(new MyListener(CACHE_NAME, cacheStartBlocked, cacheStartResumed));
+         TestingUtil.replaceComponent(manager, GlobalMarshaller.class, new GlobalMarshaller() {
+            @Override
+            public void stop() {
+               log.tracef("Stopping global component registry");
+               managerStopBlocked.complete(null);
+               managerStopResumed.join();
+               super.stop();
+            }
+         }, true);
+
+         Future<?> cacheStartFuture = fork(() -> manager.getCache(CACHE_NAME));
+         cacheStartBlocked.get(10, SECONDS);
+
+         Future<?> managerStopFuture = fork(() -> manager.stop());
+         Exceptions.expectException(TimeoutException.class, () -> managerStopBlocked.get(1, SECONDS));
+
+         Future<?> cacheStartFuture2 = fork(() -> manager.getCache(CACHE_NAME));
+         Exceptions.expectExecutionException(IllegalLifecycleStateException.class, cacheStartFuture2);
+
+         cacheStartResumed.complete(null);
+         cacheStartFuture.get(10, SECONDS);
+
+         managerStopBlocked.get(10, SECONDS);
+         managerStopResumed.complete(null);
+         managerStopFuture.get(10, SECONDS);
+      } finally {
+         cacheStartBlocked.complete(null);
+         cacheStartResumed.complete(null);
+         managerStopBlocked.complete(null);
+         managerStopResumed.complete(null);
+
+         TestingUtil.killCacheManagers(manager);
+      }
+   }
+
    public void testRemoveNonExistentCache(Method m) {
       EmbeddedCacheManager manager = getManagerWithStore(m, false, false);
       try {
          manager.getCache("cache");
          // An attempt to remove a non-existing cache should be a no-op
-         manager.removeCache("does-not-exist");
+         manager.administration().removeCache("does-not-exist");
       } finally {
          manager.stop();
       }
@@ -312,15 +321,15 @@ public class CacheManagerTest extends AbstractInfinispanTest {
          cache.put(k(m, 3), v(m, 3));
          DummyInMemoryStore store = getDummyStore(cache);
          DataContainer data = getDataContainer(cache);
-         assert !store.isEmpty();
-         assert 0 != data.size();
-         manager.removeCache("cache");
-         assert store.isEmpty();
-         assert 0 == data.size();
+         assertFalse(store.isEmpty());
+         assertTrue(0 != data.size());
+         manager.administration().removeCache("cache");
+         assertEquals(0, DummyInMemoryStore.getStoreDataSize(store.getStoreName()));
+         assertEquals(0, data.size());
          // Try removing the cache again, it should be a no-op
-         manager.removeCache("cache");
-         assert store.isEmpty();
-         assert 0 == data.size();
+         manager.administration().removeCache("cache");
+         assertEquals(0, DummyInMemoryStore.getStoreDataSize(store.getStoreName()));
+         assertEquals(0, data.size());
       } finally {
          manager.stop();
       }
@@ -336,7 +345,7 @@ public class CacheManagerTest extends AbstractInfinispanTest {
          cacheManager.defineConfiguration("correct-cache-3", cacheManager.getDefaultCacheConfiguration());
          ConfigurationBuilder incorrectBuilder = new ConfigurationBuilder();
          incorrectBuilder.customInterceptors().addInterceptor().position(InterceptorConfiguration.Position.FIRST)
-               .interceptor(new BaseCustomInterceptor() {
+               .interceptor(new BaseCustomAsyncInterceptor() {
                   @Override
                   protected void start() {
                      throw new IllegalStateException();
@@ -359,12 +368,13 @@ public class CacheManagerTest extends AbstractInfinispanTest {
          public void call() {
             EmbeddedCacheManager cm1 = cms[0];
             EmbeddedCacheManager cm2 = cms[1];
+            TestingUtil.waitForNoRebalance(cm1.getCache(), cm2.getCache());
             Cache<Object, Object> c1 = cm1.getCache();
-            cm2.getCache();
 
             GlobalConfiguration globalCfg = cm1.getCacheManagerConfiguration();
             Configuration cfg = c1.getCacheConfiguration();
-            cm1.stop();
+            TestingUtil.killCacheManagers(cm1);
+            globalCfg = new GlobalConfigurationBuilder().read(globalCfg).build();
 
             withCacheManager(new CacheManagerCallable(
                   new DefaultCacheManager(globalCfg, cfg)) {
@@ -401,6 +411,48 @@ public class CacheManagerTest extends AbstractInfinispanTest {
       }
    }
 
+   public void testGetCacheWithTemplateAlreadyDefinedConfiguration() {
+      withCacheManager(new CacheManagerCallable(createClusteredCacheManager()) {
+         @Override
+         public void call() {
+            ConfigurationBuilder builder = new ConfigurationBuilder();
+            CacheMode cacheMode = CacheMode.DIST_ASYNC;
+            // DIST_ASYNC isn't default so it should stay applied
+            builder.clustering().cacheMode(cacheMode);
+            String distCacheName = "dist-cache";
+            cm.defineConfiguration(distCacheName, builder.build());
+
+            String templateName = "template";
+            cm.defineConfiguration(templateName, new ConfigurationBuilder().template(true).build());
+
+            Cache cache = cm.getCache(distCacheName, templateName);
+            assertEquals(cacheMode, cache.getCacheConfiguration().clustering().cacheMode());
+         }
+      });
+   }
+
+   public void testDefineConfigurationWithOverrideAndTemplate() {
+      withCacheManager(new CacheManagerCallable(createClusteredCacheManager()) {
+         @Override
+         public void call() {
+            // DIST_ASYNC isn't default so it should stay applied
+            CacheMode cacheMode = CacheMode.DIST_ASYNC;
+            String templateName = "dist-cache-template";
+            cm.defineConfiguration(templateName, new ConfigurationBuilder().clustering().cacheMode(cacheMode).template(true).build());
+
+            CacheMode overrideCacheMode = CacheMode.REPL_ASYNC;
+            Configuration overrideConfiguration = new ConfigurationBuilder().clustering().cacheMode(overrideCacheMode).build();
+
+            String ourCacheName = "my-cache";
+            cm.defineConfiguration(ourCacheName, templateName, overrideConfiguration);
+
+            Cache cache = cm.getCache(ourCacheName);
+            // We expect the override to take precedence
+            assertEquals(overrideCacheMode, cache.getCacheConfiguration().clustering().cacheMode());
+         }
+      });
+   }
+
    private EmbeddedCacheManager getManagerWithStore(Method m, boolean isClustered, boolean isStoreShared) {
       return getManagerWithStore(m, isClustered, isStoreShared, "store-");
    }
@@ -415,7 +467,6 @@ public class CacheManagerTest extends AbstractInfinispanTest {
                .cacheMode(isClustered ? CacheMode.REPL_SYNC : CacheMode.LOCAL);
 
       GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder().clusteredDefault();
-      gcb.globalJmxStatistics().allowDuplicateDomains(true);
       EmbeddedCacheManager cm = TestCacheManagerFactory.createClusteredCacheManager(gcb, c);
       cm.defineConfiguration("cache", c.build());
 
@@ -433,10 +484,10 @@ public class CacheManagerTest extends AbstractInfinispanTest {
 
             Cache<String, String> cache1 = manager1.getCache("cache", true);
             Cache<String, String> cache2 = manager2.getCache("cache", true);
-            assert cache1 != null;
-            assert cache2 != null;
-            assert manager1.cacheExists("cache");
-            assert manager2.cacheExists("cache");
+            assertTrue(cache1 != null);
+            assertTrue(cache2 != null);
+            assertTrue(manager1.cacheExists("cache"));
+            assertTrue(manager2.cacheExists("cache"));
             cache1.put(k(m, 1), v(m, 1));
             cache1.put(k(m, 2), v(m, 2));
             cache1.put(k(m, 3), v(m, 3));
@@ -446,19 +497,20 @@ public class CacheManagerTest extends AbstractInfinispanTest {
             DataContainer data1 = getDataContainer(cache1);
             DummyInMemoryStore store2 = getDummyStore(cache2);
             DataContainer data2 = getDataContainer(cache2);
-            assert !store1.isEmpty();
-            assert 5 == data1.size();
-            assert !store2.isEmpty();
-            assert 5 == data2.size();
-            manager1.removeCache("cache");
-            assert !manager1.cacheExists("cache");
-            assert !manager2.cacheExists("cache");
-            assert null == manager1.getCache("cache", false);
-            assert null == manager2.getCache("cache", false);
-            assert store1.isEmpty();
-            assert 0 == data1.size();
-            assert store2.isEmpty();
-            assert 0 == data2.size();
+            assertFalse(store1.isEmpty());
+            assertEquals(5, data1.size());
+            assertFalse(store2.isEmpty());
+            assertEquals(5, data2.size());
+
+            manager1.administration().removeCache("cache");
+            assertFalse(manager1.cacheExists("cache"));
+            assertFalse(manager2.cacheExists("cache"));
+            assertNull(manager1.getCache("cache", false));
+            assertNull(manager2.getCache("cache", false));
+            assertEquals(0, DummyInMemoryStore.getStoreDataSize(store1.getStoreName()));
+            assertEquals(0, data1.size());
+            assertEquals(0, DummyInMemoryStore.getStoreDataSize(store2.getStoreName()));
+            assertEquals(0, data2.size());
          }
       });
    }
@@ -499,5 +551,32 @@ public class CacheManagerTest extends AbstractInfinispanTest {
          return new UnreliableCacheStoreConfiguration(attributes.protect(), async.create(), singleton().create());
       }
       @Override public UnreliableCacheStoreConfigurationBuilder self() { return this; }
+   }
+
+   @Listener
+   private class MyListener {
+      private String cacheName;
+      private final CompletableFuture<Void> cacheStartBlocked;
+      private final CompletableFuture<Void> cacheStartResumed;
+
+      public MyListener(String cacheName, CompletableFuture<Void> cacheStartBlocked, CompletableFuture<Void> cacheStartResumed) {
+         this.cacheName = cacheName;
+         this.cacheStartBlocked = cacheStartBlocked;
+         this.cacheStartResumed = cacheStartResumed;
+      }
+
+      @CacheStarted
+      public void cacheStarted(CacheStartedEvent event) {
+         log.tracef("Cache started: %s", event.getCacheName());
+         if (cacheName.equals(event.getCacheName())) {
+            cacheStartBlocked.complete(null);
+            cacheStartResumed.join();
+         }
+      }
+
+      @CacheStopped
+      public void cacheStopped(CacheStoppedEvent event) {
+         log.tracef("Cache stopped: %s", event.getCacheName());
+      }
    }
 }

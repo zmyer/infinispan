@@ -1,12 +1,17 @@
 package org.infinispan.distexec;
 
+import static org.infinispan.test.Exceptions.expectExecutionException;
+import static org.testng.AssertJUnit.assertEquals;
+
 import java.io.Serializable;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
@@ -15,8 +20,8 @@ import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.ExternalPojo;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestException;
 import org.infinispan.test.TestingUtil;
-import org.testng.AssertJUnit;
 import org.testng.annotations.Test;
 
 /**
@@ -45,6 +50,29 @@ public class DistributedExecutorFailoverTest extends MultipleCacheManagersTest {
       return "DistributedExecutorFailoverTest";
    }
 
+   public void testBasicLocalDistributedCallable() throws Exception {
+      long taskTimeout = TimeUnit.SECONDS.toMillis(15);
+      EmbeddedCacheManager cacheManager1 = manager(0);
+      Cache<Object, Object> cache1 = cacheManager1.getCache();
+
+      // initiate task from cache1 and execute on same node
+      DistributedExecutorService des = new DefaultExecutorService(cache1);
+
+      try {
+         SameNodeTaskFailoverPolicy sameNodeTaskFailoverPolicy = new SameNodeTaskFailoverPolicy(3);
+         DistributedTaskBuilder<Void> builder = des
+               .createDistributedTaskBuilder(new TestExceptionCallable())
+               .failoverPolicy(sameNodeTaskFailoverPolicy)
+               .timeout(taskTimeout, TimeUnit.MILLISECONDS);
+
+         CompletableFuture<Void> future = des.submit(builder.build());
+         expectExecutionException(TestException.class, future);
+         assertEquals(3, sameNodeTaskFailoverPolicy.failoverCount.get());
+      } finally {
+         des.shutdown();
+      }
+   }
+
    public void testBasicTargetRemoteDistributedCallable() throws Exception {
       long taskTimeout = TimeUnit.SECONDS.toMillis(15);
       EmbeddedCacheManager cacheManager1 = manager(0);
@@ -52,40 +80,39 @@ public class DistributedExecutorFailoverTest extends MultipleCacheManagersTest {
 
       Cache<Object, Object> cache1 = cacheManager1.getCache();
       Cache<Object, Object> cache2 = cacheManager2.getCache();
-      DistributedExecutorService des = null;
-      try {
-         // initiate task from cache1 and execute on same node
-         des = new DefaultExecutorService(cache1);
-         Address target = cache2.getAdvancedCache().getRpcManager().getAddress();
 
+      // initiate task from cache1 and execute on same node
+      DistributedExecutorService des = new DefaultExecutorService(cache1);
+      Address target = cache2.getAdvancedCache().getRpcManager().getAddress();
+
+      try {
          DistributedTaskBuilder<Integer> builder = des
                .createDistributedTaskBuilder(new SleepingSimpleCallable())
                .failoverPolicy(new RandomNodeTaskFailoverPolicy(2))
                .timeout(taskTimeout, TimeUnit.MILLISECONDS);
 
          Future<Integer> future = des.submit(target, builder.build());
-         fork(new Runnable() {
-
-            @Override
-            public void run() {
-               TestingUtil.killCacheManagers(cacheManager2);
-               latch.countDown();
-            }
+         fork(() -> {
+            TestingUtil.killCacheManagers(cacheManager2);
+            latch.countDown();
          });
 
-         AssertJUnit.assertEquals((Integer) 1, future.get());
-      } catch (Exception ex) {
-         AssertJUnit.fail("Task did not failover properly " + ex);
+         assertEquals((Integer) 1, future.get());
       } finally {
          des.shutdown();
       }
    }
 
+   static class TestExceptionCallable implements Callable<Void>, Serializable, ExternalPojo {
+
+      @Override
+      public Void call() throws Exception {
+         throw new TestException("test");
+      }
+   }
+
    static class SleepingSimpleCallable implements Callable<Integer>, Serializable, ExternalPojo {
 
-      /**
-       *
-       */
       private static final long serialVersionUID = 6189005766285399200L;
 
       public SleepingSimpleCallable() {
@@ -118,6 +145,27 @@ public class DistributedExecutorFailoverTest extends MultipleCacheManagersTest {
             throw new IllegalStateException("There are no candidates for failover: " + candidates);
          int tIndex = r.nextInt(candidates.size());
          return candidates.get(tIndex);
+      }
+
+      @Override
+      public int maxFailoverAttempts() {
+         return maxFailoverCount;
+      }
+   }
+
+   static class SameNodeTaskFailoverPolicy implements DistributedTaskFailoverPolicy {
+      private final int maxFailoverCount;
+      private final AtomicInteger failoverCount = new AtomicInteger();
+
+      public SameNodeTaskFailoverPolicy(int maxFailoverCount) {
+         super();
+         this.maxFailoverCount = maxFailoverCount;
+      }
+
+      @Override
+      public Address failover(FailoverContext fc) {
+         failoverCount.incrementAndGet();
+         return fc.executionFailureLocation();
       }
 
       @Override

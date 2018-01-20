@@ -60,7 +60,7 @@ public class RemoteQuerySecurityIT {
    protected RemoteInfinispanServer server;
 
    private RemoteCacheManagerFactory rcmFactory;
-   private Map<String, RemoteCacheManager> remoteCacheManagers = new HashMap<>();
+   private final Map<String, RemoteCacheManager> remoteCacheManagers = new HashMap<>();
 
    private static final String TEST_CACHE_INDEXED = "test_cache_indexed";
    private static final String TEST_CACHE_NOT_INDEXED = "test_cache_not_indexed";
@@ -81,7 +81,7 @@ public class RemoteQuerySecurityIT {
 
       //initialize server-side serialization context
       RemoteCache<String, String> metadataCache = remoteCacheManagers.get(ADMIN_LOGIN).getCache(ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME);
-      String proto = Util.read(getClass().getResourceAsStream("/sample_bank_account/bank.proto"));
+      String proto = Util.getResourceAsString("/sample_bank_account/bank.proto", getClass().getClassLoader());
       metadataCache.put("sample_bank_account/bank.proto", proto);
       assertFalse(metadataCache.containsKey(ProtobufMetadataManagerConstants.ERRORS_KEY_SUFFIX));
 

@@ -2,27 +2,26 @@ package org.infinispan.statetransfer;
 
 import static org.testng.AssertJUnit.assertEquals;
 
-import java.util.Collection;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.globalstate.NoOpGlobalConfigurationManager;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
-import org.infinispan.remoting.responses.Response;
-import org.infinispan.remoting.rpc.ResponseFilter;
-import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.remoting.transport.ResponseCollector;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.test.fwk.TransportFlags;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.jgroups.protocols.DISCARD;
 import org.testng.annotations.Test;
 
@@ -38,7 +37,7 @@ import org.testng.annotations.Test;
  * @author Dan Berindei
  * @since 5.2
  */
-@Test(groups = "functional", testName = "statetransfer.StateTransferRestartTest")
+@Test(groups = "functional", testName = "statetransfer.StateTransferRestart2Test")
 @CleanupAfterMethod
 public class StateTransferRestart2Test extends MultipleCacheManagersTest {
 
@@ -47,7 +46,7 @@ public class StateTransferRestart2Test extends MultipleCacheManagersTest {
    @Override
    protected void createCacheManagers() throws Throwable {
       cfgBuilder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
-      cfgBuilder.transaction().transactionManagerLookup(new DummyTransactionManagerLookup());
+      cfgBuilder.transaction().transactionManagerLookup(new EmbeddedTransactionManagerLookup());
       cfgBuilder.clustering().hash().numOwners(2);
       cfgBuilder.clustering().stateTransfer().fetchInMemoryState(true);
       cfgBuilder.clustering().stateTransfer().timeout(20000);
@@ -56,6 +55,11 @@ public class StateTransferRestart2Test extends MultipleCacheManagersTest {
       addClusterEnabledCacheManager(gcb0, cfgBuilder, new TransportFlags().withFD(true));
       GlobalConfigurationBuilder gcb1 = new GlobalConfigurationBuilder().clusteredDefault();
       addClusterEnabledCacheManager(gcb1, cfgBuilder, new TransportFlags().withFD(true));
+   }
+
+   @Override
+   protected void amendCacheManagerBeforeStart(EmbeddedCacheManager cm) {
+      NoOpGlobalConfigurationManager.amendCacheManager(cm);
    }
 
    public void testStateTransferRestart() throws Throwable {
@@ -70,41 +74,30 @@ public class StateTransferRestart2Test extends MultipleCacheManagersTest {
       for (int k = 0; k < numKeys; k++) {
          c0.put(k, k);
       }
-      TestingUtil.waitForRehashToComplete(c0, c1);
+      TestingUtil.waitForNoRebalance(c0, c1);
 
       assertEquals(numKeys, c0.entrySet().size());
       assertEquals(numKeys, c1.entrySet().size());
 
+      DISCARD d1 = TestingUtil.getDiscardForCache(c1);
       GlobalConfigurationBuilder gcb2 = new GlobalConfigurationBuilder();
       gcb2.transport().transport(new JGroupsTransport() {
          @Override
-         public CompletableFuture<Map<Address, Response>> invokeRemotelyAsync(Collection<Address> recipients,
-                                                                              ReplicableCommand rpcCommand,
-                                                                              ResponseMode mode,
-                                                                              long timeout,
-                                                                              ResponseFilter responseFilter,
-                                                                              DeliverOrder deliverOrder,
-                                                                              boolean anycast)
-               throws Exception {
-            if (rpcCommand instanceof StateRequestCommand &&
-                  ((StateRequestCommand) rpcCommand).getType() == StateRequestCommand.Type.START_STATE_TRANSFER &&
-                  recipients.contains(address(1))) {
-               DISCARD d1 = TestingUtil.getDiscardForCache(c1);
+         public <T> CompletableFuture<T> invokeCommand(Address target, ReplicableCommand command,
+                                                       ResponseCollector<T> collector, DeliverOrder deliverOrder,
+                                                       long timeout, TimeUnit unit) {
+            if (command instanceof StateRequestCommand &&
+                  ((StateRequestCommand) command).getType() == StateRequestCommand.Type.START_STATE_TRANSFER &&
+                  target.equals(address(1))) {
                d1.setDiscardAll(true);
-               d1.setExcludeItself(true);
 
                fork((Callable<Void>) () -> {
                   log.info("KILLING the c1 cache");
-                  try {
-                     TestingUtil.killCacheManagers(manager(c1));
-                  } catch (Exception e) {
-                     log.info("there was some exception while killing cache");
-                  }
+                  TestingUtil.killCacheManagers(manager(c1));
                   return null;
                });
             }
-            return super.invokeRemotelyAsync(recipients, rpcCommand, mode, timeout, responseFilter, deliverOrder,
-                                             anycast);
+            return super.invokeCommand(target, command, collector, deliverOrder, timeout, unit);
          }
       });
 

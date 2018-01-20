@@ -10,13 +10,13 @@ import javax.transaction.Transaction;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.transaction.LockingMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
-import org.infinispan.transaction.tm.DummyTransaction;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
+import org.infinispan.transaction.tm.EmbeddedTransaction;
 import org.testng.annotations.Test;
 
 /**
@@ -35,10 +35,8 @@ public class MainOwnerChangesPessimisticLockTest extends MultipleCacheManagersTe
    protected void createCacheManagers() throws Throwable {
       dccc = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true, true);
       dccc.transaction()
-            .transactionManagerLookup(new DummyTransactionManagerLookup())
+            .transactionManagerLookup(new EmbeddedTransactionManagerLookup())
             .lockingMode(LockingMode.PESSIMISTIC)
-            .syncCommitPhase(true)
-            .syncRollbackPhase(true)
             .locking().lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis())
             .clustering().hash().numOwners(1).numSegments(3)
             .l1().disable()
@@ -91,13 +89,13 @@ public class MainOwnerChangesPessimisticLockTest extends MultipleCacheManagersTe
       // search for a key that was migrated to third node and the suspended TX that locked it
       Object migratedKey = null;
       Transaction migratedTransaction = null;
-      ConsistentHash consistentHash = advancedCache(2).getDistributionManager().getConsistentHash();
+      LocalizedCacheTopology cacheTopology = advancedCache(2).getDistributionManager().getCacheTopology();
       for (Object key : key2Tx.keySet()) {
-         if (consistentHash.locatePrimaryOwner(key).equals(address(2))) {
+         if (cacheTopology.getDistribution(key).isPrimary()) {
             migratedKey = key;
             migratedTransaction = key2Tx.get(key);
             log.trace("Migrated key = " + migratedKey);
-            log.trace("Migrated transaction = " + ((DummyTransaction) migratedTransaction).getEnlistedResources());
+            log.trace("Migrated transaction = " + ((EmbeddedTransaction) migratedTransaction).getEnlistedResources());
             break;
          }
       }

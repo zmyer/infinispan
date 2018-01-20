@@ -3,6 +3,8 @@ package org.infinispan.api;
 import static org.testng.Assert.assertTrue;
 import static org.testng.AssertJUnit.assertEquals;
 
+import java.util.function.BiConsumer;
+
 import org.infinispan.Cache;
 import org.infinispan.cache.impl.AbstractDelegatingCache;
 import org.infinispan.cache.impl.SimpleCacheImpl;
@@ -11,6 +13,8 @@ import org.infinispan.configuration.CustomInterceptorConfigTest;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
+import org.infinispan.configuration.cache.StorageType;
+import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.distexec.DefaultExecutorService;
 import org.infinispan.interceptors.base.BaseCustomInterceptor;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -68,12 +72,43 @@ public class SimpleCacheTest extends APINonTxTest {
 
    @Test(expectedExceptions = CacheConfigurationException.class)
    public void testStoreAsBinary() {
-      new ConfigurationBuilder().simpleCache(true).storeAsBinary().enabled(true).build();
+      new ConfigurationBuilder().simpleCache(true).memory().storageType(StorageType.BINARY).build();
    }
 
    @Test(expectedExceptions = CacheConfigurationException.class)
    public void testCompatibility() {
       new ConfigurationBuilder().simpleCache(true).compatibility().enabled(true).build();
+   }
+
+   @Test(dataProvider = "lockedStreamActuallyLocks", expectedExceptions = UnsupportedOperationException.class)
+   @Override
+   public void testLockedStreamActuallyLocks(BiConsumer<Cache<Object, Object>, CacheEntry<Object, Object>> consumer,
+         boolean forEachOrInvokeAll) throws Throwable {
+      super.testLockedStreamActuallyLocks(consumer, forEachOrInvokeAll);
+   }
+
+   @Test(expectedExceptions = UnsupportedOperationException.class)
+   @Override
+   public void testLockedStreamSetValue() {
+      super.testLockedStreamSetValue();
+   }
+
+   @Test(expectedExceptions = UnsupportedOperationException.class)
+   @Override
+   public void testLockedStreamWithinLockedStream() {
+      super.testLockedStreamWithinLockedStream();
+   }
+
+   @Test(expectedExceptions = UnsupportedOperationException.class)
+   @Override
+   public void testLockedStreamInvokeAllFilteredSet() {
+      super.testLockedStreamInvokeAllFilteredSet();
+   }
+
+   @Test(expectedExceptions = UnsupportedOperationException.class)
+   @Override
+   public void testLockedStreamInvokeAllPut() {
+      super.testLockedStreamInvokeAllPut();
    }
 
    public void testStatistics() {

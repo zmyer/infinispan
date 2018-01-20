@@ -8,15 +8,12 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.infinispan.commons.equivalence.ByteArrayEquivalence;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.DefaultDataContainer;
 import org.infinispan.container.InternalEntryFactoryImpl;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.eviction.ActivationManager;
 import org.infinispan.eviction.EvictionManager;
-import org.infinispan.eviction.EvictionStrategy;
-import org.infinispan.eviction.EvictionThreadPolicy;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.eviction.PassivationManager;
 import org.infinispan.expiration.ExpirationManager;
@@ -24,6 +21,7 @@ import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.persistence.spi.PersistenceException;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.util.DefaultTimeService;
 import org.infinispan.util.TimeService;
 import org.infinispan.util.logging.Log;
@@ -37,7 +35,7 @@ import org.testng.annotations.Test;
  * @since 4.0
  */
 @Test(testName = "stress.DataContainerStressTest", groups = "stress",
-      description = "Disabled by default, designed to be run manually.")
+      description = "Disabled by default, designed to be run manually.", timeOut = 15*60*1000)
 public class DataContainerStressTest {
    volatile CountDownLatch latch;
    final int RUN_TIME_MILLIS = 45 * 1000; // 1 min
@@ -74,14 +72,9 @@ public class DataContainerStressTest {
    private void initializeDefaultDataContainer(DefaultDataContainer dc) {
       InternalEntryFactoryImpl entryFactory = new InternalEntryFactoryImpl();
       TimeService timeService = new DefaultTimeService();
-      entryFactory.injectTimeService(timeService);
+      TestingUtil.inject(entryFactory, timeService);
       // Mockito cannot be used as it will run out of memory from keeping all the invocations, thus we use blank impls
-      dc.initialize(new EvictionManager() {
-                       @Override
-                       public void onEntryEviction(Map evicted) {
-
-                       }
-                    }, new PassivationManager() {
+      TestingUtil.inject(dc, (EvictionManager) evicted -> {}, new PassivationManager() {
                        @Override
                        public boolean isEnabled() {
                           return false;

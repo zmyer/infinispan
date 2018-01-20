@@ -29,8 +29,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -54,25 +56,26 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ClusterLoaderConfigurationBuilder;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.ContentTypeConfigurationBuilder;
 import org.infinispan.configuration.cache.CustomStoreConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
 import org.infinispan.configuration.cache.SingleFileStoreConfigurationBuilder;
 import org.infinispan.configuration.cache.SitesConfigurationBuilder;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.configuration.cache.StoreConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ParserRegistry;
-import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.persistence.jdbc.DatabaseType;
 import org.infinispan.persistence.jdbc.configuration.AbstractJdbcStoreConfigurationBuilder;
 import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfigurationBuilder;
 import org.infinispan.persistence.jdbc.configuration.TableManipulationConfigurationBuilder;
+import org.infinispan.persistence.remote.configuration.AuthenticationConfigurationBuilder;
 import org.infinispan.persistence.remote.configuration.RemoteStoreConfigurationBuilder;
+import org.infinispan.persistence.remote.configuration.SslConfigurationBuilder;
 import org.infinispan.persistence.rest.configuration.RestStoreConfigurationBuilder;
-import org.infinispan.persistence.rest.metadata.MimeMetadataHelper;
 import org.infinispan.persistence.rocksdb.configuration.CompressionType;
 import org.infinispan.persistence.rocksdb.configuration.RocksDBStoreConfigurationBuilder;
 import org.infinispan.persistence.spi.CacheLoader;
@@ -91,14 +94,17 @@ import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.registry.Resource;
 import org.jboss.as.controller.services.path.PathManager;
 import org.jboss.as.controller.services.path.PathManagerService;
+import org.jboss.as.domain.management.SecurityRealm;
 import org.jboss.as.naming.deployment.ContextNames;
 import org.jboss.as.network.OutboundSocketBinding;
 import org.jboss.as.server.ServerEnvironment;
 import org.jboss.as.server.Services;
+import org.jboss.as.server.moduleservice.ServiceModuleLoader;
 import org.jboss.as.txn.service.TxnServices;
 import org.jboss.dmr.ModelNode;
 import org.jboss.dmr.Property;
 import org.jboss.logging.Logger;
+import org.jboss.modules.Module;
 import org.jboss.modules.ModuleIdentifier;
 import org.jboss.modules.ModuleLoader;
 import org.jboss.msc.inject.Injector;
@@ -212,9 +218,8 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
         String containerName = containerAddress.getLastElement().getValue();
 
         // get model attributes
-        ModelNode resolvedValue = null;
+        ModelNode resolvedValue;
         final String templateConfiguration = (resolvedValue = CacheConfigurationResource.CONFIGURATION.resolveModelAttribute(context, cacheModel)).isDefined() ? resolvedValue.asString() : null;
-        final ModuleIdentifier moduleId = (resolvedValue = CacheConfigurationResource.CACHE_MODULE.resolveModelAttribute(context, cacheModel)).isDefined() ? ModuleIdentifier.fromString(resolvedValue.asString()) : null;
 
         // create a list for dependencies which may need to be added during processing
         List<Dependency<?>> dependencies = new LinkedList<>();
@@ -225,21 +230,11 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
         // process cache configuration ModelNode describing overrides to defaults
         processModelNode(context, containerName, cacheModel, builder, dependencies);
 
-        // get container Model to pick up the value of the default cache of the container
-        // AS7-3488 make default-cache no required attribute
-        String defaultCache = CacheContainerResource.DEFAULT_CACHE.resolveModelAttribute(context, containerModel).asString();
-
-        ServiceTarget target = context.getServiceTarget();
-        Configuration config = builder.build();
-
-        Collection<ServiceController<?>> controllers = new ArrayList<>(3);
-
         // install the cache configuration service (configures a cache)
-        controllers.add(this.installCacheConfigurationService(target, containerName, cacheName, defaultCache, moduleId,
-                        templateConfiguration, builder, config, dependencies));
+        ServiceController<?> serviceController = installCacheConfigurationService(context.getServiceTarget(), containerName, cacheName,
+              templateConfiguration, builder, dependencies);
         log.debugf("Cache configuration service for %s installed for container %s", cacheName, containerName);
-
-        return controllers;
+        return Collections.singletonList(serviceController);
     }
 
     @Override
@@ -258,22 +253,22 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
         log.debugf("cache configuration %s removed for container %s", configurationName, containerName);
     }
 
-    protected PathAddress getCacheConfigurationAddressFromOperation(ModelNode operation) {
-        return PathAddress.pathAddress(operation.get(OP_ADDR)) ;
+    private PathAddress getCacheConfigurationAddressFromOperation(ModelNode operation) {
+        return PathAddress.pathAddress(operation.get(OP_ADDR));
     }
 
-    protected PathAddress getCacheContainerAddressFromOperation(ModelNode operation) {
-        final PathAddress configurationAddress = getCacheConfigurationAddressFromOperation(operation) ;
-        final PathAddress containerAddress = configurationAddress.subAddress(0, configurationAddress.size() - 2) ;
-        return containerAddress ;
+    private PathAddress getCacheContainerAddressFromOperation(ModelNode operation) {
+        PathAddress configurationAddress = getCacheConfigurationAddressFromOperation(operation);
+        return configurationAddress.subAddress(0, configurationAddress.size() - 2);
     }
 
-    ServiceController<?> installCacheConfigurationService(ServiceTarget target, String containerName, String cacheName, String defaultCache, ModuleIdentifier moduleId,
-            String templateConfiguration, ConfigurationBuilder builder, Configuration config, List<Dependency<?>> dependencies) {
+    private ServiceController<?> installCacheConfigurationService(ServiceTarget target, String containerName, String cacheName,
+            String templateConfiguration, ConfigurationBuilder builder, List<Dependency<?>> dependencies) {
 
+        Configuration config = builder.build();
         final InjectedValue<EmbeddedCacheManager> container = new InjectedValue<>();
         final CacheConfigurationDependencies cacheConfigurationDependencies = new CacheConfigurationDependencies(container);
-        final Service<Configuration> service = new CacheConfigurationService(cacheName, builder, moduleId, cacheConfigurationDependencies);
+        final Service<Configuration> service = new CacheConfigurationService(cacheName, builder, cacheConfigurationDependencies);
         final ServiceBuilder<?> configBuilder = target.addService(CacheServiceName.CONFIGURATION.getServiceName(containerName, cacheName), service)
                 .addDependency(CacheContainerServiceName.CACHE_CONTAINER.getServiceName(containerName), EmbeddedCacheManager.class, container)
                 .addDependency(Services.JBOSS_SERVICE_MODULE_LOADER, ModuleLoader.class, cacheConfigurationDependencies.getModuleLoaderInjector())
@@ -304,7 +299,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
 
         // add in any additional dependencies resulting from ModelNode parsing
         for (Dependency<?> dependency : dependencies) {
-            this.addDependency(configBuilder, dependency);
+            addDependency(configBuilder, dependency);
         }
         return configBuilder.install();
     }
@@ -368,17 +363,52 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
                   .withProperties(indexingProperties)
                   .autoConfig(autoConfig)
             ;
-            final ModelNode indexedEntitiesModel = IndexingConfigurationResource.INDEXED_ENTITIES.resolveModelAttribute(context, indexingModel);
-            if (indexing.isEnabled() && indexedEntitiesModel.isDefined()) {
-                for (ModelNode indexedEntityNode : indexedEntitiesModel.asList()) {
-                    String className = indexedEntityNode.asString();
-                    // TODO This is ignored for now because we do not have access to the proper ClassLoader
-                    //                try {
-                    //                    Class<?> entityClass = CacheConfigurationAdd.class.getClassLoader().loadClass(className);
-                    //                    builder.indexing().addIndexedEntity(entityClass);
-                    //                } catch (ClassNotFoundException e) {
-                    //                    throw InfinispanMessages.MESSAGES.unableToInstantiateClass(className);
-                    //                }
+            if (indexing.isEnabled()) {
+                final ModelNode indexedEntitiesModel = IndexingConfigurationResource.INDEXED_ENTITIES.resolveModelAttribute(context, indexingModel);
+                if (indexedEntitiesModel.isDefined()) {
+                    for (ModelNode indexedEntityNode : indexedEntitiesModel.asList()) {
+                        String className = indexedEntityNode.asString();
+                        String[] split = className.split(":");
+                        try {
+                            if (split.length == 1) {
+                                // it's just a class name
+                                Injector<EmbeddedCacheManager> injector = new SimpleInjector<EmbeddedCacheManager>() {
+                                    @Override
+                                    public void inject(EmbeddedCacheManager cacheManager) {
+                                        try {
+                                            ClassLoader classLoader = cacheManager.getCacheManagerConfiguration().classLoader();
+                                            Class<?> entityClass = Class.forName(className, false, classLoader);
+                                            builder.indexing().addIndexedEntity(entityClass);
+                                        } catch (Exception e) {
+                                            throw InfinispanMessages.MESSAGES.unableToInstantiateClass(className);
+                                        }
+                                    }
+                                };
+                                dependencies.add(new Dependency<>(CacheContainerServiceName.CACHE_CONTAINER.getServiceName(containerName), EmbeddedCacheManager.class, injector));
+                            } else {
+                                // it's an 'extended' class name, including the module id and slot
+                                String entityClassName = split[2];
+                                ModuleIdentifier moduleIdentifier = ModuleIdentifier.create(split[0], split[1]);
+                                Injector<Module> injector = new SimpleInjector<Module>() {
+                                    @Override
+                                    public void inject(Module module) {
+                                        try {
+                                            ClassLoader moduleClassLoader = System.getSecurityManager() == null ? module.getClassLoader() :
+                                                  AccessController.doPrivileged((PrivilegedAction<ClassLoader>) module::getClassLoader);
+                                            Class<?> entityClass = Class.forName(entityClassName, false, moduleClassLoader);
+                                            builder.indexing().addIndexedEntity(entityClass);
+                                        } catch (Exception e) {
+                                            throw InfinispanMessages.MESSAGES.unableToInstantiateClass(className);
+                                        }
+                                    }
+                                };
+                                // todo [anistor] only works for dynamic modules (see https://issues.jboss.org/browse/ISPN-8441)
+                                dependencies.add(new Dependency<>(ServiceModuleLoader.moduleServiceName(moduleIdentifier), Module.class, injector));
+                            }
+                        } catch (Exception e) {
+                            throw InfinispanMessages.MESSAGES.unableToInstantiateClass(className);
+                        }
+                    }
                 }
             }
         }
@@ -428,14 +458,6 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
                 .useSynchronization(!txMode.isXAEnabled())
                 .recovery().enabled(txMode.isRecoveryEnabled())
         ;
-
-        if (txMode.isRecoveryEnabled()) {
-            builder.transaction().syncCommitPhase(true).syncRollbackPhase(true);
-        }
-        if (mode.isSynchronous() && lockingMode == LockingMode.OPTIMISTIC && isolationLevel == IsolationLevel.REPEATABLE_READ) {
-            builder.locking().writeSkewCheck(true);
-            builder.versioning().enable().scheme(VersioningScheme.SIMPLE);
-        }
         if (batching) {
             builder.transaction().transactionMode(org.infinispan.transaction.TransactionMode.TRANSACTIONAL).invocationBatching().enable();
         } else {
@@ -489,6 +511,21 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
             }
         }
 
+        if (cache.hasDefined(ModelKeys.ENCODING)) {
+            ModelNode dataTypeNode = cache.get(ModelKeys.ENCODING);
+            ModelNode node;
+            if ((node = dataTypeNode.get(ModelKeys.KEY)).isDefined()) {
+                final String mediaType = KeyDataTypeConfigurationResource.MEDIA_TYPE.resolveModelAttribute(context, node).asString();
+                ContentTypeConfigurationBuilder keyTypeConfigurationBuilder = builder.encoding().key();
+                keyTypeConfigurationBuilder.mediaType(mediaType);
+
+            } else if ((node = dataTypeNode.get(ModelKeys.VALUE)).isDefined()) {
+                final String mediaType = ValueDataTypeConfigurationResource.MEDIA_TYPE.resolveModelAttribute(context, node).asString();
+                ContentTypeConfigurationBuilder valueTypeConfigurationBuilder = builder.encoding().value();
+                valueTypeConfigurationBuilder.mediaType(mediaType);
+            }
+        }
+
         // compatibility is a child resource
         if (cache.hasDefined(ModelKeys.COMPATIBILITY) && cache.get(ModelKeys.COMPATIBILITY, ModelKeys.COMPATIBILITY_NAME).isDefined()) {
 
@@ -500,9 +537,44 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
 
             if (compatibility.hasDefined(ModelKeys.MARSHALLER)) {
                 String marshaller = CompatibilityConfigurationResource.MARSHALLER.resolveModelAttribute(context, compatibility).asString();
+                String[] split = marshaller.split(":");
                 try {
-                    Class<? extends Marshaller> marshallerClass = CacheLoader.class.getClassLoader().loadClass(marshaller).asSubclass(Marshaller.class);
-                    builder.compatibility().marshaller(marshallerClass.newInstance());
+                    if (split.length == 1) {
+                        // it's just a class name
+                        String marshallerClassName = split[0];
+                        Injector<EmbeddedCacheManager> injector = new SimpleInjector<EmbeddedCacheManager>() {
+                            @Override
+                            public void inject(EmbeddedCacheManager cacheManager) {
+                                try {
+                                    ClassLoader classLoader = cacheManager.getCacheManagerConfiguration().classLoader();
+                                    Class<?> marshallerClass = Class.forName(marshallerClassName, false, classLoader);
+                                    builder.compatibility().marshaller(marshallerClass.asSubclass(Marshaller.class).newInstance());
+                                } catch (Exception e) {
+                                    throw InfinispanMessages.MESSAGES.unableToInstantiateClass(marshallerClassName);
+                                }
+                            }
+                        };
+                        dependencies.add(new Dependency<>(CacheContainerServiceName.CACHE_CONTAINER.getServiceName(containerName), EmbeddedCacheManager.class, injector));
+                    } else {
+                        // it's an 'extended' class name, including the module id and slot
+                        String marshallerClassName = split[2];
+                        ModuleIdentifier moduleIdentifier = ModuleIdentifier.create(split[0], split[1]);
+                        Injector<Module> injector = new SimpleInjector<Module>() {
+                            @Override
+                            public void inject(Module module) {
+                                try {
+                                    ClassLoader moduleClassLoader = System.getSecurityManager() == null ? module.getClassLoader() :
+                                          AccessController.doPrivileged((PrivilegedAction<ClassLoader>) module::getClassLoader);
+                                    Class<?> marshallerClass = Class.forName(marshallerClassName, false, moduleClassLoader);
+                                    builder.compatibility().marshaller(marshallerClass.asSubclass(Marshaller.class).newInstance());
+                                } catch (Exception e) {
+                                    throw InfinispanMessages.MESSAGES.invalidCompatibilityMarshaller(e, marshaller);
+                                }
+                            }
+                        };
+                        // todo [anistor] only works for dynamic modules (see https://issues.jboss.org/browse/ISPN-8441)
+                        dependencies.add(new Dependency<>(ServiceModuleLoader.moduleServiceName(moduleIdentifier), Module.class, injector));
+                    }
                 } catch (Exception e) {
                     throw InfinispanMessages.MESSAGES.invalidCompatibilityMarshaller(e, marshaller);
                 }
@@ -673,7 +745,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
 
    private StoreConfigurationBuilder<?, ?> buildCacheStore(OperationContext context, PersistenceConfigurationBuilder persistenceBuilder, String containerName, ModelNode store, String storeKey, List<Dependency<?>> dependencies) throws OperationFailedException {
 
-        ModelNode resolvedValue = null;
+        ModelNode resolvedValue;
         if (storeKey.equals(ModelKeys.FILE_STORE)) {
             final SingleFileStoreConfigurationBuilder builder = persistenceBuilder.addStore(SingleFileStoreConfigurationBuilder.class);
             if (store.hasDefined(ModelKeys.MAX_ENTRIES)) {
@@ -743,6 +815,30 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
             if (store.hasDefined(ModelKeys.PROTOCOL_VERSION)) {
                 builder.protocolVersion(ProtocolVersion.parseVersion(store.require(ModelKeys.PROTOCOL_VERSION).asString()));
             }
+            if (store.hasDefined(ModelKeys.ENCRYPTION) && store.get(ModelKeys.ENCRYPTION, ModelKeys.ENCRYPTION_NAME).isDefined()) {
+                ModelNode encryption = store.get(ModelKeys.ENCRYPTION, ModelKeys.ENCRYPTION_NAME);
+                SslConfigurationBuilder ssl = builder.remoteSecurity().ssl();
+                ssl.enable().sniHostName(EncryptionResource.SNI_HOSTNAME.resolveModelAttribute(context, encryption).asString());
+                String realm = EncryptionResource.SECURITY_REALM.resolveModelAttribute(context, encryption).asString();
+                ServiceName securityRealmServiceName = SecurityRealm.ServiceUtil.createServiceName(realm);
+                Injector<SecurityRealm> injector = new SimpleInjector<SecurityRealm> () {
+                    @Override
+                    public void inject(SecurityRealm value) {
+                        builder.remoteSecurity().ssl().sslContext(value.getSSLContext());
+                    }
+                };
+                dependencies.add(new Dependency<>(securityRealmServiceName, SecurityRealm.class, injector));
+            }
+            if (store.hasDefined(ModelKeys.AUTHENTICATION) && store.get(ModelKeys.AUTHENTICATION, ModelKeys.AUTHENTICATION_NAME).isDefined()) {
+                ModelNode authentication = store.get(ModelKeys.AUTHENTICATION, ModelKeys.AUTHENTICATION_NAME);
+                AuthenticationConfigurationBuilder auth = builder.remoteSecurity().authentication();
+                auth
+                      .enable()
+                      .saslMechanism(AuthenticationResource.MECHANISM.resolveModelAttribute(context, authentication).asString())
+                      .username(AuthenticationResource.USERNAME.resolveModelAttribute(context, authentication).asString())
+                      .password(AuthenticationResource.PASSWORD.resolveModelAttribute(context, authentication).asString())
+                      .realm(AuthenticationResource.REALM.resolveModelAttribute(context, authentication).asString());
+            }
             return builder;
         } else if (storeKey.equals(ModelKeys.ROCKSDB_STORE)) {
             final RocksDBStoreConfigurationBuilder builder = persistenceBuilder.addStore(RocksDBStoreConfigurationBuilder.class);
@@ -764,7 +860,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
                     }
                 }
             };
-            dependencies.add(new Dependency<PathManager>(PathManagerService.SERVICE_NAME, PathManager.class, injector));
+            dependencies.add(new Dependency<>(PathManagerService.SERVICE_NAME, PathManager.class, injector));
 
             final boolean expirationDefined = store.hasDefined(ModelKeys.EXPIRATION) && store.get(ModelKeys.EXPIRATION, ModelKeys.EXPIRATION_NAME).isDefined();
             final String expirationPath;
@@ -825,35 +921,19 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
                     };
                     dependencies.add(new Dependency<>(OutboundSocketBinding.OUTBOUND_SOCKET_BINDING_BASE_SERVICE_NAME.append(outboundSocketBinding), OutboundSocketBinding.class, injector));
                 }
-                if (store.hasDefined(ModelKeys.APPEND_CACHE_NAME_TO_PATH)) {
-                    builder.appendCacheNameToPath(store.require(ModelKeys.APPEND_CACHE_NAME_TO_PATH).asBoolean());
-                }
-                if (store.hasDefined(ModelKeys.PATH)) {
-                    builder.path(store.get(ModelKeys.PATH).asString());
-                }
+                builder.appendCacheNameToPath(RestStoreConfigurationResource.APPEND_CACHE_NAME_TO_PATH.resolveModelAttribute(context, store).asBoolean());
+                builder.path(RestStoreConfigurationResource.PATH.resolveModelAttribute(context, store).asString());
+                builder.maxContentLength(RestStoreConfigurationResource.MAX_CONTENT_LENGTH.resolveModelAttribute(context, store).asInt());
                 builder.rawValues(true);
-                builder.metadataHelper(MimeMetadataHelper.class);
 
                 if (store.hasDefined(ModelKeys.CONNECTION_POOL)) {
                     ModelNode pool = store.get(ModelKeys.CONNECTION_POOL);
-                    if (pool.hasDefined(ModelKeys.CONNECTION_TIMEOUT)) {
-                        builder.connectionPool().connectionTimeout(pool.require(ModelKeys.CONNECTION_TIMEOUT).asInt());
-                    }
-                    if (pool.hasDefined(ModelKeys.MAX_CONNECTIONS_PER_HOST)) {
-                        builder.connectionPool().maxConnectionsPerHost(pool.require(ModelKeys.MAX_CONNECTIONS_PER_HOST).asInt());
-                    }
-                    if (pool.hasDefined(ModelKeys.MAX_TOTAL_CONNECTIONS)) {
-                        builder.connectionPool().maxTotalConnections(pool.require(ModelKeys.MAX_TOTAL_CONNECTIONS).asInt());
-                    }
-                    if (pool.hasDefined(ModelKeys.BUFFER_SIZE)) {
-                        builder.connectionPool().bufferSize(pool.require(ModelKeys.BUFFER_SIZE).asInt());
-                    }
-                    if (pool.hasDefined(ModelKeys.SOCKET_TIMEOUT)) {
-                        builder.connectionPool().socketTimeout(pool.require(ModelKeys.SOCKET_TIMEOUT).asInt());
-                    }
-                    if (pool.hasDefined(ModelKeys.TCP_NO_DELAY)) {
-                        builder.connectionPool().tcpNoDelay(pool.require(ModelKeys.TCP_NO_DELAY).asBoolean());
-                    }
+                    builder.connectionPool().bufferSize(RestStoreConfigurationResource.BUFFER_SIZE.resolveModelAttribute(context, pool).asInt());
+                    builder.connectionPool().connectionTimeout(RestStoreConfigurationResource.CONNECTION_TIMEOUT.resolveModelAttribute(context, pool).asInt());
+                    builder.connectionPool().maxConnectionsPerHost(RestStoreConfigurationResource.MAX_CONNECTIONS_PER_HOST.resolveModelAttribute(context, pool).asInt());
+                    builder.connectionPool().maxTotalConnections(RestStoreConfigurationResource.MAX_TOTAL_CONNECTIONS.resolveModelAttribute(context, pool).asInt());
+                    builder.connectionPool().socketTimeout(RestStoreConfigurationResource.SOCKET_TIMEOUT.resolveModelAttribute(context, pool).asInt());
+                    builder.connectionPool().tcpNoDelay(RestStoreConfigurationResource.TCP_NO_DELAY.resolveModelAttribute(context, pool).asBoolean());
                 }
                 return builder;
         } else if (storeKey.equals(ModelKeys.STORE)) {
@@ -912,6 +992,10 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
       if (readOnly != null && readOnly.isDefined()) {
          storeConfigurationBuilder.ignoreModifications(readOnly.asBoolean());
       }
+      ModelNode maxBatchSize = store.get(ModelKeys.MAX_BATCH_SIZE);
+      if (maxBatchSize != null && maxBatchSize.isDefined()) {
+          storeConfigurationBuilder.maxBatchSize(maxBatchSize.asInt());
+      }
       final boolean async = store.hasDefined(ModelKeys.WRITE_BEHIND) && store.get(ModelKeys.WRITE_BEHIND, ModelKeys.WRITE_BEHIND_NAME).isDefined();
       if (async) {
          ModelNode writeBehind = store.get(ModelKeys.WRITE_BEHIND, ModelKeys.WRITE_BEHIND_NAME);
@@ -930,7 +1014,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
             // }
             String propertyName = property.getName();
             // get the value from ModelNode {"value" => "property-value"}
-            ModelNode propertyValue = null ;
+            ModelNode propertyValue;
             propertyValue = StorePropertyResource.VALUE.resolveModelAttribute(context,property.getValue());
             properties.setProperty(propertyName, propertyValue.asString());
          }
@@ -971,7 +1055,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
     {
         if (!table.isDefined() || !table.hasDefined(columnKey)) return defaultValue;
         ModelNode column = table.get(columnKey);
-        ModelNode resolvedValue = null ;
+        ModelNode resolvedValue;
         return ((resolvedValue = columnAttribute.resolveModelAttribute(context, column)).isDefined()) ? resolvedValue.asString() : defaultValue;
     }
 
@@ -1006,7 +1090,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
         }
     }
 
-    private abstract class SimpleInjector<I> implements Injector<I> {
+    private static abstract class SimpleInjector<I> implements Injector<I> {
         @Override
         public void uninject() {
             // Do nothing

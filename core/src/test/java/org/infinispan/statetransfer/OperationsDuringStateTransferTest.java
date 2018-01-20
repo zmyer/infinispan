@@ -6,7 +6,6 @@ import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
-import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -17,16 +16,20 @@ import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
+import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
+import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.impl.BiasedEntryWrappingInterceptor;
 import org.infinispan.interceptors.impl.CallInterceptor;
 import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
 import org.infinispan.interceptors.impl.InvocationContextInterceptor;
+import org.infinispan.interceptors.impl.RetryingEntryWrappingInterceptor;
 import org.infinispan.interceptors.impl.VersionedEntryWrappingInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -35,7 +38,7 @@ import org.infinispan.topology.CacheTopology;
 import org.infinispan.topology.ClusterTopologyManager;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -62,6 +65,8 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
          new OperationsDuringStateTransferTest().cacheMode(CacheMode.REPL_SYNC).transactional(false),
          new OperationsDuringStateTransferTest().cacheMode(CacheMode.REPL_SYNC).transactional(true).lockingMode(LockingMode.PESSIMISTIC),
          new OperationsDuringStateTransferTest().cacheMode(CacheMode.REPL_SYNC).transactional(true).lockingMode(LockingMode.OPTIMISTIC),
+         new OperationsDuringStateTransferTest().cacheMode(CacheMode.SCATTERED_SYNC).transactional(false).biasAcquisition(BiasAcquisition.NEVER),
+         new OperationsDuringStateTransferTest().cacheMode(CacheMode.SCATTERED_SYNC).transactional(false).biasAcquisition(BiasAcquisition.ON_WRITE),
       };
    }
 
@@ -70,15 +75,15 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       cacheConfigBuilder = getDefaultClusteredCacheConfig(cacheMode, transactional, true);
       if (transactional) {
          cacheConfigBuilder.transaction().transactionMode(TransactionMode.TRANSACTIONAL)
-               .transactionManagerLookup(new DummyTransactionManagerLookup())
-               .syncCommitPhase(true).syncRollbackPhase(true);
+               .transactionManagerLookup(new EmbeddedTransactionManagerLookup());
 
          cacheConfigBuilder.transaction().lockingMode(lockingMode);
          if (lockingMode == LockingMode.OPTIMISTIC) {
-            cacheConfigBuilder.transaction()
-                  .locking().writeSkewCheck(true).isolationLevel(IsolationLevel.REPEATABLE_READ)
-                  .versioning().enable().scheme(VersioningScheme.SIMPLE);
+            cacheConfigBuilder.locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
          }
+      }
+      if (biasAcquisition != null) {
+         cacheConfigBuilder.clustering().biasAcquisition(biasAcquisition);
       }
       cacheConfigBuilder.clustering().hash().numSegments(10)
             .l1().disable()
@@ -95,15 +100,14 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       // add an interceptor on second node that will block REMOVE commands right after EntryWrappingInterceptor until we are ready
       final CountDownLatch removeStartedLatch = new CountDownLatch(1);
       final CountDownLatch removeProceedLatch = new CountDownLatch(1);
-      boolean isVersioningEnabled = cache(0).getCacheConfiguration().versioning().enabled();
-      cacheConfigBuilder.customInterceptors().addInterceptor().after(isVersioningEnabled ? VersionedEntryWrappingInterceptor.class : EntryWrappingInterceptor.class).interceptor(new CommandInterceptor() {
+      cacheConfigBuilder.customInterceptors().addInterceptor().after(ewi()).interceptor(new CommandInterceptor() {
          @Override
          protected Object handleDefault(InvocationContext ctx, VisitableCommand cmd) throws Throwable {
             if (cmd instanceof RemoveCommand) {
                // signal we encounter a REMOVE
                removeStartedLatch.countDown();
                // wait until it is ok to continue with REMOVE
-               if (!removeProceedLatch.await(15, TimeUnit.SECONDS)) {
+               if (!removeProceedLatch.await(10, TimeUnit.SECONDS)) {
                   throw new TimeoutException();
                }
             }
@@ -130,21 +134,18 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       assertTrue(cache(1).getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL).keySet().isEmpty());
 
       // initiate a REMOVE
-      Future<Object> getFuture = fork(new Callable<Object>() {
-         @Override
-         public Object call() throws Exception {
-            try {
-               return cache(1).remove("myKey");
-            } catch (Exception e) {
-               log.errorf(e, "PUT failed: %s", e.getMessage());
-               throw e;
-            }
+      Future<Object> getFuture = fork(() -> {
+         try {
+            return cache(1).remove("myKey");
+         } catch (Exception e) {
+            log.errorf(e, "PUT failed: %s", e.getMessage());
+            throw e;
          }
       });
 
       // wait for REMOVE command on node B to reach beyond *EntryWrappingInterceptor, where it will block.
       // the value seen so far is null
-      if (!removeStartedLatch.await(15, TimeUnit.SECONDS)) {
+      if (!removeStartedLatch.await(10, TimeUnit.SECONDS)) {
          throw new TimeoutException();
       }
 
@@ -155,7 +156,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       ctm0.setRebalancingEnabled(true);
 
       // wait for state transfer to end
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1));
 
       // the state should be already transferred now
       assertEquals(1, cache(1).keySet().size());
@@ -163,12 +164,24 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       // allow REMOVE to continue
       removeProceedLatch.countDown();
 
-      Object oldVal = getFuture.get(15, TimeUnit.SECONDS);
+      Object oldVal = getFuture.get(10, TimeUnit.SECONDS);
       assertNotNull(oldVal);
       assertEquals("myValue", oldVal);
 
       assertNull(cache(0).get("myKey"));
       assertNull(cache(1).get("myKey"));
+   }
+
+   public Class<? extends DDAsyncInterceptor> ewi() {
+      Class<? extends DDAsyncInterceptor> after;
+      if (cacheMode.isScattered()) {
+         after = biasAcquisition == BiasAcquisition.NEVER ? RetryingEntryWrappingInterceptor.class : BiasedEntryWrappingInterceptor.class;
+      } else if (Configurations.isTxVersioned(cache(0).getCacheConfiguration())) {
+         after = VersionedEntryWrappingInterceptor.class;
+      } else {
+         after = EntryWrappingInterceptor.class;
+      }
+      return after;
    }
 
    public void testPut() throws Exception {
@@ -177,8 +190,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       // add an interceptor on second node that will block PUT commands right after EntryWrappingInterceptor until we are ready
       final CountDownLatch putStartedLatch = new CountDownLatch(1);
       final CountDownLatch putProceedLatch = new CountDownLatch(1);
-      boolean isVersioningEnabled = cache(0).getCacheConfiguration().versioning().enabled();
-      cacheConfigBuilder.customInterceptors().addInterceptor().after(isVersioningEnabled ? VersionedEntryWrappingInterceptor.class : EntryWrappingInterceptor.class).interceptor(new CommandInterceptor() {
+      cacheConfigBuilder.customInterceptors().addInterceptor().after(ewi()).interceptor(new CommandInterceptor() {
          @Override
          protected Object handleDefault(InvocationContext ctx, VisitableCommand cmd) throws Throwable {
             if (cmd instanceof PutKeyValueCommand &&
@@ -186,7 +198,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
                // signal we encounter a (non-state-transfer) PUT
                putStartedLatch.countDown();
                // wait until it is ok to continue with PUT
-               if (!putProceedLatch.await(15, TimeUnit.SECONDS)) {
+               if (!putProceedLatch.await(10, TimeUnit.SECONDS)) {
                   throw new TimeoutException();
                }
             }
@@ -213,21 +225,18 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       assertTrue(cache(1).getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL).keySet().isEmpty());
 
       // initiate a PUT
-      Future<Object> putFuture = fork(new Callable<Object>() {
-         @Override
-         public Object call() throws Exception {
-            try {
-               return cache(1).put("myKey", "newValue");
-            } catch (Exception e) {
-               log.errorf(e, "PUT failed: %s", e.getMessage());
-               throw e;
-            }
+      Future<Object> putFuture = fork(() -> {
+         try {
+            return cache(1).put("myKey", "newValue");
+         } catch (Exception e) {
+            log.errorf(e, "PUT failed: %s", e.getMessage());
+            throw e;
          }
       });
 
       // wait for PUT command on node B to reach beyond *EntryWrappingInterceptor, where it will block.
       // the value seen so far is null
-      if (!putStartedLatch.await(15, TimeUnit.SECONDS)) {
+      if (!putStartedLatch.await(10, TimeUnit.SECONDS)) {
          throw new TimeoutException();
       }
 
@@ -238,7 +247,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       ctm0.setRebalancingEnabled(true);
 
       // wait for state transfer to end
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1));
 
       // the state should be already transferred now
       assertEquals(1, cache(1).keySet().size());
@@ -246,7 +255,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       // allow PUT to continue
       putProceedLatch.countDown();
 
-      Object oldVal = putFuture.get(15, TimeUnit.SECONDS);
+      Object oldVal = putFuture.get(10, TimeUnit.SECONDS);
       assertNotNull(oldVal);
       assertEquals("myValue", oldVal);
 
@@ -260,15 +269,14 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       // add an interceptor on second node that will block REPLACE commands right after EntryWrappingInterceptor until we are ready
       final CountDownLatch replaceStartedLatch = new CountDownLatch(1);
       final CountDownLatch replaceProceedLatch = new CountDownLatch(1);
-      boolean isVersioningEnabled = cache(0).getCacheConfiguration().versioning().enabled();
-      cacheConfigBuilder.customInterceptors().addInterceptor().after(isVersioningEnabled ? VersionedEntryWrappingInterceptor.class : EntryWrappingInterceptor.class).interceptor(new CommandInterceptor() {
+      cacheConfigBuilder.customInterceptors().addInterceptor().after(ewi()).interceptor(new CommandInterceptor() {
          @Override
          protected Object handleDefault(InvocationContext ctx, VisitableCommand cmd) throws Throwable {
             if (cmd instanceof ReplaceCommand) {
                // signal we encounter a REPLACE
                replaceStartedLatch.countDown();
                // wait until it is ok to continue with REPLACE
-               if (!replaceProceedLatch.await(15, TimeUnit.SECONDS)) {
+               if (!replaceProceedLatch.await(10, TimeUnit.SECONDS)) {
                   throw new TimeoutException();
                }
             }
@@ -295,21 +303,18 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       assertTrue(cache(1).getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL).keySet().isEmpty());
 
       // initiate a REPLACE
-      Future<Object> getFuture = fork(new Callable<Object>() {
-         @Override
-         public Object call() throws Exception {
-            try {
-               return cache(1).replace("myKey", "newValue");
-            } catch (Exception e) {
-               log.errorf(e, "REPLACE failed: %s", e.getMessage());
-               throw e;
-            }
+      Future<Object> getFuture = fork(() -> {
+         try {
+            return cache(1).replace("myKey", "newValue");
+         } catch (Exception e) {
+            log.errorf(e, "REPLACE failed: %s", e.getMessage());
+            throw e;
          }
       });
 
       // wait for REPLACE command on node B to reach beyond *EntryWrappingInterceptor, where it will block.
       // the value seen so far is null
-      if (!replaceStartedLatch.await(15, TimeUnit.SECONDS)) {
+      if (!replaceStartedLatch.await(10, TimeUnit.SECONDS)) {
          throw new TimeoutException();
       }
 
@@ -320,7 +325,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       ctm0.setRebalancingEnabled(true);
 
       // wait for state transfer to end
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1));
 
       // the state should be already transferred now
       assertEquals(1, cache(1).keySet().size());
@@ -328,7 +333,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       // allow REPLACE to continue
       replaceProceedLatch.countDown();
 
-      Object oldVal = getFuture.get(15, TimeUnit.SECONDS);
+      Object oldVal = getFuture.get(10, TimeUnit.SECONDS);
       assertNotNull(oldVal);
       assertEquals("myValue", oldVal);
 
@@ -351,7 +356,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
                // signal we encounter a state transfer PUT
                applyStateStartedLatch.countDown();
                // wait until it is ok to apply state
-               if (!applyStateProceedLatch.await(15, TimeUnit.SECONDS)) {
+               if (!applyStateProceedLatch.await(10, TimeUnit.SECONDS)) {
                   throw new TimeoutException();
                }
             }
@@ -369,7 +374,7 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
                // signal we encounter a GET
                getKeyStartedLatch.countDown();
                // wait until it is ok to continue with GET
-               if (!getKeyProceedLatch.await(15, TimeUnit.SECONDS)) {
+               if (!getKeyProceedLatch.await(10, TimeUnit.SECONDS)) {
                   throw new TimeoutException();
                }
             }
@@ -381,28 +386,25 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       addClusterEnabledCacheManager(cacheConfigBuilder);
       log.info("Added a new node");
 
+      // Note: We have to access DC instead of cache with LOCAL_MODE flag, as scattered mode cache would
+      // already become an owner and would wait for the state transfer
       // state transfer is blocked, no keys should be present on node B yet
-      assertTrue(cache(1).getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL).keySet().isEmpty());
+      assertEquals(0, cache(1).getAdvancedCache().getDataContainer().size());
 
       // wait for state transfer on node B to progress to the point where data segments are about to be applied
-      if (!applyStateStartedLatch.await(15, TimeUnit.SECONDS)) {
+      if (!applyStateStartedLatch.await(10, TimeUnit.SECONDS)) {
          throw new TimeoutException();
       }
 
       // state transfer is blocked, no keys should be present on node B yet
-      assertTrue(cache(1).getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL).keySet().isEmpty());
+      assertEquals(0, cache(1).getAdvancedCache().getDataContainer().size());
 
       // initiate a GET
-      Future<Object> getFuture = fork(new Callable<Object>() {
-         @Override
-         public Object call() {
-            return cache(1).get("myKey");
-         }
-      });
+      Future<Object> getFuture = fork(() -> cache(1).get("myKey"));
 
       // wait for GET command on node B to reach beyond *DistributionInterceptor, where it will block.
       // the value seen so far is null
-      if (!getKeyStartedLatch.await(15, TimeUnit.SECONDS)) {
+      if (!getKeyStartedLatch.await(10, TimeUnit.SECONDS)) {
          throw new TimeoutException();
       }
 
@@ -410,14 +412,14 @@ public class OperationsDuringStateTransferTest extends MultipleCacheManagersTest
       applyStateProceedLatch.countDown();
 
       // wait for state transfer to end
-      TestingUtil.waitForRehashToComplete(cache(0), cache(1));
+      TestingUtil.waitForNoRebalance(cache(0), cache(1));
 
       assertEquals(1, cache(1).getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL).keySet().size());
 
       // allow GET to continue
       getKeyProceedLatch.countDown();
 
-      Object value = getFuture.get(15, TimeUnit.SECONDS);
+      Object value = getFuture.get(10, TimeUnit.SECONDS);
       assertEquals("myValue", value);
    }
 }

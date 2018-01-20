@@ -4,8 +4,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-lucene-parent</artifactId>
    <name>Parent pom for the Lucene integration modules</name>
@@ -13,17 +13,17 @@
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
       </dependency>
 
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
@@ -40,7 +40,8 @@
                <threadCount>${infinispan.test.parallel.threads}</threadCount>
                <forkCount>1</forkCount>
                <reuseForks>true</reuseForks>
-               <groups>${defaultTestGroup}</groups>
+               <groups>${defaultTestNGGroups}</groups>
+               <excludedGroups>${defaultExcludedTestNGGroups}</excludedGroups>
                <systemPropertyVariables>
                   <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
                </systemPropertyVariables>

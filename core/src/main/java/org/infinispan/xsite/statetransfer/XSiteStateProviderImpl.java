@@ -28,8 +28,6 @@ import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.filter.CollectionKeyFilter;
-import org.infinispan.filter.KeyFilter;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.manager.PersistenceManager;
@@ -38,7 +36,6 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.RetryOnFailureXSiteCommand;
 import org.infinispan.statetransfer.StateTransferLock;
-import org.infinispan.util.ReadOnlyDataContainerBackedKeySet;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.logging.Log;
@@ -61,35 +58,19 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
 
    private final ConcurrentMap<String, StatePushTask> runningStateTransfer;
 
-   private DataContainer<?, ?> dataContainer;
-   private PersistenceManager persistenceManager;
-   private ClusteringDependentLogic clusteringDependentLogic;
-   private CommandsFactory commandsFactory;
-   private RpcManager rpcManager;
+   @Inject private DataContainer<?, ?> dataContainer;
+   @Inject private PersistenceManager persistenceManager;
+   @Inject private ClusteringDependentLogic clusteringDependentLogic;
+   @Inject private CommandsFactory commandsFactory;
+   @Inject private RpcManager rpcManager;
+   @Inject @ComponentName(value = ASYNC_TRANSPORT_EXECUTOR)
    private ExecutorService executorService;
-   private Configuration configuration;
-   private XSiteStateTransferManager stateTransferManager;
-   private StateTransferLock stateTransferLock;
+   @Inject private Configuration configuration;
+   @Inject private XSiteStateTransferManager stateTransferManager;
+   @Inject private StateTransferLock stateTransferLock;
 
    public XSiteStateProviderImpl() {
       runningStateTransfer = CollectionFactory.makeConcurrentMap();
-   }
-
-   @Inject
-   public void inject(DataContainer dataContainer, PersistenceManager persistenceManager, RpcManager rpcManager,
-                      ClusteringDependentLogic clusteringDependentLogic, CommandsFactory commandsFactory,
-                      @ComponentName(value = ASYNC_TRANSPORT_EXECUTOR) ExecutorService executorService,
-                      Configuration configuration, XSiteStateTransferManager xSiteStateTransferManager,
-                      StateTransferLock stateTransferLock) {
-      this.dataContainer = dataContainer;
-      this.persistenceManager = persistenceManager;
-      this.clusteringDependentLogic = clusteringDependentLogic;
-      this.commandsFactory = commandsFactory;
-      this.rpcManager = rpcManager;
-      this.executorService = executorService;
-      this.configuration = configuration;
-      this.stateTransferManager = xSiteStateTransferManager;
-      this.stateTransferLock = stateTransferLock;
    }
 
    @Override
@@ -154,16 +135,13 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
 
    private void notifyStateTransferEnd(final String siteName, final Address origin, final boolean error) {
       if (rpcManager.getAddress().equals(origin)) {
-         executorService.submit(new Callable<Void>() {
-            @Override
-            public Void call() throws Exception {
-               try {
-                  stateTransferManager.notifyStatePushFinished(siteName, origin, !error);
-               } catch (Throwable throwable) {
-                  //ignored
-               }
-               return null;
+         executorService.submit((Callable<Void>) () -> {
+            try {
+               stateTransferManager.notifyStatePushFinished(siteName, origin, !error);
+            } catch (Throwable throwable) {
+               //ignored
             }
+            return null;
          });
       } else {
          XSiteStateTransferControlCommand command = commandsFactory.buildXSiteStateTransferControlCommand(FINISH_SEND, siteName);
@@ -173,7 +151,7 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
    }
 
    private boolean shouldSendKey(Object key) {
-      return clusteringDependentLogic.localNodeIsPrimaryOwner(key);
+      return clusteringDependentLogic.getCacheTopology().getDistribution(key).isPrimary();
    }
 
    private void sendFromSharedBuffer(XSiteBackup xSiteBackup, List<XSiteState> sharedBuffer, StatePushTask task) throws Throwable {
@@ -279,10 +257,9 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
                if (debug) {
                   log.debugf("[X-Site State Transfer - %s] start Persistence iteration", xSiteBackup.getSiteName());
                }
-               KeyFilter<Object> filter = new CacheLoaderFilter<>(new ReadOnlyDataContainerBackedKeySet(dataContainer));
                StateTransferCacheLoaderTask task = new StateTransferCacheLoaderTask(xSiteBackup, chunk, this);
                try {
-                  stProvider.process(filter, task, EXECUTOR_SERVICE, true, true);
+                  stProvider.process(k -> shouldSendKey(k) && !dataContainer.containsKey(k), task, EXECUTOR_SERVICE, true, true);
                   if (canceled) {
                      log.debugf("[X-Site State Transfer - %s] State transfer canceled!", xSiteBackup.getSiteName());
                      return;
@@ -321,18 +298,6 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
                "origin=" + origin +
                ", canceled=" + canceled +
                '}';
-      }
-   }
-
-   private class CacheLoaderFilter<K> extends CollectionKeyFilter<K> {
-
-      public CacheLoaderFilter(Collection<? extends K> rejectedKeys) {
-         super(rejectedKeys);
-      }
-
-      @Override
-      public boolean accept(K key) {
-         return shouldSendKey(key) && super.accept(key);
       }
    }
 

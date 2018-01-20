@@ -9,7 +9,7 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
 import org.infinispan.distribution.ch.impl.OwnershipStatistics;
-import org.infinispan.distribution.group.PartitionerConsistentHash;
+import org.infinispan.distribution.group.impl.PartitionerConsistentHash;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -21,7 +21,7 @@ import org.testng.annotations.Test;
  * @author Dan Berindei
  * @since 6.0
  */
-@Test(groups = "functional", testName = "distribution.ch.CapacityFactorsFunctionalTest", enabled = false, description = "to be fixed by ISPN-6470")
+@Test(groups = "unstable", testName = "distribution.ch.CapacityFactorsFunctionalTest", description = "to be fixed by ISPN-6470")
 public class CapacityFactorsFunctionalTest extends MultipleCacheManagersTest {
 
    public static final int NUM_SEGMENTS = 60;

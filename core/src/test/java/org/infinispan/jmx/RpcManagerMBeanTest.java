@@ -3,8 +3,6 @@ package org.infinispan.jmx;
 import static org.infinispan.test.TestingUtil.checkMBeanOperationParameterNaming;
 import static org.infinispan.test.TestingUtil.getCacheObjectName;
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyBoolean;
-import static org.mockito.Matchers.anyCollectionOf;
 import static org.mockito.Matchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -18,6 +16,7 @@ import java.io.ObjectOutput;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import javax.management.Attribute;
 import javax.management.MBeanServer;
@@ -25,22 +24,14 @@ import javax.management.ObjectName;
 
 import org.infinispan.Cache;
 import org.infinispan.commands.ReplicableCommand;
-import org.infinispan.configuration.cache.CacheMode;
-import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.global.GlobalConfigurationBuilder;
-import org.infinispan.manager.CacheContainer;
 import org.infinispan.marshall.core.ExternalPojo;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
-import org.infinispan.remoting.rpc.ResponseFilter;
-import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.rpc.RpcManagerImpl;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.remoting.transport.ResponseCollector;
 import org.infinispan.remoting.transport.Transport;
-import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
-import org.infinispan.test.fwk.TestCacheManagerFactory;
-import org.infinispan.test.fwk.TransportFlags;
 import org.testng.annotations.Test;
 
 /**
@@ -48,44 +39,14 @@ import org.testng.annotations.Test;
  * @author Galder Zamarreño
  */
 @Test(groups = "functional", testName = "jmx.RpcManagerMBeanTest")
-public class RpcManagerMBeanTest extends MultipleCacheManagersTest {
-   private final String cachename = "repl_sync_cache";
-   public static final String JMX_DOMAIN = RpcManagerMBeanTest.class.getSimpleName();
-   public static final String JMX_DOMAIN2 = JMX_DOMAIN + "2";
+public class RpcManagerMBeanTest extends AbstractClusterMBeanTest {
 
-   @Override
-   protected void createCacheManagers() throws Throwable {
-      ConfigurationBuilder defaultConfig = new ConfigurationBuilder();
-      GlobalConfigurationBuilder gcb1 = GlobalConfigurationBuilder.defaultClusteredBuilder();
-      gcb1.globalJmxStatistics()
-            .enable()
-            .allowDuplicateDomains(true)
-            .jmxDomain(JMX_DOMAIN)
-            .mBeanServerLookup(new PerThreadMBeanServerLookup());
-      CacheContainer cacheManager1 = TestCacheManagerFactory.createClusteredCacheManager(gcb1, defaultConfig,
-            new TransportFlags(), true);
-      cacheManager1.start();
-
-      GlobalConfigurationBuilder gcb2 = GlobalConfigurationBuilder.defaultClusteredBuilder();
-      gcb2.globalJmxStatistics()
-            .enable()
-            .allowDuplicateDomains(true)
-            .jmxDomain(JMX_DOMAIN)
-            .mBeanServerLookup(new PerThreadMBeanServerLookup());
-      CacheContainer cacheManager2 = TestCacheManagerFactory.createClusteredCacheManager(gcb2, defaultConfig,
-            new TransportFlags(), true);
-      cacheManager2.start();
-
-      registerCacheManager(cacheManager1, cacheManager2);
-
-      ConfigurationBuilder cb = new ConfigurationBuilder();
-      cb.clustering().cacheMode(CacheMode.REPL_SYNC).jmxStatistics().enable();
-      defineConfigurationOnAllManagers(cachename, cb);
-      waitForClusterToForm(cachename);
+   public RpcManagerMBeanTest() {
+      super(RpcManagerMBeanTest.class.getSimpleName());
    }
 
    public void testJmxOperationMetadata() throws Exception {
-      ObjectName rpcManager = getCacheObjectName(JMX_DOMAIN, cachename + "(repl_sync)", "RpcManager");
+      ObjectName rpcManager = getCacheObjectName(jmxDomain, cachename + "(repl_sync)", "RpcManager");
       checkMBeanOperationParameterNaming(rpcManager);
    }
 
@@ -93,8 +54,8 @@ public class RpcManagerMBeanTest extends MultipleCacheManagersTest {
       Cache<String, String> cache1 = manager(0).getCache(cachename);
       Cache cache2 = manager(1).getCache(cachename);
       MBeanServer mBeanServer = PerThreadMBeanServerLookup.getThreadMBeanServer();
-      ObjectName rpcManager1 = getCacheObjectName(JMX_DOMAIN, cachename + "(repl_sync)", "RpcManager");
-      ObjectName rpcManager2 = getCacheObjectName(JMX_DOMAIN2, cachename + "(repl_sync)", "RpcManager");
+      ObjectName rpcManager1 = getCacheObjectName(jmxDomain, cachename + "(repl_sync)", "RpcManager");
+      ObjectName rpcManager2 = getCacheObjectName(jmxDomain2, cachename + "(repl_sync)", "RpcManager");
       assert mBeanServer.isRegistered(rpcManager1);
       assert mBeanServer.isRegistered(rpcManager2);
 
@@ -134,7 +95,7 @@ public class RpcManagerMBeanTest extends MultipleCacheManagersTest {
       Cache<String, Serializable> cache1 = manager(0).getCache(cachename);
       Cache cache2 = manager(1).getCache(cachename);
       MBeanServer mBeanServer = PerThreadMBeanServerLookup.getThreadMBeanServer();
-      ObjectName rpcManager1 = getCacheObjectName(JMX_DOMAIN, cachename + "(repl_sync)", "RpcManager");
+      ObjectName rpcManager1 = getCacheObjectName(jmxDomain, cachename + "(repl_sync)", "RpcManager");
 
       // the previous test has reset the statistics
       assertEquals(mBeanServer.getAttribute(rpcManager1, "ReplicationCount"), (long) 0);
@@ -162,8 +123,12 @@ public class RpcManagerMBeanTest extends MultipleCacheManagersTest {
          Transport transport = mock(Transport.class);
          when(transport.getMembers()).thenReturn(memberList);
          when(transport.getAddress()).thenReturn(mockAddress1);
-         when(transport.invokeRemotelyAsync(anyCollectionOf(Address.class), any(ReplicableCommand.class), any(ResponseMode.class),
-               anyLong(), any(ResponseFilter.class), any(DeliverOrder.class), anyBoolean())).thenThrow(new RuntimeException());
+         // If cache1 is the primary owner it will be a broadcast, otherwise a unicast
+         when(transport.invokeCommand(any(Address.class), any(ReplicableCommand.class), any(ResponseCollector.class),
+                                      any(DeliverOrder.class), anyLong(), any(TimeUnit.class)))
+               .thenThrow(new RuntimeException());
+         when(transport.invokeCommandOnAll(any(ReplicableCommand.class), any(ResponseCollector.class),
+               any(DeliverOrder.class), anyLong(), any(TimeUnit.class))).thenThrow(new RuntimeException());
          rpcManager.setTransport(transport);
          cache1.put("a5", "b5");
          assert false : "rpc manager should have thrown an exception";

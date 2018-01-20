@@ -18,12 +18,14 @@
  */
 package org.infinispan.server.endpoint.subsystem;
 
+import org.infinispan.server.endpoint.Constants;
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathElement;
 import org.jboss.as.controller.ReloadRequiredWriteAttributeHandler;
 import org.jboss.as.controller.SimpleAttributeDefinition;
 import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
+import org.jboss.as.controller.capability.RuntimeCapability;
 import org.jboss.as.controller.descriptions.ResourceDescriptionResolver;
 import org.jboss.as.controller.registry.ManagementResourceRegistration;
 import org.jboss.dmr.ModelNode;
@@ -31,10 +33,15 @@ import org.jboss.dmr.ModelType;
 
 public class ProtocolServerConnectorResource extends CommonConnectorResource {
 
+   static final String SOCKET_CAPABILITY_NAME = "org.wildfly.network.socket-binding";
+   private static final RuntimeCapability<Void> CONNECTOR_CAPABILITY =
+         RuntimeCapability.Builder.of(Constants.DATAGRID.getCanonicalName(), true).build();
+
    static final SimpleAttributeDefinition SOCKET_BINDING =
          new SimpleAttributeDefinitionBuilder(ModelKeys.SOCKET_BINDING, ModelType.STRING, true)
                  .setAllowExpression(true)
                  .setXmlName(ModelKeys.SOCKET_BINDING)
+                 .setCapabilityReference(SOCKET_CAPABILITY_NAME, CONNECTOR_CAPABILITY)
                  .setRestartAllServices()
                  .build();
 
@@ -65,6 +72,7 @@ public class ProtocolServerConnectorResource extends CommonConnectorResource {
                  .setAllowExpression(true)
                  .setXmlName(ModelKeys.RECEIVE_BUFFER_SIZE)
                  .setRestartAllServices()
+                 .setDefaultValue(new ModelNode().set(0))
                  .build();
 
    static final SimpleAttributeDefinition SEND_BUFFER_SIZE =
@@ -72,6 +80,7 @@ public class ProtocolServerConnectorResource extends CommonConnectorResource {
                  .setAllowExpression(true)
                  .setXmlName(ModelKeys.SEND_BUFFER_SIZE)
                  .setRestartAllServices()
+                 .setDefaultValue(new ModelNode().set(0))
                  .build();
 
    static final SimpleAttributeDefinition[] PROTOCOL_SERVICE_ATTRIBUTES = { SOCKET_BINDING, IDLE_TIMEOUT, TCP_NODELAY, RECEIVE_BUFFER_SIZE, SEND_BUFFER_SIZE, WORKER_THREADS };

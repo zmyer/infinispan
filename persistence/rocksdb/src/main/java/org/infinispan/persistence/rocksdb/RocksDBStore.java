@@ -33,17 +33,21 @@ import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
+import org.rocksdb.WriteBatch;
+import org.rocksdb.WriteOptions;
 
 @Store
 @ConfiguredBy(RocksDBStoreConfiguration.class)
-public class RocksDBStore implements AdvancedLoadWriteStore {
+public class RocksDBStore<K,V> implements AdvancedLoadWriteStore<K,V> {
     private static final Log log = LogFactory.getLog(RocksDBStore.class, Log.class);
+
     private RocksDBStoreConfiguration configuration;
     private BlockingQueue<ExpiryEntry> expiryEntryQueue;
     private RocksDB db;
     private RocksDB expiredDb;
     private InitializationContext ctx;
     private Semaphore semaphore;
+    private WriteOptions dataWriteOptions;
     private volatile boolean stopped = true;
 
     @Override
@@ -76,6 +80,12 @@ public class RocksDBStore implements AdvancedLoadWriteStore {
 
     private String getQualifiedExpiredLocation() {
         return configuration.expiredLocation() + sanitizedCacheName();
+    }
+
+    private WriteOptions dataWriteOptions() {
+        if (dataWriteOptions == null)
+            dataWriteOptions = new WriteOptions().setDisableWAL(false);
+        return dataWriteOptions;
     }
 
     private Options dataDbOptions() {
@@ -161,7 +171,7 @@ public class RocksDBStore implements AdvancedLoadWriteStore {
             if (optionalIterator.isPresent() && configuration.clearThreshold() <= 0) {
                 try (RocksIterator it = optionalIterator.get()) {
                     for(it.seekToFirst(); it.isValid(); it.next()) {
-                        db.remove(it.key());
+                        db.delete(it.key());
                         count++;
 
                         if (count > configuration.clearThreshold()) {
@@ -299,7 +309,7 @@ public class RocksDBStore implements AdvancedLoadWriteStore {
                 if (db.get(keyBytes) == null) {
                     return false;
                 }
-                db.remove(keyBytes);
+                db.delete(keyBytes);
             } finally {
                 semaphore.release();
             }
@@ -355,6 +365,48 @@ public class RocksDBStore implements AdvancedLoadWriteStore {
             return me;
         } catch (Exception e) {
             throw new PersistenceException(e);
+        }
+    }
+
+    @Override
+    public void writeBatch(Iterable<MarshalledEntry<? extends K, ? extends V>> marshalledEntries) {
+        try {
+            int batchSize = 0;
+            WriteBatch batch = new WriteBatch();
+            for (MarshalledEntry entry : marshalledEntries) {
+                batch.put(marshall(entry.getKey()), marshall(entry));
+                batchSize++;
+
+                if (batchSize == configuration.maxBatchSize()) {
+                    batchSize = 0;
+                    writeBatch(batch);
+                    batch = new WriteBatch();
+                }
+            }
+
+            if (batchSize != 0)
+                writeBatch(batch);
+
+            // Add metadata only after batch has been written
+            for (MarshalledEntry entry : marshalledEntries) {
+                InternalMetadata meta = entry.getMetadata();
+                if (meta != null && meta.expiryTime() > -1)
+                    addNewExpiry(entry);
+            }
+        } catch (Exception e) {
+            throw new PersistenceException(e);
+        }
+    }
+
+    private void writeBatch(WriteBatch batch) throws InterruptedException, RocksDBException {
+        semaphore.acquire();
+        try {
+            if (stopped)
+                throw new PersistenceException("RocksDB is stopped");
+
+            db.write(dataWriteOptions(), batch);
+        } finally {
+            semaphore.release();
         }
     }
 
@@ -415,7 +467,7 @@ public class RocksDBStore implements AdvancedLoadWriteStore {
                     }
 
                     for (Long time : times) {
-                        expiredDb.remove(marshall(time));
+                        expiredDb.delete(marshall(time));
                     }
 
                     if (!keys.isEmpty())
@@ -431,7 +483,7 @@ public class RocksDBStore implements AdvancedLoadWriteStore {
                         // TODO race condition: the entry could be updated between the get and delete!
                         if (me.getMetadata() != null && me.getMetadata().isExpired(now)) {
                             // somewhat inefficient to FIND then REMOVE...
-                            db.remove(keyBytes);
+                            db.delete(keyBytes);
                             purgeListener.entryPurged(key);
                             count++;
                         }

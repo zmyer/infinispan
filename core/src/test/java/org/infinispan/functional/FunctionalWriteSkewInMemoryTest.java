@@ -1,14 +1,12 @@
 package org.infinispan.functional;
 
+import static org.infinispan.test.Exceptions.assertException;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertTrue;
 
-import java.io.Serializable;
 import java.util.Collections;
-import java.util.concurrent.TimeUnit;
-import java.util.function.BiFunction;
-import java.util.function.Function;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Stream;
 
 import javax.transaction.RollbackException;
@@ -17,8 +15,6 @@ import javax.transaction.Transaction;
 import javax.transaction.xa.XAException;
 
 import org.infinispan.Cache;
-import org.infinispan.commons.api.functional.EntryView;
-import org.infinispan.commons.api.functional.FunctionalMap;
 import org.infinispan.remoting.RemoteException;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.WriteSkewException;
@@ -31,7 +27,6 @@ public class FunctionalWriteSkewInMemoryTest extends FunctionalTxInMemoryTest {
 
    public FunctionalWriteSkewInMemoryTest() {
       transactional(true).lockingMode(LockingMode.OPTIMISTIC).isolationLevel(IsolationLevel.REPEATABLE_READ);
-      writeSkewCheck(true);
    }
 
    @Override
@@ -51,7 +46,7 @@ public class FunctionalWriteSkewInMemoryTest extends FunctionalTxInMemoryTest {
 
    @Test(dataProvider = "readCombos")
    public void testWriteSkew(boolean isOwner, ReadOp op1, ReadOp op2) throws Throwable {
-      Object key = getKey(isOwner);
+      Object key = getKey(isOwner, DIST);
       cache(0, DIST).put(key, "value0");
 
       tm.begin();
@@ -63,9 +58,13 @@ public class FunctionalWriteSkewInMemoryTest extends FunctionalTxInMemoryTest {
       tm.resume(transaction);
       try {
          assertEquals("value0", op2.action.eval(cache(0, DIST), key, ro, rw));
-      } catch (WriteSkewException e) {
+      } catch (CompletionException e) {
+         assertException(WriteSkewException.class, e.getCause());
          // this is fine; either we read the old value, or we can't read it and we throw
          tm.rollback();
+      } catch (WriteSkewException e) {
+         // synchronous get is invoked using synchronous API, without wrapping into CompletionExceptions
+         assert op2 == ReadOp.GET;
       }
       if (tm.getStatus() == Status.STATUS_ACTIVE) {
          try {
@@ -85,14 +84,12 @@ public class FunctionalWriteSkewInMemoryTest extends FunctionalTxInMemoryTest {
    }
 
    enum ReadOp {
-      READ(true, (cache, key, ro, rw) ->
-            ro.eval(key, (Serializable & Function<EntryView.ReadEntryView, Object>) v -> v.get()).get(10, TimeUnit.SECONDS)),
-      READ_MANY(true, (cache, key, ro, rw) ->
-            ro.evalMany(Collections.singleton(key), (Serializable & Function<EntryView.ReadEntryView, Object>) v -> v.get()).findAny().get()),
-      READ_WRITE_KEY(true, (cache, key, ro, rw) -> rw.eval(key, (Serializable & Function<EntryView.ReadWriteEntryView, Object>) v -> v.get()).get()),
-      READ_WRITE_KEY_VALUE(true, (cache, key, ro, rw) -> rw.eval(key, null, (Serializable & BiFunction<Object, EntryView.ReadWriteEntryView, Object>) (value, v) -> v.get()).get()),
-      READ_WRITE_MANY(true, (cache, key, ro, rw) -> rw.evalMany(Collections.singleton(key), (Serializable & Function<EntryView.ReadWriteEntryView, Object>) v -> v.get()).findAny().get()),
-      READ_WRITE_MANY_ENTRIES(true, (cache, key, ro, rw) -> rw.evalMany(Collections.singletonMap(key, null), (Serializable & BiFunction<Object, EntryView.ReadWriteEntryView, Object>) (value, v) -> v.get()).findAny().get()),
+      READ(true, (cache, key, ro, rw) -> ro.eval(key, EntryView.ReadEntryView::get).join()),
+      READ_MANY(true, (cache, key, ro, rw) -> ro.evalMany(Collections.singleton(key), EntryView.ReadEntryView::get).findAny().get()),
+      READ_WRITE_KEY(true, (cache, key, ro, rw) -> rw.eval(key, EntryView.ReadEntryView::get).join()),
+      READ_WRITE_KEY_VALUE(true, (cache, key, ro, rw) -> rw.eval(key, null, (value, v) -> v.get()).join()),
+      READ_WRITE_MANY(true, (cache, key, ro, rw) -> rw.evalMany(Collections.singleton(key), EntryView.ReadEntryView::get).findAny().get()),
+      READ_WRITE_MANY_ENTRIES(true, (cache, key, ro, rw) -> rw.evalMany(Collections.singletonMap(key, null), (value, v) -> v.get()).findAny().get()),
       GET(false, (cache, key, ro, rw) -> cache.get(key))
       ;
 
@@ -110,7 +107,7 @@ public class FunctionalWriteSkewInMemoryTest extends FunctionalTxInMemoryTest {
 
       @FunctionalInterface
       private interface Performer {
-         Object eval(Cache cache, Object key, FunctionalMap.ReadOnlyMap ro, FunctionalMap.ReadWriteMap rw) throws Throwable;
+         Object eval(Cache cache, Object key, FunctionalMap.ReadOnlyMap<Object, String> ro, FunctionalMap.ReadWriteMap<Object, String> rw) throws Throwable;
       }
    }
 }

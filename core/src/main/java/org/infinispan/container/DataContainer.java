@@ -6,7 +6,6 @@ import java.util.Set;
 import java.util.function.BiConsumer;
 
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
@@ -15,8 +14,18 @@ import org.infinispan.filter.KeyValueFilter;
 import org.infinispan.metadata.Metadata;
 
 /**
- * The main internal data structure which stores entries
- *
+ * The main internal data structure which stores entries. Care should be taken when using this directly as entries
+ * could be stored in a different way than they were given to a {@link org.infinispan.Cache}. If you wish to convert
+ * entries to the stored format, you should use the provided {@link org.infinispan.encoding.DataConversion} such as
+ * <pre>
+ * cache.getAdvancedCache().getKeyDataConversion().toStorage(key);
+ * </pre>
+ * when dealing with keys or the following when dealing with values
+ * <pre>
+ * cache.getAdvancedCache().getValueDataConversion().toStorage(value);
+ * </pre>
+ * You can also convert from storage to the user provided type by using the
+ * {@link org.infinispan.encoding.DataConversion#fromStorage(Object)} method on any value returned from the DataContainer
  * @author Manik Surtani (<a href="mailto:manik@jboss.org">manik@jboss.org</a>)
  * @author Galder Zamarreño
  * @author Vladimir Blagojevic
@@ -39,7 +48,7 @@ public interface DataContainer<K, V> extends Iterable<InternalCacheEntry<K, V>> 
     * moved to the end of the chain.
     * <p/>
     * This method should be used instead of {@link #get(Object)}} when called while iterating through the data container
-    * using methods like {@link #keySet()} to avoid changing the underlying collection's order.
+    * using methods like {@link #iterator()} to avoid changing the underlying collection's order.
     *
     * @param k key under which entry is stored
     * @return entry, if it exists, or null if not
@@ -100,14 +109,22 @@ public interface DataContainer<K, V> extends Iterable<InternalCacheEntry<K, V>> 
     * Returns a set of keys in the container. When iterating through the container using this method, clients should
     * never call {@link #get(Object)} method but instead {@link #peek(Object)}, in order to avoid changing the order of
     * the underlying collection as a side of effect of iterating through it.
-    *
+    * <p>
+    * This set of keys will include expired entries. If you wish to only retrieve non expired keys please use the
+    * {@link DataContainer#entrySet()} method and retrieve keys from there.
     * @return a set of keys
+    * @deprecated Please use iterator method if bulk operations are required.
     */
+   @Deprecated
    Set<K> keySet();
 
    /**
+    * This returns all values in the container including expired entries. If you wish to only receive values that
+    * are not expired it is recommended to use {@link DataContainer#entrySet()} and pull values from there directly.
     * @return a set of values contained in the container
+    * @deprecated Please use iterator method if bulk operations are required.
     */
+   @Deprecated
    Collection<V> values();
 
    /**
@@ -117,9 +134,14 @@ public interface DataContainer<K, V> extends Iterable<InternalCacheEntry<K, V>> 
     * <p/>
     * If a client needs to iterate through a mutable set of mutable cache entries, it should iterate the container
     * itself rather than iterating through the return of entrySet().
-    *
+    * <p>
+    * This set is a read only backed view of the entries underneath. This set will only show non expired entries when
+    * invoked. The size method of the set will count expired entries for the purpose of having a O(1) time cost compared
+    * to O(N) if it is to not count expired entries.
     * @return a set of immutable cache entries
+    * @deprecated Please use iterator method if bulk operations are required.
     */
+   @Deprecated
    Set<InternalCacheEntry<K, V>> entrySet();
 
    /**
@@ -210,6 +232,16 @@ public interface DataContainer<K, V> extends Iterable<InternalCacheEntry<K, V>> 
     * @return
     */
    default long capacity() {
+      throw new UnsupportedOperationException();
+   }
+
+   /**
+    * Returns how large the eviction size is currently. This is only supported if the container is bounded. An
+    * {@link UnsupportedOperationException} is thrown otherwise. This value will always be lower than the value returned
+    * from {@link DataContainer#capacity()}
+    * @return how large the counted eviction is
+    */
+   default long evictionSize() {
       throw new UnsupportedOperationException();
    }
 }

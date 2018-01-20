@@ -1,5 +1,11 @@
 package org.infinispan.server.hotrod;
 
+import static org.infinispan.server.hotrod.MetadataUtils.extractCreated;
+import static org.infinispan.server.hotrod.MetadataUtils.extractLastUsed;
+import static org.infinispan.server.hotrod.MetadataUtils.extractLifespan;
+import static org.infinispan.server.hotrod.MetadataUtils.extractMaxIdle;
+import static org.infinispan.server.hotrod.MetadataUtils.extractVersion;
+
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
@@ -7,6 +13,7 @@ import java.util.Set;
 
 import org.infinispan.CacheSet;
 import org.infinispan.commons.util.Util;
+import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.server.hotrod.iteration.IterableIterationResult;
 
@@ -24,6 +31,11 @@ public abstract class Response {
    protected final HotRodOperation operation;
    protected final OperationStatus status;
    protected final int topologyId;
+
+   static EmptyResponse createEmptyResponse(HotRodHeader header, OperationStatus status) {
+      return new EmptyResponse(header.version, header.messageId, header.cacheName, header.clientIntel, header.op,
+            status, header.topologyId);
+   }
 
    protected Response(byte version, long messageId, String cacheName, short clientIntel, HotRodOperation operation, OperationStatus status, int topologyId) {
       this.version = version;
@@ -305,19 +317,13 @@ class GetWithMetadataResponse extends GetResponse {
    protected final int maxIdle;
 
    GetWithMetadataResponse(byte version, long messageId, String cacheName, short clientIntel, HotRodOperation operation,
-                           OperationStatus status, int topologyId, byte[] data, long dataVersion, long created, int lifespan,
-                           long lastUsed, int maxIdle) {
-      super(version, messageId, cacheName, clientIntel, operation, status, topologyId, data);
-      this.dataVersion = dataVersion;
-      this.created = created;
-      this.lifespan = lifespan;
-      this.lastUsed = lastUsed;
-      this.maxIdle = maxIdle;
-   }
-
-   GetWithMetadataResponse(byte version, long messageId, String cacheName, short clientIntel, HotRodOperation operation,
-                           OperationStatus status, int topologyId) {
-      this(version, messageId, cacheName, clientIntel, operation, status, topologyId, null, -1, -1, -1, -1, -1);
+                           OperationStatus status, int topologyId, CacheEntry<byte[], byte[]> ce) {
+      super(version, messageId, cacheName, clientIntel, operation, status, topologyId, ce == null ? null : ce.getValue());
+      this.dataVersion = extractVersion(ce);
+      this.created = extractCreated(ce);
+      this.lifespan = extractLifespan(ce);
+      this.lastUsed = extractLastUsed(ce);
+      this.maxIdle = extractMaxIdle(ce);
    }
 
    @Override
@@ -344,15 +350,9 @@ class GetStreamResponse extends GetWithMetadataResponse {
    protected final int offset;
 
    GetStreamResponse(byte version, long messageId, String cacheName, short clientIntel, HotRodOperation operation,
-                     OperationStatus status, int topologyId, byte[] data, int offset, long dataVersion, long created, int lifespan,
-                     long lastUsed, int maxIdle) {
-      super(version, messageId, cacheName, clientIntel, operation, status, topologyId, data, dataVersion, created, lifespan, lastUsed, maxIdle);
+                     OperationStatus status, int topologyId, int offset, CacheEntry<byte[], byte[]> ce) {
+      super(version, messageId, cacheName, clientIntel, operation, status, topologyId, ce);
       this.offset = offset;
-   }
-
-   GetStreamResponse(byte version, long messageId, String cacheName, short clientIntel, HotRodOperation operation, OperationStatus status, int topologyId) {
-      super(version, messageId, cacheName, clientIntel, operation, status, topologyId);
-      offset = 0;
    }
 
    @Override
@@ -580,5 +580,16 @@ class HashDistAware20Response extends AbstractTopologyResponse {
                                      byte hashFunction) {
       super(topologyId, serverEndpointsMap, numSegments);
       this.hashFunction = hashFunction;
+   }
+}
+
+class TransactionResponse extends Response {
+
+   final int xaReturnCode;
+
+   TransactionResponse(byte version, long messageId, String cacheName, short clientIntel,
+         HotRodOperation operation, OperationStatus status, int topologyId, int xaReturnCode) {
+      super(version, messageId, cacheName, clientIntel, operation, status, topologyId);
+      this.xaReturnCode = xaReturnCode;
    }
 }

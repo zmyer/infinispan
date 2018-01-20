@@ -7,7 +7,6 @@ import static org.testng.AssertJUnit.assertTrue;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
-import org.infinispan.configuration.global.GlobalJmxStatisticsConfigurationBuilder;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.spring.builders.SpringEmbeddedCacheManagerFactoryBeanBuilder;
@@ -106,7 +105,7 @@ public class SpringEmbeddedCacheManagerFactoryBeanTest {
    public void testIfSpringEmbeddedCacheManagerFactoryBeanStopsTheCreatedEmbeddedCacheManagerWhenBeingDestroyed()
          throws Exception {
       GlobalConfigurationBuilder builder = new GlobalConfigurationBuilder();
-      builder.defaultCacheName("default").globalJmxStatistics().allowDuplicateDomains(true);
+      builder.defaultCacheName("default");
       objectUnderTest = SpringEmbeddedCacheManagerFactoryBeanBuilder
             .defaultBuilder().withGlobalConfiguration(builder).build();
 
@@ -126,7 +125,6 @@ public class SpringEmbeddedCacheManagerFactoryBeanTest {
    public void testIfSpringEmbeddedCacheManagerFactoryBeanAllowesOverridingGlobalConfiguration() throws Exception {
       GlobalConfigurationBuilder overriddenConfiguration = new GlobalConfigurationBuilder();
       overriddenConfiguration.transport().rackId("r2");
-      overriddenConfiguration.globalJmxStatistics().allowDuplicateDomains(true);
 
       objectUnderTest = SpringEmbeddedCacheManagerFactoryBeanBuilder
             .defaultBuilder().fromFile(NAMED_ASYNC_CACHE_CONFIG_LOCATION, getClass())
@@ -170,11 +168,7 @@ public class SpringEmbeddedCacheManagerFactoryBeanTest {
       objectUnderTest = SpringEmbeddedCacheManagerFactoryBeanBuilder
             .defaultBuilder().build();
 
-      // Allow duplicate domains. A good little configuration modification to make. If this isn't enabled,
-      // JMXDomainConflicts occur which break the testsuite. This way we can also have a non-default configuration to
-      // check.
       GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder();
-      gcb.globalJmxStatistics().allowDuplicateDomains(true);
 
       // Now prepare a cache configuration.
       ConfigurationBuilder builder = new ConfigurationBuilder();

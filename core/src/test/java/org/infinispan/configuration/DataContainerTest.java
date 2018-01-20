@@ -71,9 +71,9 @@ public class DataContainerTest extends AbstractInfinispanTest {
 
          DataContainer ddc = DefaultDataContainer.unBoundedDataContainer(cache.getCacheConfiguration().locking().concurrencyLevel());
          ActivationManager activationManager = mock(ActivationManager.class);
-         doNothing().when(activationManager).onUpdate(Mockito.anyObject(), Mockito.anyBoolean());
-         ((DefaultDataContainer) ddc).initialize(null, null,new InternalEntryFactoryImpl(), activationManager, null,
-                 TIME_SERVICE, null, mock(ExpirationManager.class));
+         doNothing().when(activationManager).onUpdate(Mockito.any(), Mockito.anyBoolean());
+         TestingUtil.inject(ddc, new InternalEntryFactoryImpl(), activationManager,
+               TIME_SERVICE, mock(ExpirationManager.class));
          QueryableDataContainer.setDelegate(ddc);
 
          // Verify that the default is correctly established
@@ -107,9 +107,9 @@ public class DataContainerTest extends AbstractInfinispanTest {
 
          DataContainer ddc = DefaultDataContainer.unBoundedDataContainer(cache.getCacheConfiguration().locking().concurrencyLevel());
          ActivationManager activationManager = mock(ActivationManager.class);
-         doNothing().when(activationManager).onUpdate(Mockito.anyObject(), Mockito.anyBoolean());
-         ((DefaultDataContainer) ddc).initialize(null, null,new InternalEntryFactoryImpl(), activationManager, null,
-                 TIME_SERVICE, null, mock(ExpirationManager.class));
+         doNothing().when(activationManager).onUpdate(Mockito.any(), Mockito.anyBoolean());
+         TestingUtil.inject(ddc, new InternalEntryFactoryImpl(), activationManager,
+                 TIME_SERVICE, mock(ExpirationManager.class));
          QueryableDataContainer.setDelegate(ddc);
 
          // Verify that the config is correct

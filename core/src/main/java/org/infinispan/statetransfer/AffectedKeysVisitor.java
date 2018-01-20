@@ -1,15 +1,16 @@
 package org.infinispan.statetransfer;
 
-import java.util.Collections;
 import java.util.HashSet;
 
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
@@ -21,11 +22,13 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 
 /**
- * // TODO: Document this
+ * Not used anymore.
  *
  * @author anistor@redhat.com
  * @since 5.2
+ * @deprecated since 9.1
  */
+@Deprecated
 public class AffectedKeysVisitor extends AbstractVisitor {
 
    @Override
@@ -59,17 +62,27 @@ public class AffectedKeysVisitor extends AbstractVisitor {
    }
 
    @Override
-   public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) {
-      return Collections.singleton(command.getKey());
-   }
-
-   @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) {
       return command.getAffectedKeys();
    }
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) {
+      return command.getAffectedKeys();
+   }
+
+   @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return command.getAffectedKeys();
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+      return command.getAffectedKeys();
+   }
+
+   @Override
+   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
       return command.getAffectedKeys();
    }
 

@@ -24,7 +24,7 @@ public class CustomSearchWorkCreatorTest extends SingleCacheManagerTest {
    @Test
    @SuppressWarnings("unchecked")
    public void testCustomWorkCreator() throws Exception {
-      DefaultSearchWorkCreator<Object> customSearchWorkCreator = spy(new DefaultSearchWorkCreator<>());
+      DefaultSearchWorkCreator customSearchWorkCreator = spy(new DefaultSearchWorkCreator());
       QueryInterceptor queryInterceptor = ComponentRegistryUtils.getQueryInterceptor(cache);
       queryInterceptor.setSearchWorkCreator(customSearchWorkCreator);
       KeyTransformationHandler keyTransformationHandler = queryInterceptor.getKeyTransformationHandler();
@@ -41,7 +41,7 @@ public class CustomSearchWorkCreatorTest extends SingleCacheManagerTest {
       ConfigurationBuilder cfg = getDefaultStandaloneCacheConfig(false);
       cfg.indexing().index(Index.ALL)
               .addIndexedEntity(Person.class)
-              .addProperty("default.directory_provider", "ram")
+              .addProperty("default.directory_provider", "local-heap")
               .addProperty("lucene_version", "LUCENE_CURRENT");
       return TestCacheManagerFactory.createCacheManager(cfg);
    }

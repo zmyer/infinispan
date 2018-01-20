@@ -2,6 +2,7 @@ package org.infinispan.commands.write;
 
 import java.util.Collection;
 
+import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
@@ -51,8 +52,16 @@ public interface WriteCommand extends VisitableCommand, FlagAffectedCommand, Top
    /**
     * Used for conditional commands, to update the status of the command on the originator
     * based on the result of its execution on the primary owner.
+    *
+    * @deprecated since 9.1
     */
-   void updateStatusFromRemoteResponse(Object remoteResponse);
+   @Deprecated
+   default void updateStatusFromRemoteResponse(Object remoteResponse) {}
+
+   /**
+    * Make subsequent invocations of {@link #isSuccessful()} return <code>false</code>.
+    */
+   void fail();
 
    /**
     * Indicates whether the command is write-only, meaning that it makes no
@@ -65,4 +74,8 @@ public interface WriteCommand extends VisitableCommand, FlagAffectedCommand, Top
       return false;
    }
 
+   /**
+    * @return the {@link CommandInvocationId} associated to the command.
+    */
+   CommandInvocationId getCommandInvocationId();
 }

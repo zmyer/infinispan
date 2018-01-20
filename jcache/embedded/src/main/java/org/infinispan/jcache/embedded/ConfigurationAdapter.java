@@ -8,6 +8,7 @@ import javax.cache.integration.CacheLoader;
 import javax.cache.integration.CacheWriter;
 
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.StorageType;
 
 /**
  * ConfigurationAdapter takes {@link javax.cache.configuration.Configuration} and creates
@@ -30,9 +31,21 @@ public class ConfigurationAdapter<K, V> {
    }
 
    public org.infinispan.configuration.cache.Configuration build() {
-      ConfigurationBuilder cb = new ConfigurationBuilder();
+      return build(new ConfigurationBuilder());
+   }
+
+   public org.infinispan.configuration.cache.Configuration build(org.infinispan.configuration.cache.Configuration baseConfig) {
+      ConfigurationBuilder builder = new ConfigurationBuilder();
+      if (baseConfig != null) {
+         builder.read(baseConfig);
+      }
+      return build(builder);
+   }
+
+   private org.infinispan.configuration.cache.Configuration build(ConfigurationBuilder cb) {
+
       if (c.isStoreByValue())
-         cb.storeAsBinary().enable();
+         cb.memory().storageType(StorageType.BINARY);
 
       Factory<CacheLoader<K,V>> cacheLoaderFactory = c.getCacheLoaderFactory();
       if (cacheLoaderFactory != null) {
@@ -70,5 +83,6 @@ public class ConfigurationAdapter<K, V> {
    public static <K, V> ConfigurationAdapter<K, V> create() {
       return new ConfigurationAdapter<K, V>(new MutableConfiguration<K, V>());
    }
+
 
 }

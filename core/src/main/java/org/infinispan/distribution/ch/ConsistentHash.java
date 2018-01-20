@@ -3,10 +3,13 @@ package org.infinispan.distribution.ch;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.UnaryOperator;
 
 import org.infinispan.commons.hash.Hash;
+import org.infinispan.commons.util.SmallIntSet;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.globalstate.ScopedPersistentState;
 import org.infinispan.remoting.transport.Address;
 
@@ -16,10 +19,10 @@ import org.infinispan.remoting.transport.Address;
  *
  * A consistent hash assigns each key a list of owners; the number of owners is defined at creation time,
  * but the consistent hash is free to return a smaller or a larger number of owners, depending on
- * circumstances, as long as each key has at least one owner.
+ * circumstances.
  *
- * The first element in the list of owners is the "primary owner". A key will always have a primary owner.
- * The other owners are called "backup owners".
+ * The first element in the list of owners is the "primary owner". The other owners are called "backup owners".
+ * Some implementations guarantee that there will always be a primary owner, others do not.
  *
  * This interface gives access to some implementation details of the consistent hash.
  *
@@ -41,11 +44,11 @@ import org.infinispan.remoting.transport.Address;
  * @since 4.0
  */
 public interface ConsistentHash {
-
    /**
-    * @return The configured number of owners for each key. Note that {code @getOwners(key)} may return
-    *         a different number of owners.
+    * @return The configured number of owners. Note that the actual number of owners of each key may be different.
+    * @deprecated Since 9.1, it should not be used to obtain the number of owners of a particular key.
     */
+   @Deprecated
    int getNumOwners();
 
    /**
@@ -75,7 +78,9 @@ public interface ConsistentHash {
     * Useful as a performance optimization, as this is a frequently needed information.
     * @param key key to locate
     * @return the address of the owner
+    * @deprecated Since 9.0, please use {@link LocalizedCacheTopology#getDistribution(Object)} instead.
     */
+   @Deprecated
    default Address locatePrimaryOwner(Object key) {
       return locatePrimaryOwnerForSegment(getSegment(key));
    }
@@ -86,15 +91,21 @@ public interface ConsistentHash {
     * @param key key to locate
     * @return An unmodifiable list of addresses where the key resides.
     *         Will never be {@code null}, and it will always have at least 1 element.
+    * @deprecated Since 9.0, please use {@link LocalizedCacheTopology#getDistribution(Object)} instead.
     */
+   @Deprecated
    default List<Address> locateOwners(Object key) {
       return locateOwnersForSegment(getSegment(key));
    }
 
+   /**
+    * @deprecated Since 9.0, please use {@link LocalizedCacheTopology#getWriteOwners(Collection)} instead.
+    */
+   @Deprecated
    default Set<Address> locateAllOwners(Collection<Object> keys) {
       // Use a HashSet assuming most of the time the number of keys is small.
-      HashSet<Address> owners = new HashSet<Address>();
-      HashSet<Integer> segments = new HashSet<Integer>();
+      HashSet<Address> owners = new HashSet<>();
+      SmallIntSet segments = new SmallIntSet(getNumSegments());
       for (Object key : keys) {
          int segment = getSegment(key);
          if (segments.add(segment)) {
@@ -113,14 +124,20 @@ public interface ConsistentHash {
     * @param nodeAddress address of the node to test
     * @param key key to test
     * @return {@code true} if the key is mapped to the address; {@code false} otherwise
+    * @deprecated Since 9.0, please use {@link LocalizedCacheTopology#isReadOwner(Object)} and {@link LocalizedCacheTopology#isWriteOwner(Object)} instead.
     */
+   @Deprecated
    default boolean isKeyLocalToNode(Address nodeAddress, Object key) {
       return locateOwnersForSegment(getSegment(key)).contains(nodeAddress);
    }
 
    /**
     * @return The hash space segment that a key maps to.
+    *
+    * @deprecated Since 9.0, please use {@link KeyPartitioner#getSegment(Object)}
+    *    or {@link LocalizedCacheTopology#getSegment(Object)} instead.
     */
+   @Deprecated
    int getSegment(Object key);
 
    /**
@@ -194,5 +211,13 @@ public interface ConsistentHash {
     */
    default ConsistentHash remapAddresses(UnaryOperator<Address> remapper) {
       throw new UnsupportedOperationException();
+   }
+
+   /**
+    * The capacity factor of each member. Determines the relative capacity of each node compared to the others.
+    * If {@code null}, all the members are assumed to have a capacity factor of 1.
+    */
+   default Map<Address, Float> getCapacityFactors() {
+      return null;
    }
 }

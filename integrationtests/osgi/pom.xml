@@ -5,8 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
 
    <artifactId>integrationtests-osgi</artifactId>
@@ -34,37 +34,37 @@
          <artifactId>infinispan-commons</artifactId>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-jdbc</artifactId>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-jdbc</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-embedded</artifactId>
          <version>${project.version}</version>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote</artifactId>
          <version>${project.version}</version>
       </dependency>
@@ -85,18 +85,18 @@
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-jpa</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-jpa</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-rocksdb</artifactId>
          <scope>test</scope>
       </dependency>
@@ -106,21 +106,21 @@
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-remote</artifactId>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-osgi</artifactId>
          <scope>test</scope>
       </dependency>
@@ -140,7 +140,7 @@
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-client-hotrod</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
@@ -189,6 +189,30 @@
          <artifactId>testng</artifactId>
          <scope>test</scope>
       </dependency>
+      <!-- Uncomment to debug surefire and the test container -->
+      <!--<dependency>-->
+         <!--<groupId>org.apache.maven.surefire</groupId>-->
+         <!--<artifactId>surefire-api</artifactId>-->
+         <!--<version>${version.maven.surefire}</version>-->
+         <!--<scope>provided</scope>-->
+      <!--</dependency>-->
+      <!--<dependency>-->
+         <!--<groupId>org.apache.maven.surefire</groupId>-->
+         <!--<artifactId>maven-surefire-common</artifactId>-->
+         <!--<version>${version.maven.surefire}</version>-->
+         <!--<scope>provided</scope>-->
+      <!--</dependency>-->
+      <!--<dependency>-->
+         <!--<groupId>org.apache.maven.surefire</groupId>-->
+         <!--<artifactId>surefire-junit47</artifactId>-->
+         <!--<version>${version.maven.surefire}</version>-->
+         <!--<scope>provided</scope>-->
+      <!--</dependency>-->
+      <!--<dependency>-->
+         <!--<groupId>org.ops4j.pax.exam</groupId>-->
+         <!--<artifactId>pax-exam-invoker-junit</artifactId>-->
+         <!--<version>${version.pax.exam}</version>-->
+      <!--</dependency>-->
    </dependencies>
 
    <properties>
@@ -196,8 +220,10 @@
       <defaultExcludedTestGroup />
       <infinispan.test.parallel.threads>1</infinispan.test.parallel.threads>
       <infinispan.test.jgroups.protocol>tcp</infinispan.test.jgroups.protocol>
+      <forkJvmArgs>-Xmx500m -XX:HeapDumpPath=${user.dir}</forkJvmArgs>
       <target.tmp.dir>${project.build.directory}/tmp/</target.tmp.dir>
       <skipOSGiTests>${skipTests}</skipOSGiTests>
+      <verbose.karaf>false</verbose.karaf>
    </properties>
 
    <build>
@@ -211,7 +237,8 @@
          </testResource>
       </testResources>
       <plugins>
-
+         <!-- IMPORTANT: generates META-INF/maven/dependencies.properties
+              required by PAX-EXAM framework -->
          <plugin>
             <groupId>org.apache.servicemix.tooling</groupId>
             <artifactId>depends-maven-plugin</artifactId>
@@ -228,10 +255,44 @@
             <artifactId>maven-antrun-plugin</artifactId>
             <executions>
                <execution>
-                  <phase>generate-sources</phase>
+                  <id>generate-tmp-dir</id>
+                  <phase>generate-test-resources</phase>
                   <configuration>
                      <target>
                         <mkdir dir="${target.tmp.dir}" />
+                     </target>
+                  </configuration>
+                  <goals>
+                     <goal>run</goal>
+                  </goals>
+               </execution>
+               <execution>
+                  <id>stop-karaf-test-containers</id>
+                  <phase>prepare-package</phase>
+                  <configuration>
+                     <target xmlns:if="ant:if">
+                        <condition property="kill-argument-prefix" value="/PID ">
+                           <os family="windows"/>
+                        </condition>
+                        <property name="kill-argument-prefix" value=" "/>
+                        <loadfile property="karaf.pids">
+                           <concat fixlastline="true">
+                              <fileset dir="${project.build.directory}" includes="**/karaf.pid"/>
+                              <filterchain>
+                                 <filterreader classname="org.apache.tools.ant.filters.PrefixLines">
+                                    <param name="prefix" value="${kill-argument-prefix}"/>
+                                 </filterreader>
+                                 <filterreader classname="org.apache.tools.ant.filters.StripLineBreaks"/>
+                              </filterchain>
+                           </concat>
+                        </loadfile>
+                        <echo>Found Karaf pids: ${karaf.pids}</echo>
+                        <exec osfamily="windows" executable="taskkill">
+                           <arg line="/F /T ${karaf.pids}"/>
+                        </exec>
+                        <exec executable="kill" osfamily="unix">
+                           <arg line="-9 ${karaf.pids}"/>
+                        </exec>
                      </target>
                   </configuration>
                   <goals>
@@ -246,20 +307,41 @@
             <configuration>
                <threadCount>1</threadCount>
                <parallel>classes</parallel>
+               <groups combine.self="override"></groups>
+               <excludedGroups combine.self="override"></excludedGroups>
                <systemPropertyVariables>
                   <java.io.tmpdir>${target.tmp.dir}</java.io.tmpdir>
+                  <verbose.karaf>${verbose.karaf}</verbose.karaf>
                </systemPropertyVariables>
                <runOrder>alphabetical</runOrder>
                <skipTests>${skipOSGiTests}</skipTests>
+               <failIfNoTests>false</failIfNoTests>
                <testNGArtifactName>none:none</testNGArtifactName>
+               <disableXmlReport>false</disableXmlReport>
+               <runOrder>alphabetical</runOrder>
                <properties>
                   <property>
                      <name>listener</name>
-                     <value>org.junit.runner.notification.RunListener</value>
+                     <value>${junitListener}</value>
                   </property>
                </properties>
+               <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
             </configuration>
+            <dependencies>
+               <dependency>
+                  <groupId>org.apache.maven.surefire</groupId>
+                  <artifactId>surefire-junit47</artifactId>
+                  <version>${version.maven.surefire}</version>
+               </dependency>
+            </dependencies>
             <executions>
+               <!--
+               Make sure two containers are not started at the same time by separating the
+               PerSuite reactor tests from PerClass/PerMethod(default).
+
+               Note: @Category(PerSuite.class) needs to be specified in addition to the
+               @PaxExamReactor(PerSuite.class) annotation.
+               -->
                <execution>
                   <id>default-test</id>
                   <phase>test</phase>
@@ -267,6 +349,7 @@
                      <goal>test</goal>
                   </goals>
                   <configuration>
+                     <!-- Include the tests that can reuse a single Karaf container -->
                      <groups>org.ops4j.pax.exam.spi.reactors.PerSuite</groups>
                   </configuration>
                </execution>
@@ -277,6 +360,8 @@
                      <goal>test</goal>
                   </goals>
                   <configuration>
+                     <!-- Include the tests that need a separate container for each test/method -->
+                     <groups>org.ops4j.pax.exam.spi.reactors.PerClass,org.ops4j.pax.exam.spi.reactors.PerMethod</groups>
                      <excludedGroups>org.ops4j.pax.exam.spi.reactors.PerSuite</excludedGroups>
                   </configuration>
                </execution>

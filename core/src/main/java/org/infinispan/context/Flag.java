@@ -11,7 +11,6 @@ import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.marshall.MarshallUtil;
-import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.marshall.core.Ids;
@@ -158,8 +157,7 @@ public enum Flag {
    @Deprecated
    REMOVE_DATA_ON_STOP,
    /**
-    * Used by the DistLockingInterceptor to commit the change no matter what (if the flag is set). This is used when
-    * a node A pushes state to another node B and A doesn't want B to check if the state really belongs to it
+    * Ignore current consistent hash and read from data container/commit the change no matter what (if the flag is set).
     */
    SKIP_OWNERSHIP_CHECK,
    /**
@@ -167,7 +165,9 @@ public enum Flag {
     * the object, rather than the full object. This can be useful in order to
     * make decisions such as whether the cache store needs checking to see if
     * the previous value needs to be loaded and merged.
+    * @deprecated since 9.1
     */
+   @Deprecated
    DELTA_WRITE,
 
    /**
@@ -268,7 +268,12 @@ public enum Flag {
     * that such a thing happened.  This flag was created purely for internal Infinispan usage, and should not be
     * used by clients calling into Infinispan.
     */
-   COMMAND_RETRY
+   COMMAND_RETRY,
+
+   /**
+    * Flag to identity that data is being written as part of a Rolling Upgrade.
+    */
+   ROLLING_UPGRADE
 
    ;
 

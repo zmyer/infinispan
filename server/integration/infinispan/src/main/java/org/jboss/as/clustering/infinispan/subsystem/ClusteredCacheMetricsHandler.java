@@ -66,7 +66,9 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
       HITS(ClusterWideMetricKeys.HITS, ModelType.LONG, true),
       MISSES(ClusterWideMetricKeys.MISSES, ModelType.LONG, true),
       NUMBER_OF_ENTRIES(ClusterWideMetricKeys.NUMBER_OF_ENTRIES, ModelType.INT, true),
+      NUMBER_OF_ENTRIES_IN_MEMORY(ClusterWideMetricKeys.NUMBER_OF_ENTRIES_IN_MEMORY, ModelType.INT, true),
       OFF_HEAP_MEMORY_USED(ClusterWideMetricKeys.OFF_HEAP_MEMORY_USED, ModelType.LONG, true),
+      MINIMUM_REQUIRED_NODES(ClusterWideMetricKeys.MINIMUM_REQUIRED_NODES, ModelType.INT, true),
       READ_WRITE_RATIO(ClusterWideMetricKeys.READ_WRITE_RATIO,ModelType.DOUBLE, true),
       REMOVE_HITS(ClusterWideMetricKeys.REMOVE_HITS, ModelType.LONG, true),
       REMOVE_MISSES(ClusterWideMetricKeys.REMOVE_MISSES, ModelType.LONG, true),
@@ -79,7 +81,9 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
       ACTIVATIONS(ClusterWideMetricKeys.ACTIVATIONS, ModelType.STRING, true),
       CACHE_LOADER_LOADS(ClusterWideMetricKeys.CACHE_LOADER_LOADS, ModelType.LONG, true),
       CACHE_LOADER_MISSES(ClusterWideMetricKeys.CACHE_LOADER_MISSES, ModelType.LONG, true),
-      CACHE_LOADER_STORES(ClusterWideMetricKeys.CACHE_LOADER_STORES, ModelType.LONG, true);
+      CACHE_LOADER_STORES(ClusterWideMetricKeys.CACHE_LOADER_STORES, ModelType.LONG, true),
+
+      STALE_STATS_THRESHOLD(ClusterWideMetricKeys.STALE_STATS_THRESHOLD, ModelType.LONG, true);
 
       private static final Map<String, ClusteredCacheMetrics> MAP = new HashMap<String, ClusteredCacheMetrics>();
 
@@ -185,8 +189,15 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
             result.set(clusterCacheStats.getCurrentNumberOfEntries());
             break;
          }
+         case NUMBER_OF_ENTRIES_IN_MEMORY: {
+            result.set(clusterCacheStats.getCurrentNumberOfEntriesInMemory());
+            break;
+         }
          case OFF_HEAP_MEMORY_USED:
             result.set(clusterCacheStats.getOffHeapMemoryUsed());
+            break;
+         case MINIMUM_REQUIRED_NODES:
+            result.set(clusterCacheStats.getRequiredMinimumNumberOfNodes());
             break;
          case READ_WRITE_RATIO: {
             result.set(clusterCacheStats.getReadWriteRatio());
@@ -205,7 +216,7 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
             break;
          }
          case TIME_SINCE_RESET: {
-            result.set(clusterCacheStats.getTimeSinceStart());
+            result.set(clusterCacheStats.getTimeSinceReset());
             break;
          }
          case INVALIDATIONS: {
@@ -232,6 +243,9 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
             result.set(clusterCacheStats.getStoreWrites());
             break;
          }
+         case STALE_STATS_THRESHOLD:
+            result.set(clusterCacheStats.getStaleStatsThreshold());
+            break;
          default: {
             context.getFailureDescription().set(String.format("Unknown metric %s", metric));
             break;

@@ -10,7 +10,6 @@ import javax.transaction.Transaction;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.distribution.ch.ConsistentHash;
@@ -32,20 +31,9 @@ public class VersionedDistStateTransferTest extends MultipleCacheManagersTest {
    protected void createCacheManagers() throws Throwable {
       builder = TestCacheManagerFactory.getDefaultCacheConfiguration(true);
 
-      builder
-            .clustering()
-               .cacheMode(CacheMode.DIST_SYNC)
-               .l1()
-                  .disable()
-            .versioning()
-               .enable()
-               .scheme(VersioningScheme.SIMPLE)
-            .locking()
-               .isolationLevel(IsolationLevel.REPEATABLE_READ)
-               .writeSkewCheck(true)
-            .transaction()
-               .lockingMode(LockingMode.OPTIMISTIC)
-               .syncCommitPhase(true);
+      builder.clustering().cacheMode(CacheMode.DIST_SYNC).l1().disable()
+            .locking().isolationLevel(IsolationLevel.REPEATABLE_READ)
+            .transaction().lockingMode(LockingMode.OPTIMISTIC);
 
       amendConfig(builder);
       createCluster(builder, 4);
@@ -94,7 +82,7 @@ public class VersionedDistStateTransferTest extends MultipleCacheManagersTest {
       manager(3).stop();
       // Eliminate the dead cache from the caches collection, cache4 now becomes cache(3)
       cacheManagers.remove(3);
-      TestingUtil.waitForRehashToComplete(caches());
+      TestingUtil.waitForNoRebalance(caches());
 
       log.debugf("Leaver stopped, checking transferred data");
       checkStateTransfer(keys, values);

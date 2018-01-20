@@ -9,6 +9,7 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -18,6 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.infinispan.client.hotrod.Flag;
 import org.infinispan.client.hotrod.VersionedMetadata;
 import org.infinispan.client.hotrod.annotation.ClientListener;
+import org.infinispan.client.hotrod.counter.impl.HotRodCounterEvent;
 import org.infinispan.client.hotrod.event.ClientEvent;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
 import org.infinispan.client.hotrod.exceptions.InvalidResponseException;
@@ -134,23 +136,28 @@ public class Codec10 implements Codec {
    }
 
    @Override
-   public ClientEvent readEvent(Transport transport, byte[] expectedListenerId, Marshaller marshaller) {
+   public ClientEvent readEvent(Transport transport, byte[] expectedListenerId, Marshaller marshaller, List<String> whitelist) {
       return null;  // No events sent in Hot Rod 1.x protocol
    }
 
    @Override
-   public Either<Short, ClientEvent> readHeaderOrEvent(Transport transport, HeaderParams params, byte[] expectedListenerId, Marshaller marshaller) {
+   public Either<Short, ClientEvent> readHeaderOrEvent(Transport transport, HeaderParams params, byte[] expectedListenerId, Marshaller marshaller, List<String> whitelist) {
       return null;  // No events sent in Hot Rod 1.x protocol
    }
 
    @Override
-   public Object returnPossiblePrevValue(Transport transport, short status, int flags) {
+   public HotRodCounterEvent readCounterEvent(Transport transport, byte[] listenerId) {
+      return null;  // No events sent in Hot Rod 1.x protocol
+   }
+
+   @Override
+   public Object returnPossiblePrevValue(Transport transport, short status, int flags, List<String> whitelist) {
       Marshaller marshaller = transport.getTransportFactory().getMarshaller();
       if (hasForceReturn(flags)) {
          byte[] bytes = transport.readArray();
          if (trace) getLog().tracef("Previous value bytes is: %s", Util.printArray(bytes, false));
          //0-length response means null
-         return bytes.length == 0 ? null : MarshallerUtil.bytes2obj(marshaller, bytes, status);
+         return bytes.length == 0 ? null : MarshallerUtil.bytes2obj(marshaller, bytes, status, whitelist);
       } else {
          return null;
       }
@@ -166,8 +173,8 @@ public class Codec10 implements Codec {
    }
 
    @Override
-   public <T> T readUnmarshallByteArray(Transport transport, short status) {
-      return CodecUtils.readUnmarshallByteArray(transport, status);
+   public <T> T readUnmarshallByteArray(Transport transport, short status, List<String> whitelist) {
+      return CodecUtils.readUnmarshallByteArray(transport, status, whitelist);
    }
 
    @Override
@@ -285,7 +292,7 @@ public class Codec10 implements Codec {
          int port = transport.readUnsignedShort();
          int hashCode = transport.read4ByteInt();
          if (trace) localLog.tracef("Server read: %s:%d - hash code is %d", host, port, hashCode);
-         SocketAddress address = new InetSocketAddress(host, port);
+         SocketAddress address = InetSocketAddress.createUnresolved(host, port);
          Set<Integer> hashes = servers2Hash.get(address);
          if (hashes == null) {
             hashes = new HashSet<Integer>();

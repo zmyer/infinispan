@@ -3,7 +3,7 @@ package org.infinispan.statetransfer;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.infinispan.test.TestingUtil.blockUntilViewsReceived;
 import static org.infinispan.test.TestingUtil.extractGlobalComponentRegistry;
-import static org.infinispan.test.TestingUtil.waitForRehashToComplete;
+import static org.infinispan.test.TestingUtil.waitForNoRebalance;
 import static org.testng.AssertJUnit.assertEquals;
 
 import java.io.ByteArrayInputStream;
@@ -88,7 +88,7 @@ public class ConcurrentStartChanelLookupTest extends MultipleCacheManagersTest {
          Cache<String, String> c2r = cm2.getCache(CACHE_NAME);
 
          blockUntilViewsReceived(10000, cm1, cm2);
-         waitForRehashToComplete(c1r, c2r);
+         waitForNoRebalance(c1r, c2r);
 
          c1r.put("key", "value");
          assertEquals("value", c2r.get("key"));
@@ -104,7 +104,6 @@ public class ConcurrentStartChanelLookupTest extends MultipleCacheManagersTest {
    private EmbeddedCacheManager createCacheManager(String name1, JChannel ch1) {
       GlobalConfigurationBuilder gcb1 = new GlobalConfigurationBuilder();
       gcb1.transport().nodeName(ch1.getName()).distributedSyncTimeout(10, SECONDS);
-      gcb1.globalJmxStatistics().allowDuplicateDomains(true);
       CustomChannelLookup.registerChannel(gcb1, ch1, name1, false);
 
       ConfigurationBuilder replCfg = new ConfigurationBuilder();

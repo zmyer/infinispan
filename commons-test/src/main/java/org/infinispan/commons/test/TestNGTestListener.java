@@ -19,31 +19,38 @@ import org.testng.annotations.Test;
  */
 public class TestNGTestListener implements ITestListener, IConfigurationListener2, ISuiteListener {
    private static final Logger log = Logger.getLogger(TestNGTestListener.class);
-   private Set<String> startupThreads;
+   private final TestSuiteProgress progressLogger;
+   private Set<Long> startupThreads;
+   private boolean suiteRunning;
+
+
+   public TestNGTestListener() {
+      progressLogger = new TestSuiteProgress();
+   }
 
    @Override
    public void onTestStart(ITestResult result) {
-      TestSuiteProgress.testStarted(testName(result));
+      progressLogger.testStarted(testName(result));
    }
 
    @Override
    public void onTestSuccess(ITestResult result) {
-      TestSuiteProgress.testFinished(testName(result));
+      progressLogger.testFinished(testName(result));
    }
 
    @Override
    public void onTestFailure(ITestResult result) {
-      TestSuiteProgress.testFailed(testName(result), result.getThrowable());
+      progressLogger.testFailed(testName(result), result.getThrowable());
    }
 
    @Override
    public void onTestSkipped(ITestResult result) {
-      TestSuiteProgress.testIgnored(testName(result));
+      progressLogger.testIgnored(testName(result));
    }
 
    @Override
    public void onTestFailedButWithinSuccessPercentage(ITestResult result) {
-      TestSuiteProgress.testFailed(testName(result), result.getThrowable());
+      progressLogger.testFailed(testName(result), result.getThrowable());
    }
 
    @Override
@@ -56,7 +63,7 @@ public class TestNGTestListener implements ITestListener, IConfigurationListener
 
    private String testName(ITestResult res) {
       StringBuilder result = new StringBuilder();
-      result.append(res.getTestClass().getRealClass().getName() + "." + res.getMethod().getMethodName());
+      result.append(res.getTestClass().getRealClass().getName()).append(".").append(res.getMethod().getMethodName());
       if (res.getMethod().getConstructorOrMethod().getMethod().isAnnotationPresent(Test.class)) {
          String dataProviderName = res.getMethod().getConstructorOrMethod().getMethod().getAnnotation(Test.class)
                .dataProvider();
@@ -70,18 +77,25 @@ public class TestNGTestListener implements ITestListener, IConfigurationListener
 
    @Override
    public void onStart(ISuite isuite) {
-      Set<String> threads = new HashSet<String>();
+      Set<Long> threads = new HashSet<>();
       for (Map.Entry<Thread, StackTraceElement[]> s : Thread.getAllStackTraces().entrySet()) {
          Thread thread = s.getKey();
          if (!thread.getName().startsWith("TestNG")) {
-            threads.add(thread.getName() + "@" + thread.getId());
+            threads.add(thread.getId());
          }
       }
       startupThreads = threads;
+      suiteRunning = true;
    }
 
    @Override
    public void onFinish(ISuite isuite) {
+      // TestNG invokes this method twice, ignore it the second time
+      boolean firstTime = suiteRunning;
+      suiteRunning = false;
+      if (!firstTime)
+         return;
+
       int count = 0;
       for (Map.Entry<Thread, StackTraceElement[]> s : Thread.getAllStackTraces().entrySet()) {
          Thread thread = s.getKey();
@@ -107,7 +121,7 @@ public class TestNGTestListener implements ITestListener, IConfigurationListener
 
    private boolean ignoreThread(Thread thread) {
       String threadName = thread.getName();
-      return threadName.startsWith("testng-") || startupThreads.contains(threadName + "@" + thread.getId());
+      return threadName.startsWith("testng-") || threadName.startsWith("ForkJoinPool.commonPool-worker-") || startupThreads.contains(thread.getId());
    }
 
    @Override
@@ -123,14 +137,14 @@ public class TestNGTestListener implements ITestListener, IConfigurationListener
    @Override
    public void onConfigurationFailure(ITestResult testResult) {
       if (testResult.getThrowable() != null) {
-         TestSuiteProgress.setupFailed(testName(testResult), testResult.getThrowable());
+         progressLogger.setupFailed(testName(testResult), testResult.getThrowable());
       }
    }
 
    @Override
    public void onConfigurationSkip(ITestResult testResult) {
       if (testResult.getThrowable() != null) {
-         TestSuiteProgress.testIgnored(testName(testResult));
+         progressLogger.testIgnored(testName(testResult));
       }
    }
 }

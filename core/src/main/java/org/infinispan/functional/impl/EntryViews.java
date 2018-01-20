@@ -1,5 +1,7 @@
 package org.infinispan.functional.impl;
 
+import static org.infinispan.metadata.Metadatas.updateMetadata;
+
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
@@ -7,17 +9,17 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 
-import org.infinispan.commons.api.functional.EntryView.ReadEntryView;
-import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
-import org.infinispan.commons.api.functional.EntryView.WriteEntryView;
-import org.infinispan.commons.api.functional.MetaParam;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
 import org.infinispan.commons.util.Experimental;
 import org.infinispan.commons.util.Util;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.versioning.EntryVersion;
-import org.infinispan.container.versioning.FunctionalEntryVersionAdapter;
+import org.infinispan.encoding.DataConversion;
+import org.infinispan.functional.EntryView.ReadEntryView;
+import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.EntryView.WriteEntryView;
+import org.infinispan.functional.MetaParam;
 import org.infinispan.marshall.core.Ids;
 import org.infinispan.metadata.Metadata;
 
@@ -33,53 +35,61 @@ public final class EntryViews {
       // Cannot be instantiated, it's just a holder class
    }
 
+   public static <K, V> ReadEntryView<K, V> readOnly(CacheEntry<K, V> entry, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return new EntryBackedReadOnlyView<>(entry, keyDataConversion, valueDataConversion);
+   }
+
    public static <K, V> ReadEntryView<K, V> readOnly(CacheEntry<K, V> entry) {
-      return new EntryBackedReadOnlyView<>(entry);
+      return new EntryBackedReadOnlyView<>(entry, DataConversion.DEFAULT_KEY, DataConversion.DEFAULT_VALUE);
    }
 
    public static <K, V> ReadEntryView<K, V> readOnly(K key, V value, Metadata metadata) {
       return new ReadOnlySnapshotView<>(key, value, metadata);
    }
 
-   public static <K, V> WriteEntryView<V> writeOnly(CacheEntry<K, V> entry) {
-      return new EntryBackedWriteOnlyView<>(entry);
+   public static <K, V> WriteEntryView<V> writeOnly(CacheEntry<K, V> entry, DataConversion valueDataConversion) {
+      return new EntryBackedWriteOnlyView<>(entry, valueDataConversion);
    }
 
-   public static <K, V> ReadWriteEntryView<K, V> readWrite(CacheEntry<K, V> entry) {
-      return new EntryBackedReadWriteView<>(entry);
+   public static <K, V> ReadWriteEntryView<K, V> readWrite(CacheEntry<K, V> entry, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return new EntryBackedReadWriteView<>(entry, keyDataConversion, valueDataConversion);
    }
 
-   public static <K, V> ReadWriteEntryView<K, V> readWrite(CacheEntry<K, V> entry, V prevValue, Metadata prevMetadata) {
-      return new EntryAndPreviousReadWriteView<>(entry, prevValue, prevMetadata);
+   public static <K, V> ReadWriteEntryView<K, V> readWrite(CacheEntry<K, V> entry, V prevValue, Metadata prevMetadata, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return new EntryAndPreviousReadWriteView<>(entry, prevValue, prevMetadata, keyDataConversion, valueDataConversion);
    }
 
    public static <K, V> ReadEntryView<K, V> noValue(K key) {
-      return new NoValueReadOnlyView<>(key);
+      return new NoValueReadOnlyView<>(key, null);
+   }
+
+   public static <K, V> ReadEntryView<K, V> noValue(K key, DataConversion keyDataConversion) {
+      return new NoValueReadOnlyView<>(key, keyDataConversion);
    }
 
    /**
-    * For convenience, a lambda might decide to return the entry view it
-    * received as parameter, because that makes easy to return both value and
-    * meta parameters back to the client.
-    *
-    * If the lambda function decides to return an view, launder it into an
-    * immutable view to avoid the user trying apply any modifications to the
-    * entry view from outside the lambda function.
-    *
-    * If the view is read-only, capture its data into a snapshot from the
-    * cached entry and avoid changing underneath.
+    * For convenience, a lambda might decide to return the entry view it received as parameter, because that makes easy
+    * to return both value and meta parameters back to the client.
+    * <p>
+    * If the lambda function decides to return an view, launder it into an immutable view to avoid the user trying apply
+    * any modifications to the entry view from outside the lambda function.
+    * <p>
+    * If the view is read-only, capture its data into a snapshot from the cached entry and avoid changing underneath.
     */
    @SuppressWarnings("unchecked")
    public static <R> R snapshot(R ret) {
       if (ret instanceof EntryBackedReadWriteView) {
          EntryBackedReadWriteView view = (EntryBackedReadWriteView) ret;
-         return (R) new ReadWriteSnapshotView(view.key(), view.entry.getValue(), view.entry.getMetadata());
+         return (R) new ReadWriteSnapshotView(view.key(), view.find().orElse(null), view.entry.getMetadata());
       } else if (ret instanceof EntryAndPreviousReadWriteView) {
          EntryAndPreviousReadWriteView view = (EntryAndPreviousReadWriteView) ret;
-         return (R) new ReadWriteSnapshotView(view.key(), view.entry.getValue(), view.entry.getMetadata());
+         return (R) new ReadWriteSnapshotView(view.key(), view.getCurrentValue(), view.entry.getMetadata());
       } else if (ret instanceof EntryBackedReadOnlyView) {
          EntryBackedReadOnlyView view = (EntryBackedReadOnlyView) ret;
-         return (R) new ReadOnlySnapshotView(view.key(), view.entry.getValue(), view.entry.getMetadata());
+         return (R) new ReadOnlySnapshotView(view.key(), view.find().orElse(null), view.entry.getMetadata());
+      } else if (ret instanceof NoValueReadOnlyView) {
+         NoValueReadOnlyView view = (NoValueReadOnlyView) ret;
+         return (R) new ReadOnlySnapshotView(view.key(), null, null);
       }
 
       return ret;
@@ -87,19 +97,23 @@ public final class EntryViews {
 
    private static final class EntryBackedReadOnlyView<K, V> implements ReadEntryView<K, V> {
       final CacheEntry<K, V> entry;
+      private final DataConversion keyDataConversion;
+      private final DataConversion valueDataConversion;
 
-      private EntryBackedReadOnlyView(CacheEntry<K, V> entry) {
+      private EntryBackedReadOnlyView(CacheEntry<K, V> entry, DataConversion keyDataConversion, DataConversion valueDataConversion) {
          this.entry = entry;
+         this.keyDataConversion = keyDataConversion;
+         this.valueDataConversion = valueDataConversion;
       }
 
       @Override
       public K key() {
-         return entry.getKey();
+         return (K) keyDataConversion.fromStorage(entry.getKey());
       }
 
       @Override
       public Optional<V> find() {
-         return entry == null ? Optional.empty() : Optional.ofNullable(entry.getValue());
+         return entry == null ? Optional.empty() : Optional.ofNullable((V) valueDataConversion.fromStorage(entry.getValue()));
       }
 
       @Override
@@ -107,11 +121,11 @@ public final class EntryViews {
          if (entry == null || entry.getValue() == null)
             throw new NoSuchElementException("No value present");
 
-         return entry.getValue();
+         return (V) valueDataConversion.fromStorage(entry.getValue());
       }
 
       @Override
-      public <T> Optional<T> findMetaParam(Class<T> type) {
+      public <T extends MetaParam> Optional<T> findMetaParam(Class<T> type) {
          Metadata metadata = entry.getMetadata();
          if (metadata instanceof MetaParamsInternalMetadata) {
             MetaParamsInternalMetadata metaParamsMetadata = (MetaParamsInternalMetadata) metadata;
@@ -158,7 +172,7 @@ public final class EntryViews {
 
       // TODO: Duplication
       @Override
-      public <T> Optional<T> findMetaParam(Class<T> type) {
+      public <T extends MetaParam> Optional<T> findMetaParam(Class<T> type) {
          if (metadata instanceof MetaParamsInternalMetadata) {
             MetaParamsInternalMetadata metaParamsMetadata = (MetaParamsInternalMetadata) metadata;
             return metaParamsMetadata.findMetaParam(type);
@@ -172,26 +186,41 @@ public final class EntryViews {
       @Override
       public String toString() {
          return "ReadOnlySnapshotView{" +
-            "key=" + key +
-            ", value=" + value +
-            ", metadata=" + metadata +
-            '}';
+               "key=" + key +
+               ", value=" + value +
+               ", metadata=" + metadata +
+               '}';
       }
    }
 
    private static final class EntryBackedWriteOnlyView<K, V> implements WriteEntryView<V> {
-      final CacheEntry<K, V> entry;
+      final CacheEntry entry;
+      private final DataConversion valueDataConversion;
 
-      private EntryBackedWriteOnlyView(CacheEntry<K, V> entry) {
+      private EntryBackedWriteOnlyView(CacheEntry<K, V> entry, DataConversion valueDataConversion) {
          this.entry = entry;
+         this.valueDataConversion = valueDataConversion;
       }
 
       @Override
       public Void set(V value, MetaParam.Writable... metas) {
-         entry.setValue(value);
-         entry.setChanged(true);
+         setValue(value);
          updateMetaParams(entry, metas);
          return null;
+      }
+
+      @Override
+      public Void set(V value, Metadata metadata) {
+         setValue(value);
+         updateMetadata(entry, metadata);
+         return null;
+      }
+
+      private void setValue(V value) {
+         Object encodedValue = valueDataConversion.toStorage(value);
+         entry.setValue(encodedValue);
+         entry.setChanged(true);
+         entry.setRemoved(value == null);
       }
 
       @Override
@@ -209,20 +238,37 @@ public final class EntryViews {
    }
 
    private static final class EntryBackedReadWriteView<K, V> implements ReadWriteEntryView<K, V> {
-      final CacheEntry<K, V> entry;
+      final CacheEntry entry;
+      private final DataConversion keyDataConversion;
+      private final DataConversion valueDataConversion;
+      private K decodedKey;
+      private V decodedValue;
 
-      private EntryBackedReadWriteView(CacheEntry<K, V> entry) {
+      private EntryBackedReadWriteView(CacheEntry<K, V> entry, DataConversion keyDataConversion, DataConversion valueDataConversion) {
          this.entry = entry;
+         this.keyDataConversion = keyDataConversion;
+         this.valueDataConversion = valueDataConversion;
       }
 
       @Override
       public K key() {
-         return entry.getKey();
+         if (entry == null) {
+            return null;
+         }
+
+         if (decodedKey == null) {
+            decodedKey = (K) keyDataConversion.fromStorage(entry.getKey());
+         }
+         return decodedKey;
       }
 
       @Override
       public Optional<V> find() {
-         return entry == null ? Optional.empty() : Optional.ofNullable(entry.getValue());
+         if (entry == null) {
+            return Optional.empty();
+         }
+         decodedValue = decodedValue == null ? (V) valueDataConversion.fromStorage(entry.getValue()) : decodedValue;
+         return Optional.ofNullable(decodedValue);
       }
 
       @Override
@@ -231,25 +277,42 @@ public final class EntryViews {
          return null;
       }
 
+      @Override
+      public Void set(V value, Metadata metadata) {
+         setEntry(value);
+         updateMetadata(entry, metadata);
+         return null;
+      }
+
       private void setOnly(V value, MetaParam.Writable[] metas) {
-         entry.setValue(value);
-         entry.setChanged(true);
+         setEntry(value);
          updateMetaParams(entry, metas);
+      }
+
+      private void setEntry(V value) {
+         decodedValue = value;
+         Object valueEncoded = valueDataConversion.toStorage(value);
+         entry.setCreated(entry.getValue() == null && valueEncoded != null);
+         entry.setValue(valueEncoded);
+         entry.setChanged(true);
+         entry.setRemoved(valueEncoded == null);
       }
 
       @Override
       public Void remove() {
+         decodedValue = null;
          if (!entry.isNull()) {
             entry.setRemoved(true);
             entry.setChanged(true);
             entry.setValue(null);
+            entry.setCreated(false);
          }
 
          return null;
       }
 
       @Override
-      public <T> Optional<T> findMetaParam(Class<T> type) {
+      public <T extends MetaParam> Optional<T> findMetaParam(Class<T> type) {
          Metadata metadata = entry.getMetadata();
          if (metadata instanceof MetaParamsInternalMetadata) {
             MetaParamsInternalMetadata metaParamsMetadata = (MetaParamsInternalMetadata) metadata;
@@ -265,8 +328,8 @@ public final class EntryViews {
       public V get() throws NoSuchElementException {
          if (entry == null || entry.getValue() == null)
             throw new NoSuchElementException("No value present");
-
-         return entry.getValue();
+         decodedValue = decodedValue == null ? (V) valueDataConversion.fromStorage(entry.getValue()) : decodedValue;
+         return decodedValue;
       }
 
       @Override
@@ -276,24 +339,48 @@ public final class EntryViews {
    }
 
    private static final class EntryAndPreviousReadWriteView<K, V> implements ReadWriteEntryView<K, V> {
-      final CacheEntry<K, V> entry;
+      final CacheEntry entry;
       final V prevValue;
       final Metadata prevMetadata;
+      private final DataConversion keyDataConversion;
+      private final DataConversion valueDataConversion;
+      private K decodedKey;
+      private V decodedPrevValue;
+      private V decodedValue;
 
-      private EntryAndPreviousReadWriteView(CacheEntry<K, V> entry, V prevValue, Metadata prevMetadata) {
+      private EntryAndPreviousReadWriteView(CacheEntry<K, V> entry,
+                                            V prevValue,
+                                            Metadata prevMetadata,
+                                            DataConversion keyDataConversion,
+                                            DataConversion valueDataConversion) {
          this.entry = entry;
          this.prevValue = prevValue;
          this.prevMetadata = prevMetadata;
+         this.keyDataConversion = keyDataConversion;
+         this.valueDataConversion = valueDataConversion;
       }
 
       @Override
       public K key() {
-         return entry.getKey();
+         if (decodedKey == null) {
+            decodedKey = (K) keyDataConversion.fromStorage(entry.getKey());
+         }
+         return decodedKey;
       }
 
       @Override
       public Optional<V> find() {
-         return Optional.ofNullable(prevValue);
+         if (decodedPrevValue == null) {
+            decodedPrevValue = (V) valueDataConversion.fromStorage(prevValue);
+         }
+         return Optional.ofNullable(decodedPrevValue);
+      }
+
+      public V getCurrentValue() {
+         if (decodedValue == null) {
+            decodedValue = (V) valueDataConversion.fromStorage(entry.getValue());
+         }
+         return decodedValue;
       }
 
       @Override
@@ -302,16 +389,33 @@ public final class EntryViews {
          return null;
       }
 
+      @Override
+      public Void set(V value, Metadata metadata) {
+         setValue(value);
+         updateMetadata(entry, metadata);
+         return null;
+      }
+
       private void setOnly(V value, MetaParam.Writable[] metas) {
-         entry.setValue(value);
-         entry.setChanged(true);
+         setValue(value);
          updateMetaParams(entry, metas);
+      }
+
+      private void setValue(V value) {
+         decodedValue = value;
+         Object valueEncoded = valueDataConversion.toStorage(value);
+         entry.setValue(valueEncoded);
+         entry.setChanged(true);
+         entry.setRemoved(valueEncoded == null);
+         entry.setCreated(prevValue == null && valueEncoded != null);
       }
 
       @Override
       public Void remove() {
+         decodedValue = null;
          if (!entry.isNull()) {
             entry.setRemoved(true);
+            entry.setCreated(false);
             entry.setChanged(true);
             entry.setValue(null);
          }
@@ -320,7 +424,7 @@ public final class EntryViews {
       }
 
       @Override
-      public <T> Optional<T> findMetaParam(Class<T> type) {
+      public <T extends MetaParam> Optional<T> findMetaParam(Class<T> type) {
          Metadata metadata = prevMetadata; // Use previous metadata
          if (metadata instanceof MetaParamsInternalMetadata) {
             MetaParamsInternalMetadata metaParamsMetadata = (MetaParamsInternalMetadata) metadata;
@@ -335,34 +439,39 @@ public final class EntryViews {
       @Override
       public V get() throws NoSuchElementException {
          if (prevValue == null) throw new NoSuchElementException();
-         return prevValue;
+         if (decodedPrevValue == null) {
+            decodedPrevValue = (V) valueDataConversion.fromStorage(prevValue);
+         }
+         return decodedPrevValue;
       }
 
       @Override
       public String toString() {
          return "EntryAndPreviousReadWriteView{" +
-            "entry=" + entry +
-            ", prevValue=" + prevValue +
-            ", prevMetadata=" + prevMetadata +
-            '}';
+               "entry=" + entry +
+               ", prevValue=" + prevValue +
+               ", prevMetadata=" + prevMetadata +
+               '}';
       }
    }
 
    private static final class NoValueReadOnlyView<K, V> implements ReadEntryView<K, V> {
       final K key;
+      private final DataConversion keyDataConversion;
 
-      public NoValueReadOnlyView(K key) {
+      public NoValueReadOnlyView(K key, DataConversion keyDataConversion) {
          this.key = key;
+         this.keyDataConversion = keyDataConversion;
       }
 
       @Override
       public K key() {
-         return key;
+         return (K) keyDataConversion.fromStorage(key);
       }
 
       @Override
       public V get() throws NoSuchElementException {
-         throw new NoSuchElementException("No value for key " + key);
+         throw new NoSuchElementException("No value for key " + key());
       }
 
       @Override
@@ -371,13 +480,13 @@ public final class EntryViews {
       }
 
       @Override
-      public <T> Optional<T> findMetaParam(Class<T> type) {
+      public <T extends MetaParam> Optional<T> findMetaParam(Class<T> type) {
          return Optional.empty();
       }
 
       @Override
       public String toString() {
-         return "NoValueReadOnlyView{" + "key=" + key + '}';
+         return "NoValueReadOnlyView{" + "key=" + key() + '}';
       }
    }
 
@@ -412,7 +521,7 @@ public final class EntryViews {
 
       // TODO: Duplication
       @Override
-      public <T> Optional<T> findMetaParam(Class<T> type) {
+      public <T extends MetaParam> Optional<T> findMetaParam(Class<T> type) {
          if (metadata instanceof MetaParamsInternalMetadata) {
             MetaParamsInternalMetadata metaParamsMetadata = (MetaParamsInternalMetadata) metadata;
             return metaParamsMetadata.findMetaParam(type);
@@ -426,22 +535,28 @@ public final class EntryViews {
       @Override
       public Void set(V value, MetaParam.Writable... metas) {
          throw new IllegalStateException(
-            "A read-write entry view cannot be modified outside the scope of a lambda");
+               "A read-write entry view cannot be modified outside the scope of a lambda");
+      }
+
+      @Override
+      public Void set(V value, Metadata metadata) {
+         throw new IllegalStateException(
+               "A read-write entry view cannot be modified outside the scope of a lambda");
       }
 
       @Override
       public Void remove() {
          throw new IllegalStateException(
-            "A read-write entry view cannot be modified outside the scope of a lambda");
+               "A read-write entry view cannot be modified outside the scope of a lambda");
       }
 
       @Override
       public String toString() {
          return "ReadWriteSnapshotView{" +
-            "key=" + key +
-            ", value=" + value +
-            ", metadata=" + metadata +
-            '}';
+               "key=" + key +
+               ", value=" + value +
+               ", metadata=" + metadata +
+               '}';
       }
    }
 
@@ -453,13 +568,13 @@ public final class EntryViews {
       Optional<EntryVersion> version = Optional.ofNullable(entry.getMetadata()).map(m -> m.version());
       MetaParams metaParams = MetaParams.empty();
       if (version.isPresent()) {
-         metaParams.add(new MetaParam.MetaEntryVersion(new FunctionalEntryVersionAdapter(version.get())));
+         metaParams.add(new MetaParam.MetaEntryVersion(version.get()));
       }
       if (metas.length != 0) {
          metaParams.addMany(metas);
       }
 
-      entry.setMetadata(MetaParamsInternalMetadata.from(metaParams));
+      updateMetadata(entry, MetaParamsInternalMetadata.from(metaParams));
    }
 
    private static <K, V> MetaParams extractMetaParams(CacheEntry<K, V> entry) {
@@ -522,20 +637,20 @@ public final class EntryViews {
 
       @Override
       public NoValueReadOnlyView readObject(ObjectInput input) throws IOException, ClassNotFoundException {
-         return new NoValueReadOnlyView(input.readObject());
+         return new NoValueReadOnlyView(input.readObject(), null);
       }
    }
 
    // Externalizer class defined outside of externalized class to avoid having
    // to making externalized class public, since that would leak internal impl.
-   public static final class ReadWriteSnapshotViewExternalizer
-            extends AbstractExternalizer<ReadWriteSnapshotView> {
+   public static final class ReadWriteSnapshotViewExternalizer extends AbstractExternalizer<ReadWriteSnapshotView> {
       @Override
       public Integer getId() {
          return Ids.READ_WRITE_SNAPSHOT_VIEW;
       }
 
-      @Override @SuppressWarnings("unchecked")
+      @Override
+      @SuppressWarnings("unchecked")
       public Set<Class<? extends ReadWriteSnapshotView>> getTypeClasses() {
          return Util.asSet(ReadWriteSnapshotView.class);
       }
@@ -547,7 +662,8 @@ public final class EntryViews {
          output.writeObject(obj.metadata);
       }
 
-      @Override @SuppressWarnings("unchecked")
+      @Override
+      @SuppressWarnings("unchecked")
       public ReadWriteSnapshotView readObject(ObjectInput input) throws IOException, ClassNotFoundException {
          Object key = input.readObject();
          Object value = input.readObject();

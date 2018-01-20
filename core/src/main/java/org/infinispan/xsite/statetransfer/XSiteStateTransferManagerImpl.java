@@ -18,7 +18,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -39,17 +39,15 @@ import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.TopologyChanged;
 import org.infinispan.notifications.cachelistener.event.TopologyChangedEvent;
 import org.infinispan.remoting.LocalInvocation;
-import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.ExceptionResponse;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.ResponseGenerator;
 import org.infinispan.remoting.responses.SuccessfulResponse;
-import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.RetryOnFailureXSiteCommand;
+import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.statetransfer.StateTransferManager;
-import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.infinispan.xsite.XSiteBackup;
@@ -66,37 +64,24 @@ public class XSiteStateTransferManagerImpl implements XSiteStateTransferManager 
    private static final Log log = LogFactory.getLog(XSiteStateTransferManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
    private static final boolean debug = log.isDebugEnabled();
+
+   @Inject private RpcManager rpcManager;
+   @Inject private Configuration configuration;
+   @Inject private CommandsFactory commandsFactory;
+   @Inject private ResponseGenerator responseGenerator;
+   @Inject @ComponentName(value = ASYNC_TRANSPORT_EXECUTOR)
+   private ExecutorService asyncExecutor;
+   @Inject private StateTransferManager stateTransferManager;
+   @Inject private CacheNotifier cacheNotifier;
+   @Inject private XSiteStateConsumer consumer;
+   @Inject private XSiteStateProvider provider;
+
    private final ConcurrentMap<String, XSiteStateTransferCollector> siteCollector;
    private final ConcurrentMap<String, String> status;
-   private RpcManager rpcManager;
-   private Configuration configuration;
-   private CommandsFactory commandsFactory;
-   private ResponseGenerator responseGenerator;
-   private ExecutorService asyncExecutor;
-   private StateTransferManager stateTransferManager;
-   private CacheNotifier cacheNotifier;
-   private XSiteStateConsumer consumer;
-   private XSiteStateProvider provider;
 
    public XSiteStateTransferManagerImpl() {
       siteCollector = CollectionFactory.makeConcurrentMap();
       status = CollectionFactory.makeConcurrentMap();
-   }
-
-   @Inject
-   public void inject(RpcManager rpcManager, Configuration configuration, CommandsFactory commandsFactory,
-                      ResponseGenerator responseGenerator, StateTransferManager stateTransferManager,
-                      CacheNotifier cacheNotifier, XSiteStateConsumer consumer, XSiteStateProvider provider,
-                      @ComponentName(value = ASYNC_TRANSPORT_EXECUTOR) ExecutorService asyncExecutor) {
-      this.rpcManager = rpcManager;
-      this.configuration = configuration;
-      this.commandsFactory = commandsFactory;
-      this.responseGenerator = responseGenerator;
-      this.asyncExecutor = asyncExecutor;
-      this.stateTransferManager = stateTransferManager;
-      this.cacheNotifier = cacheNotifier;
-      this.consumer = consumer;
-      this.provider = provider;
    }
 
    @Start
@@ -373,14 +358,12 @@ public class XSiteStateTransferManagerImpl implements XSiteStateTransferManager 
 
    private Map<Address, Response> invokeRemotelyInLocalSite(CacheRpcCommand command) throws Exception {
       commandsFactory.initializeReplicableCommand(command, false);
-      CompletableFuture<Map<Address, Response>> remoteFuture = rpcManager.invokeRemotelyAsync(null,
-            command, rpcManager.getRpcOptionsBuilder(ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, DeliverOrder.NONE).build());
+      CompletionStage<Map<Address, Response>> remoteFuture = rpcManager.invokeCommandOnAll(
+            command, MapResponseCollector.ignoreLeavers(), rpcManager.getSyncRpcOptions());
       final Future<Response> localFuture = asyncExecutor.submit(
             LocalInvocation.newInstance(responseGenerator, command, commandsFactory, rpcManager.getAddress()));
-      final Map<Address, Response> responseMap = new HashMap<>();
+      final Map<Address, Response> responseMap = rpcManager.blocking(remoteFuture);
       responseMap.put(rpcManager.getAddress(), localFuture.get());
-      //noinspection unchecked
-      responseMap.putAll(CompletableFutures.await(remoteFuture));
       return responseMap;
    }
 

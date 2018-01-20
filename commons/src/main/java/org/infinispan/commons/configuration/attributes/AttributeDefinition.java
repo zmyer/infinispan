@@ -1,5 +1,7 @@
 package org.infinispan.commons.configuration.attributes;
 
+import java.util.function.Supplier;
+
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.util.Util;
 
@@ -28,17 +30,22 @@ public final class AttributeDefinition<T> {
    private final T defaultValue;
    private final boolean immutable;
    private final boolean autoPersist;
+   private final boolean global;
    private final AttributeCopier copier;
    private final AttributeInitializer<? extends T> initializer;
    private final AttributeValidator<? super T> validator;
    private final Class<T> type;
 
-   AttributeDefinition(String name, String xmlName, T initialValue, Class<T> type, boolean immutable, boolean autoPersist, AttributeCopier copier, AttributeValidator<? super T> validator, AttributeInitializer<? extends T> initializer) {
+   AttributeDefinition(String name, String xmlName, T initialValue, Class<T> type,
+                       boolean immutable, boolean autoPersist, boolean global,
+                       AttributeCopier copier, AttributeValidator<? super T> validator,
+                       AttributeInitializer<? extends T> initializer) {
       this.name = name;
       this.xmlName = xmlName;
       this.defaultValue = initialValue;
       this.immutable = immutable;
       this.autoPersist = autoPersist;
+      this.global = global;
       this.copier = copier;
       this.initializer = initializer;
       this.validator = validator;
@@ -67,6 +74,10 @@ public final class AttributeDefinition<T> {
 
    public boolean isAutoPersist() {
       return autoPersist;
+   }
+
+   public boolean isGlobal() {
+      return global;
    }
 
    public AttributeCopier copier() {
@@ -103,6 +114,48 @@ public final class AttributeDefinition<T> {
       return new Builder<>(name, defaultValue, klass);
    }
 
+   public static <T> Builder<Class<? extends T>> classBuilder(String name, Class<T> klass) {
+      return new Builder(name, null, Class.class);
+   }
+
+   public static <T> Builder<Supplier<? extends T>> supplierBuilder(String name, Class<T> klass) {
+      return new Builder(name, null, Supplier.class);
+   }
+
+   @Override
+   public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+
+      AttributeDefinition<?> that = (AttributeDefinition<?>) o;
+
+      if (immutable != that.immutable) return false;
+      if (autoPersist != that.autoPersist) return false;
+      if (global != that.global) return false;
+      if (name != null ? !name.equals(that.name) : that.name != null) return false;
+      if (xmlName != null ? !xmlName.equals(that.xmlName) : that.xmlName != null) return false;
+      if (defaultValue != null ? !defaultValue.equals(that.defaultValue) : that.defaultValue != null) return false;
+      if (copier != null ? !copier.equals(that.copier) : that.copier != null) return false;
+      if (initializer != null ? !initializer.equals(that.initializer) : that.initializer != null) return false;
+      if (validator != null ? !validator.equals(that.validator) : that.validator != null) return false;
+      return type != null ? type.equals(that.type) : that.type == null;
+   }
+
+   @Override
+   public int hashCode() {
+      int result = name != null ? name.hashCode() : 0;
+      result = 31 * result + (xmlName != null ? xmlName.hashCode() : 0);
+      result = 31 * result + (defaultValue != null ? defaultValue.hashCode() : 0);
+      result = 31 * result + (immutable ? 1 : 0);
+      result = 31 * result + (autoPersist ? 1 : 0);
+      result = 31 * result + (global ? 1 : 0);
+      result = 31 * result + (copier != null ? copier.hashCode() : 0);
+      result = 31 * result + (initializer != null ? initializer.hashCode() : 0);
+      result = 31 * result + (validator != null ? validator.hashCode() : 0);
+      result = 31 * result + (type != null ? type.hashCode() : 0);
+      return result;
+   }
+
    public static final class Builder<T> {
       private final String name;
       private final T defaultValue;
@@ -110,6 +163,7 @@ public final class AttributeDefinition<T> {
 
       private boolean immutable = false;
       private boolean autoPersist = true;
+      private boolean global = true;
       private String xmlName;
       private AttributeCopier copier = null;
       private AttributeInitializer<? extends T> initializer;
@@ -142,6 +196,11 @@ public final class AttributeDefinition<T> {
          return this;
       }
 
+      public Builder<T> global(boolean global) {
+         this.global = global;
+         return this;
+      }
+
       public Builder<T> validator(AttributeValidator<? super T> validator) {
          this.validator = validator;
          return this;
@@ -153,7 +212,7 @@ public final class AttributeDefinition<T> {
       }
 
       public AttributeDefinition<T> build() {
-         return new AttributeDefinition<T>(name, xmlName == null ? Util.xmlify(name) : xmlName, defaultValue, type, immutable, autoPersist, copier, validator, initializer);
+         return new AttributeDefinition<T>(name, xmlName == null ? Util.xmlify(name) : xmlName, defaultValue, type, immutable, autoPersist, global, copier, validator, initializer);
       }
    }
 

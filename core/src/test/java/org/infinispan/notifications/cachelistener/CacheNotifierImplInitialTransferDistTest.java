@@ -1,6 +1,8 @@
 package org.infinispan.notifications.cachelistener;
 
-import static org.mockito.Mockito.argThat;
+import static org.infinispan.test.Mocks.invokeAndReturnMock;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -12,14 +14,17 @@ import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
@@ -27,17 +32,16 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
-import org.hamcrest.core.IsInstanceOf;
 import org.infinispan.Cache;
 import org.infinispan.CacheSet;
 import org.infinispan.CacheStream;
-import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.annotation.CacheEntryCreated;
@@ -46,10 +50,11 @@ import org.infinispan.notifications.cachelistener.annotation.CacheEntryRemoved;
 import org.infinispan.notifications.cachelistener.cluster.ClusterCacheNotifier;
 import org.infinispan.notifications.cachelistener.event.CacheEntryEvent;
 import org.infinispan.notifications.cachelistener.event.Event;
-import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CheckPoint;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 import org.mockito.AdditionalAnswers;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
@@ -97,7 +102,7 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
    }
 
    private void testSimpleCacheStarting(final StateListener<String, String> listener) {
-      final Map<String, String> expectedValues = new HashMap<String, String>(10);
+      final Map<String, String> expectedValues = new HashMap<>(10);
       Cache<String, String> cache = cache(0, CACHE_NAME);
       populateCache(cache, expectedValues);
 
@@ -218,18 +223,19 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
 
       final CheckPoint checkPoint = new CheckPoint();
 
-      AsyncInterceptorChain chain = mockStream(cache, (mock, real, additional) ->
+      AsyncInterceptorChain chain = mockEntrySet(cache, (mock, real, additional) ->
               doAnswer(i -> {
                  // Wait for main thread to sync up
                  checkPoint.trigger("pre_retrieve_entry_invoked");
                  // Now wait until main thread lets us through
                  checkPoint.awaitStrict("pre_retrieve_entry_released", 10, TimeUnit.SECONDS);
-                 return i.getMethod().invoke(real, i.getArguments());
+                 return invokeAndReturnMock(i, real);
               }).when(mock).iterator());
       try {
          String keyToChange = findKeyBasedOnOwnership("key-to-change",
-               cache.getAdvancedCache().getDistributionManager().getConsistentHash(), shouldBePrimaryOwner,
-               cache.getCacheManager().getAddress());
+                                                      cache.getAdvancedCache().getDistributionManager()
+                                                           .getCacheTopology(),
+                                                      shouldBePrimaryOwner);
          String value = prepareOperation(operation, cache, keyToChange);
          if (value != null) {
             expectedValues.put(keyToChange, value);
@@ -240,7 +246,7 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
             return null;
          });
 
-         checkPoint.awaitStrict("pre_retrieve_entry_invoked", 10000, TimeUnit.SECONDS);
+         checkPoint.awaitStrict("pre_retrieve_entry_invoked", 10, TimeUnit.SECONDS);
 
          operation.perform(cache, keyToChange, value);
 
@@ -283,28 +289,27 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
                                                                          Operation operation,
                                                                          boolean shouldBePrimaryOwner)
          throws IOException, InterruptedException, TimeoutException, BrokenBarrierException, ExecutionException {
-      final Map<String, String> expectedValues = new HashMap<String, String>(10);
+      final Map<String, String> expectedValues = new HashMap<>(10);
       final Cache<String, String> cache = cache(0, CACHE_NAME);
       populateCache(cache, expectedValues);
 
       CheckPoint checkPoint = new CheckPoint();
 
-      AsyncInterceptorChain chain = mockStream(cache, (mock, real, additional) -> {
+      AsyncInterceptorChain chain = mockEntrySet(cache, (mock, real, additional) -> {
          doAnswer(i -> {
             // Wait for main thread to sync up
             checkPoint.trigger("pre_close_iter_invoked");
             // Now wait until main thread lets us through
             checkPoint.awaitStrict("pre_close_iter_released", 10, TimeUnit.SECONDS);
-            return i.getMethod().invoke(real, i.getArguments());
+            return invokeAndReturnMock(i, real);
          }).when(mock).close();
-
-         doAnswer(i -> i.getMethod().invoke(real, i.getArguments())).when(mock).iterator();
       });
 
       try {
          String keyToChange = findKeyBasedOnOwnership("key-to-change",
-               cache.getAdvancedCache().getDistributionManager().getConsistentHash(), shouldBePrimaryOwner,
-               cache.getCacheManager().getAddress());
+                                                      cache.getAdvancedCache().getDistributionManager()
+                                                           .getCacheTopology(),
+                                                      shouldBePrimaryOwner);
          String value = prepareOperation(operation, cache, keyToChange);
          if (cache.get(keyToChange) != null) {
             expectedValues.put(keyToChange, cache.get(keyToChange));
@@ -380,16 +385,17 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
       }
    }
 
-   private String findKeyBasedOnOwnership(String keyPrefix, ConsistentHash hash, boolean shouldBePrimaryOwner,
-                                         Address address) {
+   private String findKeyBasedOnOwnership(String keyPrefix, LocalizedCacheTopology cacheTopology, boolean shouldBePrimaryOwner) {
       for (int i = 0; i < 1000; i++) {
          String key = keyPrefix + i;
-         boolean isPrimaryOwner = hash.locatePrimaryOwner(key).equals(address);
+         boolean isPrimaryOwner = cacheTopology.getDistribution(key).isPrimary();
          if (isPrimaryOwner == shouldBePrimaryOwner) {
             if (shouldBePrimaryOwner) {
-               log.debugf("Found key %s with primary owner %s, segment %d", key, address, hash.getSegment(key));
+               log.debugf("Found key %s with primary owner %s, segment %d", key, cacheTopology.getLocalAddress(),
+                          cacheTopology.getSegment(key));
             } else {
-               log.debugf("Found key %s with primary owner != %s, segment %d", key, address, hash.getSegment(key));
+               log.debugf("Found key %s with primary owner != %s, segment %d", key, cacheTopology.getLocalAddress(),
+                          cacheTopology.getSegment(key));
             }
             return key;
          }
@@ -466,31 +472,28 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
    protected void testIterationBeganAndSegmentNotComplete(final StateListener<String, String> listener,
                                                           Operation operation, boolean shouldBePrimaryOwner)
          throws TimeoutException, InterruptedException, ExecutionException {
-      final Map<String, String> expectedValues = new HashMap<String, String>(10);
+      final Map<String, String> expectedValues = new HashMap<>(10);
       final Cache<String, String> cache = cache(0, CACHE_NAME);
       populateCache(cache, expectedValues);
 
       String keyToChange = findKeyBasedOnOwnership("key-to-change-",
-            cache.getAdvancedCache().getDistributionManager().getConsistentHash(), shouldBePrimaryOwner,
-            cache.getCacheManager().getAddress());
+                                                   cache.getAdvancedCache().getDistributionManager().getCacheTopology(),
+                                                         shouldBePrimaryOwner);
       String value = prepareOperation(operation, cache, keyToChange);
       if (cache.get(keyToChange) != null) {
          expectedValues.put(keyToChange, cache.get(keyToChange));
       }
 
       CheckPoint checkPoint = new CheckPoint();
-      int segmentToUse = cache.getAdvancedCache().getDistributionManager().getConsistentHash().getSegment(keyToChange);
+      int segmentToUse = cache.getAdvancedCache().getDistributionManager().getCacheTopology().getSegment(keyToChange);
 
       // do the operation, which should put it in the queue.
-      ClusterCacheNotifier notifier = waitUntilClosingSegment(cache, segmentToUse, checkPoint);
+      ClusterCacheNotifier notifier = waitUntilClosingSegment(cache, segmentToUse, checkPoint, keyToChange,
+            operation == Operation.CREATE);
 
-      Future<Void> future = fork(new Callable<Void>() {
-
-         @Override
-         public Void call() throws Exception {
-            cache.addListener(listener);
-            return null;
-         }
+      Future<Void> future = fork(() -> {
+         cache.addListener(listener);
+         return null;
       });
 
       try {
@@ -583,9 +586,9 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
             assertEquals(event.getValue(), value);
          }
       } finally {
+         cache.removeListener(listener);
          TestingUtil.replaceComponent(cache, CacheNotifier.class, notifier, true);
          TestingUtil.replaceComponent(cache, ClusterCacheNotifier.class, notifier, true);
-         cache.removeListener(listener);
       }
    }
 
@@ -660,12 +663,14 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
    }
 
    protected static abstract class StateListener<K, V> {
-      final List<CacheEntryEvent<K, V>> events = new ArrayList<>();
+      final List<CacheEntryEvent<K, V>> events = Collections.synchronizedList(new ArrayList<>());
+      private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
       @CacheEntryCreated
       @CacheEntryModified
       @CacheEntryRemoved
-      public synchronized void onCacheNotification(CacheEntryEvent<K, V> event) {
+      public void onCacheNotification(CacheEntryEvent<K, V> event) {
+         log.tracef("Received event: %s", event);
          events.add(event);
       }
    }
@@ -679,38 +684,65 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
 
    }
 
+   private void segmentCompletionWaiter(AtomicBoolean shouldFire, CheckPoint checkPoint)
+         throws TimeoutException, InterruptedException {
+      // Only 2 callers should come in here, so first will always succeed and second will always fail
+      if (shouldFire.compareAndSet(false, true)) {
+         log.tracef("We were first to check segment completion");
+      } else {
+         log.tracef("We were last to check segment completion, so notifying main thread");
+         // Wait for main thread to sync up
+         checkPoint.trigger("pre_complete_segment_invoked");
+         // Now wait until main thread lets us through
+         checkPoint.awaitStrict("pre_complete_segment_released", 10, TimeUnit.SECONDS);
+      }
+   }
 
-   protected ClusterCacheNotifier waitUntilClosingSegment(final Cache<?, ?> cache, final int segment, final CheckPoint checkPoint) {
+   protected ClusterCacheNotifier waitUntilClosingSegment(final Cache<?, ?> cache, int segment, CheckPoint checkPoint,
+         Object keyToWaitFor, boolean isCreation) {
       ClusterCacheNotifier realNotifier = TestingUtil.extractComponent(cache, ClusterCacheNotifier.class);
-      ConcurrentMap<UUID, QueueingSegmentListener> listeningMap = new ConcurrentHashMap() {
+      ConcurrentMap<UUID, QueueingSegmentListener> listeningMap = new ConcurrentHashMap<UUID, QueueingSegmentListener>() {
          @Override
-         public Object putIfAbsent(Object key, Object value) {
+         public QueueingSegmentListener putIfAbsent(UUID key, QueueingSegmentListener value) {
             log.tracef("Adding segment listener %s : %s", key, value);
             final Answer<Object> listenerAnswer = AdditionalAnswers.delegatesTo(value);
 
-            final AtomicBoolean wasLastSegment = new AtomicBoolean(false);
             QueueingSegmentListener mockListener = mock(QueueingSegmentListener.class,
                                                        withSettings().defaultAnswer(listenerAnswer));
 
+            // If it was creation then we just wait until segment is about to be completed
+            AtomicBoolean foundOther = new AtomicBoolean(isCreation);
+            // We are guaranteed that we have returned an entry from iterator before segment is completed - however
+            // there is no guarantee that the iterator has marked it as processing yet
             doAnswer(i -> {
-               Set<Integer> segments = (Set<Integer>) i.getArguments()[0];
-               log.tracef("Completed segments %s", segments);
-               if (segments.contains(segment)) {
-                  wasLastSegment.set(true);
+               Supplier<PrimitiveIterator.OfInt> segments = i.getArgument(0);
+               if (log.isTraceEnabled()) {
+                  Set<Integer> segmentsCompleted = new HashSet<>();
+                  segments.get().forEachRemaining((Integer segment) -> segmentsCompleted.add(segment));
+                  log.tracef("Completed segments %s", segmentsCompleted);
+               }
+               PrimitiveIterator.OfInt iter = segments.get();
+               while (iter.hasNext()) {
+                  if (iter.nextInt() == segment) {
+                     // This will fire checkpoint if the segment completion ran after the iterator marked the value
+                     segmentCompletionWaiter(foundOther, checkPoint);
+                  }
                }
                return listenerAnswer.answer(i);
-            }).when(mockListener).segmentCompleted(Mockito.anySet());
+            }).when(mockListener).accept(Mockito.any(Supplier.class));
 
-            doAnswer(k -> {
-               log.tracef("Notified for key %s", k);
-               if (wasLastSegment.compareAndSet(true, false)) {
-                  // Wait for main thread to sync up
-                  checkPoint.trigger("pre_complete_segment_invoked");
-                  // Now wait until main thread lets us through
-                  checkPoint.awaitStrict("pre_complete_segment_released", 10, TimeUnit.SECONDS);
-               }
-               return listenerAnswer.answer(k);
-            }).when(mockListener).notifiedKey(Mockito.any());
+            // No reason to wrap listener if we won't hear the key
+            if (!isCreation) {
+               doAnswer(i -> {
+                  Object k = i.getArgument(0);
+                  log.tracef("Notified for key %s", k);
+                  if (keyToWaitFor.equals(k)) {
+                     // This will fire checkpoint if the segment completion ran before our iterator marked the value
+                     segmentCompletionWaiter(foundOther, checkPoint);
+                  }
+                  return listenerAnswer.answer(i);
+               }).when(mockListener).notifiedKey(any());
+            }
             return super.putIfAbsent(key, mockListener);
          }
       };
@@ -722,12 +754,9 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
 
    // This is a helper method so that subsequent calls to the stream will return a mocked instance so we
    // can keep track of invocations properly.
-   protected Stream mockStream(Stream realStream, StreamMocking mocking) {
-      Answer<Stream> defaultAnswer = i -> {
-         Stream stream = (Stream) i.getMethod().invoke(realStream, i.getArguments());
-         return mockStream(stream, mocking);
-      };
-      CacheStream mockStream = mock(CacheStream.class, withSettings().defaultAnswer(defaultAnswer));
+   protected Stream mockStream(CacheStream realStream, StreamMocking mocking) {
+      CacheStream mockStream =
+            mock(CacheStream.class, withSettings().defaultAnswer(i -> invokeAndReturnMock(i, realStream)));
 
       mocking.additionalInformation(mockStream, realStream, mocking);
 
@@ -738,23 +767,21 @@ public class CacheNotifierImplInitialTransferDistTest extends MultipleCacheManag
       void additionalInformation(Stream mockStream, Stream realStream, StreamMocking ourselves);
    }
 
-   protected AsyncInterceptorChain mockStream(final Cache<?, ?> cache, StreamMocking mocking) {
+   protected AsyncInterceptorChain mockEntrySet(final Cache<?, ?> cache, StreamMocking mocking) {
       AsyncInterceptorChain chain = TestingUtil.extractComponent(cache, AsyncInterceptorChain.class);
       AsyncInterceptorChain mockChain = spy(chain);
       doAnswer(i -> {
          CacheSet cacheSet = (CacheSet) i.callRealMethod();
-
-         CacheSet mockSet = spy(cacheSet);
+         CacheSet mockSet = mock(CacheSet.class,
+                                 withSettings().defaultAnswer(delegatesTo(cacheSet)));
 
          when(mockSet.stream()).then(j -> {
-            CacheStream stream = (CacheStream) j.callRealMethod();
-
+            CacheStream stream = cacheSet.stream();
             return mockStream(stream, mocking);
          });
 
          return mockSet;
-      }).when(mockChain).invoke(Mockito.any(InvocationContext.class),
-              (VisitableCommand) argThat(new IsInstanceOf(EntrySetCommand.class)));
+      }).when(mockChain).invoke(any(InvocationContext.class), any(EntrySetCommand.class));
       TestingUtil.replaceComponent(cache, AsyncInterceptorChain.class, mockChain, true);
       return chain;
    }

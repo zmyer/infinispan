@@ -1,14 +1,14 @@
 package org.infinispan.query.impl.massindex;
 
-import java.util.Collections;
-
 import org.hibernate.search.backend.UpdateLuceneWork;
 import org.hibernate.search.bridge.spi.ConversionContext;
 import org.hibernate.search.bridge.util.impl.ContextualExceptionBridgeHelper;
 import org.hibernate.search.engine.spi.DocumentBuilderIndexedEntity;
 import org.hibernate.search.engine.spi.EntityIndexBinding;
 import org.hibernate.search.spi.DefaultInstanceInitializer;
+import org.hibernate.search.spi.IndexedTypeIdentifier;
 import org.hibernate.search.spi.SearchIntegrator;
+import org.hibernate.search.spi.impl.PojoIndexedTypeIdentifier;
 import org.infinispan.Cache;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.query.backend.KeyTransformationHandler;
@@ -35,19 +35,19 @@ public class IndexUpdater {
       QueryInterceptor queryInterceptor = ComponentRegistryUtils.getQueryInterceptor(cache);
       this.searchIntegrator = queryInterceptor.getSearchFactory();
       this.keyTransformationHandler = queryInterceptor.getKeyTransformationHandler();
-      ComponentRegistry componentRegistry = cache.getAdvancedCache().getComponentRegistry();
+      ComponentRegistry componentRegistry = SecurityActions.getCacheComponentRegistry(cache.getAdvancedCache());
       DefaultMassIndexerProgressMonitor monitor = new DefaultMassIndexerProgressMonitor(componentRegistry.getTimeService());
       this.defaultBatchBackend = new ExtendedBatchBackend(searchIntegrator, monitor);
    }
 
-   public void flush(Class<?> entityType) {
-      LOG.flushingIndex(entityType.getName());
-      defaultBatchBackend.flush(Collections.singleton(entityType));
+   public void flush(IndexedTypeIdentifier entity) {
+      LOG.flushingIndex(entity.getName());
+      defaultBatchBackend.flush(entity.asTypeSet());
    }
 
-   public void purge(Class<?> entityType) {
-      LOG.purgingIndex(entityType.getName());
-      defaultBatchBackend.purge(Collections.singleton(entityType));
+   public void purge(IndexedTypeIdentifier entity) {
+      LOG.purgingIndex(entity.getName());
+      defaultBatchBackend.purge(entity.asTypeSet());
    }
 
    public void waitForAsyncCompletion() {
@@ -57,8 +57,7 @@ public class IndexUpdater {
    public void updateIndex(Object key, Object value) {
       if (value != null) {
          if (!Thread.currentThread().isInterrupted()) {
-            Class clazz = value.getClass();
-            EntityIndexBinding entityIndexBinding = searchIntegrator.getIndexBinding(clazz);
+            EntityIndexBinding entityIndexBinding = searchIntegrator.getIndexBindings().get(new PojoIndexedTypeIdentifier(value.getClass()));
             if (entityIndexBinding == null) {
                // it might be possible to receive not-indexes types
                return;
@@ -68,7 +67,7 @@ public class IndexUpdater {
             final String idInString = keyTransformationHandler.keyToString(key);
             UpdateLuceneWork updateTask = docBuilder.createUpdateWork(
                   null,
-                  clazz,
+                  docBuilder.getTypeIdentifier(),
                   value,
                   idInString,
                   idInString,

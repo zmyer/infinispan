@@ -17,8 +17,7 @@
         <!-- Checks for imports -->
         <module name="AvoidStarImport" />
         <module name="RedundantImport" />
-        <!-- Unfortunately unused import plugin is too buggy to be used https://github.com/checkstyle/checkstyle/issues/1004 -->
-        <!--<module name="UnusedImports" />-->
+        <module name="UnusedImports" />
 
         <!-- Checks for common coding problems -->
         <!--<module name="EqualsHashCode" />-->
@@ -98,6 +97,14 @@
             <!--<property name="illegalClassnames" value="org.hibernate.annotations.common.AssertionFailure" />-->
             <!--<property name="message" value="Stop using the AssertionFailure from commons-annotations." />-->
         <!--</module>-->
+
+        <!-- The severity of following rules should be eventually set to error -->
+        <module name="org.infinispan.checkstyle.checks.interceptors.InterceptorDefinesAllReadsCheck">
+            <property name="severity" value="${checkstyle.interceptors.reads.severity}" default="warning"/>
+        </module>
+        <module name="org.infinispan.checkstyle.checks.interceptors.InterceptorDefinesAllReadWritesCheck">
+            <property name="severity" value="${checkstyle.interceptors.writes.severity}" default="warning"/>
+        </module>
 
         <!--&lt;!&ndash; Required to get SuppressionCommentFilter to work &ndash;&gt;-->
         <!--<module name="FileContentsHolder" />-->

@@ -1,26 +1,24 @@
 package org.infinispan.query.remote.impl;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.hibernate.search.bridge.util.impl.ToStringNullMarker;
-import org.hibernate.search.engine.nulls.codec.impl.LuceneStringNullMarkerCodec;
-import org.hibernate.search.engine.nulls.codec.impl.NullMarkerCodec;
 import org.infinispan.AdvancedCache;
 import org.infinispan.commons.logging.LogFactory;
-import org.infinispan.protostream.ProtobufUtil;
 import org.infinispan.protostream.WrappedMessage;
-import org.infinispan.query.dsl.impl.BaseQuery;
+import org.infinispan.query.dsl.IndexedQueryMode;
+import org.infinispan.query.dsl.Query;
 import org.infinispan.query.remote.client.QueryRequest;
 import org.infinispan.query.remote.client.QueryResponse;
 import org.infinispan.query.remote.impl.logging.Log;
+import org.infinispan.security.AuthorizationManager;
+import org.infinispan.security.AuthorizationPermission;
 import org.infinispan.server.core.QueryFacade;
 import org.kohsuke.MetaInfServices;
 
 /**
- * A query facade implementation for both Lucene based queries and non-indexed in-memory queries.
- * All work is delegated to {@link RemoteQueryEngine}.
+ * A query facade implementation for both Lucene based queries and non-indexed in-memory queries. All work is delegated
+ * to {@link RemoteQueryEngine}.
  *
  * @author anistor@redhat.com
  * @since 6.0
@@ -31,44 +29,47 @@ public final class QueryFacadeImpl implements QueryFacade {
    private static final Log log = LogFactory.getLog(QueryFacadeImpl.class, Log.class);
 
    /**
-    * A special hidden Lucene document field that holds the actual protobuf type name.
+    * A special 'hidden' Lucene document field that holds the actual protobuf type name.
     */
    public static final String TYPE_FIELD_NAME = "$type$";
 
-   /**
-    * A special placeholder value that is indexed if the actual field value is null. This placeholder is needed because
-    * Lucene does not index null values.
-    */
-   public static final String NULL_TOKEN = "_null_";
-
-   public static final NullMarkerCodec NULL_TOKEN_CODEC = new LuceneStringNullMarkerCodec(new ToStringNullMarker(NULL_TOKEN));
-
    @Override
    public byte[] query(AdvancedCache<byte[], byte[]> cache, byte[] query) {
-      RemoteQueryEngine queryEngine = SecurityActions.getCacheComponentRegistry(cache).getComponent(RemoteQueryEngine.class);
+      AuthorizationManager authorizationManager = SecurityActions.getCacheAuthorizationManager(cache);
+      if (authorizationManager != null) {
+         authorizationManager.checkPermission(AuthorizationPermission.BULK_READ);
+      }
+      RemoteQueryManager remoteQueryManager = SecurityActions.getRemoteQueryManager(cache);
+      BaseRemoteQueryEngine queryEngine = remoteQueryManager.getQueryEngine();
       if (queryEngine == null) {
          throw log.queryingNotEnabled(cache.getName());
       }
 
       try {
-         // decode the query request object
-         QueryRequest request = ProtobufUtil.fromByteArray(queryEngine.getSerializationContext(), query, 0, query.length, QueryRequest.class);
+         QueryRequest request = remoteQueryManager.decodeQueryRequest(query);
 
          long startOffset = request.getStartOffset() == null ? -1 : request.getStartOffset();
          int maxResults = request.getMaxResults() == null ? -1 : request.getMaxResults();
 
          // create the query
-         BaseQuery q = queryEngine.makeQuery(request.getQueryString(), request.getNamedParametersMap(), startOffset, maxResults);
+         IndexedQueryMode queryMode = IndexedQueryMode.FETCH;
+         if (request.getIndexedQueryMode() != null) {
+            queryMode = IndexedQueryMode.valueOf(request.getIndexedQueryMode());
+         }
+         Query q = queryEngine.makeQuery(request.getQueryString(), request.getNamedParametersMap(), startOffset, maxResults, queryMode);
 
          // execute query and make the response object
          QueryResponse response = makeResponse(q);
-         return ProtobufUtil.toByteArray(queryEngine.getSerializationContext(), response);
-      } catch (IOException e) {
-         throw log.errorExecutingQuery(e);
+         return remoteQueryManager.encodeQueryResponse(response);
+      } catch (Exception e) {
+         if (log.isDebugEnabled()) {
+            log.debugf(e, "Error executing remote query : %s", e.getMessage());
+         }
+         throw e;
       }
    }
 
-   private QueryResponse makeResponse(BaseQuery query) {
+   private QueryResponse makeResponse(Query query) {
       List<?> list = query.list();
       int numResults = list.size();
       String[] projection = query.getProjection();

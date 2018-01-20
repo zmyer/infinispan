@@ -1,4 +1,4 @@
-        <subsystem xmlns="urn:infinispan:server:core:9.0" >
+        <subsystem xmlns="urn:infinispan:server:core:9.2" >
             <cache-container name="clustered" default-cache="testcache">
                 <security>
                     <authorization>
@@ -11,6 +11,7 @@
                     </authorization>
                 </security>
                 <transport lock-timeout="240000"/>
+                <distributed-cache-configuration name="template"/>
                 <distributed-cache name="testcache" remote-timeout="30000" >
                     <security>
                         <authorization roles="admin reader writer supervisor" enabled="true" />

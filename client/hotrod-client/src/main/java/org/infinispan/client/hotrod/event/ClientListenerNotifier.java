@@ -2,6 +2,7 @@ package org.infinispan.client.hotrod.event;
 
 import java.io.IOException;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.SocketAddress;
 import java.net.SocketException;
@@ -64,22 +65,24 @@ public class ClientListenerNotifier {
    private final TransportFactory transportFactory;
 
    private final Consumer<WrappedByteArray> failoverClientListener = this::failoverClientListener;
+   private final List<String> whitelist;
 
    protected ClientListenerNotifier(
          ExecutorService executor, Codec codec,
-         Marshaller marshaller, TransportFactory transportFactory) {
+         Marshaller marshaller, TransportFactory transportFactory, List<String> whitelist) {
       this.executor = executor;
       this.codec = codec;
       this.marshaller = marshaller;
       this.transportFactory = transportFactory;
+      this.whitelist = whitelist;
    }
 
-   public static ClientListenerNotifier create(Codec codec, Marshaller marshaller, TransportFactory transportFactory) {
+   public static ClientListenerNotifier create(Codec codec, Marshaller marshaller, TransportFactory transportFactory, List<String> whitelist) {
       ExecutorService executor = Executors.newCachedThreadPool(getRestoreThreadNameThreadFactory());
-      return new ClientListenerNotifier(executor, codec, marshaller, transportFactory);
+      return new ClientListenerNotifier(executor, codec, marshaller, transportFactory, whitelist);
    }
 
-   private static ThreadFactory getRestoreThreadNameThreadFactory() {
+   public static ThreadFactory getRestoreThreadNameThreadFactory() {
       return r -> new Thread(() -> {
          final String originalName = Thread.currentThread().getName();
          try {
@@ -277,7 +280,7 @@ public class ClientListenerNotifier {
          while (!Thread.currentThread().isInterrupted()) {
             ClientEvent clientEvent = null;
             try {
-               clientEvent = codec.readEvent(transport, op.listenerId, marshaller);
+               clientEvent = codec.readEvent(transport, op.listenerId, marshaller, whitelist);
                invokeClientEvent(clientEvent);
                // Nullify event, makes it easier to identify network vs invocation error messages
                clientEvent = null;
@@ -326,7 +329,12 @@ public class ClientListenerNotifier {
          } catch (TransportException e) {
             log.debug("Unable to failover client listener, so ignore connection reset");
             try {
-               transportFactory.addDisconnectedListener(op);
+               transportFactory.addDisconnectedListener(() -> {
+                  if (trace) {
+                     log.tracef("Reconnecting client listener with id %s", Util.printArray(op.listenerId));
+                  }
+                  op.execute();
+               });
             } catch (InterruptedException e1) {
                Thread.currentThread().interrupt();
             }
@@ -383,6 +391,9 @@ public class ClientListenerNotifier {
       public void invoke(ClientEvent event) {
          try {
             method.invoke(listener, event);
+         } catch (InvocationTargetException e) {
+            throw log.exceptionInvokingListener(
+               e.getClass().getName(), method, listener, e.getTargetException());
          } catch (Exception e) {
             throw log.exceptionInvokingListener(
                   e.getClass().getName(), method, listener, e);

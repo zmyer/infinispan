@@ -1,7 +1,5 @@
 package org.infinispan.container.offheap;
 
-import java.util.Arrays;
-import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 
 import sun.misc.Unsafe;
@@ -12,41 +10,44 @@ import sun.misc.Unsafe;
  */
 public class MemoryAddressHash {
    private static final Unsafe UNSAFE = UnsafeHolder.UNSAFE;
+   private static final OffHeapMemory MEMORY = OffHeapMemory.INSTANCE;
    private static final int MAXIMUM_CAPACITY = 1 << 30;
    private static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
 
    private final long memory;
    private final int pointerCount;
+   private final OffHeapMemoryAllocator allocator;
 
-   public MemoryAddressHash(int pointers) {
+   public MemoryAddressHash(int pointers, OffHeapMemoryAllocator allocator) {
       this.pointerCount = nextPowerOfTwo(pointers);
       long bytes = ((long) pointerCount) << 3;
-      memory = UNSAFE.allocateMemory(bytes);
+      this.allocator = allocator;
+      memory = allocator.allocate(bytes);
       // Have to clear out bytes to make sure no bad stuff was read in
       UNSAFE.setMemory(memory, bytes, (byte) 0);
    }
 
-   private int findOffset(Object instance) {
+   private long findOffset(Object instance) {
       int h = spread(instance.hashCode());
       int pointerMask = pointerCount - 1;
       return h & pointerMask;
    }
 
    public void putMemoryAddress(Object instance, long address) {
-      int offset = findOffset(instance);
-      UNSAFE.putLong(memory + (((long) offset) << 3), address);
+      long offset = findOffset(instance);
+      MEMORY.putLong(memory, offset << 3, address);
    }
 
    public long getMemoryAddress(Object instance) {
-      return UNSAFE.getLong(memory + (findOffset(instance) << 3));
+      return MEMORY.getLong(memory, findOffset(instance) << 3);
    }
 
    public long getMemoryAddressOffset(int offset) {
-      return UNSAFE.getLong(memory + (((long) offset) << 3));
+      return MEMORY.getLong(memory,((long) offset) << 3);
    }
 
    public void deallocate() {
-      UNSAFE.freeMemory(memory);
+      allocator.deallocate(memory, pointerCount << 3);
    }
 
    /**

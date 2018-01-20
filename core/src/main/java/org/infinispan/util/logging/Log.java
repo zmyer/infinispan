@@ -13,7 +13,6 @@ import java.security.Permission;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -28,13 +27,18 @@ import javax.transaction.xa.XAResource;
 import javax.xml.namespace.QName;
 
 import org.infinispan.IllegalLifecycleStateException;
-import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.CacheListenerException;
+import org.infinispan.commons.dataconversion.EncodingException;
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
 import org.infinispan.commons.util.TypedProperties;
+import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.cache.StorageType;
+import org.infinispan.configuration.parsing.Element;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.jmx.JmxDomainConflictException;
 import org.infinispan.partitionhandling.AvailabilityException;
@@ -92,8 +96,8 @@ import org.jgroups.View;
  * <p/>
  *
  * @author Manik Surtani
- * @since 4.0
  * @private
+ * @since 4.0
  */
 @MessageLogger(projectCode = "ISPN")
 public interface Log extends BasicLogger {
@@ -176,7 +180,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = INFO)
    @Message(value = "Passivated %d entries in %s", id = 30)
-   void passivatedEntries(int numEntries, String duration);
+   void passivatedEntries(long numEntries, String duration);
 
    @LogMessage(level = TRACE)
    @Message(value = "MBeans were successfully registered to the platform MBean server.", id = 31)
@@ -298,9 +302,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Exception while marshalling object: %s", id = 65)
    void errorMarshallingObject(@Cause Throwable ioe, Object obj);
 
-//   @LogMessage(level = ERROR)
-//   @Message(value = "Unable to read version id from first two bytes of stream, barfing.", id = 66)
-//   void unableToReadVersionId();
+   @LogMessage(level = ERROR)
+   @Message(value = "Unable to read version id from first two bytes of stream, barfing.", id = 66)
+   void unableToReadVersionId();
 
 //   @LogMessage(level = INFO)
 //   @Message(value = "Will try and wait for the cache %s to start", id = 67)
@@ -409,8 +413,8 @@ public interface Log extends BasicLogger {
 //   void remoteTxAlreadyRegistered();
 
    @LogMessage(level = WARN)
-   @Message(value = "Falling back to DummyTransactionManager from Infinispan", id = 104)
-   void fallingBackToDummyTm();
+   @Message(value = "Falling back to EmbeddedTransactionManager from Infinispan", id = 104)
+   void fallingBackToEmbeddedTm();
 
    @LogMessage(level = ERROR)
    @Message(value = "Failed creating initial JNDI context", id = 105)
@@ -550,7 +554,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = INFO)
    @Message(value = "Failed invalidating remote cache", id = 137)
-   void failedInvalidatingRemoteCache(@Cause Exception e);
+   void failedInvalidatingRemoteCache(@Cause Throwable e);
 
    @LogMessage(level = INFO)
    @Message(value = "Could not register object with name: %s", id = 138)
@@ -598,7 +602,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = INFO)
    @Message(value = "Passivation configured without an eviction policy being selected. " +
-      "Only manually evicted entities will be passivated.", id = 152)
+         "Only manually evicted entities will be passivated.", id = 152)
    void passivationWithoutEviction();
 
    // Warning ISPN000153 removed as per ISPN-2554
@@ -726,8 +730,8 @@ public interface Log extends BasicLogger {
    void failedLoadingKeysFromCacheStore(@Cause Exception e);
 
    @LogMessage(level = ERROR)
-   @Message(value = "Error during rebalance for cache %s on node %s", id = 195)
-   void rebalanceError(String cacheName, Address node, @Cause Throwable cause);
+   @Message(value = "Error during rebalance for cache %s on node %s, topology id = %d", id = 195)
+   void rebalanceError(String cacheName, Address node, int topologyId, @Cause Throwable cause);
 
    @LogMessage(level = ERROR)
    @Message(value = "Failed to recover cluster state after the current node became the coordinator (or after merge)", id = 196)
@@ -758,35 +762,35 @@ public interface Log extends BasicLogger {
    void warnXsiteBackupFailed(String cacheName, String key, Object value);
 
    @LogMessage(level = WARN)
-   @Message(value = "The rollback request for tx %s cannot be processed by the cache %s as this cache is not transactional!", id=203)
+   @Message(value = "The rollback request for tx %s cannot be processed by the cache %s as this cache is not transactional!", id = 203)
    void cannotRespondToRollback(GlobalTransaction globalTransaction, String cacheName);
 
    @LogMessage(level = WARN)
-   @Message(value = "The commit request for tx %s cannot be processed by the cache %s as this cache is not transactional!", id=204)
+   @Message(value = "The commit request for tx %s cannot be processed by the cache %s as this cache is not transactional!", id = 204)
    void cannotRespondToCommit(GlobalTransaction globalTransaction, String cacheName);
 
    @LogMessage(level = WARN)
-   @Message(value = "Trying to bring back an non-existent site (%s)!", id=205)
+   @Message(value = "Trying to bring back an non-existent site (%s)!", id = 205)
    void tryingToBringOnlineNonexistentSite(String siteName);
 
    @LogMessage(level = WARN)
-   @Message(value = "Could not execute cancellation command locally", id=206)
+   @Message(value = "Could not execute cancellation command locally", id = 206)
    void couldNotExecuteCancellationLocally(@Cause Throwable e);
 
    @LogMessage(level = WARN)
-   @Message(value = "Could not interrupt as no thread found for command uuid %s", id=207)
+   @Message(value = "Could not interrupt as no thread found for command uuid %s", id = 207)
    void couldNotInterruptThread(UUID id);
 
    @LogMessage(level = ERROR)
-   @Message(value = "No live owners found for segment %d of cache %s. Current owners are: %s. Faulty owners: %s", id=208)
-   void noLiveOwnersFoundForSegment(int segmentId, String cacheName, Collection<Address> owners, Collection<Address> faultySources);
+   @Message(value = "No live owners found for segments %s of cache %s. Excluded owners: %s", id = 208)
+   void noLiveOwnersFoundForSegments(Collection<Integer> segments, String cacheName, Collection<Address> faultySources);
 
    @LogMessage(level = WARN)
-   @Message(value = "Failed to retrieve transactions of cache %s from node %s, segments %s", id=209)
+   @Message(value = "Failed to retrieve transactions of cache %s from node %s, segments %s", id = 209)
    void failedToRetrieveTransactionsForSegments(String cacheName, Address source, Collection<Integer> segments, @Cause Exception e);
 
    @LogMessage(level = WARN)
-   @Message(value = "Failed to request state of cache %s from node %s, segments %s", id=210)
+   @Message(value = "Failed to request state of cache %s from node %s, segments %s", id = 210)
    void failedToRequestSegments(String cacheName, Address source, Collection<Integer> segments, @Cause Throwable e);
 
 //   @LogMessage(level = ERROR)
@@ -797,7 +801,7 @@ public interface Log extends BasicLogger {
    @Message(value = "Unable to remove entry under %s from cache store after activation", id = 214)
    void unableToRemoveEntryAfterActivation(Object key, @Cause Exception e);
 
-   @Message(value = "Unknown migrator %s", id=215)
+   @Message(value = "Unknown migrator %s", id = 215)
    Exception unknownMigrator(String migratorName);
 
    @LogMessage(level = INFO)
@@ -820,9 +824,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Problems un-marshalling remote command from byte buffer", id = 220)
    void errorUnMarshallingCommand(@Cause Throwable throwable);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Unknown response value [%s]. Expected [%s]", id = 221)
-   void unexpectedResponse(String actual, String expected);
+   //@LogMessage(level = WARN)
+   //@Message(value = "Unknown response value [%s]. Expected [%s]", id = 221)
+   //void unexpectedResponse(String actual, String expected);
 
    @Message(value = "Custom interceptor missing class", id = 222)
    CacheConfigurationException customInterceptorMissingClass();
@@ -886,29 +890,29 @@ public interface Log extends BasicLogger {
 //   @Message(value="Cache manager is %s and type (id=%d) cannot be resolved (thread not interrupted)", id = 241)
 //   CacheException cannotResolveExternalizerReader(ComponentStatus status, int readerIndex);
 
-//   @Message(value="Missing foreign externalizer with id=%s, either externalizer was not configured by client, or module lifecycle implementation adding externalizer was not loaded properly", id = 242)
-//   CacheException missingForeignExternalizer(int foreignId);
+   @Message(value = "Missing foreign externalizer with id=%s, either externalizer was not configured by client, or module lifecycle implementation adding externalizer was not loaded properly", id = 242)
+   CacheException missingForeignExternalizer(int foreignId);
 
-//   @Message(value="Type of data read is unknown. Id=%d is not amongst known reader indexes.", id = 243)
-//   CacheException unknownExternalizerReaderIndex(int readerIndex);
+   @Message(value = "Type of data read is unknown. Id=%d is not amongst known reader indexes.", id = 243)
+   CacheException unknownExternalizerReaderIndex(int readerIndex);
 
-//   @Message(value="AdvancedExternalizer's getTypeClasses for externalizer %s must return a non-empty set", id = 244)
-//   CacheConfigurationException advanceExternalizerTypeClassesUndefined(String className);
+   @Message(value = "AdvancedExternalizer's getTypeClasses for externalizer %s must return a non-empty set", id = 244)
+   CacheConfigurationException advanceExternalizerTypeClassesUndefined(String className);
 
-//   @Message(value="Duplicate id found! AdvancedExternalizer id=%d for %s is shared by another externalizer (%s). Reader index is %d", id = 245)
-//   CacheConfigurationException duplicateExternalizerIdFound(int externalizerId, Class<?> typeClass, String otherExternalizer, int readerIndex);
+   @Message(value = "Duplicate id found! AdvancedExternalizer id=%d for %s is shared by another externalizer (%s). Reader index is %d", id = 245)
+   CacheConfigurationException duplicateExternalizerIdFound(int externalizerId, Class<?> typeClass, String otherExternalizer, int readerIndex);
 
-//   @Message(value="Internal %s externalizer is using an id(%d) that exceeded the limit. It needs to be smaller than %d", id = 246)
-//   CacheConfigurationException internalExternalizerIdLimitExceeded(AdvancedExternalizer<?> ext, int externalizerId, int maxId);
+   @Message(value = "Internal %s externalizer is using an id(%d) that exceeded the limit. It needs to be smaller than %d", id = 246)
+   CacheConfigurationException internalExternalizerIdLimitExceeded(AdvancedExternalizer<?> ext, int externalizerId, int maxId);
 
-   @Message(value="Foreign %s externalizer is using a negative id(%d). Only positive id values are allowed.", id = 247)
+   @Message(value = "Foreign %s externalizer is using a negative id(%d). Only positive id values are allowed.", id = 247)
    CacheConfigurationException foreignExternalizerUsingNegativeId(AdvancedExternalizer<?> ext, int externalizerId);
 
 //   @Message(value =  "Invalid cache loader configuration!!  Only ONE cache loader may have fetchPersistentState set " +
 //         "to true.  Cache will not start!", id = 248)
 //   CacheConfigurationException multipleCacheStoresWithFetchPersistentState();
 
-   @Message(value =  "The cache loader configuration %s does not specify the loader class using @ConfigurationFor", id = 249)
+   @Message(value = "The cache loader configuration %s does not specify the loader class using @ConfigurationFor", id = 249)
    CacheConfigurationException loaderConfigurationDoesNotSpecifyLoaderClass(String className);
 
 //   @Message(value = "Invalid configuration, expecting '%s' got '%s' instead", id = 250)
@@ -1086,8 +1090,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Unable to acquire lock after %s for key %s and requestor %s. Lock is held by %s", id = 299)
    TimeoutException unableToAcquireLock(String timeout, Object key, Object requestor, Object owner);
 
-//   @Message(value = "There was an exception while processing retrieval of entry values", id = 300)
-//   CacheException exceptionProcessingEntryRetrievalValues(@Cause Throwable cause);
+   @Message(value = "There was an exception while processing retrieval of entry values", id = 300)
+   CacheException exceptionProcessingEntryRetrievalValues(@Cause Throwable cause);
 
 //   @Message(value = "Iterator response for identifier %s encountered unexpected exception", id = 301)
 //   CacheException exceptionProcessingIteratorResponse(UUID identifier, @Cause Throwable cause);
@@ -1121,10 +1125,6 @@ public interface Log extends BasicLogger {
    @Message(value = "Starting cluster-wide rebalance for cache %s, topology %s", id = 310)
    void startRebalance(String cacheName, CacheTopology cacheTopology);
 
-   @LogMessage(level = DEBUG)
-   @Message(value = "Received a command from an outdated topology, returning the exception to caller", id = 311)
-   void outdatedTopology(@Cause Throwable oe);
-
    // Messages between 312 and 320 have been moved to the org.infinispan.util.logging.events.Messages class
 
    @LogMessage(level = WARN)
@@ -1143,7 +1143,7 @@ public interface Log extends BasicLogger {
          "Either restart it or recreate the cache container.", id = 324)
    IllegalLifecycleStateException cacheIsStopping(String cacheName);
 
-   @Message (value="Creating tmp cache %s timed out waiting for rebalancing to complete on node %s ", id=325)
+   @Message(value = "Creating tmp cache %s timed out waiting for rebalancing to complete on node %s ", id = 325)
    RuntimeException creatingTmpCacheTimedOut(String cacheName, Address address);
 
    @LogMessage(level = WARN)
@@ -1204,7 +1204,7 @@ public interface Log extends BasicLogger {
    IllegalStateException syncPropertiesConfigOnAsyncCache();
 
    @Message(value = "Must have a transport set in the global configuration in " +
-               "order to define a clustered cache", id = 343)
+         "order to define a clustered cache", id = 343)
    CacheConfigurationException missingTransportConfiguration();
 
    @Message(value = "reaperWakeUpInterval must be >= 0, we got %d", id = 344)
@@ -1298,7 +1298,7 @@ public interface Log extends BasicLogger {
    CacheConfigurationException templateConfigurationStartAttempt(String cacheName);
 
    @Message(value = "No such template '%s' when declaring '%s'", id = 374)
-   CacheConfigurationException undeclaredConfiguration(String extend, String name);
+   CacheConfigurationException undeclaredConfiguration(String template, String name);
 
    @Message(value = "Cannot use configuration '%s' as a template", id = 375)
    CacheConfigurationException noConfiguration(String extend);
@@ -1356,24 +1356,24 @@ public interface Log extends BasicLogger {
    @Message(value = "Recovery not supported with Synchronization", id = 392)
    CacheConfigurationException recoveryNotSupportedWithSynchronization();
 
-   @Message(value = "Recovery not supported with Asynchronous %s cache mode", id = 393)
-   CacheConfigurationException recoveryNotSupportedWithAsync(String cacheMode);
+   //@Message(value = "Recovery not supported with Asynchronous %s cache mode", id = 393)
+   //CacheConfigurationException recoveryNotSupportedWithAsync(String cacheMode);
 
-   @Message(value = "Recovery not supported with asynchronous commit phase", id = 394)
-   CacheConfigurationException recoveryNotSupportedWithAsyncCommit();
+   //@Message(value = "Recovery not supported with asynchronous commit phase", id = 394)
+   //CacheConfigurationException recoveryNotSupportedWithAsyncCommit();
 
    @LogMessage(level = INFO)
    @Message(value = "Transaction notifications are disabled.  This prevents cluster listeners from working properly!", id = 395)
    void transactionNotificationsDisabled();
 
-   @LogMessage(level = WARN)
+   @LogMessage(level = DEBUG)
    @Message(value = "Received unsolicited state from node %s for segment %d of cache %s", id = 396)
    void ignoringUnsolicitedState(Address node, int segment, String cacheName);
 
-   @Message(value = "Could not migrate data for cache %s, check remote store config in the target cluster", id = 397)
+   @Message(value = "Could not migrate data for cache %s, check remote store config in the target cluster. Make sure only one remote store is present and is pointing to the source cluster", id = 397)
    CacheException couldNotMigrateData(String name);
 
-   @Message(value ="CH Factory '%s' cannot restore a persisted CH of class '%s'", id = 398)
+   @Message(value = "CH Factory '%s' cannot restore a persisted CH of class '%s'", id = 398)
    IllegalStateException persistentConsistentHashMismatch(String hashFactory, String consistentHashClass);
 
    @Message(value = "Timeout while waiting for %d members in cluster. Last view had %s", id = 399)
@@ -1386,11 +1386,11 @@ public interface Log extends BasicLogger {
    TimeoutException remoteNodeTimedOut(Address address, long time, TimeUnit unit);
 
    @Message(value = "Timeout waiting for view %d. Current view is %d, current status is %s", id = 402)
-   TimeoutException timeoutWaitingForView(int expectedViewId, int currentViewId,
-         Object clusterManagerStatus);
+   TimeoutException coordinatorTimeoutWaitingForView(int expectedViewId, int currentViewId,
+                                                     Object clusterManagerStatus);
 
    @LogMessage(level = WARN)
-   @Message(value = "No indexable classes were defined for this indexed cache; switching to autodetection (support for autodetection will be removed in Infinispan 9.0).", id = 403)
+   @Message(value = "No indexable classes were defined for this indexed cache; switching to autodetection (support for autodetection will be removed in Infinispan 10.0).", id = 403)
    void noIndexableClassesDefined();
 
    @Message(value = "The configured entity class %s is not indexable. Please remove it from the indexing configuration.", id = 404)
@@ -1457,7 +1457,7 @@ public interface Log extends BasicLogger {
    @Message(value = "Failed waiting for topology %d", id = 422)
    TimeoutException failedWaitingForTopology(int requestTopologyId);
 
-   @Message(value="Duplicate id found! AdvancedExternalizer id=%d is shared by another externalizer (%s)", id = 423)
+   @Message(value = "Duplicate id found! AdvancedExternalizer id=%d is shared by another externalizer (%s)", id = 423)
    CacheConfigurationException duplicateExternalizerIdFound(int externalizerId, String otherExternalizer);
 
    @Message(value = "Eviction size value cannot be less than or equal to zero if eviction is enabled", id = 424)
@@ -1469,11 +1469,11 @@ public interface Log extends BasicLogger {
    //removed unused message (id=426)
 
    @Message(value = "Timeout after %s waiting for acks. Id=%s", id = 427)
-   TimeoutException timeoutWaitingForAcks(String timeout, CommandInvocationId id);
+   TimeoutException timeoutWaitingForAcks(String timeout, long id);
 
    @LogMessage(level = WARN)
-   @Message(value = "The eviction element has been deprecated. Please use the memory element instead", id = 428)
-   void evictionDeprecated();
+   @Message(value = "The '%s' element has been deprecated. Please use the '%s' element instead", id = 428)
+   void elementDeprecatedUseOther(Element element, Element other);
 
    @Message(value = "On key %s previous read version (%s) is different from currently read version (%s)", id = 429)
    WriteSkewException writeSkewOnRead(@Param Object key, Object key2, EntryVersion lastVersion, EntryVersion remoteVersion);
@@ -1511,9 +1511,241 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = INFO)
    @Message(value = "Received new x-site view: %s", id = 439)
-   void receivedXSiteClusterView(Set<String> view);
+   void receivedXSiteClusterView(Collection<String> view);
 
    @LogMessage(level = ERROR)
-   @Message(value = "Error sending response for command %s", id = 440)
-   void errorSendingResponse(ReplicableCommand command);
+   @Message(value = "Error sending response for request %d@%s, command %s", id = 440)
+   void errorSendingResponse(long requestId, org.jgroups.Address origin, ReplicableCommand command);
+
+   @Message(value = "Unsupported async cache mode '%s' for transactional caches", id = 441)
+   CacheConfigurationException unsupportedAsyncCacheMode(CacheMode cacheMode);
+
+   @Message(value = "Invalid cache loader configuration for '%s'.  If a cache loader is configured as a singleton, the cache loader cannot be shared in a cluster!", id = 442)
+   CacheConfigurationException singletonStoreCannotBeShared(String name);
+
+   @Message(value = "Invalid cache loader configuration for '%s'. In order for a cache loader to be transactional, it must also be shared.", id = 443)
+   CacheConfigurationException clusteredTransactionalStoreMustBeShared(String simpleName);
+
+   @Message(value = "Invalid cache loader configuration for '%s'. A cache loader cannot be both Asynchronous and transactional.", id = 444)
+   CacheConfigurationException transactionalStoreCannotBeAsync(String simpleName);
+
+   @Message(value = "At most one store can be set to 'fetchPersistentState'!", id = 445)
+   CacheConfigurationException onlyOneFetchPersistentStoreAllowed();
+
+   @Message(value = "Multiple sites with name '%s' are configured. That is not allowed!", id = 446)
+   CacheConfigurationException multipleSitesWithSameName(String site);
+
+   @Message(value = "The site '%s' must be defined within the set of backups!", id = 447)
+   CacheConfigurationException siteMustBeInBackups(String site);
+
+   @Message(value = "'awaitInitialTransfer' can be enabled only if cache mode is distributed or replicated.", id = 448)
+   CacheConfigurationException awaitInitialTransferOnlyForDistOrRepl();
+
+   @Message(value = "XSite state transfer timeout must be higher or equals than 1 (one).", id = 449)
+   CacheConfigurationException invalidXSiteStateTransferTimeout();
+
+   @Message(value = "XSite state transfer waiting time between retries must be higher or equals than 1 (one).", id = 450)
+   CacheConfigurationException invalidXSiteStateTransferWaitTime();
+
+   @Message(value = "Timed out waiting for view %d, current view is %d", id = 451)
+   TimeoutException timeoutWaitingForView(int expectedViewId, int currentViewId);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Failed to update topology for cache %s", id = 452)
+   void topologyUpdateError(String cacheName, @Cause Throwable cause);
+
+   @Message(value = "Attempt to define configuration for cache %s which already exists", id = 453)
+   CacheConfigurationException configAlreadyDefined(String cacheName);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Calling getCache with a cache override is no longer supported. Please invoke createCache first and then getCache. Cache name was %s", id = 454)
+   void warnAttemptToOverrideExistingConfiguration(String cacheName);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Failure during leaver transactions cleanup", id = 455)
+   void transactionCleanupError(@Cause Throwable e);
+
+   @Message(value = "Cache does not contain the atomic map.", id = 456)
+   IllegalStateException atomicMapDoesNotExist();
+
+   @Message(value = "Cache contains %s which is not of expected type %s", id = 457)
+   IllegalStateException atomicMapHasWrongType(Object value, Class<?> type);
+
+   @Message(value = "Fine grained maps require clustering.hash.groups enabled.", id = 458)
+   IllegalStateException atomicFineGrainedNeedsGroups();
+
+   @Message(value = "Fine grained maps require transactional cache.", id = 459)
+   IllegalStateException atomicFineGrainedNeedsTransactions();
+
+   @Message(value = "Fine grained maps require explict transaction or auto-commit enabled", id = 460)
+   IllegalStateException atomicFineGrainedNeedsExplicitTxOrAutoCommit();
+
+   @Message(value = "Class %s should be a subclass of %s", id = 461)
+   CacheException invalidEncodingClass(Class<?> configured, Class<?> required);
+
+   @Message(value = "ConflictManager.getConflicts() already in progress", id = 462)
+   IllegalStateException getConflictsAlreadyInProgress();
+
+   @Message(value = "Unable to retrieve conflicts as StateTransfer is currently in progress for cache '%s'", id = 463)
+   IllegalStateException getConflictsStateTransferInProgress(String cacheName);
+
+   @LogMessage(level = WARN)
+   @Message(value = "The partition handling 'enable' attribute has been deprecated. Please update your configuration file to use the 'type' attribute instead", id = 464)
+   void partitionHandlingConfigurationEnabledDeprecated();
+
+   @Message(value = "Keys '%s' are not available. No owners exist in this partition", id = 465)
+   AvailabilityException degradedModeNoOwnersExist(Object key);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Exception encountered when trying to resolve conflict on Keys '%s': %s", id = 466)
+   void exceptionDuringConflictResolution(Object key, Throwable t);
+
+   @Message(value = "Scattered cache supports only single owner.", id = 467)
+   CacheConfigurationException scatteredCacheNeedsSingleOwner();
+
+   @Message(value = "Invalidation batch size configuration options applies only to scattered caches.", id = 468)
+   CacheConfigurationException invalidationBatchSizeAppliesOnNonScattered();
+
+   @Message(value = "Scattered cache does not support transactional mode.", id = 469)
+   CacheConfigurationException scatteredCacheIsNonTransactional();
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Failed confirming revoked segments. State transfer cannot continue.", id = 470)
+   void failedConfirmingRevokedSegments(@Cause Throwable t);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Failed processing values received from remote node during rebalance.", id = 471)
+   void failedProcessingValuesDuringRebalance(@Cause Throwable t);
+
+   @Message(value = "Cache manager is stopping", id = 472)
+   IllegalLifecycleStateException cacheManagerIsStopping();
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Invalid message type %s received from %s", id = 473)
+   void invalidMessageType(int messageType, org.jgroups.Address origin);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Error processing request %d@%s", id = 474)
+   void errorProcessingRequest(long requestId, org.jgroups.Address origin);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Error processing response for request %d from %s", id = 475)
+   void errorProcessingResponse(long requestId, org.jgroups.Address sender);
+
+   @Message(value = "Timed out waiting for responses for request %d from %s", id = 476)
+   TimeoutException requestTimedOut(long requestId, String targetsWithoutResponses);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Unable to perform operation %s for site %s", id = 477)
+   void xsiteAdminOperationError(String operationName, String siteName, @Cause Throwable t);
+
+   @Message(value = "Couldn't find a local transaction corresponding to remote site transaction %s", id = 478)
+   CacheException unableToFindRemoteSiteTransaction(GlobalTransaction globalTransaction);
+
+   @Message(value = "LocalTransaction not found but present in the tx table for remote site transaction %s", id = 479)
+   IllegalStateException unableToFindLocalTransactionFromRemoteSiteTransaction(GlobalTransaction globalTransaction);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Ignoring versions invalidation from topology %d, current topology is %d", id = 480)
+   void ignoringInvalidateVersionsFromOldTopology(int invalidationTopology, int currentTopologyId);
+
+   @Message(value = "Cannot create remote transaction %s, the originator is not in the cluster view", id = 481)
+   CacheException remoteTransactionOriginatorNotInView(GlobalTransaction gtx);
+
+   @Message(value = "Cannot create remote transaction %s, already completed", id = 482)
+   CacheException remoteTransactionAlreadyCompleted(GlobalTransaction gtx);
+
+   @Message(value = "Class %s not found", id = 483)
+   CacheConfigurationException classNotFound(String name);
+
+   @Message(value = "Wildcards not allowed in cache names: '%s'", id = 484)
+   CacheConfigurationException wildcardsNotAllowedInCacheNames(String name);
+
+   @Message(value = "Configuration '%s' matches multiple wildcard templates", id = 485)
+   CacheConfigurationException configurationNameMatchesMultipleWildcards(String name);
+
+   @Message(value = "Cannot register Wrapper: duplicate Id %d", id = 486)
+   EncodingException duplicateIdWrapper(byte id);
+
+   @Message(value = "Wrapper with class '%s' not found", id = 487)
+   EncodingException wrapperClassNotFound(Class<?> wrapperClass);
+
+   @Message(value = "Wrapper with Id %d not found", id = 488)
+   EncodingException wrapperIdNotFound(byte id);
+
+   @Message(value = "Cannot register Encoder: duplicate Id %d", id = 489)
+   EncodingException duplicateIdEncoder(short id);
+
+   @Message(value = "Encoder with class '%s' not found", id = 490)
+   EncodingException encoderClassNotFound(Class<?> wrapperClass);
+
+   @Message(value = "Encoder with Id %d not found", id = 491)
+   EncodingException encoderIdNotFound(short id);
+
+   @Message(value = "Cannot find transcoder between '%s' to '%s'", id = 492)
+   EncodingException cannotFindTranscoder(MediaType mediaType, MediaType another);
+
+   @Message(value = "Invalid text format: '%s'", id = 493)
+   EncodingException invalidTextFormat(Object content);
+
+   @Message(value = "Invalid text format: '%s'", id = 494)
+   EncodingException invalidBinaryFormat(Object content);
+
+   @Message(value = "Error transcoding content", id = 495)
+   EncodingException errorTranscoding(@Cause Throwable cause);
+
+   @Message(value = "Error transcoding content '%s'", id = 496)
+   EncodingException errorTranscodingContent(@Cause Throwable cause, Object content);
+
+   @Message(value = "Unsupported content '%s' during transcoding", id = 497)
+   EncodingException unsupportedContent(Object content);
+
+
+   @LogMessage(level = WARN)
+   @Message(value = "Indexing mode ALL without owning all data locally (replicated mode).", id = 498)
+   void allIndexingInNonReplicatedCache();
+
+   @Message(value = "Could not serialize the configuration of cache '%s' (%s)", id = 499)
+   CacheConfigurationException configurationSerializationFailed(String cacheName, Configuration configuration, @Cause Exception e);
+
+   @Message(value = "Cannot create clustered configuration for cache '%s' because configuration %n%s%n is incompatible with the existing configuration %n%s", id = 500)
+   CacheConfigurationException incompatibleClusterConfiguration(String cacheName, Configuration configuration, Configuration existing);
+
+   @Message(value = "Cannot persist cache configuration as global state is disabled", id = 501)
+   CacheConfigurationException globalStateDisabled();
+
+   @Message(value = "Error while persisting global configuration state", id = 502)
+   CacheConfigurationException errorPersistingGlobalConfiguration(@Cause Throwable cause);
+
+   @Message(value = "Compatibility mode requires OBJECT storage type but was: %s", id = 503)
+   CacheConfigurationException compatibilityModeOnlyCompatibleWithObjectStorage(StorageType storageType);
+
+   @Message(value = "MEMORY based eviction is not supported with OBJECT storage", id = 504)
+   CacheConfigurationException offHeapMemoryEvictionNotSupportedWithObject();
+
+   @Message(value = "MEMORY based OFF_HEAP eviction configured size %d must be larger than %d to store configured " +
+         "address count of %d", id = 505)
+   CacheConfigurationException offHeapMemoryEvictionSizeNotLargeEnoughForAddresses(long configuredSize,
+         long addressMemorySize, int addressCount);
+
+   @Message(value = "Biased reads are supported only in scattered cache. Maybe you were looking for L1?", id = 506)
+   CacheConfigurationException biasedReadsAppliesOnlyToScattered();
+
+   @Message(value = "Cache %s already exists", id = 507)
+   CacheConfigurationException cacheExists(String cacheName);
+
+   @Message(value = "Cannot rename file %s to %s", id = 508)
+   CacheConfigurationException cannotRenamePersistentFile(String absolutePath, File persistentFile);
+
+   @Message(value = "Unable to add a 'null' EntryMergePolicyFactory", id = 509)
+   IllegalArgumentException unableToAddNullEntryMergePolicyFactory();
+
+   @Message(value = "ConfigurationStrategy set to CUSTOM, but none specified", id = 510)
+   CacheConfigurationException customStorageStrategyNotSet();
+
+   @Message(value = "ConfigurationStrategy cannot be set to MANAGED in embedded mode", id = 511)
+   CacheConfigurationException managerConfigurationStorageUnavailable();
+
+   @Message(value = "Cannot acquire lock '%s' for persistent global state", id = 512)
+   CacheConfigurationException globalStateCannotAcquireLockFile(@Cause Throwable cause, File lockFile);
 }

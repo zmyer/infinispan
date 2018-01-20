@@ -13,6 +13,8 @@ import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.remote.ClusteredGetAllCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.remote.RenewBiasCommand;
+import org.infinispan.commands.remote.RevokeBiasCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTransactionsCommand;
@@ -28,14 +30,18 @@ import org.infinispan.commands.tx.totalorder.TotalOrderNonVersionedPrepareComman
 import org.infinispan.commands.tx.totalorder.TotalOrderRollbackCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedCommitCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
-import org.infinispan.commands.write.BackupPutMapRcpCommand;
-import org.infinispan.commands.write.BackupWriteRcpCommand;
+import org.infinispan.commands.write.BackupPutMapRpcCommand;
+import org.infinispan.commands.write.BackupWriteRpcCommand;
+import org.infinispan.commands.write.InvalidateVersionsCommand;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.util.Util;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.marshall.core.Ids;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
+import org.infinispan.stream.impl.StreamIteratorCloseCommand;
+import org.infinispan.stream.impl.StreamIteratorNextCommand;
+import org.infinispan.stream.impl.StreamIteratorRequestCommand;
 import org.infinispan.stream.impl.StreamRequestCommand;
 import org.infinispan.stream.impl.StreamResponseCommand;
 import org.infinispan.stream.impl.StreamSegmentResponseCommand;
@@ -79,7 +85,10 @@ public final class CacheRpcCommandExternalizer extends AbstractExternalizer<Cach
                XSiteStateTransferControlCommand.class, XSiteStatePushCommand.class, SingleXSiteRpcCommand.class,
                ClusteredGetAllCommand.class,
                StreamRequestCommand.class, StreamSegmentResponseCommand.class, StreamResponseCommand.class,
-               BackupWriteRcpCommand.class, BackupPutMapRcpCommand.class);
+               BackupWriteRpcCommand.class, BackupPutMapRpcCommand.class,
+               InvalidateVersionsCommand.class, StreamIteratorRequestCommand.class,
+               StreamIteratorNextCommand.class, StreamIteratorCloseCommand.class,
+               RevokeBiasCommand.class, RenewBiasCommand.class);
       // Only interested in cache specific replicable commands
       coreCommands.addAll(gcr.getModuleProperties().moduleCacheRpcCommands());
       return coreCommands;

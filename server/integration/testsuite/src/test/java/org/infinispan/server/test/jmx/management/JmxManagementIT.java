@@ -24,11 +24,12 @@ import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.Configuration;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
 import org.infinispan.server.infinispan.spi.InfinispanSubsystem;
+import org.infinispan.server.test.category.Unstable;
 import org.infinispan.server.test.client.memcached.MemcachedClient;
 import org.jboss.arquillian.junit.Arquillian;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 /**
@@ -97,41 +98,54 @@ public class JmxManagementIT {
         invokeOperation(provider, memcachedCacheStatisticsMBean, "resetStatistics", null, null);
     }
 
-    @Test
-    public void testHotRodConnectionCount() throws Exception {
+    private static int getNumberOfGlobalConnections(MBeanServerConnectionProvider provider, String mbean) throws Exception {
+        return Integer.parseInt(getAttribute(provider, mbean, "numberOfGlobalConnections"));
+    }
 
-        // get number of current local/global connections
-        int initialLocal = Integer.parseInt(getAttribute(provider, hotRodServerMBean, "numberOfLocalConnections"));
-        int initialGlobal = Integer.parseInt(getAttribute(provider, hotRodServerMBean, "numberOfGlobalConnections"));
-        assertEquals("Number of global connections obtained from node1 and node2 is not the same", initialGlobal,
-                Integer.parseInt(getAttribute(provider2, hotRodServerMBean, "numberOfGlobalConnections")));
-        // create another RCM and use it
-        Configuration conf = new ConfigurationBuilder().addServer().host(server1.getHotrodEndpoint().getInetAddress().getHostName()).port(server1
-                .getHotrodEndpoint().getPort()).build();
-        RemoteCacheManager manager2 = new RemoteCacheManager(conf);
-        manager2.getCache().put("key", "value");
-
-        // local connections increase by 1, global (in both nodes) by 2 (because we have distributed cache with 2 nodes, both nodes are accessed)
-        assertEquals(initialLocal + 1, Integer.parseInt(getAttribute(provider, hotRodServerMBean, "numberOfLocalConnections")));
-        assertEquals(initialGlobal + 2, Integer.parseInt(getAttribute(provider, hotRodServerMBean, "numberOfGlobalConnections")));
-        assertEquals(initialGlobal + 2, Integer.parseInt(getAttribute(provider2, hotRodServerMBean, "numberOfGlobalConnections")));
+    private static int getNumberOfLocalConnections(MBeanServerConnectionProvider provider, String mbean) throws Exception {
+        return Integer.parseInt(getAttribute(provider, mbean, "numberOfLocalConnections"));
     }
 
     @Test
-    public void testMemCachedConnectionCount() throws Exception {
-        int initialLocal = Integer.parseInt(getAttribute(provider, memCachedServerMBean, "numberOfLocalConnections"));
-        int initialGlobal = Integer.parseInt(getAttribute(provider, memCachedServerMBean, "numberOfGlobalConnections"));
+    @Category(Unstable.class) // ISPN-8291
+    public void testHotRodConnectionCount() throws Exception {
+
+        // get number of current local/global connections
+        int initialLocal = getNumberOfLocalConnections(provider, hotRodServerMBean);
+        int initialGlobal = getNumberOfGlobalConnections(provider, hotRodServerMBean);
         assertEquals("Number of global connections obtained from node1 and node2 is not the same", initialGlobal,
-                Integer.parseInt(getAttribute(provider2, memCachedServerMBean, "numberOfGlobalConnections")));
+              getNumberOfGlobalConnections(provider2, hotRodServerMBean));
+        // create another RCM and use it
+        Configuration conf = new ConfigurationBuilder()
+              .addServer()
+                .host(server1.getHotrodEndpoint().getInetAddress().getHostAddress())
+                .port(server1.getHotrodEndpoint().getPort()).build();
+        RemoteCacheManager manager2 = new RemoteCacheManager(conf);
+
+        manager2.getCache().put("key", "value");
+
+        // local connections increase by 1, global (in both nodes) by 2 (because we have distributed cache with 2 nodes, both nodes are accessed)
+        assertEquals(initialLocal + 1, getNumberOfLocalConnections(provider, hotRodServerMBean));
+        assertEquals(initialGlobal + 2, getNumberOfGlobalConnections(provider, hotRodServerMBean));
+        assertEquals(initialGlobal + 2, getNumberOfGlobalConnections(provider2, hotRodServerMBean));
+    }
+
+    @Test
+    @Category(Unstable.class) // ISPN-8291
+    public void testMemCachedConnectionCount() throws Exception {
+        int initialLocal = getNumberOfLocalConnections(provider, memCachedServerMBean);
+        int initialGlobal = getNumberOfGlobalConnections(provider, memCachedServerMBean);
+        assertEquals("Number of global connections obtained from node1 and node2 is not the same", initialGlobal,
+              getNumberOfGlobalConnections(provider2, memCachedServerMBean));
 
         MemcachedClient mc2 = new MemcachedClient("UTF-8", server1.getMemcachedEndpoint().getInetAddress()
                 .getHostName(), server1.getMemcachedEndpoint().getPort(), 10000);
         mc2.set("key", "value");
 
         // with the memcached endpoint, the connection is counted only once
-        assertEquals(initialLocal + 1, Integer.parseInt(getAttribute(provider, memCachedServerMBean, "numberOfLocalConnections")));
-        assertEquals(initialGlobal + 1, Integer.parseInt(getAttribute(provider, memCachedServerMBean, "numberOfGlobalConnections")));
-        assertEquals(initialGlobal + 1, Integer.parseInt(getAttribute(provider2, memCachedServerMBean, "numberOfGlobalConnections")));
+        assertEquals(initialLocal + 1, getNumberOfLocalConnections(provider, memCachedServerMBean));
+        assertEquals(initialGlobal + 1, getNumberOfGlobalConnections(provider, memCachedServerMBean));
+        assertEquals(initialGlobal + 1, getNumberOfGlobalConnections(provider2, memCachedServerMBean));
     }
 
     @Test
@@ -164,26 +178,18 @@ public class JmxManagementIT {
 
     @Test
     public void testCacheManagerAttributes() throws Exception {
-        assertEquals(6, Integer.parseInt(getAttribute(provider, cacheManagerMBean, "CreatedCacheCount")));
-        assertEquals(6, Integer.parseInt(getAttribute(provider, cacheManagerMBean, "DefinedCacheCount")));
+        assertEquals(2, Integer.parseInt(getAttribute(provider, cacheManagerMBean, "CreatedCacheCount")));
+        assertEquals(4, Integer.parseInt(getAttribute(provider, cacheManagerMBean, "DefinedCacheCount")));
         assertEquals("clustered", getAttribute(provider, cacheManagerMBean, "Name"));
         assertEquals(2, Integer.parseInt(getAttribute(provider, cacheManagerMBean, "ClusterSize")));
         assertEquals("RUNNING", getAttribute(provider, cacheManagerMBean, "CacheManagerStatus"));
         assertNotEquals(0, getAttribute(provider, cacheManagerMBean, "ClusterMembers").length());
         assertNotEquals(0, getAttribute(provider, cacheManagerMBean, "NodeAddress").length());
-        assertEquals(6, Integer.parseInt(getAttribute(provider, cacheManagerMBean, "RunningCacheCount")));
+        assertEquals(2, Integer.parseInt(getAttribute(provider, cacheManagerMBean, "RunningCacheCount")));
         assertNotEquals(0, getAttribute(provider, cacheManagerMBean, "PhysicalAddresses").length());
         assertEquals(Version.getVersion(), getAttribute(provider, cacheManagerMBean, "Version"));
         String names = getAttribute(provider, cacheManagerMBean, "DefinedCacheNames");
         assertTrue(names.contains("default") && names.contains("memcachedCache"));
-    }
-
-    @Ignore("Not supported - https://bugzilla.redhat.com/show_bug.cgi?id=785105")
-    @Test
-    public void testCacheManagerOperations() throws Exception {
-        assertTrue(!provider.getConnection().isRegistered(new ObjectName(newExtraCacheMBean)));
-        invokeOperation(provider, cacheManagerMBean, "startCache", new Object[]{"extracache"}, new String[]{"java.lang.String"});
-        assertTrue(provider.getConnection().isRegistered(new ObjectName(newExtraCacheMBean)));
     }
 
     @Test
@@ -230,7 +236,8 @@ public class JmxManagementIT {
         mc.set("key1", "value1");
         mc.set("key2", "value2");
         mc.get("key1");
-        assertEquals(1, Integer.parseInt(getAttribute(provider, memcachedCacheStatisticsMBean, "NumberOfEntries")));
+        assertEquals(2, Integer.parseInt(getAttribute(provider, memcachedCacheStatisticsMBean, "NumberOfEntries")));
+        assertEquals(1, Integer.parseInt(getAttribute(provider, memcachedCacheStatisticsMBean, "NumberOfEntriesInMemory")));
         mc.delete("key1");
         assertEquals(2, Integer.parseInt(getAttribute(provider, memcachedCacheStatisticsMBean, "Evictions")));
         assertEquals(0, Integer.parseInt(getAttribute(provider, memcachedCacheStatisticsMBean, "RemoveMisses")));

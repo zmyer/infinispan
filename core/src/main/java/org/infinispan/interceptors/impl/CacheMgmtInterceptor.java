@@ -6,19 +6,26 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
+import org.infinispan.AdvancedCache;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.configuration.cache.ClusteringConfiguration;
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.offheap.OffHeapMemoryAllocator;
+import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.factories.annotations.Inject;
@@ -29,6 +36,7 @@ import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
 import org.infinispan.jmx.annotations.Units;
+import org.infinispan.topology.CacheTopology;
 import org.infinispan.util.TimeService;
 import org.infinispan.util.concurrent.StripedCounters;
 
@@ -40,21 +48,14 @@ import org.infinispan.util.concurrent.StripedCounters;
  */
 @MBean(objectName = "Statistics", description = "General statistics such as timings, hit/miss ratio, etc.")
 public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
-   private DataContainer dataContainer;
-   private TimeService timeService;
-   private OffHeapMemoryAllocator allocator;
+   @Inject private AdvancedCache cache;
+   @Inject private DataContainer dataContainer;
+   @Inject private TimeService timeService;
+   @Inject private OffHeapMemoryAllocator allocator;
 
    private final AtomicLong startNanoseconds = new AtomicLong(0);
    private volatile AtomicLong resetNanoseconds = new AtomicLong(0);
    private StripedCounters<StripeB> counters = new StripedCounters<>(StripeC::new);
-
-   @Inject
-   @SuppressWarnings("unused")
-   public void setDependencies(DataContainer dataContainer, TimeService timeService, OffHeapMemoryAllocator allocator) {
-      this.dataContainer = dataContainer;
-      this.timeService = timeService;
-      this.allocator = allocator;
-   }
 
    @Start
    public void start() {
@@ -90,12 +91,12 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       long start = timeService.time();
       return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
          StripeB stripe = counters.stripeForCurrentThread();
-         long intervalMilliseconds = timeService.timeDuration(start, TimeUnit.MILLISECONDS);
+         long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
          if (rv == null) {
-            counters.add(StripeB.missTimesFieldUpdater, stripe, intervalMilliseconds);
+            counters.add(StripeB.missTimesFieldUpdater, stripe, intervalNanoseconds);
             counters.increment(StripeB.missesFieldUpdater, stripe);
          } else {
-            counters.add(StripeB.hitTimesFieldUpdater, stripe, intervalMilliseconds);
+            counters.add(StripeB.hitTimesFieldUpdater, stripe, intervalNanoseconds);
             counters.increment(StripeB.hitsFieldUpdater, stripe);
          }
       });
@@ -110,7 +111,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
       long start = timeService.time();
       return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
-         long intervalMilliseconds = timeService.timeDuration(start, TimeUnit.MILLISECONDS);
+         long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
          int requests = ((GetAllCommand) rCommand).getKeys().size();
          int hitCount = 0;
          for (Entry<Object, Object> entry : ((Map<Object, Object>) rv).entrySet()) {
@@ -123,11 +124,11 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          StripeB stripe = counters.stripeForCurrentThread();
          if (hitCount > 0) {
             counters.add(StripeB.hitsFieldUpdater, stripe, hitCount);
-            counters.add(StripeB.hitTimesFieldUpdater, stripe, intervalMilliseconds * hitCount / requests);
+            counters.add(StripeB.hitTimesFieldUpdater, stripe, intervalNanoseconds * hitCount / requests);
          }
          if (missCount > 0) {
             counters.add(StripeB.missesFieldUpdater, stripe, missCount);
-            counters.add(StripeB.missTimesFieldUpdater, stripe, intervalMilliseconds * missCount / requests);
+            counters.add(StripeB.missTimesFieldUpdater, stripe, intervalNanoseconds * missCount / requests);
          }
       });
    }
@@ -140,11 +141,11 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
       long start = timeService.time();
       return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
-         final long intervalMilliseconds = timeService.timeDuration(start, TimeUnit.MILLISECONDS);
+         final long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
          final Map<Object, Object> data = ((PutMapCommand) rCommand).getMap();
          if (data != null && !data.isEmpty()) {
             StripeB stripe = counters.stripeForCurrentThread();
-            counters.add(StripeB.storeTimesFieldUpdater, stripe, intervalMilliseconds);
+            counters.add(StripeB.storeTimesFieldUpdater, stripe, intervalNanoseconds);
             counters.add(StripeB.storesFieldUpdater, stripe, data.size());
          }
       });
@@ -161,6 +162,30 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       return updateStoreStatistics(ctx, command);
    }
 
+   @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      boolean statisticsEnabled = getStatisticsEnabled(command);
+      if (!statisticsEnabled || !ctx.isOriginLocal())
+         return invokeNext(ctx, command);
+
+      long start = timeService.time();
+      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
+         if (rv == null && command.isSuccessful()) {
+            increaseRemoveMisses();
+         } else if (command.isSuccessful()) {
+            long intervalMilliseconds = timeService.timeDuration(start, TimeUnit.MILLISECONDS);
+            StripeB stripe = counters.stripeForCurrentThread();
+            counters.add(StripeB.storeTimesFieldUpdater, stripe, intervalMilliseconds);
+            counters.increment(StripeB.storesFieldUpdater, stripe);
+         }
+      });
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+      return updateStoreStatistics(ctx, command);
+   }
+
    private Object updateStoreStatistics(InvocationContext ctx, WriteCommand command) throws Throwable {
       boolean statisticsEnabled = getStatisticsEnabled(command);
       if (!statisticsEnabled || !ctx.isOriginLocal())
@@ -169,9 +194,9 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       long start = timeService.time();
       return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
          if (command.isSuccessful()) {
-            long intervalMilliseconds = timeService.timeDuration(start, TimeUnit.MILLISECONDS);
+            long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
             StripeB stripe = counters.stripeForCurrentThread();
-            counters.add(StripeB.storeTimesFieldUpdater, stripe, intervalMilliseconds);
+            counters.add(StripeB.storeTimesFieldUpdater, stripe, intervalNanoseconds);
             counters.increment(StripeB.storesFieldUpdater, stripe);
          }
       });
@@ -201,9 +226,9 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    private void increaseRemoveHits(long start) {
-      long intervalMilliseconds = timeService.timeDuration(start, TimeUnit.MILLISECONDS);
+      long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
       StripeB stripe = counters.stripeForCurrentThread();
-      counters.add(StripeB.removeTimesFieldUpdater, stripe, intervalMilliseconds);
+      counters.add(StripeB.removeTimesFieldUpdater, stripe, intervalNanoseconds);
       counters.increment(StripeB.removeHitsFieldUpdater, stripe);
    }
 
@@ -302,9 +327,9 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @ManagedAttribute(
-         description = "Average number of milliseconds for a read operation on the cache",
+         description = "Average number of nanoseconds for a read operation on the cache",
          displayName = "Average read time",
-         units = Units.MILLISECONDS,
+         units = Units.NANOSECONDS,
          displayType = DisplayType.SUMMARY
    )
    @SuppressWarnings("unused")
@@ -316,9 +341,9 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @ManagedAttribute(
-         description = "Average number of milliseconds for a write operation in the cache",
+         description = "Average number of nanoseconds for a write operation in the cache",
          displayName = "Average write time",
-         units = Units.MILLISECONDS,
+         units = Units.NANOSECONDS,
          displayType = DisplayType.SUMMARY
    )
    @SuppressWarnings("unused")
@@ -330,9 +355,9 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @ManagedAttribute(
-         description = "Average number of milliseconds for a remove operation in the cache",
+         description = "Average number of nanoseconds for a remove operation in the cache",
          displayName = "Average remove time",
-         units = Units.MILLISECONDS,
+         units = Units.NANOSECONDS,
          displayType = DisplayType.SUMMARY
    )
    @SuppressWarnings("unused")
@@ -344,12 +369,21 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @ManagedAttribute(
-         description = "Number of entries currently in memory including expired entries",
+         description = "Number of entries in the cache including passivated entries",
          displayName = "Number of current cache entries",
          displayType = DisplayType.SUMMARY
    )
    public int getNumberOfEntries() {
-      return dataContainer.sizeIncludingExpired();
+      return cache.withFlags(Flag.CACHE_MODE_LOCAL).size();
+   }
+
+   @ManagedAttribute(
+         description = "Number of entries currently in-memory excluding expired entries",
+         displayName = "Number of in-memory cache entries",
+         displayType = DisplayType.SUMMARY
+   )
+   public int getNumberOfEntriesInMemory() {
+      return dataContainer.size();
    }
 
    @ManagedAttribute(
@@ -359,6 +393,48 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    )
    public long getOffHeapMemoryUsed() {
       return allocator.getAllocatedAmount();
+   }
+
+   @ManagedAttribute(
+         description = "Amount of nodes required to guarantee data consistency",
+         displayName = "Required Minimum Nodes",
+         displayType = DisplayType.SUMMARY
+   )
+   public int getRequiredMinimumNumberOfNodes() {
+      return calculateRequiredMinimumNumberOfNodes(cache);
+   }
+
+   public static int calculateRequiredMinimumNumberOfNodes(AdvancedCache<?, ?> cache) {
+      Configuration config = cache.getCacheConfiguration();
+
+      ClusteringConfiguration clusteringConfiguration = config.clustering();
+      CacheMode mode = clusteringConfiguration.cacheMode();
+      if (mode.isReplicated() || !mode.isClustered()) {
+         // Local and replicated only require the 1 node to keep the data
+         return 1;
+      }
+      CacheTopology cacheTopology = cache.getDistributionManager().getCacheTopology();
+      if (mode.isInvalidation()) {
+         // Invalidation requires all as we don't know what data is installed on which
+         return cacheTopology.getMembers().size();
+      }
+      int numMembers = cacheTopology.getMembers().size();
+      // If scattered just assume 2 owners - numOwners in config says 1 though
+      int numOwners = mode.isScattered() ? 2 : clusteringConfiguration.hash().numOwners();
+      int minNodes = numMembers - numOwners + 1;
+      long maxSize = config.memory().size();
+
+      int evictionRestrictedNodes;
+      if (maxSize > 0) {
+         DataContainer dataContainer = cache.getDataContainer();
+         long totalData = dataContainer.evictionSize() * numOwners;
+         long capacity = dataContainer.capacity();
+
+         evictionRestrictedNodes = (int) (totalData / capacity) + (totalData % capacity != 0 ? 1 : 0);
+      } else {
+         evictionRestrictedNodes = 1;
+      }
+      return Math.max(evictionRestrictedNodes, minNodes);
    }
 
    @ManagedAttribute(

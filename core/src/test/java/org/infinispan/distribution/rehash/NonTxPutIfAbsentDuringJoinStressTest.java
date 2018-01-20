@@ -4,18 +4,17 @@ import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertTrue;
 
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.fwk.CleanupAfterMethod;
-import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.testng.annotations.Test;
 
@@ -25,7 +24,8 @@ import org.testng.annotations.Test;
  *
  * @author Dan Berindei
  */
-@Test(groups = "functional", testName = "distribution.rehash.NonTxPutIfAbsentDuringJoinStressTest")
+//unstable. test fails with DIST_SYNC and SCATTERED_SYNC (ISPN-3918)
+@Test(groups = {"functional", "unstable"}, testName = "distribution.rehash.NonTxPutIfAbsentDuringJoinStressTest")
 @CleanupAfterMethod
 public class NonTxPutIfAbsentDuringJoinStressTest extends MultipleCacheManagersTest {
 
@@ -34,6 +34,15 @@ public class NonTxPutIfAbsentDuringJoinStressTest extends MultipleCacheManagersT
    private static final int NUM_KEYS = 100;
    private final ConcurrentMap<String, String> insertedValues = CollectionFactory.makeConcurrentMap();
    private volatile boolean stop = false;
+
+   @Override
+   public Object[] factory() {
+      return new Object[] {
+            new NonTxPutIfAbsentDuringJoinStressTest().cacheMode(CacheMode.DIST_SYNC),
+            new NonTxPutIfAbsentDuringJoinStressTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.NEVER),
+            new NonTxPutIfAbsentDuringJoinStressTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.ON_WRITE),
+      };
+   }
 
    @Override
    protected void createCacheManagers() throws Throwable {
@@ -45,40 +54,32 @@ public class NonTxPutIfAbsentDuringJoinStressTest extends MultipleCacheManagersT
    }
 
    private ConfigurationBuilder getConfigurationBuilder() {
-      ConfigurationBuilder c = new ConfigurationBuilder();
-      c.clustering().cacheMode(CacheMode.DIST_SYNC);
-      c.transaction().transactionMode(TransactionMode.NON_TRANSACTIONAL);
-      return c;
+      return getDefaultClusteredCacheConfig(cacheMode, false);
    }
 
-   @Test(groups = "unstable", description = "See ISPN-3918")
    public void testNodeJoiningDuringPutIfAbsent() throws Exception {
       Future[] futures = new Future[NUM_WRITERS];
       for (int i = 0; i < NUM_WRITERS; i++) {
          final int writerIndex = i;
-         futures[i] = fork(new Callable() {
-            @Override
-            public Object call() throws Exception {
-               while (!stop) {
-                  for (int j = 0; j < NUM_KEYS; j++) {
-                     Cache<Object, Object> cache = cache(writerIndex % NUM_ORIGINATORS);
-                     String key = "key_" + j;
-                     String value = "value_" + j + "_" + writerIndex;
-                     Object oldValue = cache.putIfAbsent(key, value);
-                     Object newValue = cache.get(key);
-                     if (oldValue == null) {
-                        // succeeded
-                        log.tracef("Successfully inserted value %s for key %s", value, key);
-                        assertEquals(value, newValue);
-                        boolean isFirst = insertedValues.putIfAbsent(key, value) == null;
-                        assertTrue("A second putIfAbsent succeeded for " + key, isFirst);
-                     } else {
-                        // failed
-                        assertEquals(oldValue, newValue);
-                     }
+         futures[i] = fork(() -> {
+            while (!stop) {
+               for (int j = 0; j < NUM_KEYS; j++) {
+                  Cache<Object, Object> cache = cache(writerIndex % NUM_ORIGINATORS);
+                  String key = "key_" + j;
+                  String value = "value_" + j + "_" + writerIndex;
+                  Object oldValue = cache.putIfAbsent(key, value);
+                  Object newValue = cache.get(key);
+                  if (oldValue == null) {
+                     // succeeded
+                     log.tracef("Successfully inserted value %s for key %s", value, key);
+                     assertEquals(value, newValue);
+                     boolean isFirst = insertedValues.putIfAbsent(key, value) == null;
+                     assertTrue("A second putIfAbsent succeeded for " + key, isFirst);
+                  } else {
+                     // failed
+                     assertEquals(oldValue, newValue);
                   }
                }
-               return null;
             }
          });
       }

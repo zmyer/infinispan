@@ -2,7 +2,9 @@ package org.infinispan.distribution;
 
 import java.util.List;
 
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -14,51 +16,39 @@ import org.testng.annotations.Test;
  */
 @Test (groups = "functional", testName = "distribution.MultipleNodesLeavingTest")
 public class MultipleNodesLeavingTest extends MultipleCacheManagersTest {
+   @Override
+   public Object[] factory() {
+      return new Object[] {
+            new MultipleNodesLeavingTest().cacheMode(CacheMode.DIST_SYNC),
+            new MultipleNodesLeavingTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.NEVER),
+            new MultipleNodesLeavingTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.ON_WRITE),
+      };
+   }
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      createCluster(getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, false), 4);
+      ConfigurationBuilder builder = getDefaultClusteredCacheConfig(cacheMode, false);
+      if (biasAcquisition != null) {
+         builder.clustering().biasAcquisition(biasAcquisition);
+      }
+      createCluster(builder, 4);
       waitForClusterToForm();
    }
 
    public void testMultipleLeaves() throws Exception {
 
       //kill 3 caches at once
-      fork(new Runnable() {
-         @Override
-         public void run() {
-            manager(3).stop();
-         }
-      });
+      fork(() -> manager(3).stop());
+      fork(() -> manager(2).stop());
+      fork(() -> manager(1).stop());
 
-      fork(new Runnable() {
-         @Override
-         public void run() {
-            manager(2).stop();
-         }
-      });
-
-      fork(new Runnable() {
-         @Override
-         public void run() {
-            manager(1).stop();
-         }
-      });
-
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            List<Address> members = advancedCache(0).getRpcManager().getTransport().getMembers();
-            log.trace("members = " + members);
-            return members.size() == 1;
-         }
-      });
+      eventuallyEquals(1, () -> advancedCache(0).getRpcManager().getTransport().getMembers().size());
 
       log.trace("MultipleNodesLeavingTest.testMultipleLeaves");
 
       TestingUtil.blockUntilViewsReceived(60000, false, cache(0));
-      TestingUtil.waitForRehashToComplete(cache(0));
-      List<Address> caches = advancedCache(0).getDistributionManager().getConsistentHash().getMembers();
+      TestingUtil.waitForNoRebalance(cache(0));
+      List<Address> caches = advancedCache(0).getDistributionManager().getWriteConsistentHash().getMembers();
       log.tracef("caches = %s", caches);
       int size = caches.size();
       assert size == 1;

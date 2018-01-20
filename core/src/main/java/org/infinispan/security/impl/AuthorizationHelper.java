@@ -33,6 +33,7 @@ import org.infinispan.util.logging.LogFactory;
  */
 public class AuthorizationHelper {
    private static final Log log = LogFactory.getLog(AuthorizationHelper.class);
+   private static final boolean trace = log.isTraceEnabled();
    private final GlobalSecurityConfiguration globalConfiguration;
    private final AuditLogger audit;
    private final AuditContext context;
@@ -53,24 +54,24 @@ public class AuthorizationHelper {
    }
 
    public void checkPermission(AuthorizationPermission perm) {
-      checkPermission(null, perm, null);
+      checkPermission(null, null, perm, null);
    }
 
    public void checkPermission(AuthorizationPermission perm, String role) {
-      checkPermission(null, perm, role);
+      checkPermission(null, null, perm, role);
    }
 
    public void checkPermission(AuthorizationConfiguration configuration, AuthorizationPermission perm) {
-      checkPermission(configuration, perm, null);
+      checkPermission(configuration, null, perm, null);
    }
 
-   public void checkPermission(AuthorizationConfiguration configuration, AuthorizationPermission perm,
+   public void checkPermission(AuthorizationConfiguration configuration, Subject subject, AuthorizationPermission perm,
          String role) {
       if (globalConfiguration.authorization().enabled()) {
          if (Security.isPrivileged()) {
             Security.checkPermission(perm.getSecurityPermission());
          } else {
-            Subject subject = Security.getSubject();
+            subject = subject != null ? subject : Security.getSubject();
             try {
                if (subject != null) {
                   if (checkSubjectPermissionAndRole(subject, configuration, perm, role)) {
@@ -104,14 +105,16 @@ public class AuthorizationHelper {
          CachePrincipalPair cpp = new CachePrincipalPair(userPrincipal, name);
          SubjectACL subjectACL;
          if (aclCache != null)
-            subjectACL = aclCache.computeIfAbsent(cpp, s -> {
-               return computeSubjectACL(subject, configuration);
-            });
+            subjectACL = aclCache.computeIfAbsent(cpp, s -> computeSubjectACL(subject, configuration));
          else
             subjectACL = computeSubjectACL(subject, configuration);
 
          int permissionMask = requiredPermission.getMask();
-         return subjectACL.matches(permissionMask) && (requestedRole != null ? subjectACL.containsRole(requestedRole) : true);
+         boolean authorized = subjectACL.matches(permissionMask) && (requestedRole != null ? subjectACL.containsRole(requestedRole) : true);
+         if (trace) {
+            log.tracef("Check subject '%s' with ACL '%s' has permission '%s' and role '%s' = %b", subject, subjectACL, requiredPermission, requestedRole, authorized);
+         }
+         return authorized;
       } else {
          return false;
       }
@@ -136,6 +139,9 @@ public class AuthorizationHelper {
                subjectMask |= globalRole.getMask();
             }
          }
+      }
+      if (trace) {
+         log.tracef("Subject '%s' has roles '%s' and permission mask %d", subject, allRoles, subjectMask);
       }
       return new SubjectACL(allRoles, subjectMask);
    }

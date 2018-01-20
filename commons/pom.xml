@@ -4,8 +4,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-commons</artifactId>
@@ -25,6 +25,12 @@
       </dependency>
 
       <dependency>
+         <groupId>org.jboss.spec.javax.transaction</groupId>
+         <artifactId>jboss-transaction-api_1.1_spec</artifactId>
+         <scope>provided</scope>
+      </dependency>
+
+      <dependency>
          <groupId>org.jboss.marshalling</groupId>
          <artifactId>jboss-marshalling-osgi</artifactId>
          <optional>true</optional>
@@ -40,6 +46,19 @@
          <groupId>org.osgi</groupId>
          <artifactId>org.osgi.compendium</artifactId>
          <scope>provided</scope>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.karaf.features</groupId>
+        <artifactId>framework</artifactId>
+        <type>kar</type>
+        <scope>provided</scope>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-commons-test</artifactId>
+         <scope>test</scope>
       </dependency>
 
       <dependency>
@@ -70,11 +89,13 @@
          </resource>
       </resources>
       <plugins>
+         <!-- compiler to use -XDignore.symbol.file to suppress warnings regarding the use of sun.misc.Unsafe -->
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-compiler-plugin</artifactId>
             <configuration>
                <compilerArgument combine.children="append">-XDignore.symbol.file</compilerArgument>
+               <!-- Forking is necessary to allow for the compiler args to be picked up. -->
                <fork combine.children="append">true</fork>
                <source>1.8</source>
                <target>1.8</target>
@@ -86,14 +107,18 @@
             <configuration>
                <instructions>
                   <Export-Package>
-                     ${project.groupId}.commons.*;version=${project.version};-split-package:=error
+                     ${project.groupId}.commons.*;version=${project.version};-split-package:=error,
+                     ${project.groupId}.counter.*;version=${project.version};-split-package:=error,
+                     ${project.groupId}.multimap.*;version=${project.version};-split-package:=error
                   </Export-Package>
-                  
-                  <Import-Package>
+                  <!-- Relax the versioning rule for osgi packages as a specific version is provided by the container and
+                       it might not match the one used to build. -->
+                  <Import-Package><![CDATA[
                   !sun.misc,
                   *
-                  
+                  ]]>
                   </Import-Package>
+                  <!-- Required for loading client classes. -->
                   <DynamicImport-Package>*</DynamicImport-Package>
                </instructions>
             </configuration>
@@ -102,28 +127,35 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration>
-               <excludedGroups combine.self="override">${suite.exclude.groups}</excludedGroups>
+               <parallel>classes</parallel>
+               <groups combine.self="override">${defaultJUnitGroups}</groups>
+               <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
                <systemPropertyVariables combine.self="override">
                   <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
                   <build.directory>${project.build.directory}</build.directory>
                </systemPropertyVariables>
                <argLine combine.self="override">-Xmx768m</argLine>
-               <properties combine.self="override">
+               <properties>
                   <property>
                      <name>usedefaultlisteners</name>
-                     <value>true</value>
+                     <value>false</value>
+                  </property>
+                  <property>
+                     <name>listener</name>
+                     <value>${junitListener}</value>
                   </property>
                </properties>
+               <disableXmlReport>false</disableXmlReport>
             </configuration>
             <dependencies>
                <dependency>
                   <groupId>org.apache.maven.surefire</groupId>
-                  <artifactId>surefire-junit4</artifactId>
+                  <artifactId>surefire-junit47</artifactId>
                   <version>${version.maven.surefire}</version>
                </dependency>
             </dependencies>
          </plugin>
-         
+
          <plugin>
             <groupId>org.codehaus.mojo</groupId>
             <artifactId>build-helper-maven-plugin</artifactId>
@@ -146,6 +178,35 @@
                </execution>
             </executions>
          </plugin>
+         <plugin>
+            <groupId>org.apache.karaf.tooling</groupId>
+            <artifactId>karaf-maven-plugin</artifactId>
+            <configuration>
+               <features>
+                  <feature>infinispan-commons</feature>
+               </features>
+            </configuration>
+         </plugin>
       </plugins>
    </build>
+
+   <profiles>
+      <profile>
+         <id>smoke</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <executions>
+                     <execution>
+                        <id>default-test</id>
+                        <phase>none</phase>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

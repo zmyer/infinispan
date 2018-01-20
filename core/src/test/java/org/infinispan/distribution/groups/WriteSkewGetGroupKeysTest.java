@@ -9,8 +9,7 @@ import javax.transaction.SystemException;
 import javax.transaction.Transaction;
 import javax.transaction.TransactionManager;
 
-import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
+import org.infinispan.transaction.WriteSkewException;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.AssertJUnit;
 import org.testng.annotations.Test;
@@ -26,12 +25,12 @@ public class WriteSkewGetGroupKeysTest extends TransactionalGetGroupKeysTest {
    @Override
    public Object[] factory() {
       return new Object[] {
-//         new WriteSkewGetGroupKeysTest(TestCacheFactory.PRIMARY_OWNER).totalOrder(false),
-//         new WriteSkewGetGroupKeysTest(TestCacheFactory.PRIMARY_OWNER).totalOrder(true),
+         new WriteSkewGetGroupKeysTest(TestCacheFactory.PRIMARY_OWNER).totalOrder(false),
+         new WriteSkewGetGroupKeysTest(TestCacheFactory.PRIMARY_OWNER).totalOrder(true),
          new WriteSkewGetGroupKeysTest(TestCacheFactory.BACKUP_OWNER).totalOrder(false),
-//         new WriteSkewGetGroupKeysTest(TestCacheFactory.BACKUP_OWNER).totalOrder(true),
-//         new WriteSkewGetGroupKeysTest(TestCacheFactory.NON_OWNER).totalOrder(false),
-//         new WriteSkewGetGroupKeysTest(TestCacheFactory.NON_OWNER).totalOrder(true),
+         new WriteSkewGetGroupKeysTest(TestCacheFactory.BACKUP_OWNER).totalOrder(true),
+         new WriteSkewGetGroupKeysTest(TestCacheFactory.NON_OWNER).totalOrder(false),
+         new WriteSkewGetGroupKeysTest(TestCacheFactory.NON_OWNER).totalOrder(true),
       };
    }
 
@@ -46,7 +45,7 @@ public class WriteSkewGetGroupKeysTest extends TransactionalGetGroupKeysTest {
 
 
    public void testRemoveGroupWithConcurrentConflictingUpdate() throws Exception{
-      final TestCache testCache = createTestCacheAndReset(GROUP, this.<GroupKey, String>caches());
+      final TestCache testCache = createTestCacheAndReset(GROUP, this.caches());
       initCache(testCache.primaryOwner);
 
       final TransactionManager tm = tm(testCache.testCache);
@@ -60,11 +59,17 @@ public class WriteSkewGetGroupKeysTest extends TransactionalGetGroupKeysTest {
       testCache.primaryOwner.put(key(1), value(-1));
 
       tm.resume(tx);
-      testCache.testCache.removeGroup(GROUP);
-      groupKeySet = testCache.testCache.getGroup(GROUP);
-      expectedGroupSet.clear();
-      AssertJUnit.assertEquals(expectedGroupSet, groupKeySet);
-      assertCommitFail(tm); //write skew should abort the transaction
+      try {
+         testCache.testCache.removeGroup(GROUP);
+         groupKeySet = testCache.testCache.getGroup(GROUP);
+         expectedGroupSet.clear();
+         AssertJUnit.assertEquals(expectedGroupSet, groupKeySet);
+         assertCommitFail(tm); //write skew should abort the transaction
+      } catch (WriteSkewException e) {
+         // On non-owner, the second retrieval of keys within the group will find out that one of the entries
+         // has different value and will throw WSE
+         tm.rollback();
+      }
 
 
       groupKeySet = testCache.testCache.getGroup(GROUP);
@@ -74,7 +79,7 @@ public class WriteSkewGetGroupKeysTest extends TransactionalGetGroupKeysTest {
    }
 
    public void testRemoveGroupWithConcurrentAdd() throws Exception{
-      final TestCache testCache = createTestCacheAndReset(GROUP, this.<GroupKey, String>caches());
+      final TestCache testCache = createTestCacheAndReset(GROUP, this.caches());
       initCache(testCache.primaryOwner);
 
       final TransactionManager tm = tm(testCache.testCache);
@@ -99,7 +104,7 @@ public class WriteSkewGetGroupKeysTest extends TransactionalGetGroupKeysTest {
    }
 
    public void testRemoveGroupWithConcurrentConflictingRemove() throws Exception{
-      final TestCache testCache = createTestCacheAndReset(GROUP, this.<GroupKey, String>caches());
+      final TestCache testCache = createTestCacheAndReset(GROUP, this.caches());
       initCache(testCache.primaryOwner);
 
       final TransactionManager tm = tm(testCache.testCache);
@@ -125,7 +130,7 @@ public class WriteSkewGetGroupKeysTest extends TransactionalGetGroupKeysTest {
    }
 
    public void testRemoveGroupWithConcurrentRemove() throws Exception{
-      final TestCache testCache = createTestCacheAndReset(GROUP, this.<GroupKey, String>caches());
+      final TestCache testCache = createTestCacheAndReset(GROUP, this.caches());
       initCache(testCache.primaryOwner);
 
       final TransactionManager tm = tm(testCache.testCache);
@@ -152,14 +157,6 @@ public class WriteSkewGetGroupKeysTest extends TransactionalGetGroupKeysTest {
       AssertJUnit.assertEquals(expectedGroupSet, groupKeySet);
    }
 
-   @Override
-   protected ConfigurationBuilder amendConfiguration(ConfigurationBuilder builder) {
-      super.amendConfiguration(builder);
-      builder.locking().writeSkewCheck(true);
-      builder.versioning().enable().scheme(VersioningScheme.SIMPLE);
-      return builder;
-   }
-
    private static void assertCommitFail(TransactionManager tm) throws SystemException {
       try {
          tm.commit();
@@ -169,11 +166,7 @@ public class WriteSkewGetGroupKeysTest extends TransactionalGetGroupKeysTest {
       }
    }
 
-   private static void assertCommitOk(TransactionManager tm) throws SystemException {
-      try {
-         tm.commit();
-      } catch (RollbackException | HeuristicMixedException | HeuristicRollbackException e) {
-         AssertJUnit.fail("Commit should fail!");
-      }
+   private static void assertCommitOk(TransactionManager tm) throws Exception {
+      tm.commit();
    }
 }

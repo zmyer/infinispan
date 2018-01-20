@@ -3,15 +3,14 @@
    <modelVersion>4.0.0</modelVersion>
 
    <parent>
-      <groupId>org.jboss</groupId>
-      <artifactId>jboss-parent</artifactId>
-      <version>19</version>
-      <relativePath />
+      <groupId>org.infinispan</groupId>
+      <artifactId>infinispan-parent</artifactId>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../../pom.xml</relativePath>
    </parent>
 
    <groupId>org.infinispan.server</groupId>
    <artifactId>infinispan-server-versions</artifactId>
-   <version>9.0.0-SNAPSHOT</version>
    <packaging>pom</packaging>
 
    <name>Infinispan Server - BOM</name>
@@ -23,70 +22,42 @@
       <maven.compiler.target>1.8</maven.compiler.target>
       <maven.compiler.source>1.8</maven.compiler.source>
       <server.output.dir.prefix>infinispan-server</server.output.dir.prefix>
+      <forkJvmArgs>-Xmx500m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=${user.dir}</forkJvmArgs>
+      <jigsawForkJvmArgs/>
+      <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
 
-      <version.ant-contrib>1.0b3</version.ant-contrib>
-      <version.apache.ds>2.0.0-M16</version.apache.ds>
-      <version.com.github.relaxng.relaxngDatatype>2011.1</version.com.github.relaxng.relaxngDatatype>
-      <version.com.github.ben-manes.caffeine>2.3.3</version.com.github.ben-manes.caffeine>
-      <version.com.thoughtworks.paranamer>2.3</version.com.thoughtworks.paranamer>
-      <version.commons.logging>1.1.1</version.commons.logging>
-      <version.net.jcip.annotations>1.0</version.net.jcip.annotations>
-      <version.org.jboss.jandex>2.0.0.Final</version.org.jboss.jandex>
-      <version.org.jboss.jbossts.jbossjts>4.16.2.Final</version.org.jboss.jbossts.jbossjts>
-      <version.org.jboss.marshalling.jboss-marshalling>2.0.0.Beta3</version.org.jboss.marshalling.jboss-marshalling>
-      <version.org.jboss.modules>1.4.3.Final</version.org.jboss.modules>
-      <version.junit>4.11</version.junit>
-      <version.org.infinispan>${project.version}</version.org.infinispan>
-      <version.org.infinispan.infinispan-management-console>9.0.0.CR1</version.org.infinispan.infinispan-management-console>
-      <version.org.infinispan.arquillian.container>1.2.0.Beta1</version.org.infinispan.arquillian.container>
+      <version.org.jboss.marshalling.jboss-marshalling>2.0.2.Final</version.org.jboss.marshalling.jboss-marshalling>
+      <version.org.infinispan.infinispan-management-console>9.2.0.CR1</version.org.infinispan.infinispan-management-console>
+      <version.org.infinispan.arquillian.container>1.2.0.Beta2</version.org.infinispan.arquillian.container>
+      <version.org.infinispan.server-build.old>8.2.7.Final</version.org.infinispan.server-build.old>
       <version.org.slf4j>1.7.2</version.org.slf4j>
       <version.org.apache.logging.log4j>2.3</version.org.apache.logging.log4j>
 
+      <!-- WildFly dependencies -->
       <version.org.wildfly>10.1.0.Final</version.org.wildfly>
       <version.org.wildfly.core>2.2.0.Final</version.org.wildfly.core>
       <version.org.wildfly.arquillian>1.1.0.Beta1</version.org.wildfly.arquillian>
       <version.remoting.jmx.wildfly>2.0.1.Final</version.remoting.jmx.wildfly>
       <version.org.wildfly.build-tools>1.1.6.Final</version.org.wildfly.build-tools>
-      <version.org.jboss.spec.javax.servlet.jboss-servlet-api_3.1_spec>1.0.0.Final</version.org.jboss.spec.javax.servlet.jboss-servlet-api_3.1_spec>
+      <!-- Infinispan Server dependencies -->
       <version.org.wildfly.extras.creaper>1.1.0</version.org.wildfly.extras.creaper>
-      <version.org.xerial.snappy>1.0.5</version.org.xerial.snappy>
-      <version.antrun.maven.plugin>1.8</version.antrun.maven.plugin>
       <version.xml.maven.plugin>1.0</version.xml.maven.plugin>
-      <version.org.infinispan.protostream>4.0.0.Alpha4</version.org.infinispan.protostream>
-      <version.http.client>4.3</version.http.client>
+      <version.http.client>4.5</version.http.client>
       <version.org.picketbox>4.0.17.SP2</version.org.picketbox>
       <version.xpp3>1.1.4c</version.xpp3>
-      <version.pax.url>1.3.7</version.pax.url>
-      <version.karaf>2.3.4</version.karaf>
-      <version.pax.exam>4.1.0</version.pax.exam>
+      <version.karaf>4.1.2</version.karaf>
+      <version.pax.exam>4.11.0</version.pax.exam>
       <version.h2.database>1.3.173</version.h2.database>
-      <version.resteasy>3.1.0.Final</version.resteasy>
-      <version.lucene>5.5.2</version.lucene>
       <version.jest>2.0.4</version.jest>
       <version.gson>2.6.2</version.gson>
       <version.commonslang3>3.4</version.commonslang3>
-      <checkstyle.config.location>${session.executionRootDirectory}/checkstyle/src/main/resources/checkstyle.xml</checkstyle.config.location>
       <version.jboss.aesh>0.66.13</version.jboss.aesh>
+      <!-- Jolokia and Prometheus support -->
+      <version.agent-bond>1.0.2</version.agent-bond>
    </properties>
 
    <dependencyManagement>
       <dependencies>
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-parent</artifactId>
-            <version>${project.version}</version>
-            <type>pom</type>
-            <scope>import</scope>
-         </dependency>
-
-         <dependency>
-            <groupId>org.wildfly</groupId>
-            <artifactId>wildfly-parent</artifactId>
-            <type>pom</type>
-            <version>${version.org.wildfly}</version>
-            <scope>import</scope>
-         </dependency>
-
          <dependency>
             <groupId>org.wildfly</groupId>
             <artifactId>wildfly-feature-pack</artifactId>
@@ -100,19 +71,25 @@
             <type>zip</type>
             <version>${version.org.wildfly}</version>
          </dependency>
-         
+
+         <dependency>
+            <groupId>org.wildfly</groupId>
+            <artifactId>wildfly-naming</artifactId>
+            <version>${version.org.wildfly}</version>
+         </dependency>
+
          <dependency>
             <groupId>org.wildfly</groupId>
             <artifactId>wildfly-security</artifactId>
             <version>${version.org.wildfly}</version>
          </dependency>
-         
+
          <dependency>
             <groupId>org.wildfly</groupId>
             <artifactId>wildfly-transactions</artifactId>
             <version>${version.org.wildfly}</version>
          </dependency>
-         
+
          <dependency>
             <groupId>org.wildfly</groupId>
             <artifactId>wildfly-dist</artifactId>
@@ -190,24 +167,6 @@
          </dependency>
 
          <dependency>
-            <groupId>com.github.relaxng</groupId>
-            <artifactId>relaxngDatatype</artifactId>
-            <version>${version.com.github.relaxng.relaxngDatatype}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>com.github.ben-manes.caffeine</groupId>
-            <artifactId>caffeine</artifactId>
-            <version>${version.com.github.ben-manes.caffeine}</version>
-         </dependency>
-
-         <dependency>
-             <groupId>com.thoughtworks.paranamer</groupId>
-             <artifactId>paranamer</artifactId>
-             <version>${version.com.thoughtworks.paranamer}</version>
-         </dependency>
-
-         <dependency>
             <groupId>org.jboss.marshalling</groupId>
             <artifactId>jboss-marshalling-parent</artifactId>
             <version>${version.org.jboss.marshalling.jboss-marshalling}</version>
@@ -215,91 +174,31 @@
          </dependency>
 
          <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>infinispan-server-cli</artifactId>
-            <version>${project.version}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>infinispan-server-commons</artifactId>
-            <version>${project.version}</version>
-         </dependency>
-         
-         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-commons</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
          </dependency>
 
          <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>infinispan-server-event-logger</artifactId>
-            <version>${project.version}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>infinispan-server-jgroups</artifactId>
-            <version>${project.version}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-jgroups</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
          </dependency>
 
          <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>infinispan-server-infinispan</artifactId>
-            <version>${project.version}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-infinispan</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
          </dependency>
 
          <dependency>
-            <groupId>org.jboss.jbossts</groupId>
-            <artifactId>jbossjta</artifactId>
-            <version>${version.org.jboss.jbossts.jbossjts}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>infinispan-server-common</artifactId>
-            <version>${project.version}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>infinispan-server-endpoints</artifactId>
-            <version>${project.version}</version>
-         </dependency>
-         
-         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-feature-pack</artifactId>
             <version>${project.version}</version>
             <type>zip</type>
-         </dependency>
-
-         <dependency>
-            <groupId>commons-logging</groupId>
-            <artifactId>commons-logging</artifactId>
-            <version>${version.commons.logging}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>net.jcip</groupId>
-            <artifactId>jcip-annotations</artifactId>
-            <version>${version.net.jcip.annotations}</version>
          </dependency>
 
          <dependency>
@@ -307,132 +206,21 @@
             <artifactId>jboss-logmanager-log4j</artifactId>
             <version>${version.org.jboss.logmanager.jboss-logmanager-log4j}</version>
          </dependency>
-         
-         <dependency>
-            <groupId>org.jboss.modules</groupId>
-            <artifactId>jboss-modules</artifactId>
-            <version>${version.org.jboss.modules}</version>
-         </dependency>
 
          <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan</artifactId>
-            <version>${version.org.infinispan}</version>
+            <version>${project.version}</version>
             <classifier>javadoc</classifier>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-core</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-core</artifactId>
-            <type>test-jar</type>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-cachestore-parent</artifactId>
-            <version>${version.org.infinispan}</version>
-            <type>pom</type>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-cachestore-remote</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-cachestore-rest</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-cachestore-jdbc</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-cachestore-leveldb</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-client-hotrod</artifactId>
-            <version>${version.org.infinispan}</version>
          </dependency>
 
          <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-client-hotrod</artifactId>
             <classifier>javadoc</classifier>
-            <version>${version.org.infinispan}</version>
+            <version>${project.version}</version>
          </dependency>
 
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-server-core</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-server-hotrod</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-server-router</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-server-memcached</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-server-rest</artifactId>
-            <version>${version.org.infinispan}</version>
-            <classifier>classes</classifier>
-         </dependency>
-
-         <dependency>
-            <groupId>org.jboss.resteasy</groupId>
-            <artifactId>resteasy-jaxrs</artifactId>
-            <version>${version.resteasy}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.jboss.resteasy</groupId>
-            <artifactId>jaxrs-api</artifactId>
-            <version>${version.resteasy}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-server-websocket</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-cli-interpreter</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-         
          <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-management-console</artifactId>
@@ -440,29 +228,10 @@
          </dependency>
 
          <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-cli-client</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-tasks</artifactId>
-            <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
             <groupId>org.sonatype.oss</groupId>
             <artifactId>oss-parent</artifactId>
             <version>${version.org.sonatype.oss.parent}</version>
             <type>pom</type>
-         </dependency>
-
-         <dependency>
-            <groupId>junit</groupId>
-            <artifactId>junit</artifactId>
-            <version>${version.junit}</version>
-            <scope>test</scope>
          </dependency>
 
          <dependency>
@@ -522,30 +291,6 @@
          </dependency>
 
          <dependency>
-            <groupId>org.xerial.snappy</groupId>
-            <artifactId>snappy-java</artifactId>
-            <version>${version.org.xerial.snappy}</version>
-         </dependency>
-
-         <dependency>
-             <groupId>org.infinispan.protostream</groupId>
-             <artifactId>sample-domain-implementation</artifactId>
-             <version>${version.org.infinispan.protostream}</version>
-         </dependency>
-
-         <dependency>
-             <groupId>org.infinispan</groupId>
-             <artifactId>infinispan-query-dsl</artifactId>
-             <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
-             <groupId>org.infinispan</groupId>
-             <artifactId>infinispan-remote-query-client</artifactId>
-             <version>${version.org.infinispan}</version>
-         </dependency>
-
-         <dependency>
             <groupId>ant-contrib</groupId>
             <artifactId>ant-contrib</artifactId>
             <version>${version.ant-contrib}</version>
@@ -555,12 +300,6 @@
          <dependency>
             <groupId>org.apache.httpcomponents</groupId>
             <artifactId>httpclient</artifactId>
-            <version>${version.http.client}</version>
-         </dependency>
-
-         <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpcore</artifactId>
             <version>${version.http.client}</version>
          </dependency>
 
@@ -619,11 +358,11 @@
             <scope>test</scope>
             <version>${version.h2.database}</version>
          </dependency>
-         
+
          <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-security-integrationtests</artifactId>
-            <version>${version.org.infinispan}</version>
+            <version>${project.version}</version>
             <classifier>tests</classifier>
             <scope>test</scope>
          </dependency>
@@ -632,7 +371,15 @@
             <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-build</artifactId>
             <type>pom</type>
-            <version>${version.org.infinispan}</version>
+            <version>${project.version}</version>
+            <scope>test</scope>
+         </dependency>
+
+         <dependency>
+            <groupId>org.infinispan.server</groupId>
+            <artifactId>infinispan-server-build</artifactId>
+            <type>zip</type>
+            <version>${project.version}</version>
             <scope>test</scope>
          </dependency>
 
@@ -652,6 +399,12 @@
          <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-queryparser</artifactId>
+            <version>${version.lucene}</version>
+         </dependency>
+
+         <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-queries</artifactId>
             <version>${version.lucene}</version>
          </dependency>
 
@@ -697,18 +450,20 @@
             <version>${version.commonslang3}</version>
          </dependency>
 
+         <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>agent-bond-agent</artifactId>
+            <version>${version.agent-bond}</version>
+         </dependency>
+
       </dependencies>
 
    </dependencyManagement>
 
    <build>
+      <finalName>${project.artifactId}-${project.version}</finalName>
       <pluginManagement>
          <plugins>
-            <plugin>
-               <groupId>org.apache.maven.plugins</groupId>
-               <artifactId>maven-antrun-plugin</artifactId>
-               <version>${version.antrun.maven.plugin}</version>
-            </plugin>
             <plugin>
                <groupId>org.codehaus.mojo</groupId>
                <artifactId>xml-maven-plugin</artifactId>
@@ -725,39 +480,17 @@
                <version>${version.org.wildfly.build-tools}</version>
             </plugin>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-checkstyle-plugin</artifactId>
-                <version>2.17</version>
-                <dependencies>
-                   <dependency>
-                      <groupId>org.infinispan</groupId>
-                      <artifactId>infinispan-checkstyle</artifactId>
-                      <version>${project.version}</version>
-                   </dependency>
-                </dependencies>
-               <configuration>
-                  <configLocation>checkstyle.xml</configLocation>
-                  <consoleOutput>true</consoleOutput>
-                  <failsOnError>true</failsOnError>
-                  <violationSeverity>error</violationSeverity>
-                  <includeTestSourceDirectory>true</includeTestSourceDirectory>
-               </configuration>
-               <executions>
-                  <execution>
-                     <id>checkstyle</id>
-                     <phase>process-sources</phase>
-                     <goals>
-                        <goal>checkstyle</goal>
-                     </goals>
-                  </execution>
-               </executions>
-             </plugin>
-            <plugin>
                <groupId>org.apache.maven.plugins</groupId>
                <artifactId>maven-surefire-plugin</artifactId>
                <configuration>
                   <trimStackTrace>false</trimStackTrace>
+                  <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
                </configuration>
+            </plugin>
+            <plugin>
+               <groupId>org.apache.maven.plugins</groupId>
+               <artifactId>maven-enforcer-plugin</artifactId>
+               <version>3.0.0-M1</version>
             </plugin>
          </plugins>
       </pluginManagement>
@@ -765,6 +498,7 @@
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-compiler-plugin</artifactId>
+            <version>${version.maven-compiler-plugin}</version>
             <configuration>
                <useIncrementalCompilation>false</useIncrementalCompilation>
             </configuration>
@@ -772,6 +506,7 @@
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-enforcer-plugin</artifactId>
+            <version>1.3.1</version>
             <executions>
                <execution>
                   <id>enforce-java</id>
@@ -801,6 +536,24 @@
 
    <profiles>
       <profile>
+         <id>smoke</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <executions>
+                     <execution>
+                        <id>default-test</id>
+                        <phase>none</phase>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+
+      <profile>
          <id>distribution</id>
          <activation>
             <activeByDefault>false</activeByDefault>
@@ -808,6 +561,77 @@
          <properties>
             <skipTests>true</skipTests>
          </properties>
+      </profile>
+
+      <profile>
+         <id>customForkJvmArgs</id>
+         <activation>
+            <activeByDefault>false</activeByDefault>
+            <property>
+               <name>env.MAVEN_FORK_OPTS</name>
+            </property>
+         </activation>
+         <properties>
+            <forkJvmArgs>${env.MAVEN_FORK_OPTS}</forkJvmArgs>
+         </properties>
+      </profile>
+      <profile>
+         <id>jigsaw</id>
+         <activation>
+            <jdk>[9,)</jdk>
+         </activation>
+         <properties>
+            <!--
+              java.lang, java.util, java.io, java.lang.invoke, java.lang, reflect, java.util.concurrent, java.time:
+                core externalizers for JDK types
+              java.nio, jdk.internal.ref: Netty, server/hotrod
+              com.sun.security.sasl: CRAM-MD5 mechanism, server/hotrod
+              java.text, java.awt.font: XStream, server/rest
+              java.security: Wildfly, server/integration/*
+            -->
+            <jigsawForkJvmArgs>
+               -Dsun.reflect.debugModuleAccessChecks=true
+               --add-opens=java.base/java.lang=ALL-UNNAMED
+               --add-opens=java.base/java.util=ALL-UNNAMED
+               --add-opens=java.base/java.io=ALL-UNNAMED
+               --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+               --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+               --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+               --add-opens=java.base/java.time=ALL-UNNAMED
+               --add-opens=java.base/java.nio=ALL-UNNAMED
+               --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED
+               --add-modules=java.xml.bind
+               --add-opens=java.security.sasl/com.sun.security.sasl=ALL-UNNAMED
+               --add-opens=java.base/java.text=ALL-UNNAMED
+               --add-opens=java.desktop/java.awt.font=ALL-UNNAMED
+               --add-opens=java.base/java.security=ALL-UNNAMED
+               --add-exports=jdk.security.jgss/com.sun.security.sasl.gsskerb=ALL-UNNAMED
+               --add-exports=java.base/sun.nio.ch=ALL-UNNAMED
+               --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+               --add-exports=java.security.sasl/com.sun.security.sasl.digest=ALL-UNNAMED
+               --add-exports=java.security.sasl/com.sun.security.sasl.ntlm=ALL-UNNAMED
+               --add-exports=java.naming/com.sun.jndi.ldap=ALL-UNNAMED
+               --add-opens=java.management/javax.management=ALL-UNNAMED
+            </jigsawForkJvmArgs>
+         </properties>
+         <build>
+            <pluginManagement>
+               <plugins>
+                  <plugin>
+                     <groupId>org.apache.maven.plugins</groupId>
+                     <artifactId>maven-compiler-plugin</artifactId>
+                     <configuration>
+                        <!-- fork is needed so compiler args can be used -->
+                        <fork>true</fork>
+                        <compilerArgs>
+                           <arg>-J--add-modules</arg>
+                           <arg>-Jjava.xml.ws.annotation</arg>
+                        </compilerArgs>
+                     </configuration>
+                  </plugin>
+               </plugins>
+            </pluginManagement>
+         </build>
       </profile>
    </profiles>
 

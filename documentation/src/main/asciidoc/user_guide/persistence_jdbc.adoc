@@ -5,6 +5,9 @@ Each key in the cache is stored in its own row in the database. In order to stor
 on a (pluggable) bijection that maps the each key to a String object. The bijection is defined by the Key2StringMapper interface.
 Infinispans ships a default implementation (smartly named DefaultTwoWayKey2StringMapper) that knows how to handle primitive types.
 
+NOTE: By default Infinispan shares are not stored, meaning that all nodes in the cluster will write to the underlying store upon each update.
+If you wish for an operation to only be written to the underlying database once, you must configure the JDBC store to be shared.
+
 ==== Connection management (pooling)
 In order to obtain a connection to the database the JDBC cache store relies on a link:http://docs.jboss.org/infinispan/{infinispanversion}/apidocs/org/infinispan/persistence/jdbc/connectionfactory/ConnectionFactory.html[ConnectionFactory]
 implementation. The connection factory is specified programmatically using one of the connectionPool(), dataSource()
@@ -47,7 +50,7 @@ For detailed description of all the parameters used refer to the link:http://doc
 [source,xml]
 ----
 <persistence>
-   <string-keyed-jdbc-store fetch-state="false" read-only="false" purge="false">
+   <string-keyed-jdbc-store xmlns="urn:infinispan:config:store:jdbc:9.2" shared="true" fetch-state="false" read-only="false" purge="false">
       <connection-pool connection-url="jdbc:h2:mem:infinispan_string_based;DB_CLOSE_DELAY=-1" username="sa" driver="org.h2.Driver"/>
       <string-keyed-table drop-on-exit="true" create-on-start="true" prefix="ISPN_STRING_TABLE">
          <id-column name="ID_COLUMN" type="VARCHAR(255)" />
@@ -67,6 +70,7 @@ builder.persistence().addStore(JdbcStringBasedStoreConfigurationBuilder.class)
       .fetchPersistentState(false)
       .ignoreModifications(false)
       .purgeOnStartup(false)
+      .shared(true)
       .table()
          .dropOnExit(true)
          .createOnStart(true)
@@ -86,7 +90,7 @@ Finally, below is an example of a JDBC cache store with a managed connection fac
 [source,xml]
 ----
 
-<string-keyed-jdbc-store xmlns="urn:infinispan:config:store:jdbc:7.0" fetch-state="false" read-only="false" purge="false">
+<string-keyed-jdbc-store xmlns="urn:infinispan:config:store:jdbc:9.2" shared="true" fetch-state="false" read-only="false" purge="false">
    <data-source jndi-url="java:/StringStoreWithManagedConnectionTest/DS" />
    <string-keyed-table drop-on-exit="true" create-on-start="true" prefix="ISPN_STRING_TABLE">
       <id-column name="ID_COLUMN" type="VARCHAR(255)" />
@@ -102,7 +106,10 @@ Finally, below is an example of a JDBC cache store with a managed connection fac
 
 ConfigurationBuilder builder = new ConfigurationBuilder();
 builder.persistence().addStore(JdbcStringBasedStoreConfigurationBuilder.class)
-      .fetchPersistentState(false).ignoreModifications(false).purgeOnStartup(false)
+      .fetchPersistentState(false)
+      .ignoreModifications(false)
+      .purgeOnStartup(false)
+      .shared(true)
       .table()
          .dropOnExit(true)
          .createOnStart(true)
@@ -125,8 +132,9 @@ deserialised, updated, serialised and then re-inserted back into the db. To assi
 `JDBCMigrator.java`, that reads data from an existing Mixed/Binary store and then stores it in a string keyed table via the
 <<_JDBC_String_based_Cache_Store, JdbcStringBasedStore>>.
 
-NOTE: The migrator can also be used to migrate existing string based tables to new database tables if you wish to use a
-new marshaller or TwoWayKeyToStringMapper for the store's content.
+NOTE: The marshaller changes introduced in Infinispan 9 mean that existing stores that were populated by 8.x are no longer
+compatible. The JDBCMigrator can be used to migrate existing JdbcStringBasedStores from the legacy 8.x marshaller to the latest
+9.x compatible marshaller.
 
 ===== Usage
 The Jdbc migrator `org.infinispan.tools.jdbc.migrator.JDBCMigrator` takes a single argument, the path to a
@@ -190,12 +198,18 @@ All migrator properties are configured within the context of a source or target 
 with either `source.` or `target.`.  All of the properties listed below are applicable to both source and target stores,
 with the exception of `table.binary.*` properties as it is not possible to migrate to a binary table.
 
+The property `*.marshaller.type` denotes whether the marshaller from infinispan 8.2x (LEGACY), 9.x (CURRENT) or a custom
+marshaller should be utilised. Note, that the LEGACY marshaller can only be specified for the source store.
+
 [options="header"]
 |===============
 |Property|Description|Example value|Required
-|type | Store type enum: [STRING,BINARY,MIXED] | MIXED | TRUE
+|type | [STRING,BINARY,MIXED] | MIXED | TRUE
 |cache_name | The name of the cache associated with the store | persistentMixedCache | TRUE
 |dialect | The dialect of the underlying database | POSTGRES | TRUE
+|marshaller.type | [LEGACY,CURRENT,CUSTOM] | CURRENT | TRUE
+|marshaller.class | The class of the marshaller if type=CUSTOM | org.example.CustomMarshaller |
+|marshaller.externalizers | A comma-separated list of custom AdvancedExternalizer implementations to load[id]:<Externalizer class> | 25:Externalizer1,org.example.Externalizer2 |
 |connection_pool.connection_url | The JDBC connection url | jdbc:postgresql:postgres | TRUE
 |connection_pool.driver_class | The class of the JDBC driver | org.postrgesql.Driver | TRUE
 |connection_pool.username | Database username | | TRUE

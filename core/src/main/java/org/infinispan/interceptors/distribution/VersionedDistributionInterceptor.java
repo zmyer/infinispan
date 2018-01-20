@@ -5,7 +5,7 @@ import static org.infinispan.transaction.impl.WriteSkewHelper.readVersionsFromRe
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.container.entries.CacheEntry;
@@ -15,10 +15,10 @@ import org.infinispan.container.versioning.VersionGenerator;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.transaction.impl.AbstractCacheTransaction;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.transaction.xa.CacheTransaction;
@@ -37,12 +37,7 @@ public class VersionedDistributionInterceptor extends TxDistributionInterceptor 
 
    private static final Log log = LogFactory.getLog(VersionedDistributionInterceptor.class);
 
-   private VersionGenerator versionGenerator;
-
-   @Inject
-   public void init(VersionGenerator versionGenerator) {
-      this.versionGenerator = versionGenerator;
-   }
+   @Inject private VersionGenerator versionGenerator;
 
    @Override
    protected Log getLog() {
@@ -52,7 +47,8 @@ public class VersionedDistributionInterceptor extends TxDistributionInterceptor 
    @Override
    protected void wrapRemoteEntry(InvocationContext ctx, Object key, CacheEntry ice, boolean isWrite) {
       if (ctx.isInTxScope()) {
-         EntryVersion seenVersion = ((TxInvocationContext) ctx).getCacheTransaction().getVersionsRead().get(key);
+         AbstractCacheTransaction cacheTransaction = ((TxInvocationContext) ctx).getCacheTransaction();
+         EntryVersion seenVersion = cacheTransaction.getVersionsRead().get(key);
          if (seenVersion != null) {
             EntryVersion newVersion = null;
             if (ice != null && ice.getMetadata() != null) {
@@ -62,7 +58,16 @@ public class VersionedDistributionInterceptor extends TxDistributionInterceptor 
                throw new IllegalStateException("Wrapping entry without version");
             }
             if (seenVersion.compareTo(newVersion) != InequalVersionComparisonResult.EQUAL) {
-               throw log.writeSkewOnRead(key, key, seenVersion, newVersion);
+               if (ctx.lookupEntry(key) == null) {
+                  // We have read the entry using functional command on remote node and now we want
+                  // the full entry, but we cannot provide the same version as the already read one.
+                  throw log.writeSkewOnRead(key, key, seenVersion, newVersion);
+               } else {
+                  // We have retrieved remote entry despite being already wrapped: that can happen
+                  // for GetKeysInGroupCommand which does not know what entries will it fetch.
+                  // We can safely ignore the newly fetched value.
+                  return;
+               }
             }
          }
       }
@@ -133,10 +138,15 @@ public class VersionedDistributionInterceptor extends TxDistributionInterceptor 
    }
 
    @Override
-   protected CompletableFuture<Object> prepareOnAffectedNodes(TxInvocationContext<?> ctx, PrepareCommand command, Collection<Address> recipients) {
-      // Perform the RPC
-      CompletableFuture<Map<Address, Response>>
-            remoteInvocation = rpcManager.invokeRemotelyAsync(recipients, command, createPrepareRpcOptions());
+   protected CompletionStage<Object> prepareOnAffectedNodes(TxInvocationContext<?> ctx, PrepareCommand command, Collection<Address> recipients) {
+      CompletionStage<Map<Address, Response>> remoteInvocation;
+      if (recipients != null) {
+         MapResponseCollector collector = MapResponseCollector.ignoreLeavers(recipients.size());
+         remoteInvocation = rpcManager.invokeCommand(recipients, command, collector, rpcManager.getSyncRpcOptions());
+      } else {
+         MapResponseCollector collector = MapResponseCollector.ignoreLeavers();
+         remoteInvocation = rpcManager.invokeCommandOnAll(command, collector, rpcManager.getSyncRpcOptions());
+      }
       return remoteInvocation.handle((responses, t) -> {
          transactionRemotelyPrepared(ctx);
          CompletableFutures.rethrowException(t);

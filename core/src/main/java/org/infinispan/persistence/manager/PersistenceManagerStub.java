@@ -29,6 +29,11 @@ public class PersistenceManagerStub implements PersistenceManager {
    }
 
    @Override
+   public boolean isPreloaded() {
+      return false;
+   }
+
+   @Override
    public void preload() {
    }
 
@@ -85,6 +90,10 @@ public class PersistenceManagerStub implements PersistenceManager {
    }
 
    @Override
+   public void writeToAllNonTxStores(MarshalledEntry marshalledEntry, AccessMode modes, long flags) {
+   }
+
+   @Override
    public AdvancedCacheLoader getStateTransferProvider() {
       return null;
    }
@@ -108,5 +117,13 @@ public class PersistenceManagerStub implements PersistenceManager {
 
    @Override
    public void rollbackAllTxStores(Transaction transaction, AccessMode accessMode) {
+   }
+
+   @Override
+   public void writeBatchToAllNonTxStores(Iterable<MarshalledEntry> entries, AccessMode accessMode, long flags) {
+   }
+
+   @Override
+   public void deleteBatchFromAllNonTxStores(Iterable<Object> keys, AccessMode accessMode, long flags) {
    }
 }

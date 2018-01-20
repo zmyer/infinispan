@@ -4,8 +4,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-cli-interpreter</artifactId>
@@ -13,18 +13,18 @@
    <name>Infinispan CLI Interpreter</name>
    <description>Infinispan CLI Interpreter module</description>
 
-
+   <!-- This module declares components that either has lifecycle (@Start or @Stop) or uses @Inject to retrieve dependencies -->
    <properties>
       <module.skipComponentMetaDataProcessing>false</module.skipComponentMetaDataProcessing>
    </properties>
 
    <dependencies>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-memcached</artifactId>
          <optional>true</optional>
       </dependency>
@@ -37,54 +37,53 @@
          <artifactId>jackson-mapper-asl</artifactId>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons-test</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-core</artifactId>
+         <type>test-jar</type>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-core</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-client-hotrod</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-remote</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-hotrod</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-memcached</artifactId>
          <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>${project.groupId}</groupId>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-rest</artifactId>
-         <classifier>classes</classifier>
-         <scope>test</scope>
-      </dependency>
-      <dependency>
-         <groupId>${project.groupId}</groupId>
-         <artifactId>infinispan-server-rest</artifactId>
-         <type>test-jar</type>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -139,7 +138,8 @@
                   <Include-Resource>
                      {maven-resources},
                      /META-INF/services=${project.basedir}/target/classes/META-INF/services,
-                     /OSGI-INF/blueprint/blueprint.xml=${project.basedir}/target/classes/OSGI-INF/blueprint/blueprint.xml
+                     /OSGI-INF/blueprint/blueprint.xml=${project.basedir}/target/classes/OSGI-INF/blueprint/blueprint.xml,
+                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
                   </Include-Resource>
                </instructions>
             </configuration>

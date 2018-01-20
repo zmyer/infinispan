@@ -1,7 +1,6 @@
 package org.infinispan.query.affinity;
 
 import java.io.Serializable;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -9,13 +8,13 @@ import java.util.concurrent.CompletableFuture;
 import org.apache.lucene.document.Document;
 import org.hibernate.search.backend.LuceneWork;
 import org.hibernate.search.indexes.spi.IndexManager;
+import org.hibernate.search.spi.IndexedTypeIdentifier;
 import org.infinispan.query.backend.KeyTransformationHandler;
 import org.infinispan.query.impl.ModuleCommandIds;
 import org.infinispan.query.indexmanager.AbstractUpdateCommand;
 import org.infinispan.query.indexmanager.LuceneWorkConverter;
 import org.infinispan.query.logging.Log;
 import org.infinispan.remoting.responses.ExceptionResponse;
-import org.infinispan.remoting.responses.SuccessfulResponse;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.logging.LogFactory;
 
@@ -50,7 +49,7 @@ public class AffinityUpdateCommand extends AbstractUpdateCommand {
       List<LuceneWork> workToApply = LuceneWorkConverter.transformKeysToString(luceneWorks, handler);
 
       for (LuceneWork luceneWork : workToApply) {
-         List<IndexManager> indexManagers = getIndexManagerForModifications(luceneWork);
+         Iterable<IndexManager> indexManagers = getIndexManagerForModifications(luceneWork);
          try {
             for (IndexManager im : indexManagers) {
                if (log.isDebugEnabled())
@@ -63,20 +62,22 @@ public class AffinityUpdateCommand extends AbstractUpdateCommand {
          }
       }
 
-      return CompletableFuture.completedFuture(SuccessfulResponse.create(Boolean.TRUE));
+      return CompletableFuture.completedFuture(Boolean.TRUE);
    }
 
-   private List<IndexManager> getIndexManagerForModifications(LuceneWork luceneWork) {
-      Class<?> entityClass = luceneWork.getEntityClass();
+   private Iterable<IndexManager> getIndexManagerForModifications(LuceneWork luceneWork) {
+      IndexedTypeIdentifier type = luceneWork.getEntityType();
       Serializable id = luceneWork.getId();
       if (id != null) {
          String idInString = luceneWork.getIdInString();
          Document document = luceneWork.getDocument();
-         return Arrays.asList(searchFactory.getIndexBinding(entityClass).getSelectionStrategy()
-               .getIndexManagerForAddition(entityClass, id, idInString, document));
+         return Collections.singleton(searchFactory.getIndexBinding(type)
+               .getIndexManagerSelector()
+               .forNew(type, id, idInString, document));
       } else {
-         return Arrays.asList(searchFactory.getIndexBinding(entityClass)
-               .getSelectionStrategy().getIndexManagersForDeletion(entityClass, null, null));
+         return searchFactory.getIndexBinding(type)
+               .getIndexManagerSelector()
+               .forExisting(type, null, null);
       }
    }
 

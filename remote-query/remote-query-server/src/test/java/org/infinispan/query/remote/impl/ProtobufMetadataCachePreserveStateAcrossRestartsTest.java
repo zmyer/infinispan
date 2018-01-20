@@ -9,7 +9,7 @@ import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.query.remote.client.ProtobufMetadataManagerConstants;
 import org.infinispan.test.AbstractInfinispanTest;
-import org.infinispan.test.CacheManagerCallable;
+import org.infinispan.test.MultiCacheManagerCallable;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
@@ -18,9 +18,9 @@ import org.testng.annotations.Test;
 public class ProtobufMetadataCachePreserveStateAcrossRestartsTest extends AbstractInfinispanTest {
 
    protected EmbeddedCacheManager createCacheManager(String persistentStateLocation) throws Exception {
-      GlobalConfigurationBuilder global = new GlobalConfigurationBuilder();
+      GlobalConfigurationBuilder global = new GlobalConfigurationBuilder().clusteredDefault();
       global.globalState().enable().persistentLocation(persistentStateLocation);
-      EmbeddedCacheManager cacheManager = TestCacheManagerFactory.createCacheManager(global, new ConfigurationBuilder());
+      EmbeddedCacheManager cacheManager = TestCacheManagerFactory.createClusteredCacheManager(global, new ConfigurationBuilder());
       cacheManager.getCache();
       return cacheManager;
    }
@@ -29,19 +29,26 @@ public class ProtobufMetadataCachePreserveStateAcrossRestartsTest extends Abstra
       String persistentStateLocation = TestingUtil.tmpDirectory(this.getClass());
       Util.recursiveFileRemove(persistentStateLocation);
 
-      TestingUtil.withCacheManager(new CacheManagerCallable(createCacheManager(persistentStateLocation)) {
+      final String persistentStateLocation1 = persistentStateLocation + "/1";
+      final String persistentStateLocation2 = persistentStateLocation + "/2";
+      TestingUtil.withCacheManagers(new MultiCacheManagerCallable(createCacheManager(persistentStateLocation1),
+                                                                  createCacheManager(persistentStateLocation2)) {
          @Override
          public void call() throws Exception {
-            Cache<String, String> protobufMetadaCache = cm.getCache(ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME);
-            protobufMetadaCache.put("test.proto", "package X;");
+            Cache<String, String> protobufMetadaCache = cms[0].getCache(ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME);
+            protobufMetadaCache.put("testA.proto", "package A;");
+            protobufMetadaCache.put("testB.proto", "import \"testB.proto\";\npackage B;");
          }
       });
 
-      TestingUtil.withCacheManager(new CacheManagerCallable(createCacheManager(persistentStateLocation)) {
+      TestingUtil.withCacheManagers(new MultiCacheManagerCallable(createCacheManager(persistentStateLocation1),
+                                                                  createCacheManager(persistentStateLocation2)) {
          @Override
          public void call() throws Exception {
-            Cache<String, String> protobufMetadaCache = cm.getCache(ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME);
-            assertTrue(protobufMetadaCache.containsKey("test.proto"));
+            Cache<String, String> protobufMetadaCache = cms[0].getCache(ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME);
+            assertTrue(protobufMetadaCache.containsKey("testA.proto"));
+            assertTrue(protobufMetadaCache.containsKey("testB.proto"));
+            assertTrue(protobufMetadaCache.containsKey("testB.proto.errors"));
          }
       });
    }

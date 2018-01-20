@@ -5,8 +5,8 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.0.0-SNAPSHOT</version>
-      <relativePath>../../parent/pom.xml</relativePath>
+      <version>9.2.0-SNAPSHOT</version>
+      <relativePath>../../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-wildfly-module-integrationtests</artifactId>
@@ -19,14 +19,14 @@
       <ispnserver.dist>${basedir}/target/infinispan-server</ispnserver.dist>
       <server.jvm>${env.JAVA_HOME}</server.jvm>
       <resources.dir>${basedir}/src/test/resources</resources.dir>
-      <jvm.memory.args>-Xmx1G</jvm.memory.args>
+      <serverMemoryJvmArgs>-Xmx300m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=${user.dir}</serverMemoryJvmArgs>
       <jvm.x64.args />
       <default.transport.stack>udp</default.transport.stack>
       <transport.stack>-Djboss.default.jgroups.stack=${default.transport.stack}</transport.stack>
       <jvm.ip.stack>-Djava.net.preferIPv4Stack=true</jvm.ip.stack>
       <mcast.ip>234.99.54.14</mcast.ip>
       <jvm.ip.stack>-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false -Djboss.default.multicast.address=${mcast.ip}</jvm.ip.stack>
-      <server.jvm.args>${jvm.ip.stack} ${jvm.memory.args} ${transport.stack} ${jvm.x64.args}</server.jvm.args>
+      <server.jvm.args>${jvm.ip.stack} ${serverMemoryJvmArgs} ${transport.stack} ${jvm.x64.args} ${jigsawForkJvmArgs}</server.jvm.args>
       <log4j.configurationFile>log4j2.xml</log4j.configurationFile>
    </properties>
 
@@ -141,8 +141,9 @@
       </dependency>
 
       <dependency>
-         <groupId>org.elasticsearch.plugin</groupId>
-         <artifactId>delete-by-query</artifactId>
+         <groupId>org.infinispan.server</groupId>
+         <artifactId>infinispan-server-infinispan</artifactId>
+         <version>${project.version}</version>
          <scope>test</scope>
       </dependency>
 
@@ -199,13 +200,16 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-failsafe-plugin</artifactId>
             <configuration>
+               <!-- Force use of JUnit, since TestNG+Arquillian break in wonderful ways -->
                <testNGArtifactName>none:none</testNGArtifactName>
+               <disableXmlReport>false</disableXmlReport>
                <properties>
                   <property>
                      <name>listener</name>
                      <value>${junitListener}</value>
                   </property>
                </properties>
+               <argLine>${forkJvmArgs} ${jigsawForkJvmArgs}</argLine>
             </configuration>
             <executions>
                <execution>
@@ -230,6 +234,7 @@
                      <goal>unpack</goal>
                   </goals>
                   <configuration>
+                     <skip>${skipTests}</skip>
                      <artifactItems>
                         <artifactItem>
                            <groupId>org.wildfly</groupId>
@@ -268,12 +273,40 @@
                </execution>
             </executions>
          </plugin>
+         <plugin>
+            <groupId>com.github.alexcojocaru</groupId>
+            <artifactId>elasticsearch-maven-plugin</artifactId>
+            <configuration>
+               <version>${version.elasticsearch}</version>
+               <skip>${skipTests}</skip>
+               <clusterName>elasticTestCluster</clusterName>
+               <tcpPort>9300</tcpPort>
+               <httpPort>9200</httpPort>
+               <pathConf>${project.basedir}/src/elasticsearch-config</pathConf>
+            </configuration>
+            <executions>
+               <execution>
+                  <id>start-elasticsearch</id>
+                  <phase>pre-integration-test</phase>
+                  <goals>
+                     <goal>runforked</goal>
+                  </goals>
+               </execution>
+               <execution>
+                  <id>stop-elasticsearch</id>
+                  <phase>post-integration-test</phase>
+                  <goals>
+                     <goal>stop</goal>
+                  </goals>
+               </execution>
+            </executions>
+         </plugin>
 
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-resources-plugin</artifactId>
             <executions>
-
+               <!-- Copy the AS configuration files so we can use our custom configurations -->
                <execution>
                   <id>configure-as-node1</id>
                   <phase>pre-integration-test</phase>
@@ -281,6 +314,7 @@
                      <goal>copy-resources</goal>
                   </goals>
                   <configuration>
+                     <skip>${skipTests}</skip>
                      <outputDirectory>${project.build.directory}/node2/wildfly-${version.org.wildfly}</outputDirectory>
                      <overwrite>true</overwrite>
                      <resources>
@@ -297,6 +331,7 @@
                      <goal>copy-resources</goal>
                   </goals>
                   <configuration>
+                     <skip>${skipTests}</skip>
                      <outputDirectory>${project.build.directory}/node1/wildfly-${version.org.wildfly}</outputDirectory>
                      <overwrite>true</overwrite>
                      <resources>
@@ -306,6 +341,7 @@
                      </resources>
                   </configuration>
                </execution>
+
             </executions>
          </plugin>
 
@@ -337,6 +373,9 @@
                   <configuration>
                      <skip>${skipTests}</skip>
                      <target>
+                        <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="kill-server">
+                           <property name="hotrod.port" value="11222" />
+                        </ant>
                         <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="start-server">
                            <property name="server.dist" value="${ispnserver.dist}" />
                            <property name="port.offset" value="0" />
@@ -370,4 +409,24 @@
 
       </plugins>
    </build>
+
+   <profiles>
+      <profile>
+         <id>smoke</id>
+         <properties>
+            <skipTests>true</skipTests>
+         </properties>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-failsafe-plugin</artifactId>
+                  <configuration>
+                     <skipITs>${skipTests}</skipITs>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

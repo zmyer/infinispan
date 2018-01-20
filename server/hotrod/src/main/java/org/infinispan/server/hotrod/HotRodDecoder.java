@@ -1,6 +1,5 @@
 package org.infinispan.server.hotrod;
 
-import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.function.Predicate;
 
@@ -74,7 +73,7 @@ public class HotRodDecoder extends ByteToMessageDecoder {
    protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
       try {
          if (CacheDecodeContext.isTrace) {
-            log.tracef("Decode using instance @%x", System.identityHashCode(this));
+            log.tracef("Decode buffer %s using instance @%x", dumpHexByteBuf(in), System.identityHashCode(this));
          }
 
          if (resetRequested) {
@@ -90,8 +89,7 @@ public class HotRodDecoder extends ByteToMessageDecoder {
             // These are all fall through cases which means they call to the one below if they needed additional
             // processing
             case DECODE_HEADER:
-               if (!decodeHeader(((InetSocketAddress) ctx.channel().remoteAddress()).getAddress().isLoopbackAddress(),
-                     in, out)) {
+               if (!decodeHeader(in, out)) {
                   break;
                }
                state(HotRodDecoderState.DECODE_KEY, in);
@@ -131,7 +129,24 @@ public class HotRodDecoder extends ByteToMessageDecoder {
       }
    }
 
-   boolean decodeHeader(boolean isLoopBack, ByteBuf in, List<Object> out) throws Exception {
+   private static String dumpHexByteBuf(ByteBuf in) {
+      int maxLength = 32;
+      StringBuilder sb = new StringBuilder(maxLength * 2 + 20);
+      sb.append('(').append(in.readableBytes()).append(')');
+      int startIndex;
+      if (in.readableBytes() < maxLength) {
+         startIndex = in.readerIndex();
+      } else {
+         startIndex = in.writerIndex() - maxLength;
+         sb.append("...");
+      }
+      for (int i = startIndex; i < in.writerIndex(); i++) {
+         Util.addHexByte(sb, in.getByte(i));
+      }
+      return sb.toString();
+   }
+
+   boolean decodeHeader(ByteBuf in, List<Object> out) throws Exception {
       boolean shouldContinue = readHeader(in);
       // If there was nothing present it means we throw this decoding away and start fresh
       if (!shouldContinue) {
@@ -142,7 +157,7 @@ public class HotRodDecoder extends ByteToMessageDecoder {
       if (ignoreCache.test(header.cacheName)) {
          throw new CacheUnavailableException();
       }
-      decodeCtx.obtainCache(cacheManager, isLoopBack);
+      decodeCtx.obtainCache(cacheManager);
       HotRodOperation op = header.op;
       switch (op.getDecoderRequirements()) {
          case HEADER_CUSTOM:
@@ -262,11 +277,11 @@ public class HotRodDecoder extends ByteToMessageDecoder {
       // If we want a single key read that - else we do try for custom read
       if (op.requiresKey()) {
          byte[] bytes = ExtendedByteBufJava.readMaybeRangedBytes(in);
-         if (CacheDecodeContext.isTrace) {
-            log.tracef("Body key: %s", Util.toHexString(bytes));
-         }
          // If the bytes don't exist then we need to reread
          if (bytes != null) {
+            if (CacheDecodeContext.isTrace) {
+               log.tracef("Body key: %s", Util.printArray(bytes));
+            }
             decodeCtx.key = bytes;
          } else {
             return false;
@@ -323,7 +338,7 @@ public class HotRodDecoder extends ByteToMessageDecoder {
          in.readBytes(bytes);
          decodeCtx.operationDecodeContext = bytes;
          if (CacheDecodeContext.isTrace) {
-            log.tracef("Body value: %s", Util.toHexString(bytes));
+            log.tracef("Body value: %s", Util.printArray(bytes));
          }
       }
       switch (op.getDecoderRequirements()) {

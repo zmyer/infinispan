@@ -45,7 +45,7 @@ public class InfinispanResourceDescriptionResolver extends SubsystemResourceDesc
     private Map<String, String> sharedAttributeResolver = new HashMap<>();
 
     InfinispanResourceDescriptionResolver() {
-        this(Collections.<String>emptyList());
+        this(Collections.emptyList());
     }
 
     InfinispanResourceDescriptionResolver(String keyPrefix) {
@@ -174,6 +174,7 @@ public class InfinispanResourceDescriptionResolver extends SubsystemResourceDesc
         sharedAttributeResolver.put(ModelKeys.READ_ONLY, "store");
         sharedAttributeResolver.put(ModelKeys.SHARED, "store");
         sharedAttributeResolver.put(ModelKeys.SINGLETON, "store");
+        sharedAttributeResolver.put(ModelKeys.MAX_BATCH_SIZE, "store");
         sharedAttributeResolver.put(ModelKeys.PROPERTY, "store");
         sharedAttributeResolver.put(ModelKeys.PROPERTIES, "store");
 
@@ -187,8 +188,6 @@ public class InfinispanResourceDescriptionResolver extends SubsystemResourceDesc
         sharedAttributeResolver.put(ModelKeys.ID_COLUMN + ".column", "jdbc-store");
         sharedAttributeResolver.put(ModelKeys.DATA_COLUMN + ".column", "jdbc-store");
         sharedAttributeResolver.put(ModelKeys.TIMESTAMP_COLUMN + ".column", "jdbc-store");
-        sharedAttributeResolver.put(ModelKeys.ENTRY_TABLE + "table", "jdbc-store");
-        sharedAttributeResolver.put(ModelKeys.BUCKET_TABLE + "table", "jdbc-store");
 
         // shared cache metrics
         sharedAttributeResolver.put(MetricKeys.AVERAGE_READ_TIME, "cache");
@@ -206,9 +205,11 @@ public class InfinispanResourceDescriptionResolver extends SubsystemResourceDesc
         sharedAttributeResolver.put(MetricKeys.MISSES, "cache");
         sharedAttributeResolver.put(MetricKeys.SITES_MIXED, "cache");
         sharedAttributeResolver.put(MetricKeys.NUMBER_OF_ENTRIES, "cache");
+        sharedAttributeResolver.put(MetricKeys.NUMBER_OF_ENTRIES_IN_MEMORY, "cache");
         sharedAttributeResolver.put(MetricKeys.NUMBER_OF_LOCKS_AVAILABLE, "cache");
         sharedAttributeResolver.put(MetricKeys.NUMBER_OF_LOCKS_HELD, "cache");
         sharedAttributeResolver.put(MetricKeys.OFF_HEAP_MEMORY_USED, "cache");
+        sharedAttributeResolver.put(MetricKeys.MINIMUM_REQUIRED_NODES, "cache");
         sharedAttributeResolver.put(MetricKeys.SITES_OFFLINE, "cache");
         sharedAttributeResolver.put(MetricKeys.SITES_ONLINE, "cache");
         sharedAttributeResolver.put(MetricKeys.PREPARES, "cache");
@@ -240,6 +241,7 @@ public class InfinispanResourceDescriptionResolver extends SubsystemResourceDesc
         sharedAttributeResolver.put(ModelKeys.MEMORY, null);
         sharedAttributeResolver.put(ModelKeys.EVICTION, null);
         sharedAttributeResolver.put(ModelKeys.EXPIRATION, null);
+        sharedAttributeResolver.put(ModelKeys.ENCODING, null);
         sharedAttributeResolver.put(ModelKeys.INDEXING, null);
         sharedAttributeResolver.put(ModelKeys.STATE_TRANSFER, null);
         sharedAttributeResolver.put(ModelKeys.PARTITION_HANDLING, null);

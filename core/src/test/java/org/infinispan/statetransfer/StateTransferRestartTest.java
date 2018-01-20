@@ -13,6 +13,8 @@ import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.globalstate.NoOpGlobalConfigurationManager;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.rpc.ResponseFilter;
@@ -23,7 +25,7 @@ import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.test.fwk.TransportFlags;
-import org.infinispan.transaction.lookup.DummyTransactionManagerLookup;
+import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.jgroups.protocols.DISCARD;
 import org.testng.annotations.Test;
 
@@ -50,12 +52,12 @@ public class StateTransferRestartTest extends MultipleCacheManagersTest {
 
       @Override
       public CompletableFuture<Map<Address, Response>> invokeRemotelyAsync(Collection<Address> recipients,
-                                                                           ReplicableCommand rpcCommand,
+                                                                           ReplicableCommand command,
                                                                            ResponseMode mode, long timeout,
                                                                            ResponseFilter responseFilter,
                                                                            DeliverOrder deliverOrder,
-                                                                           boolean anycast) throws Exception {
-         if (callOnStateResponseCommand != null && rpcCommand.getClass() == StateResponseCommand.class) {
+                                                                           boolean anycast) {
+         if (callOnStateResponseCommand != null && command.getClass() == StateResponseCommand.class) {
             log.trace("Ignoring StateResponseCommand");
             try {
                callOnStateResponseCommand.call();
@@ -64,7 +66,7 @@ public class StateTransferRestartTest extends MultipleCacheManagersTest {
             }
             return CompletableFuture.completedFuture(Collections.emptyMap());
          }
-         return super.invokeRemotelyAsync(recipients, rpcCommand, mode, timeout, responseFilter, deliverOrder, anycast);
+         return super.invokeRemotelyAsync(recipients, command, mode, timeout, responseFilter, deliverOrder, anycast);
       }
    }
 
@@ -73,13 +75,18 @@ public class StateTransferRestartTest extends MultipleCacheManagersTest {
    @Override
    protected void createCacheManagers() throws Throwable {
       cfgBuilder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
-      cfgBuilder.transaction().transactionManagerLookup(new DummyTransactionManagerLookup());
+      cfgBuilder.transaction().transactionManagerLookup(new EmbeddedTransactionManagerLookup());
       cfgBuilder.clustering().hash().numOwners(2);
       cfgBuilder.clustering().stateTransfer().fetchInMemoryState(true);
       cfgBuilder.clustering().stateTransfer().timeout(20000);
 
       gcfgBuilder = new GlobalConfigurationBuilder();
       gcfgBuilder.transport().transport(mockTransport);
+   }
+
+   @Override
+   protected void amendCacheManagerBeforeStart(EmbeddedCacheManager cm) {
+      NoOpGlobalConfigurationManager.amendCacheManager(cm);
    }
 
    public void testStateTransferRestart() throws Throwable {
@@ -96,7 +103,7 @@ public class StateTransferRestartTest extends MultipleCacheManagersTest {
       for (int k = 0; k < numKeys; k++) {
          c0.put(k, k);
       }
-      TestingUtil.waitForRehashToComplete(c0, c1);
+      TestingUtil.waitForNoRebalance(c0, c1);
 
       assertEquals(numKeys, c0.entrySet().size());
       assertEquals(numKeys, c1.entrySet().size());
@@ -107,7 +114,6 @@ public class StateTransferRestartTest extends MultipleCacheManagersTest {
             try {
                DISCARD d3 = TestingUtil.getDiscardForCache(c1);
                d3.setDiscardAll(true);
-               d3.setExcludeItself(true);
                TestingUtil.killCacheManagers(manager(c1));
             } catch (Exception e) {
                log.info("there was some exception while killing cache");

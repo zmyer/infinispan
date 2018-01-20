@@ -23,6 +23,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
    private final CustomInterceptorsConfigurationBuilder customInterceptors;
    private final DataContainerConfigurationBuilder dataContainer;
    private final DeadlockDetectionConfigurationBuilder deadlockDetection;
+   private final EncodingConfigurationBuilder encoding;
    private final EvictionConfigurationBuilder eviction;
    private final ExpirationConfigurationBuilder expiration;
    private final IndexingConfigurationBuilder indexing;
@@ -35,7 +36,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
    private final TransactionConfigurationBuilder transaction;
    private final VersioningConfigurationBuilder versioning;
    private final UnsafeConfigurationBuilder unsafe;
-   private final List<Builder<?>> modules = new ArrayList<Builder<?>>();
+   private final List<Builder<?>> modules = new ArrayList<>();
    private final SitesConfigurationBuilder sites;
    private final CompatibilityModeConfigurationBuilder compatibility;
    private final MemoryConfigurationBuilder memory;
@@ -49,6 +50,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
       this.customInterceptors = new CustomInterceptorsConfigurationBuilder(this);
       this.dataContainer = new DataContainerConfigurationBuilder(this);
       this.deadlockDetection = new DeadlockDetectionConfigurationBuilder(this);
+      this.encoding = new EncodingConfigurationBuilder(this);
       this.eviction = new EvictionConfigurationBuilder(this);
       this.expiration = new ExpirationConfigurationBuilder(this);
       this.indexing = new IndexingConfigurationBuilder(this);
@@ -92,16 +94,24 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
       return dataContainer;
    }
 
+   /**
+    * @deprecated Since 9.0, deadlock detection is always disabled.
+    */
+   @Deprecated
    @Override
    public DeadlockDetectionConfigurationBuilder deadlockDetection() {
       return deadlockDetection;
    }
 
+   @Override
+   public EncodingConfigurationBuilder encoding() {
+      return encoding;
+   }
+
    /**
-    *
-    * @return
-    * @deprecated Use {@link ConfigurationBuilder#memory()} instead
+    * @deprecated Since 9.0, Use {@link ConfigurationBuilder#memory()} instead
     */
+   @Deprecated
    @Override
    public EvictionConfigurationBuilder eviction() {
       return eviction;
@@ -127,6 +137,10 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
       return jmxStatistics;
    }
 
+   /**
+    * Deprecated since 9.0, please use {@link ConfigurationBuilder#memory()} instead.
+    */
+   @Deprecated
    @Override
    public StoreAsBinaryConfigurationBuilder storeAsBinary() {
       return storeAsBinary;
@@ -201,6 +215,10 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
       return this;
    }
 
+   public boolean template() {
+      return template;
+   }
+
    @SuppressWarnings("unchecked")
    public void validate() {
       if (attributes.attribute(SIMPLE_CACHE).get()) {
@@ -210,7 +228,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
       for (Builder<?> validatable:
             asList(clustering, customInterceptors, dataContainer, deadlockDetection, eviction, expiration, indexing,
                    invocationBatching, jmxStatistics, persistence, locking, storeAsBinary, transaction,
-                   versioning, unsafe, sites, compatibility)) {
+                   versioning, unsafe, sites, compatibility, memory)) {
          try {
             validatable.validate();
          } catch (RuntimeException e) {
@@ -234,7 +252,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
             || !persistence.stores().isEmpty()
             || invocationBatching.isEnabled()
             || indexing.enabled()
-            || storeAsBinary.create().enabled()
+            || memory.create().storageType() == StorageType.BINARY
             || compatibility.create().enabled()) {
          throw log.notSupportedInSimpleCache();
       }
@@ -246,7 +264,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
       for (ConfigurationChildBuilder validatable:
             asList(clustering, customInterceptors, dataContainer, deadlockDetection, eviction, expiration, indexing,
                    invocationBatching, jmxStatistics, persistence, locking, storeAsBinary, transaction,
-                   versioning, unsafe, sites, compatibility, security)) {
+                   versioning, unsafe, sites, compatibility, security, memory)) {
          try {
             validatable.validate(globalConfig);
          } catch (RuntimeException e) {
@@ -271,12 +289,12 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
       if (validate) {
          validate();
       }
-      List<Object> modulesConfig = new LinkedList<Object>();
+      List<Object> modulesConfig = new LinkedList<>();
       for (Builder<?> module : modules)
          modulesConfig.add(module.create());
       return new Configuration(template, attributes.protect(), clustering.create(), customInterceptors.create(),
                dataContainer.create(), deadlockDetection.create(), eviction.create(),
-               expiration.create(), indexing.create(), invocationBatching.create(),
+               expiration.create(), encoding.create(), indexing.create(), invocationBatching.create(),
                jmxStatistics.create(), persistence.create(), locking.create(), security.create(),
                storeAsBinary.create(), transaction.create(), unsafe.create(), versioning.create(), sites.create(),
                compatibility.create(), memory.create(),
@@ -304,6 +322,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
       this.versioning.read(template.versioning());
       this.compatibility.read(template.compatibility());
       this.memory.read(template.memory());
+      this.encoding.read(template.encoding());
 
       for (Object c : template.modules().values()) {
          Builder<Object> builder = this.addModule(ConfigurationUtils.builderFor(c));

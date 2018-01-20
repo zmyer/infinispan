@@ -23,6 +23,7 @@ import org.infinispan.notifications.cachelistener.annotation.CacheEntryModified;
 import org.infinispan.notifications.cachelistener.annotation.CacheEntryRemoved;
 import org.infinispan.notifications.cachelistener.event.CacheEntryEvent;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.fwk.InCacheMode;
 import org.infinispan.test.fwk.TestResourceTracker;
 import org.testng.annotations.Test;
 
@@ -33,7 +34,8 @@ import org.testng.annotations.Test;
  * @author wburns
  * @since 7.0
  */
-@Test(groups = "stress", testName = "notifications.cachelistener.cluster.ClusterListenerStressTest")
+@Test(groups = "stress", testName = "notifications.cachelistener.cluster.ClusterListenerStressTest", timeOut = 15*60*1000)
+@InCacheMode({ CacheMode.DIST_SYNC, CacheMode.SCATTERED_SYNC })
 public class ClusterListenerStressTest extends MultipleCacheManagersTest {
    protected final static String CACHE_NAME = "cluster-listener";
    protected final static String KEY = "ClusterListenerStressTestKey";
@@ -43,10 +45,9 @@ public class ClusterListenerStressTest extends MultipleCacheManagersTest {
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      Configuration distConfig = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, false).build();
+      Configuration distConfig = getDefaultClusteredCacheConfig(cacheMode, false).build();
       for (int i = 0; i < NUM_NODES; i++) {
          GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder();
-         gcb.globalJmxStatistics().allowDuplicateDomains(true);
          gcb.transport().defaultTransport().nodeName(TestResourceTracker.getNameForIndex(i));
          BlockingThreadPoolExecutorFactory remoteExecutorFactory = new BlockingThreadPoolExecutorFactory(
                10, 1, 0, 60000);

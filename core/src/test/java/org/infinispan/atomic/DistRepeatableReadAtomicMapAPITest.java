@@ -22,11 +22,10 @@ public class DistRepeatableReadAtomicMapAPITest extends RepeatableReadAtomicMapA
       ConfigurationBuilder c = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
       c.transaction()
             .transactionMode(TransactionMode.TRANSACTIONAL)
-            .syncCommitPhase(true)
             .lockingMode(LockingMode.PESSIMISTIC)
             .locking().isolationLevel(IsolationLevel.REPEATABLE_READ)
             .locking().lockAcquisitionTimeout(TestingUtil.shortTimeoutMillis());
-      c.clustering().hash().numOwners(1);
+      c.clustering().hash().numOwners(1).groups().enabled();
       createClusteredCaches(2, "atomic", c);
    }
 }

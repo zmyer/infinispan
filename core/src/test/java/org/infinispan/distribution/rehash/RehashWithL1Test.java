@@ -6,7 +6,6 @@ import static org.testng.AssertJUnit.assertNull;
 
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -14,6 +13,7 @@ import org.infinispan.commons.marshall.Externalizer;
 import org.infinispan.commons.marshall.SerializeWith;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
@@ -26,7 +26,7 @@ import org.testng.annotations.Test;
  * @author Galder Zamarreño
  * @since 5.2
  */
-@Test(groups = "functional", testName = "distribution.rehash.RehashWithL1Test")
+@Test(groups = {"functional", "unstable"}, testName = "distribution.rehash.RehashWithL1Test", description = "See ISPN-7801")
 public class RehashWithL1Test extends MultipleCacheManagersTest {
 
    ConfigurationBuilder builder;
@@ -100,14 +100,14 @@ public class RehashWithL1Test extends MultipleCacheManagersTest {
    }
 
    @SerializeWith(MyBaseControlledConsistentHashFactory.Ext.class)
-   private static class MyBaseControlledConsistentHashFactory extends BaseControlledConsistentHashFactory {
+   private static class MyBaseControlledConsistentHashFactory extends BaseControlledConsistentHashFactory<DefaultConsistentHash> {
       public MyBaseControlledConsistentHashFactory() {
-         super(1);
+         super(new DefaultTrait(), 1);
       }
 
       @Override
-      protected List<Address> createOwnersCollection(List<Address> members, int numberOfOwners, int segmentIndex) {
-         return Collections.singletonList(members.get(members.size() - 1));
+      protected int[][] assignOwners(int numSegments, int numOwners, List<Address> members) {
+         return new int[][]{{members.size() - 1}};
       }
 
       public static final class Ext implements Externalizer<MyBaseControlledConsistentHashFactory> {

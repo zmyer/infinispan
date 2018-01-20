@@ -9,9 +9,9 @@ import org.infinispan.commands.tx.totalorder.TotalOrderPrepareCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedCommitCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.interceptors.totalorder.RetryPrepareException;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
 import org.infinispan.remoting.responses.ExceptionResponse;
+import org.infinispan.statetransfer.OutdatedTopologyException;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.transaction.impl.TotalOrderRemoteTransactionState;
 import org.infinispan.transaction.totalorder.TotalOrderLatch;
@@ -31,12 +31,7 @@ public class TotalOrderTxPerCacheInboundInvocationHandler extends BasePerCacheIn
 
    private static final Log log = LogFactory.getLog(TotalOrderTxPerCacheInboundInvocationHandler.class);
    private static final boolean trace = log.isTraceEnabled();
-   private TotalOrderManager totalOrderManager;
-
-   @Inject
-   public void injectTotalOrderManager(TotalOrderManager totalOrderManager) {
-      this.totalOrderManager = totalOrderManager;
-   }
+   @Inject private TotalOrderManager totalOrderManager;
 
    @Override
    public void handle(CacheRpcCommand command, Reply reply, DeliverOrder order) {
@@ -107,12 +102,12 @@ public class TotalOrderTxPerCacheInboundInvocationHandler extends BasePerCacheIn
 
          @Override
          protected void onException(Throwable throwable) {
-            if (throwable instanceof RetryPrepareException) {
-               RetryPrepareException retry = (RetryPrepareException) throwable;
-               log.debugf(retry, "Prepare [%s] conflicted with state transfer", command);
-               response = new ExceptionResponse(retry);
+            if (throwable instanceof OutdatedTopologyException) {
+               if (trace)
+                  log.tracef(throwable, "Prepare [%s] conflicted with state transfer. Releasing state and retrying.", command);
+            } else {
+               log.debugf("Exception received on prepare. Releasing state.");
             }
-            log.debugf("Exception received on prepare. Releasing state.");
             totalOrderManager.release(state);
          }
 

@@ -11,6 +11,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -23,6 +24,7 @@ import org.infinispan.container.DataContainer;
 import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.distexec.DistributedCallable;
 import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
@@ -34,8 +36,11 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.transaction.impl.LocalTransaction;
+import org.infinispan.transaction.impl.TransactionOriginatorChecker;
 import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.transaction.xa.CacheTransaction;
+import org.infinispan.transaction.xa.GlobalTransaction;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -51,59 +56,33 @@ public class StateProviderImpl implements StateProvider {
    private static final Log log = LogFactory.getLog(StateProviderImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   private String cacheName;
-   private Configuration configuration;
-   private RpcManager rpcManager;
-   private CommandsFactory commandsFactory;
-   private ClusterCacheNotifier clusterCacheNotifier;
-   private TransactionTable transactionTable;     // optional
-   private DataContainer dataContainer;
-   private PersistenceManager persistenceManager; // optional
-   private ExecutorService executorService;
-   private StateTransferLock stateTransferLock;
-   private InternalEntryFactory entryFactory;
-   private long timeout;
-   private int chunkSize;
+   @Inject private Cache cache;
+   @Inject private Configuration configuration;
+   @Inject protected RpcManager rpcManager;
+   @Inject protected CommandsFactory commandsFactory;
+   @Inject private ClusterCacheNotifier clusterCacheNotifier;
+   @Inject private TransactionTable transactionTable;     // optional
+   @Inject protected DataContainer dataContainer;
+   @Inject protected PersistenceManager persistenceManager; // optional
+   @Inject @ComponentName(ASYNC_TRANSPORT_EXECUTOR)
+   protected ExecutorService executorService;
+   @Inject protected StateTransferLock stateTransferLock;
+   @Inject protected InternalEntryFactory entryFactory;
+   @Inject protected KeyPartitioner keyPartitioner;
+   @Inject protected StateConsumer stateConsumer;
+   @Inject private TransactionOriginatorChecker transactionOriginatorChecker;
 
-   private StateConsumer stateConsumer;
+   protected String cacheName;
+   protected long timeout;
+   protected int chunkSize;
 
    /**
     * A map that keeps track of current outbound state transfers by destination address. There could be multiple transfers
     * flowing to the same destination (but for different segments) so the values are lists.
     */
-   private final Map<Address, List<OutboundTransferTask>> transfersByDestination = new HashMap<Address, List<OutboundTransferTask>>();
+   private final Map<Address, List<OutboundTransferTask>> transfersByDestination = new HashMap<>();
 
    public StateProviderImpl() {
-   }
-
-   @Inject
-   public void init(Cache cache,
-                    @ComponentName(ASYNC_TRANSPORT_EXECUTOR) ExecutorService executorService, //TODO Use a dedicated ExecutorService
-                    Configuration configuration,
-                    RpcManager rpcManager,
-                    CommandsFactory commandsFactory,
-                    ClusterCacheNotifier clusterCacheNotifier,
-                    PersistenceManager persistenceManager,
-                    DataContainer dataContainer,
-                    TransactionTable transactionTable,
-                    StateTransferLock stateTransferLock,
-                    StateConsumer stateConsumer, InternalEntryFactory entryFactory) {
-      this.cacheName = cache.getName();
-      this.executorService = executorService;
-      this.configuration = configuration;
-      this.rpcManager = rpcManager;
-      this.commandsFactory = commandsFactory;
-      this.clusterCacheNotifier = clusterCacheNotifier;
-      this.persistenceManager = persistenceManager;
-      this.dataContainer = dataContainer;
-      this.transactionTable = transactionTable;
-      this.stateTransferLock = stateTransferLock;
-      this.stateConsumer = stateConsumer;
-      this.entryFactory = entryFactory;
-
-      timeout = configuration.clustering().stateTransfer().timeout();
-
-      this.chunkSize = configuration.clustering().stateTransfer().chunkSize();
    }
 
    public boolean isStateTransferInProgress() {
@@ -112,12 +91,11 @@ public class StateProviderImpl implements StateProvider {
       }
    }
 
-   public void onTopologyUpdate(CacheTopology cacheTopology, boolean isRebalance) {
+   public CompletableFuture<Void> onTopologyUpdate(CacheTopology cacheTopology, boolean isRebalance) {
       // Cancel outbound state transfers for destinations that are no longer members in new topology
       // If the rebalance was cancelled, stop every outbound transfer. This will prevent "leaking" transfers
       // from one rebalance to the next.
-      boolean stateTransferInProgress = cacheTopology.getPendingCH() != null;
-      Set<Address> members = new HashSet<Address>(cacheTopology.getWriteConsistentHash().getMembers());
+      Set<Address> members = new HashSet<>(cacheTopology.getWriteConsistentHash().getMembers());
       synchronized (transfersByDestination) {
          for (Iterator<Address> it = transfersByDestination.keySet().iterator(); it.hasNext(); ) {
             Address destination = it.next();
@@ -130,13 +108,16 @@ public class StateProviderImpl implements StateProvider {
             }
          }
       }
-
+      return CompletableFutures.completedNull();
       //todo [anistor] must cancel transfers for all segments that we no longer own
    }
 
    @Start(priority = 60)
    @Override
    public void start() {
+      this.cacheName = cache.getName();
+      timeout = configuration.clustering().stateTransfer().timeout();
+      chunkSize = configuration.clustering().stateTransfer().chunkSize();
    }
 
    @Stop(priority = 0)
@@ -176,7 +157,7 @@ public class StateProviderImpl implements StateProvider {
          throw new IllegalArgumentException("Segments " + segments + " are not owned by " + rpcManager.getAddress());
       }
 
-      List<TransactionInfo> transactions = new ArrayList<TransactionInfo>();
+      List<TransactionInfo> transactions = new ArrayList<>();
       //we migrate locks only if the cache is transactional and distributed
       if (configuration.transaction().transactionMode().isTransactional()) {
          collectTransactionsToTransfer(destination, transactions, transactionTable.getRemoteTransactions(), segments, cacheTopology);
@@ -224,24 +205,25 @@ public class StateProviderImpl implements StateProvider {
                                               Collection<? extends CacheTransaction> transactions,
                                               Set<Integer> segments, CacheTopology cacheTopology) {
       int topologyId = cacheTopology.getTopologyId();
-      List<Address> members = cacheTopology.getMembers();
-      ConsistentHash readCh = cacheTopology.getReadConsistentHash();
+      Set<Address> members = new HashSet<>(cacheTopology.getMembers());
 
       // no need to filter out state transfer generated transactions because there should not be any such transactions running for any of the requested segments
       for (CacheTransaction tx : transactions) {
+         final GlobalTransaction gtx = tx.getGlobalTransaction();
          // Skip transactions whose originators left. The topology id check is needed for joiners.
          // Also skip transactions that originates after state transfer starts.
-         if (tx.getTopologyId() == topologyId || !members.contains(tx.getGlobalTransaction().getAddress())) {
+         if (tx.getTopologyId() == topologyId ||
+               (transactionOriginatorChecker.isOriginatorMissing(gtx, members))) {
             if (trace) log.tracef("Skipping transaction %s as it was started in the current topology or by a leaver", tx);
             continue;
          }
 
          // transfer only locked keys that belong to requested segments
-         Set<Object> filteredLockedKeys = new HashSet<Object>();
+         Set<Object> filteredLockedKeys = new HashSet<>();
          Set<Object> lockedKeys = tx.getLockedKeys();
          synchronized (lockedKeys) {
             for (Object key : lockedKeys) {
-               if (segments.contains(readCh.getSegment(key))) {
+               if (segments.contains(keyPartitioner.getSegment(key))) {
                   filteredLockedKeys.add(key);
                }
             }
@@ -249,7 +231,7 @@ public class StateProviderImpl implements StateProvider {
          Set<Object> backupLockedKeys = tx.getBackupLockedKeys();
          synchronized (backupLockedKeys) {
             for (Object key : backupLockedKeys) {
-               if (segments.contains(readCh.getSegment(key))) {
+               if (segments.contains(keyPartitioner.getSegment(key))) {
                   filteredLockedKeys.add(key);
                }
             }
@@ -272,41 +254,38 @@ public class StateProviderImpl implements StateProvider {
             LocalTransaction localTx = (LocalTransaction) tx;
             localTx.locksAcquired(Collections.singleton(destination));
             if (trace) log.tracef("Adding affected node %s to transferred transaction %s (keys %s)", destination,
-                  tx.getGlobalTransaction(), filteredLockedKeys);
+                  gtx, filteredLockedKeys);
          }
-         transactionsToTransfer.add(new TransactionInfo(tx.getGlobalTransaction(), tx.getTopologyId(),
+         transactionsToTransfer.add(new TransactionInfo(gtx, tx.getTopologyId(),
                modifications, filteredLockedKeys));
       }
    }
 
    @Override
-   public void startOutboundTransfer(Address destination, int requestTopologyId, Set<Integer> segments)
+   public void startOutboundTransfer(Address destination, int requestTopologyId, Set<Integer> segments, boolean applyState)
          throws InterruptedException {
       if (trace) {
          log.tracef("Starting outbound transfer to node %s for cache %s, topology id %d, segments %s", destination,
                     cacheName, requestTopologyId, segments);
       }
 
-      final CacheTopology cacheTopology = getCacheTopology(requestTopologyId, destination, false);
-
       // the destination node must already have an InboundTransferTask waiting for these segments
       OutboundTransferTask outboundTransfer = new OutboundTransferTask(destination, segments, chunkSize, requestTopologyId,
-            cacheTopology.getReadConsistentHash(), this, dataContainer, persistenceManager, rpcManager, commandsFactory, entryFactory, timeout, cacheName);
+            keyPartitioner, this::onTaskCompletion, chunks -> {},
+            OutboundTransferTask::defaultMapEntryFromDataContainer, OutboundTransferTask::defaultMapEntryFromStore,
+            dataContainer, persistenceManager, rpcManager, commandsFactory, entryFactory, timeout, cacheName, applyState, false);
       addTransfer(outboundTransfer);
       outboundTransfer.execute(executorService);
    }
 
-   private void addTransfer(OutboundTransferTask transferTask) {
+   protected void addTransfer(OutboundTransferTask transferTask) {
       if (trace) {
          log.tracef("Adding outbound transfer to %s for segments %s", transferTask.getDestination(),
                     transferTask.getSegments());
       }
       synchronized (transfersByDestination) {
-         List<OutboundTransferTask> transfers = transfersByDestination.get(transferTask.getDestination());
-         if (transfers == null) {
-            transfers = new ArrayList<OutboundTransferTask>();
-            transfersByDestination.put(transferTask.getDestination(), transfers);
-         }
+         List<OutboundTransferTask> transfers = transfersByDestination
+               .computeIfAbsent(transferTask.getDestination(), k -> new ArrayList<>());
          transfers.add(transferTask);
       }
    }
@@ -344,7 +323,7 @@ public class StateProviderImpl implements StateProvider {
       }
    }
 
-   void onTaskCompletion(OutboundTransferTask transferTask) {
+   protected void onTaskCompletion(OutboundTransferTask transferTask) {
       if (trace) {
          log.tracef("Removing %s outbound transfer of segments to %s for cache %s, segments %s",
                     transferTask.isCancelled() ? "cancelled" : "completed", transferTask.getDestination(),

@@ -29,6 +29,7 @@ import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.configuration.cache.CacheMode;
 import org.jboss.as.controller.OperationFailedException;
 import org.jboss.as.controller.persistence.ConfigurationPersistenceException;
+import org.jboss.as.domain.management.SecurityRealm;
 import org.jboss.as.network.OutboundSocketBinding;
 import org.jboss.logging.Messages;
 import org.jboss.logging.annotations.Cause;
@@ -236,7 +237,7 @@ public interface InfinispanMessages {
      * Creates an exception indicating an invalid compatibility marshaller.
      *
      * @param cause the cause of the error.
-     * @param cacheLoaderName the name of the marshaller.
+     * @param marshallerClassName the name of the marshaller.
      *
      * @return an {@link IllegalArgumentException} for the error.
      */
@@ -271,4 +272,25 @@ public interface InfinispanMessages {
 
    @Message(id = 123, value = "%s has been removed since 9.0.0. Please use %s instead")
    CacheConfigurationException removeJDBCStoreSpecified(String oldStore, String newStore);
+
+   @Message(id = 124, value = "Could not inject resolve destination address for outbound socket binding named '%s'")
+   InjectionException failedToInjectSecurityRealm(@Cause UnknownHostException cause, SecurityRealm realm);
+
+   @Message(id = 125, value = "%s is not a valid EntryMergePolicy")
+   IllegalArgumentException invalidEntryMergePolicy(@Cause Throwable cause, String mergePolicy);
+
+   @Message(id = 126, value = "Cannot create cache '%s'")
+   CacheConfigurationException cannotCreateCache(@Cause Throwable cause, String name);
+
+   @Message(id = 127, value = "Cannot remove cache '%s'")
+   CacheConfigurationException cannotRemoveCache(@Cause Throwable e, String name);
+
+   @Message(id = 128, value = "Cache '%s' does not exist")
+   CacheConfigurationException nonExistingCache(String name);
+
+   @Message(id = 129, value = "Cannot create non-permanent cache '%s'")
+   CacheConfigurationException cannotCreateNonPermamentCache(String name);
+
+   @Message(id = 130, value = "Cannot create cache '%s' since template '%s' does not exist")
+   CacheConfigurationException nonExistingTemplate(String name, String template);
 }

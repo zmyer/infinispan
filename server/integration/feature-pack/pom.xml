@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.infinispan.server</groupId>
         <artifactId>infinispan-server-versions</artifactId>
-        <version>9.0.0-SNAPSHOT</version>
+        <version>9.2.0-SNAPSHOT</version>
         <relativePath>../versions/pom.xml</relativePath>
     </parent>
 
@@ -16,8 +16,44 @@
 
     <dependencies>
 
+        <!-- Prevent infinispan-parent transistive dependencies being loaded-->
+        <dependency>
+            <groupId>org.jboss.logging</groupId>
+            <artifactId>jboss-logging-processor</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
 
         <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.jboss.narayana.jta</groupId>
+            <artifactId>narayana-jta</artifactId>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+       <!-- Feature Pack dependencies -->
+       <dependency>
             <groupId>org.wildfly</groupId>
             <artifactId>wildfly-feature-pack</artifactId>
             <type>zip</type>
@@ -30,7 +66,8 @@
         </dependency>
 
 
-        <dependency>
+       <!-- Main module dependencies -->
+       <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-cachestore-jdbc</artifactId>
             <exclusions>
@@ -275,7 +312,6 @@
         <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-server-rest</artifactId>
-            <classifier>classes</classifier>
             <exclusions>
                 <exclusion>
                     <groupId>*</groupId>
@@ -374,6 +410,28 @@
 
         <dependency>
             <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-clustered-counter</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-multimap</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.infinispan</groupId>
             <artifactId>infinispan-management-console</artifactId>
         </dependency>
 
@@ -383,7 +441,8 @@
         </dependency>
 
 
-        <dependency>
+       <!-- Transitive module dependencies -->
+       <dependency>
             <groupId>commons-codec</groupId>
             <artifactId>commons-codec</artifactId>
         </dependency>
@@ -426,7 +485,63 @@
 
         <dependency>
             <groupId>io.netty</groupId>
-            <artifactId>netty-all</artifactId>
+            <artifactId>netty-buffer</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-http</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-http2</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-native-epoll</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-native-epoll</artifactId>
+            <classifier>linux-x86_64</classifier>
+        </dependency>
+
+        <dependency>
+            <groupId>io.reactivex.rxjava2</groupId>
+            <artifactId>rxjava</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.reactivestreams</groupId>
+            <artifactId>reactive-streams</artifactId>
         </dependency>
 
         <dependency>
@@ -563,12 +678,13 @@
         </dependency>
 
         <dependency>
-            <groupId>org.jboss.resteasy</groupId>
-            <artifactId>resteasy-netty4</artifactId>
+            <groupId>org.jboss.marshalling</groupId>
+            <artifactId>jboss-marshalling-river</artifactId>
+            <version>${version.org.jboss.marshalling.jboss-marshalling}</version>
             <exclusions>
                 <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
+                    <groupId>org.jboss.marshalling</groupId>
+                    <artifactId>jboss-marshalling</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -613,27 +729,7 @@
 
         <dependency>
             <groupId>org.jgroups.kubernetes</groupId>
-            <artifactId>kubernetes</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>org.jgroups.kubernetes</groupId>
-            <artifactId>common</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>org.jgroups.kubernetes</groupId>
-            <artifactId>dns</artifactId>
+            <artifactId>jgroups-kubernetes</artifactId>
             <exclusions>
                 <exclusion>
                     <groupId>*</groupId>
@@ -646,6 +742,17 @@
             <artifactId>oauth</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>agent-bond-agent</artifactId>
+            <version>${version.agent-bond}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
     </dependencies>
 
     <build>
@@ -718,7 +825,7 @@
                                     <rules>
                                         <banTransitiveDependencies>
                                             <excludes>
-
+                                                <!-- Ignore jdk jars because they are system scope -->
                                                 <exclude>com.sun:tools</exclude>
                                                 <exclude>sun.jdk:jconsole</exclude>
                                             </excludes>

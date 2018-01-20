@@ -5,8 +5,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -26,50 +26,35 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.interceptors.distribution.L1WriteSynchronizer;
-import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.Response;
-import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
-import org.infinispan.remoting.rpc.RpcOptions;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.util.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 public class L1ManagerImpl implements L1Manager, RemoteValueRetrievedListener {
-
    private static final Log log = LogFactory.getLog(L1ManagerImpl.class);
-   private final boolean trace = log.isTraceEnabled();
+   private static final boolean trace = log.isTraceEnabled();
 
-   private Configuration configuration;
-   private RpcManager rpcManager;
-   private CommandsFactory commandsFactory;
+   @Inject private Configuration configuration;
+   @Inject private RpcManager rpcManager;
+   @Inject private CommandsFactory commandsFactory;
+   @Inject private TimeService timeService;
+   @Inject @ComponentName(KnownComponentNames.EXPIRATION_SCHEDULED_EXECUTOR)
+   private ScheduledExecutorService scheduledExecutor;
+
    private int threshold;
    private long l1Lifespan;
-
    // TODO replace this with a custom, expirable collection
    private final ConcurrentMap<Object, ConcurrentMap<Address, Long>> requestors;
    private final ConcurrentMap<Object, L1WriteSynchronizer> synchronizers;
-   private ScheduledExecutorService scheduledExecutor;
    private ScheduledFuture<?> scheduledRequestorsCleanupTask;
-   private TimeService timeService;
-
-   private RpcOptions syncIgnoreLeaversRpcOptions;
 
    public L1ManagerImpl() {
       requestors = CollectionFactory.makeConcurrentMap();
       synchronizers = CollectionFactory.makeConcurrentMap();
-   }
-
-   @Inject
-   public void init(Configuration configuration, RpcManager rpcManager, CommandsFactory commandsFactory,
-                    @ComponentName(KnownComponentNames.EXPIRATION_SCHEDULED_EXECUTOR) ScheduledExecutorService scheduledExecutor,
-                    TimeService timeService) {
-      this.rpcManager = rpcManager;
-      this.commandsFactory = commandsFactory;
-      this.configuration = configuration;
-      this.scheduledExecutor = scheduledExecutor;
-      this.timeService = timeService;
    }
 
    @Start (priority = 3)
@@ -77,20 +62,14 @@ public class L1ManagerImpl implements L1Manager, RemoteValueRetrievedListener {
       this.threshold = configuration.clustering().l1().invalidationThreshold();
       this.l1Lifespan = configuration.clustering().l1().lifespan();
       if (configuration.clustering().l1().cleanupTaskFrequency() > 0) {
-         scheduledRequestorsCleanupTask = scheduledExecutor.scheduleAtFixedRate(new Runnable() {
-            @Override
-            public void run() {
-               cleanUpRequestors();
-            }
-         }, configuration.clustering().l1().cleanupTaskFrequency(),
-               configuration.clustering().l1().cleanupTaskFrequency(), TimeUnit.MILLISECONDS);
+         scheduledRequestorsCleanupTask =
+            scheduledExecutor.scheduleAtFixedRate(this::cleanUpRequestors,
+                                                  configuration.clustering().l1().cleanupTaskFrequency(),
+                                                  configuration.clustering().l1().cleanupTaskFrequency(),
+                                                  TimeUnit.MILLISECONDS);
       } else {
          log.warnL1NotHavingReaperThread();
       }
-      // L1 invalidations can ignore a member leaving while sending invalidation, since their value is no longer
-      // cached any longer
-      syncIgnoreLeaversRpcOptions = rpcManager.getRpcOptionsBuilder(ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, DeliverOrder.NONE)
-            .build();
    }
 
    @Stop (priority = 3)
@@ -135,7 +114,7 @@ public class L1ManagerImpl implements L1Manager, RemoteValueRetrievedListener {
    }
 
    @Override
-   public Future<?> flushCache(Collection<Object> keys, Address origin, boolean assumeOriginKeptEntryInL1) {
+   public CompletableFuture<?> flushCache(Collection<Object> keys, Address origin, boolean assumeOriginKeptEntryInL1) {
       final Collection<Address> invalidationAddresses = buildInvalidationAddressList(keys, origin, assumeOriginKeptEntryInL1);
 
       int nodes = invalidationAddresses.size();
@@ -148,13 +127,16 @@ public class L1ManagerImpl implements L1Manager, RemoteValueRetrievedListener {
          boolean multicast = isUseMulticast(nodes);
          if (trace) log.tracef("Invalidating keys %s on nodes %s. Use multicast? %s", keys, invalidationAddresses, multicast);
 
-         CompletableFuture<Map<Address, Response>> future;
+         // L1 invalidations can ignore a member leaving while sending invalidation
+         MapResponseCollector collector = MapResponseCollector.ignoreLeavers();
+         CompletionStage<Map<Address, Response>> request;
          if (multicast) {
-            future = rpcManager.invokeRemotelyAsync(null, rpcCommand, syncIgnoreLeaversRpcOptions);
+            request = rpcManager.invokeCommandOnAll(rpcCommand, collector, rpcManager.getSyncRpcOptions());
          } else {
-            future = rpcManager.invokeRemotelyAsync(invalidationAddresses, rpcCommand, syncIgnoreLeaversRpcOptions);
+            request = rpcManager.invokeCommand(invalidationAddresses, rpcCommand, collector,
+                                               rpcManager.getSyncRpcOptions());
          }
-         return future;
+         return request.toCompletableFuture();
       } else {
          if (trace) log.tracef("No L1 caches to invalidate for keys %s", keys);
          return null;
@@ -162,7 +144,7 @@ public class L1ManagerImpl implements L1Manager, RemoteValueRetrievedListener {
    }
 
    private Collection<Address> buildInvalidationAddressList(Collection<Object> keys, Address origin, boolean assumeOriginKeptEntryInL1) {
-      Collection<Address> addresses = new HashSet<Address>(2);
+      Collection<Address> addresses = new HashSet<>(2);
       boolean originIsInRequestorsList = false;
       for (Object key : keys) {
          ConcurrentMap<Address, Long> as = requestors.remove(key);

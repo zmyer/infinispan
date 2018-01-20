@@ -3,12 +3,12 @@ package org.infinispan.query.backend;
 import org.hibernate.search.spi.IndexingMode;
 import org.hibernate.search.spi.SearchIntegrator;
 import org.infinispan.commands.FlagAffectedCommand;
-import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.context.impl.FlagBitSets;
+import org.infinispan.distribution.DistributionInfo;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.remoting.rpc.RpcManager;
-import org.infinispan.context.impl.FlagBitSets;
 
 /**
  * Defines for which events the Query Interceptor will generate indexing events.
@@ -39,7 +39,13 @@ public enum IndexModificationStrategy {
       @Override
       public boolean shouldModifyIndexes(FlagAffectedCommand command, InvocationContext ctx,
                                          DistributionManager distributionManager, RpcManager rpcManager, Object key) {
-         return !command.hasAnyFlag(FlagBitSets.SKIP_INDEXING);
+         if (key == null || distributionManager == null) {
+            return true;
+         }
+         DistributionInfo info = distributionManager.getCacheTopology().getDistribution(key);
+         // If this is a backup node we should modify the entry in the remote context
+         return info.isPrimary() || info.isWriteOwner() &&
+               (ctx.isInTxScope() || !ctx.isOriginLocal() || command != null && command.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER));
       }
    },
 
@@ -51,9 +57,7 @@ public enum IndexModificationStrategy {
       @Override
       public boolean shouldModifyIndexes(FlagAffectedCommand command, InvocationContext ctx,
                                          DistributionManager distributionManager, RpcManager rpcManager, Object key) {
-         // will index only local updates that were not flagged with SKIP_INDEXING,
-         // are not caused internally by state transfer and indexing strategy is not configured to 'manual'
-         return ctx.isOriginLocal() && !command.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER | FlagBitSets.SKIP_INDEXING);
+         return PRIMARY_OWNER.shouldModifyIndexes(command, ctx, distributionManager, rpcManager, key);
       }
    },
 
@@ -64,9 +68,11 @@ public enum IndexModificationStrategy {
       @Override
       public boolean shouldModifyIndexes(FlagAffectedCommand command, InvocationContext ctx,
                                          DistributionManager distributionManager, RpcManager rpcManager, Object key) {
-         return command instanceof ClearCommand ||
-               !(command.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER) || command.hasAnyFlag(FlagBitSets.SKIP_INDEXING)) &&
-                     (distributionManager == null || distributionManager.getPrimaryLocation(key).equals(rpcManager.getAddress()));
+         if(key == null) {
+            return ctx.isOriginLocal();
+         }
+         return (command == null || !command.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER)) &&
+                     (distributionManager == null || distributionManager.getCacheTopology().getDistribution(key).isPrimary());
 
       }
    };

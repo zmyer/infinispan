@@ -33,15 +33,16 @@ public class TransactionFactory {
 
    private static final Log log = LogFactory.getLog(TransactionFactory.class);
 
-   private TxFactoryEnum txFactoryEnum;
-
-   private Configuration configuration;
+   @Inject private Configuration configuration;
+   @Inject @ComponentName(value = KnownComponentNames.TRANSACTION_VERSION_GENERATOR)
    private VersionGenerator clusterIdGenerator;
-   private TimeService timeService;
+   @Inject private TimeService timeService;
+
+   private TxFactoryEnum txFactoryEnum;
    private boolean isClustered;
 
    public enum TxFactoryEnum {
-
+      @Deprecated
       DLD_RECOVERY_XA {
          @Override
          public LocalTransaction newLocalTransaction(Transaction tx, GlobalTransaction gtx, boolean implicitTransaction,
@@ -75,7 +76,7 @@ public class TransactionFactory {
             return new RecoveryAwareRemoteTransaction(tx, topologyId, txCreationTime);
          }
       },
-
+      @Deprecated
       DLD_NORECOVERY_XA {
          @Override
          public LocalTransaction newLocalTransaction(Transaction tx, GlobalTransaction gtx, boolean implicitTransaction,
@@ -107,7 +108,7 @@ public class TransactionFactory {
             return new RemoteTransaction(tx, topologyId, txCreationTime);
          }
       },
-
+      @Deprecated
       DLD_NORECOVERY_NOXA {
          @Override
          public LocalTransaction newLocalTransaction(Transaction tx, GlobalTransaction gtx, boolean implicitTransaction,
@@ -284,60 +285,30 @@ public class TransactionFactory {
       return txFactoryEnum.newRemoteTransaction(tx, topologyId, timeService.time());
    }
 
-   @Inject
-   public void init(Configuration configuration,
-                    @ComponentName(value = KnownComponentNames.TRANSACTION_VERSION_GENERATOR)VersionGenerator clusterIdGenerator,
-                    TimeService timeService) {
-      this.configuration = configuration;
-      this.clusterIdGenerator = clusterIdGenerator;
-      this.timeService = timeService;
-   }
-
    @Start
    public void start() {
-      boolean dldEnabled = configuration.deadlockDetection().enabled();
       boolean xa = !configuration.transaction().useSynchronization();
       boolean recoveryEnabled = configuration.transaction().recovery().enabled();
       boolean batchingEnabled = configuration.invocationBatching().enabled();
-      init(dldEnabled, recoveryEnabled, xa, batchingEnabled);
+      init(false, recoveryEnabled, xa, batchingEnabled);
       isClustered = configuration.clustering().cacheMode().isClustered();
    }
 
    public void init(boolean dldEnabled, boolean recoveryEnabled, boolean xa, boolean batchingEnabled) {
       if (batchingEnabled) {
-         if (dldEnabled) {
-            txFactoryEnum = TxFactoryEnum.DLD_NORECOVERY_NOXA;
-         } else {
-            txFactoryEnum = TxFactoryEnum.NODLD_NORECOVERY_NOXA;
-         }
+         txFactoryEnum = TxFactoryEnum.NODLD_NORECOVERY_NOXA;
       } else {
-         if (dldEnabled) {
-            if (recoveryEnabled) {
-               if (xa) {
-                  txFactoryEnum = TxFactoryEnum.DLD_RECOVERY_XA;
-               } else { //using synchronisation enlistment
-                  txFactoryEnum = TxFactoryEnum.DLD_NORECOVERY_NOXA;
-               }
-            } else {
-               if (xa) {
-                  txFactoryEnum = TxFactoryEnum.DLD_NORECOVERY_XA;
-               } else {
-                  txFactoryEnum = TxFactoryEnum.DLD_NORECOVERY_NOXA;
-               }
+         if (recoveryEnabled) {
+            if (xa) {
+               txFactoryEnum = TxFactoryEnum.NODLD_RECOVERY_XA;
+            } else { //using synchronisation enlistment
+               txFactoryEnum = TxFactoryEnum.NODLD_NORECOVERY_NOXA;
             }
          } else {
-            if (recoveryEnabled) {
-               if (xa) {
-                  txFactoryEnum = TxFactoryEnum.NODLD_RECOVERY_XA;
-               } else { //using synchronisation enlistment
-                  txFactoryEnum = TxFactoryEnum.NODLD_NORECOVERY_NOXA;
-               }
+            if (xa) {
+               txFactoryEnum = TxFactoryEnum.NODLD_NORECOVERY_XA;
             } else {
-               if (xa) {
-                  txFactoryEnum = TxFactoryEnum.NODLD_NORECOVERY_XA;
-               } else {
-                  txFactoryEnum = TxFactoryEnum.NODLD_NORECOVERY_NOXA;
-               }
+               txFactoryEnum = TxFactoryEnum.NODLD_NORECOVERY_NOXA;
             }
          }
       }

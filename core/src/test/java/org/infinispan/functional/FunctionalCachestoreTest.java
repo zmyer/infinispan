@@ -4,17 +4,12 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
-import java.io.Serializable;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiConsumer;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.infinispan.Cache;
-import org.infinispan.commons.api.functional.EntryView.ReadEntryView;
-import org.infinispan.commons.api.functional.EntryView.WriteEntryView;
 import org.infinispan.persistence.dummy.DummyInMemoryStore;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.testng.annotations.Test;
@@ -38,16 +33,16 @@ public class FunctionalCachestoreTest extends AbstractFunctionalOpTest {
    }
 
    @Test(dataProvider = "owningModeAndWriteMethod")
-   public void testWriteLoad(boolean isSourceOwner, WriteMethod method) throws InterruptedException {
-      Object key = getKey(isSourceOwner);
+   public void testWriteLoad(boolean isSourceOwner, WriteMethod method) throws Exception {
+      Object key = getKey(isSourceOwner, DIST);
 
       List<Cache<Object, Object>> owners = caches(DIST).stream()
             .filter(cache -> cache.getAdvancedCache().getDistributionManager().getLocality(key).isLocal())
             .collect(Collectors.toList());
 
-      method.action.eval(key, wo, rw,
-            (Function<ReadEntryView<Object, String>, Void> & Serializable) view -> { assertFalse(view.find().isPresent()); return null; },
-            (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> view.set("value"), getClass());
+      method.eval(key, wo, rw,
+            view -> { assertFalse(view.find().isPresent()); return null; },
+            (view, nil) -> view.set("value"), getClass());
 
       assertInvocations(2);
 
@@ -61,13 +56,13 @@ public class FunctionalCachestoreTest extends AbstractFunctionalOpTest {
          assertTrue(store.contains(key), getAddress(cache).toString());
       });
 
-      method.action.eval(key, wo, rw,
-            (Function<ReadEntryView<Object, String>, Void> & Serializable) view -> {
+      method.eval(key, wo, rw,
+            view -> {
                assertTrue(view.find().isPresent());
                assertEquals(view.get(), "value");
                return null;
             },
-            (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> {}, getClass());
+            (view, nil) -> {}, getClass());
 
       assertInvocations(4);
    }
@@ -81,9 +76,9 @@ public class FunctionalCachestoreTest extends AbstractFunctionalOpTest {
    public void testWriteLoadLocal(WriteMethod method) {
       Integer key = 1;
 
-      method.action.eval(key, lwo, lrw,
-         (Function<ReadEntryView<Integer, String>, Void> & Serializable) view -> { assertFalse(view.find().isPresent()); return null; },
-         (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> view.set("value"), getClass());
+      method.eval(key, lwo, lrw,
+         view -> { assertFalse(view.find().isPresent()); return null; },
+         (view, nil) -> view.set("value"), getClass());
 
       assertInvocations(1);
 
@@ -95,26 +90,25 @@ public class FunctionalCachestoreTest extends AbstractFunctionalOpTest {
       DummyInMemoryStore store = getStore(cache);
       assertTrue(store.contains(key));
 
-      method.action.eval(key, lwo, lrw,
-         (Function<ReadEntryView<Object, String>, Void> & Serializable) view -> {
+      method.eval(key, lwo, lrw,
+         view -> {
             assertTrue(view.find().isPresent());
             assertEquals(view.get(), "value");
             return null;
          },
-         (BiConsumer<WriteEntryView<String>, Void> & Serializable) (view, nil) -> {}, getClass());
+         (view, nil) -> {}, getClass());
 
       assertInvocations(2);
    }
 
    @Test(dataProvider = "owningModeAndReadMethod")
    public void testReadLoad(boolean isSourceOwner, ReadMethod method) {
-      Object key = getKey(isSourceOwner);
+      Object key = getKey(isSourceOwner, DIST);
       List<Cache<Object, Object>> owners = caches(DIST).stream()
             .filter(cache -> cache.getAdvancedCache().getDistributionManager().getLocality(key).isLocal())
             .collect(Collectors.toList());
 
-      assertTrue((Boolean) method.action.eval(key, ro,
-            (Function<ReadEntryView<Object, String>, Boolean> & Serializable) view -> { assertFalse(view.find().isPresent()); return true; }));
+      assertTrue(method.eval(key, ro, view -> { assertFalse(view.find().isPresent()); return true; }));
 
       // we can't add from read-only cache, so we put manually:
       cache(0, DIST).put(key, "value");
@@ -128,8 +122,8 @@ public class FunctionalCachestoreTest extends AbstractFunctionalOpTest {
          assertTrue(store.contains(key), getAddress(cache).toString());
       });
 
-      assertEquals(method.action.eval(key, ro,
-            (Function<ReadEntryView<Object, String>, Object> & Serializable) view -> {
+      assertEquals(method.eval(key, ro,
+            view -> {
                assertTrue(view.find().isPresent());
                assertEquals(view.get(), "value");
                return "OK";

@@ -16,9 +16,9 @@ import javax.transaction.Transaction;
 import javax.transaction.TransactionManager;
 
 import org.infinispan.AdvancedCache;
+import org.infinispan.cache.impl.AbstractDelegatingCache;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.Util;
-import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.entries.ExpiryHelper;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.factories.KnownComponentNames;
@@ -47,18 +47,23 @@ import net.jcip.annotations.ThreadSafe;
  */
 @ThreadSafe
 public class ClusterExpirationManager<K, V> extends ExpirationManagerImpl<K, V> {
-   protected static final Log log = LogFactory.getLog(ClusterExpirationManager.class);
-   protected static final boolean trace = log.isTraceEnabled();
+   private static final Log log = LogFactory.getLog(ClusterExpirationManager.class);
+   private static final boolean trace = log.isTraceEnabled();
 
+   @Inject @ComponentName(KnownComponentNames.ASYNC_OPERATIONS_EXECUTOR)
    private ExecutorService asyncExecutor;
-   private AdvancedCache<K, V> cache;
+   @Inject private AdvancedCache<K, V> cache;
    private boolean needTransaction;
 
-   @Inject
-   public void inject(AdvancedCache<K, V> cache, Configuration configuration,
-           @ComponentName(KnownComponentNames.ASYNC_OPERATIONS_EXECUTOR) ExecutorService asyncExecutor) {
-      this.cache = cache;
-      this.asyncExecutor = asyncExecutor;
+   public ExecutorService getAsyncExecutor() {
+      return asyncExecutor;
+   }
+
+   @Override
+   public void start() {
+      super.start();
+      // Data container entries are retrieved directly, so we don't need to worry about an encodings
+      this.cache = AbstractDelegatingCache.unwrapCache(cache).getAdvancedCache();
       needTransaction = configuration.transaction().transactionMode().isTransactional();
    }
 
@@ -76,9 +81,20 @@ public class ClusterExpirationManager<K, V> extends ExpirationManagerImpl<K, V> 
                  purgeCandidates.hasNext();) {
                InternalCacheEntry<K, V> e = purgeCandidates.next();
                if (e.canExpire()) {
-                  if (ExpiryHelper.isExpiredMortal(e.getLifespan(), e.getCreated(), currentTimeMillis)) {
-                     handleLifespanExpireEntry(e, true);
-                  } else if (ExpiryHelper.isExpiredTransient(e.getMaxIdle(), e.getLastUsed(), currentTimeMillis)) {
+                  // Have to synchronize on the entry to make sure we see the value and metadata at the same time
+                  boolean expiredMortal;
+                  boolean expiredTransient;
+                  V value;
+                  long lifespan;
+                  synchronized (e) {
+                     value = e.getValue();
+                     lifespan = e.getLifespan();
+                     expiredMortal = ExpiryHelper.isExpiredMortal(lifespan, e.getCreated(), currentTimeMillis);
+                     expiredTransient = ExpiryHelper.isExpiredTransient(e.getMaxIdle(), e.getLastUsed(), currentTimeMillis);
+                  }
+                  if (expiredMortal) {
+                     handleLifespanExpireEntry(e.getKey(), value, lifespan, true);
+                  } else if (expiredTransient) {
                      super.handleInMemoryExpiration(e, currentTimeMillis);
                   }
                }
@@ -97,17 +113,15 @@ public class ClusterExpirationManager<K, V> extends ExpirationManagerImpl<K, V> 
       }
    }
 
-   void handleLifespanExpireEntry(InternalCacheEntry<K, V> entry, boolean sync) {
-      K key = entry.getKey();
+   void handleLifespanExpireEntry(K key, V value, long lifespan, boolean sync) {
       // The most used case will be a miss so no extra read before
       if (expiring.putIfAbsent(key, key) == null) {
-         long lifespan = entry.getLifespan();
          if (trace) {
             log.tracef("Submitting expiration removal for key %s which had lifespan of %s", toStr(key), lifespan);
          }
          Runnable runnable = () -> {
             try {
-               removeExpired(key, entry.getValue(), lifespan);
+               removeExpired(key, value, lifespan);
             } finally {
                expiring.remove(key);
             }
@@ -150,12 +164,18 @@ public class ClusterExpirationManager<K, V> extends ExpirationManagerImpl<K, V> 
    public void handleInMemoryExpiration(InternalCacheEntry<K, V> entry, long currentTime) {
       // We need to synchronize on the entry since {@link InternalCacheEntry} locks the entry when doing an update
       // so we can see both the new value and the metadata
+      boolean expiredMortal;
+      V value;
+      long lifespan;
       synchronized (entry) {
-         if (ExpiryHelper.isExpiredMortal(entry.getLifespan(), entry.getCreated(), currentTime)) {
-            handleLifespanExpireEntry(entry, false);
-         } else {
-            super.handleInMemoryExpiration(entry, currentTime);
-         }
+         value = entry.getValue();
+         lifespan = entry.getLifespan();
+         expiredMortal = ExpiryHelper.isExpiredMortal(lifespan, entry.getCreated(), currentTime);
+      }
+      if (expiredMortal) {
+         handleLifespanExpireEntry(entry.getKey(), value, lifespan, false);
+      } else {
+         super.handleInMemoryExpiration(entry, currentTime);
       }
    }
 

@@ -1,10 +1,9 @@
 package org.infinispan.api;
 
 import static org.infinispan.test.TestingUtil.extractComponent;
-import static org.infinispan.test.TestingUtil.replaceField;
+import static org.infinispan.test.TestingUtil.wrapInboundInvocationHandler;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyBoolean;
-import static org.mockito.Matchers.anyObject;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.spy;
 import static org.testng.Assert.assertNull;
@@ -20,7 +19,6 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.EntryFactory;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.distribution.MagicKey;
-import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
 import org.infinispan.remoting.inboundhandler.Reply;
@@ -28,8 +26,6 @@ import org.infinispan.statetransfer.StateResponseCommand;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.mockito.Mockito;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 import org.testng.annotations.Test;
 
 /**
@@ -57,42 +53,31 @@ public class ConditionalOperationPrimaryOwnerFailTest extends MultipleCacheManag
       //it blocks the StateResponseCommand.class
       final CountDownLatch latch1 = new CountDownLatch(1);
       final CountDownLatch latch2 = new CountDownLatch(1);
-      doAnswer(new Answer<Object>() {
-         @Override
-         public Object answer(InvocationOnMock invocation) throws Throwable {
-            CacheRpcCommand command = (CacheRpcCommand) invocation.getArguments()[0];
-            if (command instanceof StateResponseCommand) {
-               log.debugf("Blocking command %s", command);
-               latch2.countDown();
-               latch1.await();
-            }
-            return invocation.callRealMethod();
+      doAnswer(invocation -> {
+         CacheRpcCommand command = (CacheRpcCommand) invocation.getArguments()[0];
+         if (command instanceof StateResponseCommand) {
+            log.debugf("Blocking command %s", command);
+            latch2.countDown();
+            latch1.await();
          }
+         return invocation.callRealMethod();
       }).when(spyHandler).handle(any(CacheRpcCommand.class), any(Reply.class), any(DeliverOrder.class));
 
-      doAnswer(new Answer() {
-         @Override
-         public Object answer(InvocationOnMock invocation) throws Throwable {
-            InvocationContext context = (InvocationContext) invocation.getArguments()[0];
-            log.debugf("wrapEntryForWriting invoked with %s", context);
+      doAnswer(invocation -> {
+         InvocationContext context = (InvocationContext) invocation.getArguments()[0];
+         log.debugf("wrapEntryForWriting invoked with %s", context);
 
-            Object mvccEntry = invocation.callRealMethod();
-            assertNull(mvccEntry, "Entry should not be wrapped!");
-            assertNull(context.lookupEntry(key), "Entry should not be wrapped!");
-            return mvccEntry;
-         }
-      }).when(spyEntryFactory).wrapEntryForWriting(any(InvocationContext.class), anyObject(),
-            anyBoolean());
+         Object mvccEntry = invocation.callRealMethod();
+         assertNull(mvccEntry, "Entry should not be wrapped!");
+         assertNull(context.lookupEntry(key), "Entry should not be wrapped!");
+         return mvccEntry;
+      }).when(spyEntryFactory).wrapEntryForWriting(any(InvocationContext.class), any(),
+                                                      anyBoolean(), anyBoolean());
 
-      Future<?> killMemberResult = fork(new Runnable() {
-         @Override
-         public void run() {
-            killMember(1);
-         }
-      });
+      Future<?> killMemberResult = fork(() -> killMember(1));
 
       //await until the key is received from state transfer (the command is blocked now...)
-      latch2.await();
+      latch2.await(30, TimeUnit.SECONDS);
       futureBackupOwnerCache.put(key, FINAL_VALUE);
 
       latch1.countDown();
@@ -115,10 +100,6 @@ public class ConditionalOperationPrimaryOwnerFailTest extends MultipleCacheManag
    }
 
    private PerCacheInboundInvocationHandler spyInvocationHandler(Cache cache) {
-      PerCacheInboundInvocationHandler spy = Mockito.spy(extractComponent(cache, PerCacheInboundInvocationHandler.class));
-      TestingUtil.replaceComponent(cache, PerCacheInboundInvocationHandler.class, spy, true);
-      replaceField(spy, "inboundInvocationHandler", cache.getAdvancedCache().getComponentRegistry(), ComponentRegistry.class);
-      return spy;
+      return wrapInboundInvocationHandler(cache, Mockito::spy);
    }
-
 }

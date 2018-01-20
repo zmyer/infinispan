@@ -1,4 +1,4 @@
-       <subsystem xmlns="urn:infinispan:server:core:9.0" >
+       <subsystem xmlns="urn:infinispan:server:core:9.2" >
             <cache-container name="local" default-cache="stringWithPassivation" >
 
                 <local-cache name="stringWithPassivation"  >
@@ -26,7 +26,7 @@
                     </string-keyed-jdbc-store>
                 </local-cache>
 
-                <local-cache name="memcachedCache"  >
+                <local-cache name="memcachedCache">
                     <string-keyed-jdbc-store datasource="${jndi.name}" passivation="false" preload="false" purge="false" name="STRING_ASYNC">
                         <property name="databaseType">${database.type}</property>
                         <!--<write-behind modification-queue-size="2048" thread-pool-size="15" />-->

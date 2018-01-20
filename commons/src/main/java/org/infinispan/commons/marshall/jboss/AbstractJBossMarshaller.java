@@ -38,7 +38,7 @@ import org.jboss.marshalling.Unmarshaller;
 public abstract class AbstractJBossMarshaller extends AbstractMarshaller implements StreamingMarshaller {
 
    protected static final Log log = LogFactory.getLog(AbstractJBossMarshaller.class);
-   protected static final boolean trace = log.isTraceEnabled();
+   private static final boolean trace = log.isTraceEnabled();
    protected static final JBossMarshallerFactory factory = new JBossMarshallerFactory();
    protected static final int DEF_INSTANCE_COUNT = 16;
    protected static final int DEF_CLASS_COUNT = 8;

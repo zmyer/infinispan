@@ -4,15 +4,12 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.infinispan.container.versioning.InequalVersionComparisonResult.EQUAL;
-import static org.infinispan.test.TestingUtil.extractComponent;
-import static org.infinispan.test.TestingUtil.replaceComponent;
-import static org.infinispan.test.TestingUtil.replaceField;
+import static org.infinispan.test.TestingUtil.wrapInboundInvocationHandler;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 
 import org.infinispan.Cache;
@@ -23,12 +20,10 @@ import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.MagicKey;
-import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.interceptors.base.BaseCustomInterceptor;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
@@ -76,31 +71,25 @@ public class WriteSkewConsistencyTest extends MultipleCacheManagersTest {
       //version2 is put by tx2
       final EntryVersion version2 = versionGenerator.increment((IncrementableEntryVersion) version1);
 
-      ControllerInboundInvocationHandler handler = injectControllerInboundInvocationHandler(cache(0));
+      ControllerInboundInvocationHandler handler = wrapInboundInvocationHandler(cache(0), ControllerInboundInvocationHandler::new);
       BackupOwnerInterceptor backupOwnerInterceptor = injectBackupOwnerInterceptor(cache(0));
       backupOwnerInterceptor.blockCommit(true);
       handler.discardRemoteGet = true;
 
-      Future<Boolean> tx1 = fork(new Callable<Boolean>() {
-         @Override
-         public Boolean call() throws Exception {
-            tm(2).begin();
-            assertEquals("Wrong value for tx1.", 1, cache(2).get(key));
-            cache(2).put(key, 2);
-            tm(2).commit();
-            return Boolean.TRUE;
-         }
+      Future<Boolean> tx1 = fork(() -> {
+         tm(2).begin();
+         assertEquals("Wrong value for tx1.", 1, cache(2).get(key));
+         cache(2).put(key, 2);
+         tm(2).commit();
+         return Boolean.TRUE;
       });
 
       //after this, the primary owner has committed the new value but still have the locks acquired.
       //in the backup owner, it still has the old value
 
-      eventually(new Condition() {
-         @Override
-         public boolean isSatisfied() throws Exception {
-            Integer value = (Integer) cache(3).get(key);
-            return value != null && value == 2;
-         }
+      eventually(() -> {
+         Integer value = (Integer) cache(3).get(key);
+         return value != null && value == 2;
       });
 
       assertVersion("Wrong version in the primary owner", primaryOwnerDataContainer.get(key).getMetadata().version(),
@@ -111,15 +100,12 @@ public class WriteSkewConsistencyTest extends MultipleCacheManagersTest {
       backupOwnerInterceptor.resetPrepare();
 
       //tx2 will read from the primary owner (i.e., the most recent value) and will commit.
-      Future<Boolean> tx2 = fork(new Callable<Boolean>() {
-         @Override
-         public Boolean call() throws Exception {
-            tm(3).begin();
-            assertEquals("Wrong value for tx2.", 2, cache(3).get(key));
-            cache(3).put(key, 3);
-            tm(3).commit();
-            return Boolean.TRUE;
-         }
+      Future<Boolean> tx2 = fork(() -> {
+         tm(3).begin();
+         assertEquals("Wrong value for tx2.", 2, cache(3).get(key));
+         cache(3).put(key, 3);
+         tm(3).commit();
+         return Boolean.TRUE;
       });
 
       //if everything works fine, it should ignore the value from the backup owner and only use the version returned by
@@ -149,12 +135,7 @@ public class WriteSkewConsistencyTest extends MultipleCacheManagersTest {
    @Override
    protected final void createCacheManagers() throws Throwable {
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(cacheMode, true);
-      builder.locking()
-            .isolationLevel(IsolationLevel.REPEATABLE_READ)
-            .writeSkewCheck(true);
-      builder.versioning()
-            .enabled(true)
-            .scheme(VersioningScheme.SIMPLE);
+      builder.locking().isolationLevel(IsolationLevel.REPEATABLE_READ);
       builder.clustering().hash().numSegments(60);
       createClusteredCaches(4, builder);
    }
@@ -170,14 +151,6 @@ public class WriteSkewConsistencyTest extends MultipleCacheManagersTest {
       ReorderResponsesRpcManager newRpcManager = new ReorderResponsesRpcManager(address(lastResponse), rpcManager);
       TestingUtil.replaceComponent(toInject, RpcManager.class, newRpcManager, true);
       return newRpcManager;
-   }
-
-   private ControllerInboundInvocationHandler injectControllerInboundInvocationHandler(Cache cache) {
-      ControllerInboundInvocationHandler handler = new ControllerInboundInvocationHandler(
-            extractComponent(cache, PerCacheInboundInvocationHandler.class));
-      replaceComponent(cache, PerCacheInboundInvocationHandler.class, handler, true);
-      replaceField(handler, "inboundInvocationHandler", cache.getAdvancedCache().getComponentRegistry(), ComponentRegistry.class);
-      return handler;
    }
 
    private void assertVersion(String message, EntryVersion v0, EntryVersion v1, InequalVersionComparisonResult result) {
@@ -259,25 +232,26 @@ public class WriteSkewConsistencyTest extends MultipleCacheManagersTest {
       }
 
       @Override
-      protected Map<Address, Response> afterInvokeRemotely(ReplicableCommand command, Map<Address, Response> responseMap, Object argument) {
-         if (responseMap != null) {
-            Map<Address, Response> newResponseMap = new LinkedHashMap<>();
-            boolean containsLastResponseAddress = false;
-            for (Map.Entry<Address, Response> entry : responseMap.entrySet()) {
-               if (lastResponse.equals(entry.getKey())) {
-                  containsLastResponseAddress = true;
-                  continue;
-               }
-               newResponseMap.put(entry.getKey(), entry.getValue());
-            }
-            if (containsLastResponseAddress) {
-               newResponseMap.put(lastResponse, responseMap.get(lastResponse));
-            }
-            log.debugf("Responses for command %s are %s", command, newResponseMap.values());
-            return newResponseMap;
+      protected <T> T afterInvokeRemotely(ReplicableCommand command, T responseObject, Object argument) {
+         if (!(responseObject instanceof Map)) {
+            log.debugf("Single response for command %s: %s", command, responseObject);
+            return responseObject;
          }
-         log.debugf("Responses for command %s are null", command);
-         return null;
+
+         Map<Address, Response> newResponseMap = new LinkedHashMap<>();
+         boolean containsLastResponseAddress = false;
+         for (Map.Entry<Address, Response> entry : ((Map<Address, Response>) responseObject).entrySet()) {
+            if (lastResponse.equals(entry.getKey())) {
+               containsLastResponseAddress = true;
+               continue;
+            }
+            newResponseMap.put(entry.getKey(), entry.getValue());
+         }
+         if (containsLastResponseAddress) {
+            newResponseMap.put(lastResponse, ((Map<Address, Response>) responseObject).get(lastResponse));
+         }
+         log.debugf("Responses for command %s are %s", command, newResponseMap.values());
+         return (T) newResponseMap;
       }
    }
 

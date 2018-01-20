@@ -3,6 +3,7 @@ package org.infinispan.test;
 import static org.testng.AssertJUnit.assertTrue;
 import static org.testng.AssertJUnit.fail;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -56,12 +57,12 @@ import org.testng.internal.MethodInstance;
 @TestSelector(interceptors = AbstractInfinispanTest.OrderByInstance.class)
 public class AbstractInfinispanTest {
 
-   protected final Log log = LogFactory.getLog(getClass());
+   protected static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
    private final ThreadFactory defaultThreadFactory = getTestThreadFactory("ForkThread");
    private final ThreadPoolExecutor defaultExecutorService = new ThreadPoolExecutor(0, Integer.MAX_VALUE,
                                                                                  60L, TimeUnit.SECONDS,
-                                                                                 new SynchronousQueue<Runnable>(),
+                                                                                    new SynchronousQueue<>(),
                                                                                  defaultThreadFactory);
 
    public static final TimeService TIME_SERVICE = new DefaultTimeService();
@@ -544,7 +545,7 @@ public class AbstractInfinispanTest {
             log.debug("Exiting fork callable.");
             return result;
          } catch (Exception e) {
-            log.debug("Exiting fork callable due to exception", e);
+            log.warn("Exiting fork callable due to exception", e);
             throw e;
          }
       }

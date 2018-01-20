@@ -1,12 +1,12 @@
 package org.infinispan.api;
 
-import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 
 import org.infinispan.Cache;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.remoting.rpc.RpcManager;
@@ -33,6 +33,16 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "api.NonDuplicateModificationTest")
 public class NonDuplicateModificationTest extends MultipleCacheManagersTest {
 
+   @Override
+   public Object[] factory() {
+      // It is not (easily) possible to run this test with bias acquisition since the ControlledRpcManager
+      // cannot handle RpcManager.sendTo + CommandAckCollector -style RPC
+      return new Object[] {
+            new NonDuplicateModificationTest().cacheMode(CacheMode.REPL_SYNC),
+            new NonDuplicateModificationTest().cacheMode(CacheMode.SCATTERED_SYNC).biasAcquisition(BiasAcquisition.NEVER),
+      };
+   }
+
    /**
     * ISPN-3354
     */
@@ -56,9 +66,11 @@ public class NonDuplicateModificationTest extends MultipleCacheManagersTest {
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.REPL_SYNC, false);
-      builder.clustering().hash()
-            .numSegments(60);
+      ConfigurationBuilder builder = getDefaultClusteredCacheConfig(cacheMode, false);
+      if (biasAcquisition != null) {
+         builder.clustering().biasAcquisition(biasAcquisition);
+      }
+      builder.clustering().hash().numSegments(60);
       createClusteredCaches(2, builder);
    }
 
@@ -72,12 +84,9 @@ public class NonDuplicateModificationTest extends MultipleCacheManagersTest {
 
       assertKeyValue(key, "v1");
 
-      Future<Void> future = fork(new Callable<Void>() {
-         @Override
-         public Void call() throws Exception {
-            operation.execute(cache(1), key, "v2");
-            return null;
-         }
+      Future<Void> future = fork(() -> {
+         operation.execute(cache(1), key, "v2");
+         return null;
       });
 
       controlledRpcManager.waitForCommandToBlock();

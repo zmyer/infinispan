@@ -161,7 +161,7 @@ public class MetadataTransientMortalCacheEntry extends AbstractInternalCacheEntr
 
       @Override
       public Set<Class<? extends MetadataTransientMortalCacheEntry>> getTypeClasses() {
-         return Util.<Class<? extends MetadataTransientMortalCacheEntry>>asSet(MetadataTransientMortalCacheEntry.class);
+         return Util.asSet(MetadataTransientMortalCacheEntry.class);
       }
    }
 }

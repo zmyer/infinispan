@@ -14,7 +14,16 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import org.infinispan.commands.Visitor;
-import org.infinispan.commands.write.ApplyDeltaCommand;
+import org.infinispan.commands.functional.ReadWriteKeyCommand;
+import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
+import org.infinispan.commands.functional.ReadWriteManyCommand;
+import org.infinispan.commands.functional.ReadWriteManyEntriesCommand;
+import org.infinispan.commands.functional.WriteOnlyKeyCommand;
+import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
+import org.infinispan.commands.functional.WriteOnlyManyCommand;
+import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
@@ -108,7 +117,7 @@ public class PrepareCommand extends AbstractTransactionBoundaryCommand implement
       }
 
       // 1. first create a remote transaction (or get the existing one)
-      RemoteTransaction remoteTransaction = getRemoteTransaction();
+      RemoteTransaction remoteTransaction = txTable.getOrCreateRemoteTransaction(globalTx, modifications);
       //set the list of modifications anyway, as the transaction might have already been created by a previous
       //LockControlCommand with null modifications.
       if (hasModifications()) {
@@ -132,17 +141,22 @@ public class PrepareCommand extends AbstractTransactionBoundaryCommand implement
          switch (writeCommand.getCommandId()) {
             case PutKeyValueCommand.COMMAND_ID:
             case RemoveCommand.COMMAND_ID:
+            case ComputeCommand.COMMAND_ID:
+            case ComputeIfAbsentCommand.COMMAND_ID:
             case RemoveExpiredCommand.COMMAND_ID:
             case ReplaceCommand.COMMAND_ID:
+            case ReadWriteKeyCommand.COMMAND_ID:
+            case ReadWriteKeyValueCommand.COMMAND_ID:
+            case WriteOnlyKeyCommand.COMMAND_ID:
+            case WriteOnlyKeyValueCommand.COMMAND_ID:
                set.add(((DataWriteCommand) writeCommand).getKey());
                break;
             case PutMapCommand.COMMAND_ID:
+            case ReadWriteManyCommand.COMMAND_ID:
+            case ReadWriteManyEntriesCommand.COMMAND_ID:
+            case WriteOnlyManyCommand.COMMAND_ID:
+            case WriteOnlyManyEntriesCommand.COMMAND_ID:
                set.addAll(writeCommand.getAffectedKeys());
-               break;
-            case ApplyDeltaCommand.COMMAND_ID:
-               ApplyDeltaCommand command = (ApplyDeltaCommand) writeCommand;
-               Object[] compositeKeys = command.getCompositeKeys();
-               set.addAll(Arrays.asList(compositeKeys));
                break;
             default:
                break;
@@ -164,11 +178,6 @@ public class PrepareCommand extends AbstractTransactionBoundaryCommand implement
    @Override
    public boolean hasSkipLocking() {
       return false;
-   }
-
-   @Override
-   protected RemoteTransaction getRemoteTransaction() {
-      return txTable.getOrCreateRemoteTransaction(globalTx, modifications);
    }
 
    @Override

@@ -44,7 +44,7 @@ public class TestResourceTracker {
       addResource(testName, cleaner);
    }
 
-   protected static void cleanUpResources(String testName) {
+   public static void cleanUpResources(String testName) {
       TestResources resources = testResources.remove(testName);
       if (resources != null) {
          for (Cleaner<?> cleaner : resources.getCleaners()) {
@@ -56,6 +56,11 @@ public class TestResourceTracker {
             }
          }
       }
+   }
+
+   public static String getCurrentTestShortName() {
+      String currentTestName = TestResourceTracker.getCurrentTestName();
+      return currentTestName.substring(currentTestName.lastIndexOf(".") + 1);
    }
 
    public static String getCurrentTestName() {
@@ -96,7 +101,7 @@ public class TestResourceTracker {
     */
    public static void testFinished(String testName) {
       cleanUpResources(testName);
-      if (!testName.equals(getCurrentTestName())) {
+      if (!testName.equals(threadTestName.get())) {
          cleanUpResources(getCurrentTestName());
          throw new IllegalArgumentException("Current thread's test name was not set correctly: " + getCurrentTestName() +
                ", should have been " + testName);
@@ -203,15 +208,12 @@ public class TestResourceTracker {
 
       @Override
       public void close() {
-         PrivilegedAction<Object> action = new PrivilegedAction<Object>() {
-            @Override
-            public Object run() {
-               if (!ref.getStatus().isTerminated()) {
-                  log.debugf("Stopping cache manager %s", ref);
-                  ref.stop();
-               }
-               return null;
+         PrivilegedAction<Object> action = () -> {
+            if (!ref.getStatus().isTerminated()) {
+               log.debugf("Stopping cache manager %s", ref);
+               ref.stop();
             }
+            return null;
          };
          if (System.getSecurityManager() != null) {
             AccessController.doPrivileged(action);

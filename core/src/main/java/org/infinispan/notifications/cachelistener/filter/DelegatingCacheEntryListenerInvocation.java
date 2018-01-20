@@ -4,6 +4,7 @@ import java.lang.annotation.Annotation;
 import java.util.Set;
 import java.util.UUID;
 
+import org.infinispan.encoding.DataConversion;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheEntryListenerInvocation;
 import org.infinispan.notifications.cachelistener.EventWrapper;
@@ -91,5 +92,15 @@ public abstract class DelegatingCacheEntryListenerInvocation<K, V> implements Ca
    @Override
    public Set<Class<? extends Annotation>> getFilterAnnotations() {
       return invocation.getFilterAnnotations();
+   }
+
+   @Override
+   public DataConversion getKeyDataConversion() {
+      return invocation.getKeyDataConversion();
+   }
+
+   @Override
+   public DataConversion getValueDataConversion() {
+      return invocation.getValueDataConversion();
    }
 }

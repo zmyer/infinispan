@@ -1,9 +1,9 @@
-        <subsystem xmlns="urn:infinispan:server:core:9.0" >
+        <subsystem xmlns="urn:infinispan:server:core:9.2" >
             <cache-container
                 name="local"
-                default-cache="testCache">
+                default-cache="default">
                 <local-cache
-                    name="testCache"
+                    name="default"
                     batching="false"
                     >
                 </local-cache>
@@ -16,9 +16,22 @@
                     name="memcachedCache"
                     batching="false"
                     >
+                    <encoding>
+                        <value media-type="text/plain"/>
+                    </encoding>
                 </local-cache>
                 <local-cache name="namedCache" />
                 <local-cache name="restNamedCache" />
+                <local-cache name="restNamedCacheText">
+                    <encoding>
+                        <value media-type="text/plain"/>
+                    </encoding>
+                </local-cache>
+                <local-cache name="offHeapCache">
+                    <memory>
+                        <off-heap/>
+                    </memory>
+                </local-cache>
                 <local-cache name="compatibilityCache">
                     <compatibility enabled="true"/>
                 </local-cache>

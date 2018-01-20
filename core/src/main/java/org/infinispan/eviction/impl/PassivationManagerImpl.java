@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.util.IteratorMapper;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
@@ -27,34 +28,23 @@ import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 public class PassivationManagerImpl implements PassivationManager {
+   private static final Log log = LogFactory.getLog(PassivationManagerImpl.class);
+   private static final boolean trace = log.isTraceEnabled();
 
-   PersistenceManager persistenceManager;
-   CacheNotifier notifier;
-   Configuration cfg;
+   @Inject private PersistenceManager persistenceManager;
+   @Inject private CacheNotifier notifier;
+   @Inject private Configuration cfg;
+   @Inject private DataContainer<Object, Object> container;
+   @Inject private TimeService timeService;
+   @Inject private MarshalledEntryFactory marshalledEntryFactory;
+   @Inject private DistributionManager distributionManager;
+
    private volatile boolean skipOnStop = false;
 
    boolean statsEnabled = false;
    boolean enabled = false;
-   private static final Log log = LogFactory.getLog(PassivationManagerImpl.class);
-   private final AtomicLong passivations = new AtomicLong(0);
-   private DataContainer<Object, Object> container;
-   private TimeService timeService;
-   private static final boolean trace = log.isTraceEnabled();
-   private MarshalledEntryFactory marshalledEntryFactory;
-   private DistributionManager distributionManager;
 
-   @Inject
-   public void inject(PersistenceManager persistenceManager, CacheNotifier notifier, Configuration cfg, DataContainer container,
-                      TimeService timeService, MarshalledEntryFactory marshalledEntryFactory,
-                      DistributionManager distributionManager) {
-      this.persistenceManager = persistenceManager;
-      this.notifier = notifier;
-      this.cfg = cfg;
-      this.container = container;
-      this.timeService = timeService;
-      this.marshalledEntryFactory = marshalledEntryFactory;
-      this.distributionManager = distributionManager;
-   }
+   private final AtomicLong passivations = new AtomicLong(0);
 
    @Start(priority = 12)
    public void start() {
@@ -70,7 +60,7 @@ public class PassivationManagerImpl implements PassivationManager {
    }
 
    private boolean isL1Key(Object key) {
-      return distributionManager != null && !distributionManager.getLocality(key).isLocal();
+      return distributionManager != null && !distributionManager.getCacheTopology().isWriteOwner(key);
    }
 
    @Override
@@ -99,13 +89,12 @@ public class PassivationManagerImpl implements PassivationManager {
       if (enabled && !skipOnStop) {
          long start = timeService.time();
          log.passivatingAllEntries();
-         for (InternalCacheEntry e : container) {
-            if (trace) log.tracef("Passivating %s", e.getKey());
-            persistenceManager.writeToAllNonTxStores(marshalledEntryFactory.newMarshalledEntry(e.getKey(), e.getValue(),
-                                                                                               internalMetadata(e)), BOTH);
-         }
-         log.passivatedEntries(container.size(),
-                               Util.prettyPrintTime(timeService.timeDuration(start, TimeUnit.MILLISECONDS)));
+
+         int count = container.sizeIncludingExpired();
+         Iterable<MarshalledEntry> iterable = () -> new IteratorMapper<>(container.iterator(), e ->
+            marshalledEntryFactory.newMarshalledEntry(e.getKey(), e.getValue(), internalMetadata(e)));
+         persistenceManager.writeBatchToAllNonTxStores(iterable, BOTH, 0);
+         log.passivatedEntries(count, Util.prettyPrintTime(timeService.timeDuration(start, TimeUnit.MILLISECONDS)));
       }
    }
 

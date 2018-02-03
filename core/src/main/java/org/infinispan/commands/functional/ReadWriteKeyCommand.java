@@ -13,14 +13,17 @@ import org.infinispan.commands.Visitor;
 import org.infinispan.commands.functional.functions.InjectableComponent;
 import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commons.marshall.MarshallUtil;
-import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.Param.StatisticsMode;
 import org.infinispan.functional.impl.EntryViews;
+import org.infinispan.functional.impl.EntryViews.AccessLoggingReadWriteView;
 import org.infinispan.functional.impl.Params;
+import org.infinispan.functional.impl.StatsEnvelope;
 
 // TODO: the command does not carry previous values to backup, so it can cause
 // the values on primary and backup owners to diverge in case of topology change
@@ -30,7 +33,7 @@ public final class ReadWriteKeyCommand<K, V, R> extends AbstractWriteKeyCommand<
 
    private Function<ReadWriteEntryView<K, V>, R> f;
 
-   public ReadWriteKeyCommand(K key, Function<ReadWriteEntryView<K, V>, R> f,
+   public ReadWriteKeyCommand(Object key, Function<ReadWriteEntryView<K, V>, R> f,
                               CommandInvocationId id, ValueMatcher valueMatcher, Params params,
                               DataConversion keyDataConversion,
                               DataConversion valueDataConversion,
@@ -57,8 +60,8 @@ public final class ReadWriteKeyCommand<K, V, R> extends AbstractWriteKeyCommand<
       Params.writeObject(output, params);
       output.writeLong(FlagBitSets.copyWithoutRemotableFlags(getFlagsBitSet()));
       CommandInvocationId.writeTo(output, commandInvocationId);
-      output.writeObject(keyDataConversion);
-      output.writeObject(valueDataConversion);
+      DataConversion.writeTo(output, keyDataConversion);
+      DataConversion.writeTo(output, valueDataConversion);
    }
 
    @Override
@@ -69,8 +72,8 @@ public final class ReadWriteKeyCommand<K, V, R> extends AbstractWriteKeyCommand<
       params = Params.readObject(input);
       setFlagsBitSet(input.readLong());
       commandInvocationId = CommandInvocationId.readFrom(input);
-      keyDataConversion = (DataConversion) input.readObject();
-      valueDataConversion = (DataConversion) input.readObject();
+      keyDataConversion = DataConversion.readFrom(input);
+      valueDataConversion = DataConversion.readFrom(input);
    }
 
    @Override
@@ -86,15 +89,20 @@ public final class ReadWriteKeyCommand<K, V, R> extends AbstractWriteKeyCommand<
          return null;
       }
 
-      CacheEntry<K, V> e = ctx.lookupEntry(key);
+      MVCCEntry e = (MVCCEntry) ctx.lookupEntry(key);
 
       // Could be that the key is not local, 'null' is how this is signalled
       if (e == null) return null;
 
       R ret;
-      ReadWriteEntryView<K, V> entry = EntryViews.readWrite(e, keyDataConversion, valueDataConversion);
-      ret = f.apply(entry);
-      return snapshot(ret);
+      boolean exists = e.getValue() != null;
+      AccessLoggingReadWriteView<K, V> view = EntryViews.readWrite(e, keyDataConversion, valueDataConversion);
+      ret = snapshot(f.apply(view));
+      // The effective result of retried command is not safe; we'll go to backup anyway
+      if (!e.isChanged() && !hasAnyFlag(FlagBitSets.COMMAND_RETRY)) {
+         successful = false;
+      }
+      return StatisticsMode.isSkip(params) ? ret : StatsEnvelope.create(ret, e, exists, view.isRead());
    }
 
    @Override
@@ -108,8 +116,8 @@ public final class ReadWriteKeyCommand<K, V, R> extends AbstractWriteKeyCommand<
    }
 
    @Override
-   public Mutation<K, V, ?> toMutation(K key) {
-      return new Mutations.ReadWrite<>(f);
+   public Mutation<K, V, ?> toMutation(Object key) {
+      return new Mutations.ReadWrite<>(keyDataConversion, valueDataConversion, f);
    }
 
    public Function<ReadWriteEntryView<K, V>, R> getFunction() {
@@ -119,7 +127,7 @@ public final class ReadWriteKeyCommand<K, V, R> extends AbstractWriteKeyCommand<
    @Override
    public String toString() {
       final StringBuilder sb = new StringBuilder("ReadWriteKeyCommand{");
-      sb.append(", key=").append(toStr(key));
+      sb.append("key=").append(toStr(key));
       sb.append(", f=").append(f.getClass().getName());
       sb.append(", flags=").append(printFlags());
       sb.append(", commandInvocationId=").append(commandInvocationId);
@@ -139,4 +147,5 @@ public final class ReadWriteKeyCommand<K, V, R> extends AbstractWriteKeyCommand<
       if (f instanceof InjectableComponent)
          ((InjectableComponent) f).inject(componentRegistry);
    }
+
 }

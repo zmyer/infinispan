@@ -1,8 +1,10 @@
 package org.infinispan.functional;
 
+import org.infinispan.AdvancedCache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.functional.impl.FunctionalMapImpl;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.testng.annotations.BeforeClass;
@@ -63,6 +65,9 @@ abstract class AbstractFunctionalTest extends MultipleCacheManagersTest {
    }
 
    protected void configureCache(ConfigurationBuilder builder) {
+      // Make sure there are no errors when counting stats
+//      builder.jmxStatistics().enabled(true);
+      builder.jmxStatistics().available(false);
       if (transactional != null) {
          builder.transaction().transactionMode(transactionMode());
          if (lockingMode != null) {
@@ -103,14 +108,17 @@ abstract class AbstractFunctionalTest extends MultipleCacheManagersTest {
    }
 
    protected void initMaps() {
-      fmapL1 = FunctionalMapImpl.create(cacheManagers.get(0).<Integer, String>getCache().getAdvancedCache());
-      fmapL2 = FunctionalMapImpl.create(cacheManagers.get(0).<Integer, String>getCache().getAdvancedCache());
-      fmapD1 = FunctionalMapImpl.create(cacheManagers.get(0).<Object, String>getCache(DIST).getAdvancedCache());
-      fmapD2 = FunctionalMapImpl.create(cacheManagers.get(1).<Object, String>getCache(DIST).getAdvancedCache());
-      fmapR1 = FunctionalMapImpl.create(cacheManagers.get(0).<Object, String>getCache(REPL).getAdvancedCache());
-      fmapR2 = FunctionalMapImpl.create(cacheManagers.get(1).<Object, String>getCache(REPL).getAdvancedCache());
-      fmapS1 = FunctionalMapImpl.create(cacheManagers.get(0).<Object, String>getCache(SCATTERED).getAdvancedCache());
-      fmapS2 = FunctionalMapImpl.create(cacheManagers.get(1).<Object, String>getCache(SCATTERED).getAdvancedCache());
+      fmapL1 = FunctionalMapImpl.create(getAdvancedCache(cacheManagers.get(0), null));
+      fmapL2 = FunctionalMapImpl.create(getAdvancedCache(cacheManagers.get(0), null));
+      fmapD1 = FunctionalMapImpl.create(getAdvancedCache(cacheManagers.get(0), DIST));
+      fmapD2 = FunctionalMapImpl.create(getAdvancedCache(cacheManagers.get(1), DIST));
+      fmapR1 = FunctionalMapImpl.create(getAdvancedCache(cacheManagers.get(0), REPL));
+      fmapR2 = FunctionalMapImpl.create(getAdvancedCache(cacheManagers.get(1), REPL));
+      fmapS1 = FunctionalMapImpl.create(getAdvancedCache(cacheManagers.get(0), SCATTERED));
+      fmapS2 = FunctionalMapImpl.create(getAdvancedCache(cacheManagers.get(1), SCATTERED));
    }
 
+   protected <K, V> AdvancedCache<K, V> getAdvancedCache(EmbeddedCacheManager cm, String cacheName) {
+      return (AdvancedCache<K, V>) (cacheName == null ? cm.getCache() : cm.getCache(cacheName));
+   }
 }

@@ -481,7 +481,8 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
 
                List<Mutation> mutationsOnKey = getMutationsOnKey((TxInvocationContext) ctx, key);
                mutationsOnKey.add(command.toMutation(key));
-               TxReadOnlyKeyCommand remoteRead = new TxReadOnlyKeyCommand(key, mutationsOnKey, command.getKeyDataConversion(), command.getValueDataConversion(), componentRegistry);
+               TxReadOnlyKeyCommand remoteRead = new TxReadOnlyKeyCommand(key, mutationsOnKey, command.getParams(),
+                     command.getKeyDataConversion(), command.getValueDataConversion(), componentRegistry);
                remoteRead.setTopologyId(command.getTopologyId());
 
                CompletionStage<Response> remoteStage =
@@ -542,7 +543,8 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       if (!ctx.isInTxScope()) {
          return command;
       }
-      return new TxReadOnlyKeyCommand(command, getMutationsOnKey((TxInvocationContext) ctx, command.getKey()), command.getKeyDataConversion(), command.getValueDataConversion(), componentRegistry);
+      return new TxReadOnlyKeyCommand(command, getMutationsOnKey((TxInvocationContext) ctx, command.getKey()),
+            command.getParams(), command.getKeyDataConversion(), command.getValueDataConversion(), componentRegistry);
    }
 
    @Override
@@ -561,9 +563,9 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       return cf.thenRun(() -> {
          entryFactory.wrapEntryForWriting(ctx, key, false, true);
          MVCCEntry cacheEntry = (MVCCEntry) ctx.lookupEntry(key);
-         // TODO: ISPN-8090 support full cache encoding in tx cache
-         EntryView.ReadWriteEntryView readWriteEntryView = EntryViews.readWrite(cacheEntry, DataConversion.DEFAULT_KEY, DataConversion.DEFAULT_VALUE);
          for (Mutation mutation : mutationsOnKey) {
+            EntryView.ReadWriteEntryView readWriteEntryView =
+                  EntryViews.readWrite(cacheEntry, mutation.keyDataConversion(), mutation.valueDataConversion());
             mutation.apply(readWriteEntryView);
             cacheEntry.updatePreviousValue();
          }
@@ -678,7 +680,8 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
                list.add(mutation);
             }
          }
-         return new TxReadOnlyManyCommand(keys, mutations, command.getKeyDataConversion(), command.getValueDataConversion(), componentRegistry);
+         return new TxReadOnlyManyCommand(keys, mutations, command.getParams(),
+               command.getKeyDataConversion(), command.getValueDataConversion(), componentRegistry);
       }
 
       @Override

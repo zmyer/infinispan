@@ -16,13 +16,16 @@ import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.Visitor;
 import org.infinispan.commands.functional.functions.InjectableComponent;
 import org.infinispan.commons.marshall.MarshallUtil;
-import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.Param;
 import org.infinispan.functional.impl.EntryViews;
+import org.infinispan.functional.impl.EntryViews.AccessLoggingReadWriteView;
 import org.infinispan.functional.impl.Params;
+import org.infinispan.functional.impl.StatsEnvelope;
 
 // TODO: the command does not carry previous values to backup, so it can cause
 // the values on primary and backup owners to diverge in case of topology change
@@ -30,12 +33,12 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
 
    public static final byte COMMAND_ID = 53;
 
-   private Map<? extends K, ? extends V> entries;
+   private Map<?, ?> entries;
    private BiFunction<V, ReadWriteEntryView<K, V>, R> f;
 
    boolean isForwarded = false;
 
-   public ReadWriteManyEntriesCommand(Map<? extends K, ? extends V> entries,
+   public ReadWriteManyEntriesCommand(Map<?, ?> entries,
                                       BiFunction<V, ReadWriteEntryView<K, V>, R> f,
                                       Params params,
                                       CommandInvocationId commandInvocationId,
@@ -59,15 +62,19 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
    public ReadWriteManyEntriesCommand() {
    }
 
-   public Map<? extends K, ? extends V> getEntries() {
+   public BiFunction<V, ReadWriteEntryView<K, V>, R> getBiFunction() {
+      return f;
+   }
+
+   public Map<?, ?> getEntries() {
       return entries;
    }
 
-   public void setEntries(Map<? extends K, ? extends V> entries) {
+   public void setEntries(Map<?, ?> entries) {
       this.entries = entries;
    }
 
-   public final ReadWriteManyEntriesCommand<K, V, R> withEntries(Map<? extends K, ? extends V> entries) {
+   public final ReadWriteManyEntriesCommand<K, V, R> withEntries(Map<?, ?> entries) {
       setEntries(entries);
       return this;
    }
@@ -86,8 +93,8 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
       Params.writeObject(output, params);
       output.writeInt(topologyId);
       output.writeLong(flags);
-      output.writeObject(keyDataConversion);
-      output.writeObject(valueDataConversion);
+      DataConversion.writeTo(output, keyDataConversion);
+      DataConversion.writeTo(output, valueDataConversion);
    }
 
    @Override
@@ -100,8 +107,8 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
       params = Params.readObject(input);
       topologyId = input.readInt();
       flags = input.readLong();
-      keyDataConversion = (DataConversion) input.readObject();
-      valueDataConversion = (DataConversion) input.readObject();
+      keyDataConversion = DataConversion.readFrom(input);
+      valueDataConversion = DataConversion.readFrom(input);
    }
 
    public boolean isForwarded() {
@@ -124,16 +131,19 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
 
    @Override
    public Object perform(InvocationContext ctx) throws Throwable {
-      List<R> returns = new ArrayList<>(entries.size());
+      List<Object> returns = new ArrayList<>(entries.size());
+      boolean skipStats = Param.StatisticsMode.isSkip(params);
       entries.forEach((k, v) -> {
-         CacheEntry<K, V> entry = ctx.lookupEntry(k);
+         MVCCEntry entry = (MVCCEntry) ctx.lookupEntry(k);
 
          if (entry == null) {
             throw new IllegalStateException();
          }
          V decodedValue = (V) valueDataConversion.fromStorage(v);
-         R r = f.apply(decodedValue, EntryViews.readWrite(entry, keyDataConversion, valueDataConversion));
-         returns.add(snapshot(r));
+         boolean exists = entry.getValue() != null;
+         AccessLoggingReadWriteView<K, V> view = EntryViews.readWrite(entry, keyDataConversion, valueDataConversion);
+         R r = snapshot(f.apply(decodedValue, view));
+         returns.add(skipStats ? r : StatsEnvelope.create(r, entry, exists, view.isRead()));
       });
       return returns;
    }
@@ -170,15 +180,13 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
    }
 
    @Override
-   public Collection<Object> getKeysToLock() {
-      // TODO: fixup the generics
-      return (Collection<Object>) entries.keySet();
+   public Collection<?> getKeysToLock() {
+      return entries.keySet();
    }
 
    @Override
-   public Mutation<K, V, ?> toMutation(K key) {
-      V valueFromStorage = (V) valueDataConversion.fromStorage(entries.get(key));
-      return new Mutations.ReadWriteWithValue(valueFromStorage, f);
+   public Mutation<K, V, ?> toMutation(Object key) {
+      return new Mutations.ReadWriteWithValue(keyDataConversion, valueDataConversion, entries.get(key), f);
    }
 
    @Override
@@ -189,4 +197,5 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
       if (f instanceof InjectableComponent)
          ((InjectableComponent) f).inject(componentRegistry);
    }
+
 }

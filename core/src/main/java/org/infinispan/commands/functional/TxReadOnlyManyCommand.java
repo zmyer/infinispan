@@ -16,8 +16,10 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView;
+import org.infinispan.functional.Param;
 import org.infinispan.functional.impl.EntryViews;
 import org.infinispan.functional.impl.Params;
+import org.infinispan.functional.impl.StatsEnvelope;
 
 public class TxReadOnlyManyCommand<K, V, R> extends ReadOnlyManyCommand<K, V, R> {
    public static final byte COMMAND_ID = 65;
@@ -28,11 +30,11 @@ public class TxReadOnlyManyCommand<K, V, R> extends ReadOnlyManyCommand<K, V, R>
    public TxReadOnlyManyCommand() {
    }
 
-   public TxReadOnlyManyCommand(Collection<? extends K> keys, List<List<Mutation<K, V, ?>>> mutations,
-                                DataConversion keyDataConversion,
+   public TxReadOnlyManyCommand(Collection<?> keys, List<List<Mutation<K, V, ?>>> mutations,
+                                Params params, DataConversion keyDataConversion,
                                 DataConversion valueDataConversion,
                                 ComponentRegistry componentRegistry) {
-      super(keys, null, Params.create(), keyDataConversion, valueDataConversion, componentRegistry);
+      super(keys, null, params, keyDataConversion, valueDataConversion, componentRegistry);
       this.mutations = mutations;
       init(componentRegistry);
    }
@@ -40,6 +42,18 @@ public class TxReadOnlyManyCommand<K, V, R> extends ReadOnlyManyCommand<K, V, R>
    public TxReadOnlyManyCommand(ReadOnlyManyCommand c, List<List<Mutation<K, V, ?>>> mutations) {
       super(c);
       this.mutations = mutations;
+   }
+
+   @Override
+   public void init(ComponentRegistry componentRegistry) {
+      super.init(componentRegistry);
+      if (mutations != null) {
+         for (List<Mutation<K, V, ?>> list : mutations) {
+            for (Mutation<K, V, ?> m : list) {
+               m.inject(componentRegistry);
+            }
+         }
+      }
    }
 
    @Override
@@ -100,11 +114,12 @@ public class TxReadOnlyManyCommand<K, V, R> extends ReadOnlyManyCommand<K, V, R>
       if (mutations == null) {
          return super.perform(ctx);
       }
-      ArrayList<R> retvals = new ArrayList<>(keys.size());
+      ArrayList<Object> retvals = new ArrayList<>(keys.size());
       Iterator<List<Mutation<K, V, ?>>> mutIt = mutations.iterator();
-      for (K k : keys) {
+      boolean skipStats = Param.StatisticsMode.isSkip(params);
+      for (Object k : keys) {
          List<Mutation<K, V, ?>> mutations = mutIt.next();
-         MVCCEntry<K, V> entry = (MVCCEntry<K, V>) lookupCacheEntry(ctx, k);
+         MVCCEntry entry = (MVCCEntry) lookupCacheEntry(ctx, k);
          EntryView.ReadEntryView<K, V> ro;
          Object ret = null;
          if (mutations.isEmpty()) {
@@ -118,9 +133,9 @@ public class TxReadOnlyManyCommand<K, V, R> extends ReadOnlyManyCommand<K, V, R>
             ro = rw;
          }
          if (f != null) {
-            ret = f.apply(ro);
+            ret = snapshot(f.apply(ro));
          }
-         retvals.add(snapshot((R) ret));
+         retvals.add(skipStats ? ret : StatsEnvelope.create(ret, entry.isNull()));
       }
       return retvals.stream();
    }

@@ -69,18 +69,17 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       return addBlockingInterceptorBeforeTx(cache, barrier, commandClass, true);
    }
 
-   protected BlockingInterceptor addBlockingInterceptorBeforeTx(Cache<?, ?> cache,
-         final CyclicBarrier barrier,
-                                                 Class<? extends VisitableCommand> commandClass,
-                                                 boolean blockAfterCommand) {
+   protected BlockingInterceptor addBlockingInterceptorBeforeTx(Cache<?, ?> cache, final CyclicBarrier barrier,
+                                                                Class<? extends VisitableCommand> commandClass,
+                                                                boolean blockAfterCommand) {
       return addBlockingInterceptor(cache, barrier, commandClass, getDistributionInterceptorClass(),
             blockAfterCommand);
    }
 
    protected BlockingInterceptor addBlockingInterceptor(Cache<?, ?> cache, final CyclicBarrier barrier,
-                                         Class<? extends VisitableCommand> commandClass,
-         Class<? extends AsyncInterceptor> interceptorPosition,
-                                         boolean blockAfterCommand) {
+                                                        Class<? extends VisitableCommand> commandClass,
+                                                        Class<? extends AsyncInterceptor> interceptorPosition,
+                                                        boolean blockAfterCommand) {
       BlockingInterceptor bi = new BlockingInterceptor<>(barrier, commandClass, blockAfterCommand, false);
       AsyncInterceptorChain interceptorChain = cache.getAdvancedCache().getAsyncInterceptorChain();
       assertTrue(interceptorChain.addInterceptorBefore(bi, interceptorPosition));
@@ -513,7 +512,7 @@ public abstract class BaseDistSyncL1Test extends BaseDistFunctionalTest<Object, 
       try {
          log.warn("Doing get here - ignore all previous");
 
-         Future<String> getFuture = nonOwnerCache.getAsync(key);
+         Future<String> getFuture = fork(() -> nonOwnerCache.get(key));
 
          // Wait until we are about to write value into data container on non owner
          checkPoint.awaitStrict("pre_acquire_shared_topology_lock_invoked", 10, TimeUnit.SECONDS);

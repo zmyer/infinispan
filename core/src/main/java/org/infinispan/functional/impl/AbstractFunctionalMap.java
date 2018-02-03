@@ -18,6 +18,7 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.functional.FunctionalMap;
+import org.infinispan.functional.Param;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
@@ -49,7 +50,7 @@ abstract class AbstractFunctionalMap<K, V> implements FunctionalMap<K, V> {
       autoCommit = config.transaction().autoCommit();
       transactionManager = transactional ? fmap.cache.getTransactionManager() : null;
       batchContainer = transactional && config.invocationBatching().enabled() ? fmap.cache.getBatchContainer() : null;
-      this.params = params;
+      this.params = config.jmxStatistics().available() ? params : params.addAll(Param.StatisticsMode.SKIP);
       this.keyDataConversion = fmap.cache.getKeyDataConversion();
       this.valueDataConversion = fmap.cache.getValueDataConversion();
    }
@@ -161,11 +162,11 @@ abstract class AbstractFunctionalMap<K, V> implements FunctionalMap<K, V> {
       }
    }
 
-   protected Set encodeKeys(Set<? extends K> keys) {
+   protected Set<?> encodeKeys(Set<? extends K> keys) {
       return keys.stream().map(k -> keyDataConversion.toStorage(k)).collect(Collectors.toSet());
    }
 
-   protected Map encodeEntries(Map<? extends K, ? extends V> entries) {
+   protected Map<?, ?> encodeEntries(Map<? extends K, ? extends V> entries) {
       Map encodedEntries = new HashMap<>();
       entries.entrySet().forEach(e -> {
          Object keyEncoded = keyDataConversion.toStorage(e.getKey());

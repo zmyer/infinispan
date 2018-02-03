@@ -14,13 +14,16 @@ import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.Visitor;
 import org.infinispan.commands.functional.functions.InjectableComponent;
 import org.infinispan.commons.marshall.MarshallUtil;
-import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.Param;
 import org.infinispan.functional.impl.EntryViews;
+import org.infinispan.functional.impl.EntryViews.AccessLoggingReadWriteView;
 import org.infinispan.functional.impl.Params;
+import org.infinispan.functional.impl.StatsEnvelope;
 
 // TODO: the command does not carry previous values to backup, so it can cause
 // the values on primary and backup owners to diverge in case of topology change
@@ -28,12 +31,12 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
 
    public static final byte COMMAND_ID = 52;
 
-   private Collection<? extends K> keys;
+   private Collection<?> keys;
    private Function<ReadWriteEntryView<K, V>, R> f;
 
    boolean isForwarded = false;
 
-   public ReadWriteManyCommand(Collection<? extends K> keys,
+   public ReadWriteManyCommand(Collection<?> keys,
                                Function<ReadWriteEntryView<K, V>, R> f, Params params,
                                CommandInvocationId commandInvocationId,
                                DataConversion keyDataConversion,
@@ -56,11 +59,15 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
    public ReadWriteManyCommand() {
    }
 
-   public void setKeys(Collection<? extends K> keys) {
+   public Function<ReadWriteEntryView<K, V>, R> getBiFunction() {
+      return f;
+   }
+
+   public void setKeys(Collection<?> keys) {
       this.keys = keys;
    }
 
-   public final ReadWriteManyCommand<K, V, R> withKeys(Collection<? extends K> keys) {
+   public final ReadWriteManyCommand<K, V, R> withKeys(Collection<?> keys) {
       setKeys(keys);
       return this;
    }
@@ -79,8 +86,8 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
       Params.writeObject(output, params);
       output.writeInt(topologyId);
       output.writeLong(flags);
-      output.writeObject(keyDataConversion);
-      output.writeObject(valueDataConversion);
+      DataConversion.writeTo(output, keyDataConversion);
+      DataConversion.writeTo(output, valueDataConversion);
    }
 
    @Override
@@ -92,8 +99,8 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
       params = Params.readObject(input);
       topologyId = input.readInt();
       flags = input.readLong();
-      keyDataConversion = (DataConversion) input.readObject();
-      valueDataConversion = (DataConversion) input.readObject();
+      keyDataConversion = DataConversion.readFrom(input);
+      valueDataConversion = DataConversion.readFrom(input);
    }
 
    public boolean isForwarded() {
@@ -120,15 +127,15 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
       // EntryWrappingInterceptor expects any changes to be done eagerly,
       // otherwise they're not applied. So, apply the function eagerly and
       // return a lazy stream of the void returns.
-      List<R> returns = new ArrayList<>(keys.size());
+      List<Object> returns = new ArrayList<>(keys.size());
+      boolean skipStats = Param.StatisticsMode.isSkip(params);
       keys.forEach(k -> {
-         CacheEntry<K, V> entry = ctx.lookupEntry(k);
+         MVCCEntry entry = (MVCCEntry) ctx.lookupEntry(k);
 
-         // Could be that the key is not local, 'null' is how this is signalled
-         if (entry != null) {
-            R r = f.apply(EntryViews.readWrite(entry, keyDataConversion, valueDataConversion));
-            returns.add(snapshot(r));
-         }
+         boolean exists = entry.getValue() != null;
+         AccessLoggingReadWriteView<K, V> view = EntryViews.readWrite(entry, keyDataConversion, valueDataConversion);
+         R r = snapshot(f.apply(view));
+         returns.add(skipStats ? r : StatsEnvelope.create(r, entry, exists, view.isRead()));
       });
       return returns;
    }
@@ -156,14 +163,12 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
    }
 
    @Override
-   public Collection<Object> getKeysToLock() {
-      // TODO: fixup the generics
-      return (Collection<Object>) keys;
+   public Collection<?> getKeysToLock() {
+      return keys;
    }
 
-   @Override
-   public Mutation toMutation(K key) {
-      return new Mutations.ReadWrite<>(f);
+   public Mutation toMutation(Object key) {
+      return new Mutations.ReadWrite<>(keyDataConversion, valueDataConversion, f);
    }
 
    @Override
@@ -174,4 +179,5 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
          ((InjectableComponent) f).inject(componentRegistry);
       }
    }
+
 }

@@ -22,10 +22,10 @@
 
 package org.infinispan.server.jgroups.subsystem;
 
-import org.infinispan.server.commons.controller.ReloadRequiredAddStepHandler;
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathElement;
+import org.jboss.as.controller.ReloadRequiredAddStepHandler;
 import org.jboss.as.controller.ReloadRequiredRemoveStepHandler;
 import org.jboss.as.controller.ReloadRequiredWriteAttributeHandler;
 import org.jboss.as.controller.SimpleAttributeDefinition;
@@ -138,8 +138,6 @@ public class TransportResourceDefinition extends SimpleResourceDefinition {
 
     @Override
     public void registerChildren(ManagementResourceRegistration registration) {
-        registration.registerSubModel(new PropertyResourceDefinition());
-
         for (ThreadPoolResourceDefinition pool : ThreadPoolResourceDefinition.values()) {
             registration.registerSubModel(pool);
         }

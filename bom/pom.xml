@@ -73,7 +73,6 @@
       <version.c3p0>0.9.5-pre8</version.c3p0>
       <version.caffeine>2.4.0</version.caffeine>
       <version.cdi>1.2</version.cdi>
-      <version.commons.pool>1.6</version.commons.pool>
       <version.groovy>2.4.8</version.groovy>
       <version.hibernate.core>5.2.11.Final</version.hibernate.core>
       <version.hibernate.javax.persistence>1.0.0.Final</version.hibernate.javax.persistence>
@@ -83,7 +82,7 @@
       <version.javax.cache>1.1.0</version.javax.cache>
       <version.jboss.logging>3.3.0.Final</version.jboss.logging>
       <version.jboss.marshalling>2.0.2.Final</version.jboss.marshalling>
-      <version.jgroups>4.0.9.Final</version.jgroups>
+      <version.jgroups>4.0.10.Final</version.jgroups>
       <version.jta>1.0.1.Final</version.jta>
       <version.lucene>5.5.5</version.lucene>
       <version.maven-compiler-plugin>3.6.1</version.maven-compiler-plugin>
@@ -112,6 +111,7 @@
       <version.netty>4.1.9.Final</version.netty>
       <version.protostuff>1.6.0</version.protostuff>
       <version.xstream>1.4.9</version.xstream>
+      <version.xpp3>1.1.4c</version.xpp3>
    </properties>
 
    <dependencyManagement>
@@ -734,9 +734,9 @@
             <version>${version.xstream}</version>
          </dependency>
          <dependency>
-            <groupId>commons-pool</groupId>
-            <artifactId>commons-pool</artifactId>
-            <version>${version.commons.pool}</version>
+            <groupId>xpp3</groupId>
+            <artifactId>xpp3</artifactId>
+            <version>${version.xpp3}</version>
          </dependency>
          <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>

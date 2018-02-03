@@ -5,7 +5,7 @@ import static org.infinispan.test.TestingUtil.WrapFactory;
 import static org.infinispan.test.TestingUtil.extractComponent;
 import static org.infinispan.test.TestingUtil.wrapComponent;
 import static org.infinispan.test.TestingUtil.wrapGlobalComponent;
-import static org.infinispan.util.BlockingLocalTopologyManager.replaceTopologyManager;
+import static org.infinispan.util.BlockingLocalTopologyManager.replaceTopologyManagerDefaultCache;
 
 import java.util.Collection;
 import java.util.concurrent.Future;
@@ -219,19 +219,19 @@ public class SiteProviderTopologyChangeTest extends AbstractTopologyChangeTest {
       log.debugf("Controlled cache=%s, Coordinator cache=%s, Cache to remove=%s", addressOf(testCaches.controllerCache),
                  addressOf(testCaches.coordinator), testCaches.removeIndex < 0 ? "NONE" : addressOf(cache(LON, testCaches.removeIndex)));
 
-      final BlockingLocalTopologyManager topologyManager = replaceTopologyManager(testCaches.controllerCache.getCacheManager());
-
-      topologyManager.startBlocking(BlockingLocalTopologyManager.LatchType.CONSISTENT_HASH_UPDATE);
+      BlockingLocalTopologyManager topologyManager =
+         replaceTopologyManagerDefaultCache(testCaches.controllerCache.getCacheManager());
 
       final Future<Void> topologyEventFuture = triggerTopologyChange(LON, testCaches.removeIndex);
 
-      topologyManager.waitToBlock(BlockingLocalTopologyManager.LatchType.CONSISTENT_HASH_UPDATE);
+      // We could get either the NO_REBALANCE update or the READ_OLD rebalance start first
+      BlockingLocalTopologyManager.BlockedTopology blockedTopology = topologyManager.expectTopologyUpdate();
 
       log.debug("Start x-site state transfer");
       startStateTransfer(testCaches.coordinator, NYC);
       assertOnline(LON, NYC);
 
-      topologyManager.stopBlockingAll();
+      blockedTopology.unblock();
 
       topologyEventFuture.get();
 

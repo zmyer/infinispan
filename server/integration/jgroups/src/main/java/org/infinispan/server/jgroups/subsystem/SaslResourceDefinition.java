@@ -21,15 +21,14 @@
  */
 package org.infinispan.server.jgroups.subsystem;
 
-import org.infinispan.server.commons.controller.ReloadRequiredAddStepHandler;
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathElement;
+import org.jboss.as.controller.ReloadRequiredAddStepHandler;
 import org.jboss.as.controller.ReloadRequiredRemoveStepHandler;
 import org.jboss.as.controller.ReloadRequiredWriteAttributeHandler;
 import org.jboss.as.controller.SimpleAttributeDefinition;
 import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
-import org.jboss.as.controller.SimpleListAttributeDefinition;
 import org.jboss.as.controller.SimpleResourceDefinition;
 import org.jboss.as.controller.registry.AttributeAccess;
 import org.jboss.as.controller.registry.ManagementResourceRegistration;
@@ -65,13 +64,6 @@ public class SaslResourceDefinition extends SimpleResourceDefinition {
             .setRestartAllServices()
             .build();
 
-    static final SimpleAttributeDefinition PROPERTY = new SimpleAttributeDefinition(ModelKeys.PROPERTY, ModelType.PROPERTY, true);
-
-    static final SimpleListAttributeDefinition PROPERTIES = new SimpleListAttributeDefinition.Builder(ModelKeys.PROPERTIES, PROPERTY).
-            setAllowNull(true).
-            build()
-    ;
-
     static final AttributeDefinition[] ATTRIBUTES = new AttributeDefinition[] { CLUSTER_ROLE, MECH, SECURITY_REALM, ProtocolResourceDefinition.PROPERTIES };
 
     SaslResourceDefinition() {
@@ -84,10 +76,5 @@ public class SaslResourceDefinition extends SimpleResourceDefinition {
         for (AttributeDefinition attribute: ATTRIBUTES) {
             registration.registerReadWriteAttribute(attribute, null, writeHandler);
         }
-    }
-
-    @Override
-    public void registerChildren(ManagementResourceRegistration registration) {
-        registration.registerSubModel(new PropertyResourceDefinition());
     }
 }

@@ -25,7 +25,6 @@ import io.netty.channel.Channel;
  */
 @MessageLogger(projectCode = "ISPN")
 public interface Log extends org.infinispan.util.logging.Log {
-
    @LogMessage(level = INFO)
    @Message(value = "Start main with args: %s", id = 5001)
    void startWithArgs(String args);
@@ -130,4 +129,7 @@ public interface Log extends org.infinispan.util.logging.Log {
 
    @Message(value = "Administration task '%s' invoked without required parameter '%s'", id = 5030)
    NullPointerException missingRequiredAdminTaskParameter(String name, String parameter);
+
+   @Message(value = "The supplied configuration for cache '%s' is missing a declaration named 'configuration': %s", id = 5031)
+   CacheConfigurationException missingCacheConfiguration(String name, String configuration);
 }

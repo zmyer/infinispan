@@ -16,17 +16,19 @@ import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView.WriteEntryView;
+import org.infinispan.functional.Param.StatisticsMode;
 import org.infinispan.functional.impl.EntryViews;
 import org.infinispan.functional.impl.Params;
+import org.infinispan.functional.impl.StatsEnvelope;
 
 public final class WriteOnlyKeyValueCommand<K, V> extends AbstractWriteKeyCommand<K, V> {
 
    public static final byte COMMAND_ID = 55;
 
    private BiConsumer<V, WriteEntryView<V>> f;
-   private V value;
+   private Object value;
 
-   public WriteOnlyKeyValueCommand(K key, V value,
+   public WriteOnlyKeyValueCommand(Object key, Object value,
                                    BiConsumer<V, WriteEntryView<V>> f,
                                    CommandInvocationId id,
                                    ValueMatcher valueMatcher,
@@ -58,21 +60,21 @@ public final class WriteOnlyKeyValueCommand<K, V> extends AbstractWriteKeyComman
       Params.writeObject(output, params);
       output.writeLong(FlagBitSets.copyWithoutRemotableFlags(getFlagsBitSet()));
       CommandInvocationId.writeTo(output, commandInvocationId);
-      output.writeObject(keyDataConversion);
-      output.writeObject(valueDataConversion);
+      DataConversion.writeTo(output, keyDataConversion);
+      DataConversion.writeTo(output, valueDataConversion);
    }
 
    @Override
    public void readFrom(ObjectInput input) throws IOException, ClassNotFoundException {
       key = input.readObject();
-      value = (V) input.readObject();
+      value = input.readObject();
       f = (BiConsumer<V, WriteEntryView<V>>) input.readObject();
       valueMatcher = MarshallUtil.unmarshallEnum(input, ValueMatcher::valueOf);
       params = Params.readObject(input);
       setFlagsBitSet(input.readLong());
       commandInvocationId = CommandInvocationId.readFrom(input);
-      keyDataConversion = (DataConversion) input.readObject();
-      valueDataConversion = (DataConversion) input.readObject();
+      keyDataConversion = DataConversion.readFrom(input);
+      valueDataConversion = DataConversion.readFrom(input);
    }
 
    @Override
@@ -82,14 +84,19 @@ public final class WriteOnlyKeyValueCommand<K, V> extends AbstractWriteKeyComman
 
    @Override
    public Object perform(InvocationContext ctx) throws Throwable {
-      CacheEntry<K, V> e = ctx.lookupEntry(key);
+      CacheEntry e = ctx.lookupEntry(key);
 
       // Could be that the key is not local
       if (e == null) return null;
 
       V decodedValue = (V) valueDataConversion.fromStorage(value);
+      boolean exists = e.getValue() != null;
       f.accept(decodedValue, EntryViews.writeOnly(e, valueDataConversion));
-      return null;
+      // The effective result of retried command is not safe; we'll go to backup anyway
+      if (!e.isChanged() && !hasAnyFlag(FlagBitSets.COMMAND_RETRY)) {
+         successful = false;
+      }
+      return StatisticsMode.isSkip(params) ? null : StatsEnvelope.create(null, e, exists, false);
    }
 
    @Override
@@ -108,8 +115,8 @@ public final class WriteOnlyKeyValueCommand<K, V> extends AbstractWriteKeyComman
    }
 
    @Override
-   public Mutation<K, V, ?> toMutation(K key) {
-      return new Mutations.WriteWithValue<>(value, f);
+   public Mutation<K, V, ?> toMutation(Object key) {
+      return new Mutations.WriteWithValue<>(keyDataConversion, valueDataConversion, value, f);
    }
 
    @Override
@@ -118,5 +125,13 @@ public final class WriteOnlyKeyValueCommand<K, V> extends AbstractWriteKeyComman
       componentRegistry.wireDependencies(valueDataConversion);
       if (f instanceof InjectableComponent)
          ((InjectableComponent) f).inject(componentRegistry);
+   }
+
+   public BiConsumer<V, WriteEntryView<V>> getBiConsumer() {
+      return f;
+   }
+
+   public Object getValue() {
+      return value;
    }
 }

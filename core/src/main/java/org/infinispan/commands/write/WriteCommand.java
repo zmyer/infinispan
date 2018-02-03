@@ -78,4 +78,5 @@ public interface WriteCommand extends VisitableCommand, FlagAffectedCommand, Top
     * @return the {@link CommandInvocationId} associated to the command.
     */
    CommandInvocationId getCommandInvocationId();
+
 }

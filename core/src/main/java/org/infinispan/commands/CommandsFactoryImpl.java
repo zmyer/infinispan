@@ -50,6 +50,11 @@ import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTransactionsCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTxInfoCommand;
 import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
+import org.infinispan.commands.triangle.MultiEntriesFunctionalBackupWriteCommand;
+import org.infinispan.commands.triangle.MultiKeyFunctionalBackupWriteCommand;
+import org.infinispan.commands.triangle.PutMapBackupWriteCommand;
+import org.infinispan.commands.triangle.SingleKeyBackupWriteCommand;
+import org.infinispan.commands.triangle.SingleKeyFunctionalBackupWriteCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
@@ -62,12 +67,9 @@ import org.infinispan.commands.tx.totalorder.TotalOrderVersionedCommitCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
 import org.infinispan.commands.write.BackupAckCommand;
 import org.infinispan.commands.write.BackupMultiKeyAckCommand;
-import org.infinispan.commands.write.BackupPutMapRpcCommand;
-import org.infinispan.commands.write.BackupWriteRpcCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.ComputeCommand;
 import org.infinispan.commands.write.ComputeIfAbsentCommand;
-import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
 import org.infinispan.commands.write.InvalidateCommand;
@@ -95,6 +97,7 @@ import org.infinispan.container.versioning.VersionGenerator;
 import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.group.impl.GroupManager;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
@@ -195,6 +198,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Inject @ComponentName(KnownComponentNames.MODULE_COMMAND_INITIALIZERS)
    private Map<Byte, ModuleCommandInitializer> moduleCommandInitializers;
    @Inject private VersionGenerator versionGenerator;
+   @Inject private KeyPartitioner keyPartitioner;
 
    private ByteString cacheName;
    private boolean transactional;
@@ -509,18 +513,27 @@ public class CommandsFactoryImpl implements CommandsFactory {
             BackupAckCommand command = (BackupAckCommand) c;
             command.setCommandAckCollector(commandAckCollector);
             break;
-         case BackupWriteRpcCommand.COMMAND_ID:
-            BackupWriteRpcCommand bwc = (BackupWriteRpcCommand) c;
-            bwc.init(icf, interceptorChain, notifier, componentRegistry, versionGenerator);
+         case SingleKeyBackupWriteCommand.COMMAND_ID:
+            ((SingleKeyBackupWriteCommand) c)
+                  .init(icf, interceptorChain, notifier, componentRegistry, versionGenerator);
+            break;
+         case SingleKeyFunctionalBackupWriteCommand.COMMAND_ID:
+            ((SingleKeyFunctionalBackupWriteCommand) c).init(icf, interceptorChain, componentRegistry);
+            break;
+         case PutMapBackupWriteCommand.COMMAND_ID:
+            ((PutMapBackupWriteCommand) c).init(icf, interceptorChain, notifier);
+            break;
+         case MultiEntriesFunctionalBackupWriteCommand.COMMAND_ID:
+            ((MultiEntriesFunctionalBackupWriteCommand) c).init(icf, interceptorChain, componentRegistry);
+            break;
+         case MultiKeyFunctionalBackupWriteCommand.COMMAND_ID:
+            ((MultiKeyFunctionalBackupWriteCommand) c).init(icf, interceptorChain, componentRegistry);
             break;
          case BackupMultiKeyAckCommand.COMMAND_ID:
             ((BackupMultiKeyAckCommand) c).setCommandAckCollector(commandAckCollector);
             break;
          case ExceptionAckCommand.COMMAND_ID:
             ((ExceptionAckCommand) c).setCommandAckCollector(commandAckCollector);
-            break;
-         case BackupPutMapRpcCommand.COMMAND_ID:
-            ((BackupPutMapRpcCommand) c).init(icf, interceptorChain, notifier);
             break;
          case InvalidateVersionsCommand.COMMAND_ID:
             InvalidateVersionsCommand invalidateVersionsCommand = (InvalidateVersionsCommand) c;
@@ -729,17 +742,17 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
-   public <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(K key, Function<ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(Object key, Function<ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new ReadOnlyKeyCommand<>(key, f, params, keyDataConversion, valueDataConversion, componentRegistry);
    }
 
    @Override
-   public <K, V, R> ReadOnlyManyCommand<K, V, R> buildReadOnlyManyCommand(Collection<? extends K> keys, Function<ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V, R> ReadOnlyManyCommand<K, V, R> buildReadOnlyManyCommand(Collection<?> keys, Function<ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new ReadOnlyManyCommand<>(keys, f, params, keyDataConversion, valueDataConversion, componentRegistry);
    }
 
    @Override
-   public <K, V, R> ReadWriteKeyValueCommand<K, V, R> buildReadWriteKeyValueCommand(K key, V value, BiFunction<V, ReadWriteEntryView<K, V>, R> f,
+   public <K, V, R> ReadWriteKeyValueCommand<K, V, R> buildReadWriteKeyValueCommand(Object key, Object value, BiFunction<V, ReadWriteEntryView<K, V>, R> f,
                                                                                     Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new ReadWriteKeyValueCommand(key, value, f, generateUUID(transactional), getValueMatcher(f),
             params, keyDataConversion, valueDataConversion, componentRegistry);
@@ -747,17 +760,17 @@ public class CommandsFactoryImpl implements CommandsFactory {
 
    @Override
    public <K, V, R> ReadWriteKeyCommand<K, V, R> buildReadWriteKeyCommand(
-         K key, Function<ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+         Object key, Function<ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new ReadWriteKeyCommand<>(key, f, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion, componentRegistry);
    }
 
    @Override
-   public <K, V, R> ReadWriteManyCommand<K, V, R> buildReadWriteManyCommand(Collection<? extends K> keys, Function<ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V, R> ReadWriteManyCommand<K, V, R> buildReadWriteManyCommand(Collection<?> keys, Function<ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new ReadWriteManyCommand<>(keys, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion, componentRegistry);
    }
 
    @Override
-   public <K, V, R> ReadWriteManyEntriesCommand<K, V, R> buildReadWriteManyEntriesCommand(Map<? extends K, ? extends V> entries, BiFunction<V, ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V, R> ReadWriteManyEntriesCommand<K, V, R> buildReadWriteManyEntriesCommand(Map<?, ?> entries, BiFunction<V, ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new ReadWriteManyEntriesCommand<>(entries, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion, componentRegistry);
    }
 
@@ -768,23 +781,23 @@ public class CommandsFactoryImpl implements CommandsFactory {
 
    @Override
    public <K, V> WriteOnlyKeyCommand<K, V> buildWriteOnlyKeyCommand(
-         K key, Consumer<WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+         Object key, Consumer<WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new WriteOnlyKeyCommand<>(key, f, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion, componentRegistry);
    }
 
    @Override
-   public <K, V> WriteOnlyKeyValueCommand<K, V> buildWriteOnlyKeyValueCommand(K key, V value, BiConsumer<V, WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V> WriteOnlyKeyValueCommand<K, V> buildWriteOnlyKeyValueCommand(Object key, Object value, BiConsumer<V, WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new WriteOnlyKeyValueCommand<>(key, value, f, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion, componentRegistry);
    }
 
    @Override
-   public <K, V> WriteOnlyManyCommand<K, V> buildWriteOnlyManyCommand(Collection<? extends K> keys, Consumer<WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V> WriteOnlyManyCommand<K, V> buildWriteOnlyManyCommand(Collection<?> keys, Consumer<WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new WriteOnlyManyCommand<>(keys, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion, componentRegistry);
    }
 
    @Override
    public <K, V> WriteOnlyManyEntriesCommand<K, V> buildWriteOnlyManyEntriesCommand(
-         Map<? extends K, ? extends V> entries, BiConsumer<V, WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+         Map<?, ?> entries, BiConsumer<V, WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new WriteOnlyManyEntriesCommand<>(entries, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion, componentRegistry);
    }
 
@@ -808,18 +821,6 @@ public class CommandsFactoryImpl implements CommandsFactory {
       return new ExceptionAckCommand(cacheName, id, throwable, topologyId);
    }
 
-   @Override
-   public BackupWriteRpcCommand buildBackupWriteRpcCommand(DataWriteCommand command) {
-      BackupWriteRpcCommand cmd = new BackupWriteRpcCommand(cacheName);
-      command.initBackupWriteRpcCommand(cmd);
-      return cmd;
-   }
-
-   @Override
-   public BackupPutMapRpcCommand buildBackupPutMapRpcCommand(PutMapCommand command) {
-      return new BackupPutMapRpcCommand(cacheName, command);
-   }
-
    private ValueMatcher getValueMatcher(Object o) {
       SerializeFunctionWith ann = o.getClass().getAnnotation(SerializeFunctionWith.class);
       if (ann != null)
@@ -840,5 +841,30 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Override
    public RenewBiasCommand buildRenewBiasCommand(Object[] keys) {
       return new RenewBiasCommand(cacheName, keys);
+   }
+
+   @Override
+   public SingleKeyBackupWriteCommand buildSingleKeyBackupWriteCommand() {
+      return new SingleKeyBackupWriteCommand(cacheName);
+   }
+
+   @Override
+   public SingleKeyFunctionalBackupWriteCommand buildSingleKeyFunctionalBackupWriteCommand() {
+      return new SingleKeyFunctionalBackupWriteCommand(cacheName);
+   }
+
+   @Override
+   public PutMapBackupWriteCommand buildPutMapBackupWriteCommand() {
+      return new PutMapBackupWriteCommand(cacheName);
+   }
+
+   @Override
+   public MultiEntriesFunctionalBackupWriteCommand buildMultiEntriesFunctionalBackupWriteCommand() {
+      return new MultiEntriesFunctionalBackupWriteCommand(cacheName);
+   }
+
+   @Override
+   public MultiKeyFunctionalBackupWriteCommand buildMultiKeyFunctionalBackupWriteCommand() {
+      return new MultiKeyFunctionalBackupWriteCommand(cacheName);
    }
 }

@@ -28,10 +28,13 @@ import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.StreamingRemoteCache;
 import org.infinispan.client.hotrod.configuration.Configuration;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
+import org.infinispan.client.hotrod.exceptions.TransportException;
+import org.infinispan.test.Exceptions;
 import org.jboss.arquillian.container.test.api.ContainerController;
 import org.jboss.arquillian.junit.Arquillian;
 import org.jboss.arquillian.test.api.ArquillianResource;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -265,22 +268,17 @@ public class HotRodRemoteStreamingIT {
 
       rcm1.stop();
 
-      out.write(value, 50, 50);
-      out.close();
+      Exceptions.expectException(IOException.class, () -> {
+         out.write(value, 50, 50);
+         out.close();
+      });
 
-      try {
-         src1.get(key);
-         src1.put(key);
-         fail("No exception returned with stopped RemoteCacheManager");
-      } catch (Exception e) {
-      }
+      Exceptions.expectException(TransportException.class, () -> src1.get(key));
+      Exceptions.expectException(TransportException.class, () -> src1.put(key));
 
       rcm1.start();
 
-      src1.get(key).read(ret);
-
-      assertTrue("Returned value incorrect", Arrays.equals(ret, value));
-
+      assertEquals(null, src1.get(key));
    }
 
    /**
@@ -290,6 +288,7 @@ public class HotRodRemoteStreamingIT {
     * @throws InterruptedException
     */
    @Test
+   @Ignore("ISPN-8724")
    public void serverShutdownTest() throws IOException, InterruptedException {
       byte[] value = new byte[5000];
       random.nextBytes(value);
@@ -332,6 +331,7 @@ public class HotRodRemoteStreamingIT {
     * @throws InterruptedException
     */
    @Test
+   @Ignore("ISPN-8724")
    public void serverKillTest() throws IOException, InterruptedException {
       byte[] value = new byte[5000];
       random.nextBytes(value);
@@ -373,6 +373,7 @@ public class HotRodRemoteStreamingIT {
     * @throws Exception
     */
    @Test
+   @Ignore
    public void performanceTest() throws Exception {
       try {
          byte[] ba = new byte[1024 * 1024 * 10];
@@ -592,7 +593,7 @@ public class HotRodRemoteStreamingIT {
                      fromrand[i] = 0;
 
                if (!Arrays.equals(arr, fromrand)) {
-                  throw new Exception("Data returned from stream were not correct");
+                  throw new Exception("Data returned from stream were not correct: \n\n" + Arrays.toString(arr) + "\n\n" + Arrays.toString(fromrand));
                }
                count = count + ret;
 

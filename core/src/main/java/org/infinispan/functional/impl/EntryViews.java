@@ -14,6 +14,7 @@ import org.infinispan.commons.marshall.AdvancedExternalizer;
 import org.infinispan.commons.util.Experimental;
 import org.infinispan.commons.util.Util;
 import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.functional.EntryView.ReadEntryView;
@@ -39,7 +40,7 @@ public final class EntryViews {
       return new EntryBackedReadOnlyView<>(entry, keyDataConversion, valueDataConversion);
    }
 
-   public static <K, V> ReadEntryView<K, V> readOnly(CacheEntry<K, V> entry) {
+   public static <K, V> ReadEntryView<K, V> readOnly(CacheEntry entry) {
       return new EntryBackedReadOnlyView<>(entry, DataConversion.DEFAULT_KEY, DataConversion.DEFAULT_VALUE);
    }
 
@@ -47,23 +48,23 @@ public final class EntryViews {
       return new ReadOnlySnapshotView<>(key, value, metadata);
    }
 
-   public static <K, V> WriteEntryView<V> writeOnly(CacheEntry<K, V> entry, DataConversion valueDataConversion) {
+   public static <K, V> WriteEntryView<V> writeOnly(CacheEntry entry, DataConversion valueDataConversion) {
       return new EntryBackedWriteOnlyView<>(entry, valueDataConversion);
    }
 
-   public static <K, V> ReadWriteEntryView<K, V> readWrite(CacheEntry<K, V> entry, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public static <K, V> AccessLoggingReadWriteView<K, V> readWrite(MVCCEntry entry, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new EntryBackedReadWriteView<>(entry, keyDataConversion, valueDataConversion);
    }
 
-   public static <K, V> ReadWriteEntryView<K, V> readWrite(CacheEntry<K, V> entry, V prevValue, Metadata prevMetadata, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public static <K, V> AccessLoggingReadWriteView<K, V> readWrite(MVCCEntry entry, Object prevValue, Metadata prevMetadata, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return new EntryAndPreviousReadWriteView<>(entry, prevValue, prevMetadata, keyDataConversion, valueDataConversion);
    }
 
-   public static <K, V> ReadEntryView<K, V> noValue(K key) {
+   public static <K, V> ReadEntryView<K, V> noValue(Object key) {
       return new NoValueReadOnlyView<>(key, null);
    }
 
-   public static <K, V> ReadEntryView<K, V> noValue(K key, DataConversion keyDataConversion) {
+   public static <K, V> ReadEntryView<K, V> noValue(Object key, DataConversion keyDataConversion) {
       return new NoValueReadOnlyView<>(key, keyDataConversion);
    }
 
@@ -93,6 +94,10 @@ public final class EntryViews {
       }
 
       return ret;
+   }
+
+   public interface AccessLoggingReadWriteView<K, V> extends ReadWriteEntryView<K, V> {
+      boolean isRead();
    }
 
    private static final class EntryBackedReadOnlyView<K, V> implements ReadEntryView<K, V> {
@@ -197,7 +202,7 @@ public final class EntryViews {
       final CacheEntry entry;
       private final DataConversion valueDataConversion;
 
-      private EntryBackedWriteOnlyView(CacheEntry<K, V> entry, DataConversion valueDataConversion) {
+      private EntryBackedWriteOnlyView(CacheEntry entry, DataConversion valueDataConversion) {
          this.entry = entry;
          this.valueDataConversion = valueDataConversion;
       }
@@ -237,17 +242,20 @@ public final class EntryViews {
       }
    }
 
-   private static final class EntryBackedReadWriteView<K, V> implements ReadWriteEntryView<K, V> {
-      final CacheEntry entry;
+   private static final class EntryBackedReadWriteView<K, V> implements AccessLoggingReadWriteView<K, V> {
+      final MVCCEntry entry;
       private final DataConversion keyDataConversion;
       private final DataConversion valueDataConversion;
+      private final boolean existsBefore;
       private K decodedKey;
       private V decodedValue;
+      private boolean isRead;
 
-      private EntryBackedReadWriteView(CacheEntry<K, V> entry, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      private EntryBackedReadWriteView(MVCCEntry entry, DataConversion keyDataConversion, DataConversion valueDataConversion) {
          this.entry = entry;
          this.keyDataConversion = keyDataConversion;
          this.valueDataConversion = valueDataConversion;
+         this.existsBefore = entry.getValue() != null;
       }
 
       @Override
@@ -264,10 +272,18 @@ public final class EntryViews {
 
       @Override
       public Optional<V> find() {
+         isRead = true;
+         return peek();
+      }
+
+      @Override
+      public Optional<V> peek() {
          if (entry == null) {
             return Optional.empty();
          }
-         decodedValue = decodedValue == null ? (V) valueDataConversion.fromStorage(entry.getValue()) : decodedValue;
+         if (decodedValue == null) {
+            decodedValue = (V) valueDataConversion.fromStorage(entry.getValue());
+         }
          return Optional.ofNullable(decodedValue);
       }
 
@@ -301,12 +317,10 @@ public final class EntryViews {
       @Override
       public Void remove() {
          decodedValue = null;
-         if (!entry.isNull()) {
-            entry.setRemoved(true);
-            entry.setChanged(true);
-            entry.setValue(null);
-            entry.setCreated(false);
-         }
+         entry.setRemoved(existsBefore);
+         entry.setChanged(existsBefore);
+         entry.setValue(null);
+         entry.setCreated(false);
 
          return null;
       }
@@ -314,6 +328,9 @@ public final class EntryViews {
       @Override
       public <T extends MetaParam> Optional<T> findMetaParam(Class<T> type) {
          Metadata metadata = entry.getMetadata();
+         if (type == MetaParam.MetaLoadedFromPersistence.class) {
+            return Optional.of((T) MetaParam.MetaLoadedFromPersistence.of(entry.isLoaded()));
+         }
          if (metadata instanceof MetaParamsInternalMetadata) {
             MetaParamsInternalMetadata metaParamsMetadata = (MetaParamsInternalMetadata) metadata;
             return metaParamsMetadata.findMetaParam(type);
@@ -326,6 +343,7 @@ public final class EntryViews {
 
       @Override
       public V get() throws NoSuchElementException {
+         isRead = true;
          if (entry == null || entry.getValue() == null)
             throw new NoSuchElementException("No value present");
          decodedValue = decodedValue == null ? (V) valueDataConversion.fromStorage(entry.getValue()) : decodedValue;
@@ -336,20 +354,26 @@ public final class EntryViews {
       public String toString() {
          return "EntryBackedReadWriteView{" + "entry=" + entry + '}';
       }
+
+      @Override
+      public boolean isRead() {
+         return isRead;
+      }
    }
 
-   private static final class EntryAndPreviousReadWriteView<K, V> implements ReadWriteEntryView<K, V> {
-      final CacheEntry entry;
-      final V prevValue;
+   private static final class EntryAndPreviousReadWriteView<K, V> implements AccessLoggingReadWriteView<K, V> {
+      final MVCCEntry entry;
+      final Object prevValue;
       final Metadata prevMetadata;
       private final DataConversion keyDataConversion;
       private final DataConversion valueDataConversion;
       private K decodedKey;
       private V decodedPrevValue;
       private V decodedValue;
+      private boolean isRead;
 
-      private EntryAndPreviousReadWriteView(CacheEntry<K, V> entry,
-                                            V prevValue,
+      private EntryAndPreviousReadWriteView(MVCCEntry entry,
+                                            Object prevValue,
                                             Metadata prevMetadata,
                                             DataConversion keyDataConversion,
                                             DataConversion valueDataConversion) {
@@ -370,6 +394,12 @@ public final class EntryViews {
 
       @Override
       public Optional<V> find() {
+         isRead = true;
+         return peek();
+      }
+
+      @Override
+      public Optional<V> peek() {
          if (decodedPrevValue == null) {
             decodedPrevValue = (V) valueDataConversion.fromStorage(prevValue);
          }
@@ -377,6 +407,7 @@ public final class EntryViews {
       }
 
       public V getCurrentValue() {
+         isRead = true;
          if (decodedValue == null) {
             decodedValue = (V) valueDataConversion.fromStorage(entry.getValue());
          }
@@ -413,18 +444,20 @@ public final class EntryViews {
       @Override
       public Void remove() {
          decodedValue = null;
-         if (!entry.isNull()) {
-            entry.setRemoved(true);
-            entry.setCreated(false);
-            entry.setChanged(true);
-            entry.setValue(null);
-         }
+         entry.setRemoved(prevValue != null);
+         entry.setCreated(false);
+         entry.setChanged(prevValue != null);
+         entry.setValue(null);
 
          return null;
       }
 
       @Override
       public <T extends MetaParam> Optional<T> findMetaParam(Class<T> type) {
+         isRead = true;
+         if (type == MetaParam.MetaLoadedFromPersistence.class) {
+            return Optional.of((T) MetaParam.MetaLoadedFromPersistence.of(entry.isLoaded()));
+         }
          Metadata metadata = prevMetadata; // Use previous metadata
          if (metadata instanceof MetaParamsInternalMetadata) {
             MetaParamsInternalMetadata metaParamsMetadata = (MetaParamsInternalMetadata) metadata;
@@ -438,6 +471,7 @@ public final class EntryViews {
 
       @Override
       public V get() throws NoSuchElementException {
+         isRead = true;
          if (prevValue == null) throw new NoSuchElementException();
          if (decodedPrevValue == null) {
             decodedPrevValue = (V) valueDataConversion.fromStorage(prevValue);
@@ -453,13 +487,18 @@ public final class EntryViews {
                ", prevMetadata=" + prevMetadata +
                '}';
       }
+
+      @Override
+      public boolean isRead() {
+         return isRead;
+      }
    }
 
    private static final class NoValueReadOnlyView<K, V> implements ReadEntryView<K, V> {
-      final K key;
+      final Object key;
       private final DataConversion keyDataConversion;
 
-      public NoValueReadOnlyView(K key, DataConversion keyDataConversion) {
+      public NoValueReadOnlyView(Object key, DataConversion keyDataConversion) {
          this.key = key;
          this.keyDataConversion = keyDataConversion;
       }

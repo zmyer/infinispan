@@ -63,19 +63,6 @@
          <optional>${uberjar.deps.optional}</optional>
       </dependency>
 
-      <!-- Needed by JCache Remote -->
-      <dependency>
-         <groupId>org.wildfly.core</groupId>
-         <artifactId>wildfly-controller-client</artifactId>
-         <optional>${uberjar.deps.optional}</optional>
-      </dependency>
-
-      <dependency>
-         <groupId>org.wildfly.core</groupId>
-         <artifactId>wildfly-controller</artifactId>
-         <optional>${uberjar.deps.optional}</optional>
-      </dependency>
-
       <dependency>
         <groupId>org.apache.karaf.features</groupId>
         <artifactId>framework</artifactId>
@@ -295,6 +282,15 @@
                            !org.wildfly.*,
                            !org.xml.*,
                            !org.apache.logging.log4j.*,
+                           !com.jcraft.jzlib,
+                           !com.ning.compress.*,
+                           !io.netty.internal.tcnative.*,
+                           !lzma.*,
+                           !net.jpountz.*,
+                           !org.apache.log4j.*,
+                           !org.bouncycastle.*,
+                           !org.eclipse.jetty.*,
+                           !sun.security.*,
                            *
                         </Import-Package>
                         <DynamicImport-Package>*</DynamicImport-Package>

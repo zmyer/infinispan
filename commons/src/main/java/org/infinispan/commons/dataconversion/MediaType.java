@@ -62,7 +62,7 @@ public final class MediaType {
    public static MediaType APPLICATION_SERIALIZED_OBJECT = fromString(APPLICATION_SERIALIZED_OBJECT_TYPE);
    public static MediaType APPLICATION_XML = fromString(APPLICATION_XML_TYPE);
    public static MediaType APPLICATION_PROTOSTREAM = fromString(APPLICATION_PROTOSTREAM_TYPE);
-   public static MediaType APPLICATION_JBOSS_MARSHALLED = fromString(APPLICATION_JBOSS_MARSHALLING_TYPE);
+   public static MediaType APPLICATION_JBOSS_MARSHALLING = fromString(APPLICATION_JBOSS_MARSHALLING_TYPE);
    public static MediaType APPLICATION_INFINISPAN_MARSHALLED = fromString(APPLICATION_INFINISPAN_MARSHALLING_TYPE);
    public static MediaType APPLICATION_WWW_FORM_URLENCODED = fromString(WWW_FORM_URLENCODED_TYPE);
    public static MediaType IMAGE_PNG = fromString(IMAGE_PNG_TYPE);
@@ -108,20 +108,24 @@ public final class MediaType {
 
    public static MediaType parse(String str) {
       if (str == null || str.isEmpty()) throw log.missingMediaType();
-      if (str.indexOf('/') == -1)
-         throw log.invalidMediaTypeSubtype();
-      boolean hasParams = str.indexOf(';') != -1;
-      if (!hasParams) {
-         String[] types = str.split("/");
-         return new MediaType(types[0].trim(), types[1].trim());
-
-      }
-      int paramSeparator = str.indexOf(';');
-      String types = str.substring(0, paramSeparator);
-      String params = str.substring(paramSeparator + 1);
-      String[] typeSubType = types.split("/");
+      int separatorIdx = str.indexOf(';');
+      boolean emptyParams = separatorIdx == -1;
+      String types = emptyParams ? str : str.substring(0, separatorIdx);
+      String params = emptyParams ? "" : str.substring(separatorIdx + 1);
       Map<String, String> paramMap = parseParams(params);
-      return new MediaType(typeSubType[0].trim(), typeSubType[1].trim(), paramMap);
+
+      // "*" is not a valid MediaType according to the https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html,
+      // but we'll ignore for now to play nice with java.net.HttpURLConnection.
+      // More details on https://bugs.openjdk.java.net/browse/JDK-8163921
+      if (types.trim().equals("*")) {
+         return emptyParams ? MediaType.MATCH_ALL : new MediaType("*", "*", paramMap);
+      }
+      if (types.indexOf('/') == -1) {
+         throw log.invalidMediaTypeSubtype();
+      }
+
+      String[] typeSubtype = types.split("/");
+      return new MediaType(typeSubtype[0].trim(), typeSubtype[1].trim(), paramMap);
    }
 
    public static Stream<MediaType> parseList(String mediaTypeList) {
@@ -140,6 +144,8 @@ public final class MediaType {
 
    private static Map<String, String> parseParams(String params) {
       Map<String, String> parsed = new HashMap<>();
+      if (params == null || params.isEmpty()) return parsed;
+
       String[] parameters = params.split(";");
 
       for (String p : parameters) {
@@ -222,13 +228,23 @@ public final class MediaType {
    }
 
    private static String validate(String token) {
-      if(token == null) throw new NullPointerException("type and subtype cannot be null");
+      if (token == null) throw new NullPointerException("type and subtype cannot be null");
       for (char c : token.toCharArray()) {
          if (c < 0x20 || c > 0x7F || INVALID_TOKENS.indexOf(c) > 0) {
             throw log.invalidCharMediaType(c, token);
          }
       }
       return token;
+   }
+
+   public MediaType withCharset(Charset charset) {
+      return withParameter(CHARSET_PARAM_NAME, charset.toString());
+   }
+
+   public MediaType withParameter(String name, String value) {
+      Map<String, String> newParams = new HashMap<>(params);
+      newParams.put(name, value);
+      return new MediaType(type, subType, newParams);
    }
 
    public String toStringExcludingParam(String... params) {

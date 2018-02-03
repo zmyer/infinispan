@@ -13,15 +13,17 @@ import org.infinispan.commands.Visitor;
 import org.infinispan.commands.functional.functions.InjectableComponent;
 import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commons.marshall.MarshallUtil;
-import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.MVCCEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView.ReadWriteEntryView;
+import org.infinispan.functional.Param.StatisticsMode;
 import org.infinispan.functional.impl.EntryViews;
+import org.infinispan.functional.impl.EntryViews.AccessLoggingReadWriteView;
 import org.infinispan.functional.impl.Params;
+import org.infinispan.functional.impl.StatsEnvelope;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -31,12 +33,12 @@ public final class ReadWriteKeyValueCommand<K, V, R> extends AbstractWriteKeyCom
 
    public static final byte COMMAND_ID = 51;
 
-   private V value;
+   private Object value;
    private BiFunction<V, ReadWriteEntryView<K, V>, R> f;
-   private V prevValue;
+   private Object prevValue;
    private Metadata prevMetadata;
 
-   public ReadWriteKeyValueCommand(K key, V value, BiFunction<V, ReadWriteEntryView<K, V>, R> f,
+   public ReadWriteKeyValueCommand(Object key, Object value, BiFunction<V, ReadWriteEntryView<K, V>, R> f,
                                    CommandInvocationId id,
                                    ValueMatcher valueMatcher,
                                    Params params,
@@ -69,23 +71,23 @@ public final class ReadWriteKeyValueCommand<K, V, R> extends AbstractWriteKeyCom
       CommandInvocationId.writeTo(output, commandInvocationId);
       output.writeObject(prevValue);
       output.writeObject(prevMetadata);
-      output.writeObject(keyDataConversion);
-      output.writeObject(valueDataConversion);
+      DataConversion.writeTo(output, keyDataConversion);
+      DataConversion.writeTo(output, valueDataConversion);
    }
 
    @Override
    public void readFrom(ObjectInput input) throws IOException, ClassNotFoundException {
       key = input.readObject();
-      value = (V) input.readObject();
+      value = input.readObject();
       f = (BiFunction<V, ReadWriteEntryView<K, V>, R>) input.readObject();
       valueMatcher = MarshallUtil.unmarshallEnum(input, ValueMatcher::valueOf);
       params = Params.readObject(input);
       setFlagsBitSet(input.readLong());
       commandInvocationId = CommandInvocationId.readFrom(input);
-      prevValue = (V) input.readObject();
+      prevValue = input.readObject();
       prevMetadata = (Metadata) input.readObject();
-      keyDataConversion = (DataConversion) input.readObject();
-      valueDataConversion = (DataConversion) input.readObject();
+      keyDataConversion = DataConversion.readFrom(input);
+      valueDataConversion = DataConversion.readFrom(input);
    }
 
    @Override
@@ -121,9 +123,10 @@ public final class ReadWriteKeyValueCommand<K, V, R> extends AbstractWriteKeyCom
       // Note: other commands don't clone the entry as they don't carry the previous value for comparison
       // using value matcher - if other commands are retried these can apply the function multiple times.
       // Here we don't want to modify the value in context when trying what would be the outcome of the operation.
-      CacheEntry<K, V> copy = e.clone();
+      MVCCEntry<K, V> copy = e.clone();
       V decodedValue = (V) valueDataConversion.fromStorage(value);
-      R ret = f.apply(decodedValue, EntryViews.readWrite(copy, prevValue, prevMetadata, keyDataConversion, valueDataConversion));
+      AccessLoggingReadWriteView<K, V> view = EntryViews.readWrite(copy, prevValue, prevMetadata, keyDataConversion, valueDataConversion);
+      R ret = snapshot(f.apply(decodedValue, view));
       if (valueMatcher.matches(oldPrevValue, prevValue, copy.getValue())) {
          log.tracef("Execute read-write function on previous value %s and previous metadata %s", prevValue, prevMetadata);
          e.setValue(copy.getValue());
@@ -132,7 +135,11 @@ public final class ReadWriteKeyValueCommand<K, V, R> extends AbstractWriteKeyCom
          e.setChanged(copy.isChanged());
          e.setRemoved(copy.isRemoved());
       }
-      return snapshot(ret);
+      // The effective result of retried command is not safe; we'll go to backup anyway
+      if (!e.isChanged() && !hasAnyFlag(FlagBitSets.COMMAND_RETRY)) {
+         successful = false;
+      }
+      return StatisticsMode.isSkip(params) ? ret : StatsEnvelope.create(ret, e, prevValue != null, view.isRead());
    }
 
    @Override
@@ -147,9 +154,10 @@ public final class ReadWriteKeyValueCommand<K, V, R> extends AbstractWriteKeyCom
 
    @Override
    public String toString() {
-      return new StringBuilder(getClass().getSimpleName())
-            .append(" {key=").append(toStr(key))
+      return new StringBuilder("ReadWriteKeyValueCommand{")
+            .append("key=").append(toStr(key))
             .append(", value=").append(toStr(value))
+            .append(", f=").append(f.getClass().getName())
             .append(", prevValue=").append(toStr(prevValue))
             .append(", prevMetadata=").append(toStr(prevMetadata))
             .append(", flags=").append(printFlags())
@@ -162,8 +170,8 @@ public final class ReadWriteKeyValueCommand<K, V, R> extends AbstractWriteKeyCom
    }
 
    @Override
-   public Mutation toMutation(K key) {
-      return new Mutations.ReadWriteWithValue<>(value, f);
+   public Mutation toMutation(Object key) {
+      return new Mutations.ReadWriteWithValue<>(keyDataConversion, valueDataConversion, value, f);
    }
 
    @Override
@@ -173,5 +181,26 @@ public final class ReadWriteKeyValueCommand<K, V, R> extends AbstractWriteKeyCom
 
       if (f instanceof InjectableComponent)
          ((InjectableComponent) f).inject(componentRegistry);
+   }
+
+   public void setPrevValueAndMetadata(Object prevValue, Metadata prevMetadata) {
+      this.prevMetadata = prevMetadata;
+      this.prevValue = prevValue;
+   }
+
+   public Object getValue() {
+      return value;
+   }
+
+   public BiFunction<V, ReadWriteEntryView<K, V>, R> getBiFunction() {
+      return f;
+   }
+
+   public Object getPrevValue() {
+      return prevValue;
+   }
+
+   public Metadata getPrevMetadata() {
+      return prevMetadata;
    }
 }

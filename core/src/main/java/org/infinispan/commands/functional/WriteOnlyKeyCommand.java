@@ -16,8 +16,10 @@ import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView.WriteEntryView;
+import org.infinispan.functional.Param;
 import org.infinispan.functional.impl.EntryViews;
 import org.infinispan.functional.impl.Params;
+import org.infinispan.functional.impl.StatsEnvelope;
 
 public final class WriteOnlyKeyCommand<K, V> extends AbstractWriteKeyCommand<K, V> {
 
@@ -25,7 +27,7 @@ public final class WriteOnlyKeyCommand<K, V> extends AbstractWriteKeyCommand<K, 
 
    private Consumer<WriteEntryView<V>> f;
 
-   public WriteOnlyKeyCommand(K key,
+   public WriteOnlyKeyCommand(Object key,
                               Consumer<WriteEntryView<V>> f,
                               CommandInvocationId id,
                               ValueMatcher valueMatcher,
@@ -54,8 +56,8 @@ public final class WriteOnlyKeyCommand<K, V> extends AbstractWriteKeyCommand<K, 
       Params.writeObject(output, params);
       output.writeLong(FlagBitSets.copyWithoutRemotableFlags(getFlagsBitSet()));
       CommandInvocationId.writeTo(output, commandInvocationId);
-      output.writeObject(keyDataConversion);
-      output.writeObject(valueDataConversion);
+      DataConversion.writeTo(output, keyDataConversion);
+      DataConversion.writeTo(output, valueDataConversion);
    }
 
    @Override
@@ -66,8 +68,8 @@ public final class WriteOnlyKeyCommand<K, V> extends AbstractWriteKeyCommand<K, 
       params = Params.readObject(input);
       setFlagsBitSet(input.readLong());
       commandInvocationId = CommandInvocationId.readFrom(input);
-      keyDataConversion = (DataConversion) input.readObject();
-      valueDataConversion = (DataConversion) input.readObject();
+      keyDataConversion = DataConversion.readFrom(input);
+      valueDataConversion = DataConversion.readFrom(input);
    }
 
    @Override
@@ -87,13 +89,19 @@ public final class WriteOnlyKeyCommand<K, V> extends AbstractWriteKeyCommand<K, 
 
    @Override
    public Object perform(InvocationContext ctx) throws Throwable {
-      CacheEntry<K, V> e = ctx.lookupEntry(key);
+      CacheEntry e = ctx.lookupEntry(key);
 
       // Could be that the key is not local
       if (e == null) return null;
 
+      // should we leak this to stats in write-only commands? we do that for events anyway...
+      boolean exists = e.getValue() != null;
       f.accept(EntryViews.writeOnly(e, valueDataConversion));
-      return null;
+      // The effective result of retried command is not safe; we'll go to backup anyway
+      if (!e.isChanged() && !hasAnyFlag(FlagBitSets.COMMAND_RETRY)) {
+         successful = false;
+      }
+      return Param.StatisticsMode.isSkip(params) ? null : StatsEnvelope.create(null, e, exists, false);
    }
 
    @Override
@@ -102,8 +110,8 @@ public final class WriteOnlyKeyCommand<K, V> extends AbstractWriteKeyCommand<K, 
    }
 
    @Override
-   public Mutation<K, V, ?> toMutation(K key) {
-      return new Mutations.Write(f);
+   public Mutation<K, V, ?> toMutation(Object key) {
+      return new Mutations.Write(keyDataConversion, valueDataConversion, f);
    }
 
    @Override
@@ -112,5 +120,9 @@ public final class WriteOnlyKeyCommand<K, V> extends AbstractWriteKeyCommand<K, 
       componentRegistry.wireDependencies(valueDataConversion);
       if (f instanceof InjectableComponent)
          ((InjectableComponent) f).inject(componentRegistry);
+   }
+
+   public Consumer<WriteEntryView<V>> getConsumer() {
+      return f;
    }
 }

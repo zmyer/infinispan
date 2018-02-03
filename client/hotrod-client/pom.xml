@@ -39,8 +39,14 @@
       </dependency>
 
       <dependency>
-         <groupId>commons-pool</groupId>
-         <artifactId>commons-pool</artifactId>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-handler</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-transport-native-epoll</artifactId>
+         <classifier>linux-x86_64</classifier>
       </dependency>
 
       <dependency>
@@ -117,12 +123,6 @@
       <dependency>
          <groupId>org.infinispan.protostream</groupId>
          <artifactId>sample-domain-definition</artifactId>
-         <scope>test</scope>
-      </dependency>
-
-       <dependency>
-         <groupId>org.jboss.sasl</groupId>
-         <artifactId>jboss-sasl</artifactId>
          <scope>test</scope>
       </dependency>
 

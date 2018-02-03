@@ -53,6 +53,11 @@ import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTransactionsCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTxInfoCommand;
 import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
+import org.infinispan.commands.triangle.MultiEntriesFunctionalBackupWriteCommand;
+import org.infinispan.commands.triangle.MultiKeyFunctionalBackupWriteCommand;
+import org.infinispan.commands.triangle.PutMapBackupWriteCommand;
+import org.infinispan.commands.triangle.SingleKeyBackupWriteCommand;
+import org.infinispan.commands.triangle.SingleKeyFunctionalBackupWriteCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
@@ -60,12 +65,9 @@ import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.commands.write.BackupAckCommand;
 import org.infinispan.commands.write.BackupMultiKeyAckCommand;
-import org.infinispan.commands.write.BackupPutMapRpcCommand;
-import org.infinispan.commands.write.BackupWriteRpcCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.ComputeCommand;
 import org.infinispan.commands.write.ComputeIfAbsentCommand;
-import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
 import org.infinispan.commands.write.InvalidateCommand;
@@ -111,7 +113,7 @@ import org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand;
  */
 public class ControlledCommandFactory implements CommandsFactory {
 
-   private static Log log = LogFactory.getLog(ControlledCommandFactory.class);
+   private final static Log log = LogFactory.getLog(ControlledCommandFactory.class);
 
    public final CommandsFactory actual;
    public final ReclosableLatch gate = new ReclosableLatch(true);
@@ -431,56 +433,56 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(K key, Function<EntryView.ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(Object key, Function<EntryView.ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildReadOnlyKeyCommand(key, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
-   public <K, V, R> ReadOnlyManyCommand<K, V, R> buildReadOnlyManyCommand(Collection<? extends K> keys, Function<EntryView.ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V, R> ReadOnlyManyCommand<K, V, R> buildReadOnlyManyCommand(Collection<?> keys, Function<EntryView.ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildReadOnlyManyCommand(keys, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
-   public <K, V, R> ReadWriteKeyValueCommand<K, V, R> buildReadWriteKeyValueCommand(K key, V value, BiFunction<V, EntryView.ReadWriteEntryView<K, V>, R> f,
+   public <K, V, R> ReadWriteKeyValueCommand<K, V, R> buildReadWriteKeyValueCommand(Object key, Object value, BiFunction<V, EntryView.ReadWriteEntryView<K, V>, R> f,
                                                                                     Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildReadWriteKeyValueCommand(key, value, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
    public <K, V, R> ReadWriteKeyCommand<K, V, R> buildReadWriteKeyCommand(
-         K key, Function<EntryView.ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+         Object key, Function<EntryView.ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildReadWriteKeyCommand(key, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
-   public <K, V, R> ReadWriteManyCommand<K, V, R> buildReadWriteManyCommand(Collection<? extends K> keys, Function<EntryView.ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V, R> ReadWriteManyCommand<K, V, R> buildReadWriteManyCommand(Collection<?> keys, Function<EntryView.ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildReadWriteManyCommand(keys, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
-   public <K, V, R> ReadWriteManyEntriesCommand<K, V, R> buildReadWriteManyEntriesCommand(Map<? extends K, ? extends V> entries, BiFunction<V, EntryView.ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V, R> ReadWriteManyEntriesCommand<K, V, R> buildReadWriteManyEntriesCommand(Map<?, ?> entries, BiFunction<V, EntryView.ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildReadWriteManyEntriesCommand(entries, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
    public <K, V> WriteOnlyKeyCommand<K, V> buildWriteOnlyKeyCommand(
-         K key, Consumer<EntryView.WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+         Object key, Consumer<EntryView.WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildWriteOnlyKeyCommand(key, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
-   public <K, V> WriteOnlyKeyValueCommand<K, V> buildWriteOnlyKeyValueCommand(K key, V value, BiConsumer<V, EntryView.WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V> WriteOnlyKeyValueCommand<K, V> buildWriteOnlyKeyValueCommand(Object key, Object value, BiConsumer<V, EntryView.WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildWriteOnlyKeyValueCommand(key, value, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
-   public <K, V> WriteOnlyManyCommand<K, V> buildWriteOnlyManyCommand(Collection<? extends K> keys, Consumer<EntryView.WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+   public <K, V> WriteOnlyManyCommand<K, V> buildWriteOnlyManyCommand(Collection<?> keys, Consumer<EntryView.WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildWriteOnlyManyCommand(keys, f, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
    public <K, V> WriteOnlyManyEntriesCommand<K, V> buildWriteOnlyManyEntriesCommand(
-         Map<? extends K, ? extends V> entries, BiConsumer<V, EntryView.WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+         Map<?, ?> entries, BiConsumer<V, EntryView.WriteEntryView<V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
       return actual.buildWriteOnlyManyEntriesCommand(entries, f, params, keyDataConversion, valueDataConversion);
    }
 
@@ -505,16 +507,6 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public BackupWriteRpcCommand buildBackupWriteRpcCommand(DataWriteCommand command) {
-      return actual.buildBackupWriteRpcCommand(command);
-   }
-
-   @Override
-   public BackupPutMapRpcCommand buildBackupPutMapRpcCommand(PutMapCommand command) {
-      return actual.buildBackupPutMapRpcCommand(command);
-   }
-
-   @Override
    public InvalidateVersionsCommand buildInvalidateVersionsCommand(int topologyId, Object[] keys, int[] topologyIds, long[] versions, boolean removed) {
       return actual.buildInvalidateVersionsCommand(topologyId, keys, topologyIds, versions, removed);
    }
@@ -529,4 +521,29 @@ public class ControlledCommandFactory implements CommandsFactory {
       return actual.buildRenewBiasCommand(keys);
    }
 
+
+   @Override
+   public SingleKeyBackupWriteCommand buildSingleKeyBackupWriteCommand() {
+      return actual.buildSingleKeyBackupWriteCommand();
+   }
+
+   @Override
+   public SingleKeyFunctionalBackupWriteCommand buildSingleKeyFunctionalBackupWriteCommand() {
+      return actual.buildSingleKeyFunctionalBackupWriteCommand();
+   }
+
+   @Override
+   public PutMapBackupWriteCommand buildPutMapBackupWriteCommand() {
+      return actual.buildPutMapBackupWriteCommand();
+   }
+
+   @Override
+   public MultiEntriesFunctionalBackupWriteCommand buildMultiEntriesFunctionalBackupWriteCommand() {
+      return actual.buildMultiEntriesFunctionalBackupWriteCommand();
+   }
+
+   @Override
+   public MultiKeyFunctionalBackupWriteCommand buildMultiKeyFunctionalBackupWriteCommand() {
+      return actual.buildMultiKeyFunctionalBackupWriteCommand();
+   }
 }

@@ -16,8 +16,10 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView.ReadEntryView;
+import org.infinispan.functional.Param.StatisticsMode;
 import org.infinispan.functional.impl.EntryViews;
 import org.infinispan.functional.impl.Params;
+import org.infinispan.functional.impl.StatsEnvelope;
 
 public class ReadOnlyKeyCommand<K, V, R> extends AbstractDataCommand {
 
@@ -60,8 +62,8 @@ public class ReadOnlyKeyCommand<K, V, R> extends AbstractDataCommand {
       output.writeObject(key);
       output.writeObject(f);
       Params.writeObject(output, params);
-      output.writeObject(keyDataConversion);
-      output.writeObject(valueDataConversion);
+      DataConversion.writeTo(output, keyDataConversion);
+      DataConversion.writeTo(output, valueDataConversion);
    }
 
    @Override
@@ -70,8 +72,8 @@ public class ReadOnlyKeyCommand<K, V, R> extends AbstractDataCommand {
       f = (Function<ReadEntryView<K, V>, R>) input.readObject();
       params = Params.readObject(input);
       this.setFlagsBitSet(params.toFlagsBitSet());
-      keyDataConversion = (DataConversion) input.readObject();
-      valueDataConversion = (DataConversion) input.readObject();
+      keyDataConversion = DataConversion.readFrom(input);
+      valueDataConversion = DataConversion.readFrom(input);
    }
 
    // Not really invoked unless in local mode
@@ -84,8 +86,9 @@ public class ReadOnlyKeyCommand<K, V, R> extends AbstractDataCommand {
       }
 
       ReadEntryView<K, V> ro = entry.isNull() ? EntryViews.noValue((K) key, keyDataConversion) : EntryViews.readOnly(entry, keyDataConversion, valueDataConversion);
-      R ret = f.apply(ro);
-      return snapshot(ret);
+      R ret = snapshot(f.apply(ro));
+      // We'll consider the entry always read for stats purposes even if the function is a noop
+      return StatisticsMode.isSkip(params) ? ret : StatsEnvelope.create(ret, entry.isNull());
    }
 
    @Override
@@ -102,7 +105,7 @@ public class ReadOnlyKeyCommand<K, V, R> extends AbstractDataCommand {
     * Apply function on entry without any data
     */
    public Object performOnLostData() {
-      return f.apply(EntryViews.noValue((K) key, keyDataConversion));
+      return StatsEnvelope.create(f.apply(EntryViews.noValue((K) key, keyDataConversion)), true);
    }
 
    @Override
@@ -122,5 +125,9 @@ public class ReadOnlyKeyCommand<K, V, R> extends AbstractDataCommand {
 
    public DataConversion getValueDataConversion() {
       return valueDataConversion;
+   }
+
+   public Params getParams() {
+      return params;
    }
 }

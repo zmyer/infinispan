@@ -60,9 +60,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Invocation of %s threw an exception %s. Exception is ignored.", id = 902)
    void ignoringException(String methodName, String exceptionName, @Cause Throwable t);
 
-   @LogMessage(level = ERROR)
-   @Message(value = "Unable to set value!", id = 903)
-   void unableToSetValue(@Cause Exception e);
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Unable to set value!", id = 903)
+//   void unableToSetValue(@Cause Exception e);
 
    @Message(value = "Error while initializing SSL context", id = 904)
    CacheConfigurationException sslInitializationException(@Cause Throwable e);
@@ -107,8 +107,8 @@ public interface Log extends BasicLogger {
    @Message(value = "No attribute copier for type '%s'", id = 916)
    IllegalArgumentException noAttributeCopierForType(Class<?> klass);
 
-   @Message(value = "Cannot resize unbounded container", id = 917)
-   UnsupportedOperationException cannotResizeUnboundedContainer();
+//   @Message(value = "Cannot resize unbounded container", id = 917)
+//   UnsupportedOperationException cannotResizeUnboundedContainer();
 
    @Message(value = "Cannot find resource '%s'", id = 918)
    IOException cannotFindResource(String fileName);
@@ -171,7 +171,25 @@ public interface Log extends BasicLogger {
    @Message(value = "Invalid Weight '%s'. Supported values are between 0 and 1.0", id = 935)
    EncodingException invalidWeight(Object weight);
 
-   //----- counters exceptions ------
+   @Message(value = "Class '%s' blocked by deserialization white list. Adjust the client configuration serialization white list regular expression to include this class.", id = 936)
+   CacheException classNotInWhitelist(String className);
+
+   @Message(value = "Invalid media type. Expected '%s' but got '%s'", id = 937)
+   EncodingException invalidMediaType(String expected, String actual);
+
+   @Message(value = "Invalid text content '%s'", id = 938)
+   EncodingException invalidTextContent(Object content);
+
+   @Message(value = "Conversion of content '%s' from '%s' to '%s' not supported", id = 939)
+   EncodingException conversionNotSupported(Object content, String fromMediaType, String toMediaType);
+
+   @Message(value = "Invalid application/x-www-form-urlencoded content: '%s'", id = 940)
+   EncodingException cannotDecodeFormURLContent(Object content);
+
+   @Message(value = "Error encoding content '%s' to '%s'", id = 941)
+   EncodingException errorEncoding(Object content, MediaType mediaType);
+
+   //----- counters exceptions // don't use the same id range ------
 
    @Message(value = CounterOutOfBoundsException.FORMAT_MESSAGE, id = 28001)
    CounterOutOfBoundsException counterOurOfBounds(String bound);
@@ -185,23 +203,5 @@ public interface Log extends BasicLogger {
    @Message(value = "WEAK and BOUNDED encoded flag isn't supported!", id = 28022)
    CounterException invalidCounterTypeEncoded();
 
-   //----- counters exceptions ------
-
-   @Message(value = "Class '%s' blocked by deserialization white list. Adjust the client configuration serialization white list regular expression to include this class.", id = 28023)
-   CacheException classNotInWhitelist(String className);
-
-   @Message(value = "Invalid media type. Expected '%s' but got '%s'", id = 28024)
-   EncodingException invalidMediaType(String expected, String actual);
-
-   @Message(value = "Invalid text content '%s'", id = 28025)
-   EncodingException invalidTextContent(Object content);
-
-   @Message(value = "Conversion of content '%s' from '%s' to '%s' not supported", id = 28026)
-   EncodingException conversionNotSupported(Object content, String fromMediaType, String toMediaType);
-
-   @Message(value = "Invalid application/x-www-form-urlencoded content: '%s'", id = 28027)
-   EncodingException cannotDecodeFormURLContent(Object content);
-
-   @Message(value = "Error encoding content '%s' to '%s'", id = 28028)
-   EncodingException errorEncoding(Object content, MediaType mediaType);
+   //----- counters exceptions // don't use the same id range  ------
 }

@@ -67,6 +67,8 @@ import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.commons.dataconversion.Encoder;
+import org.infinispan.commons.dataconversion.IdentityEncoder;
+import org.infinispan.commons.dataconversion.IdentityWrapper;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.dataconversion.Wrapper;
 import org.infinispan.commons.marshall.StreamingMarshaller;
@@ -476,6 +478,17 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
+   public CompletableFuture<CacheEntry<K, V>> getCacheEntryAsync(Object key) {
+      return getCacheEntryAsync(key, EnumUtil.EMPTY_BIT_SET, invocationContextFactory.createInvocationContext(false, 1));
+   }
+
+   final CompletableFuture<CacheEntry<K,V>> getCacheEntryAsync(Object key, long explicitFlags, InvocationContext ctx) {
+      assertKeyNotNull(key);
+      GetCacheEntryCommand command = commandsFactory.buildGetCacheEntryCommand(key, explicitFlags);
+      return invoker.invokeAsync(ctx, command).thenApply(CacheEntry.class::cast);
+   }
+
+   @Override
    public Map<K, V> getAll(Set<?> keys) {
       return getAll(keys, EnumUtil.EMPTY_BIT_SET, invocationContextFactory.createInvocationContext(false, keys.size()));
    }
@@ -484,6 +497,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       GetAllCommand command = commandsFactory.buildGetAllCommand(keys, explicitFlags, false);
       Map<K, V> map = (Map<K, V>) invoker.invoke(ctx, command);
       return dropNullEntries(map);
+   }
+
+   @Override
+   public CompletableFuture<Map<K, V>> getAllAsync(Set<?> keys) {
+      return getAllAsync(keys, EnumUtil.EMPTY_BIT_SET, invocationContextFactory.createInvocationContext(false, keys.size()));
+   }
+
+   final CompletableFuture<Map<K, V>> getAllAsync(Set<?> keys, long explicitFlags, InvocationContext ctx) {
+      GetAllCommand command = commandsFactory.buildGetAllCommand(keys, explicitFlags, false);
+      return invoker.invokeAsync(ctx, command).thenApply(map -> dropNullEntries((Map<K, V>) map));
    }
 
    private Map<K, V> dropNullEntries(Map<K, V> map) {
@@ -619,29 +642,41 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public AdvancedCache<K, V> withEncoding(Class<? extends Encoder> encoderClass) {
-      return new EncoderCache<>(this, DataConversion.DEFAULT_KEY.withEncoding(encoderClass), DataConversion.DEFAULT_VALUE.withEncoding(encoderClass));
+      if (encoderClass == IdentityEncoder.class) {
+         return this;
+      }
+      return new EncoderCache<>(this, getKeyDataConversion().withEncoding(encoderClass), getValueDataConversion().withEncoding(encoderClass));
    }
 
    @Override
    public AdvancedCache<?, ?> withKeyEncoding(Class<? extends Encoder> encoderClass) {
-      return new EncoderCache<>(this, DataConversion.DEFAULT_KEY.withEncoding(encoderClass), DataConversion.DEFAULT_VALUE);
+      if (encoderClass == IdentityEncoder.class) {
+         return this;
+      }
+      return new EncoderCache<>(this, getKeyDataConversion().withEncoding(encoderClass), getValueDataConversion());
    }
 
    @Override
    public AdvancedCache<K, V> withEncoding(Class<? extends Encoder> keyEncoderClass, Class<? extends Encoder> valueEncoderClass) {
-      return new EncoderCache<>(this, DataConversion.DEFAULT_KEY.withEncoding(keyEncoderClass), DataConversion.DEFAULT_VALUE.withEncoding(valueEncoderClass));
+      if (keyEncoderClass == IdentityEncoder.class && valueEncoderClass == IdentityEncoder.class) {
+         return this;
+      }
+      return new EncoderCache<>(this, getKeyDataConversion().withEncoding(keyEncoderClass), getValueDataConversion().withEncoding(valueEncoderClass));
    }
 
    @Override
    public AdvancedCache<K, V> withWrapping(Class<? extends Wrapper> wrapperClass) {
-      return new EncoderCache<>(this, DataConversion.DEFAULT_KEY.withWrapping(wrapperClass), DataConversion.DEFAULT_VALUE.withWrapping(wrapperClass));
+      if (wrapperClass == IdentityWrapper.class) {
+         return this;
+      }
+      return new EncoderCache<>(this, getKeyDataConversion().withWrapping(wrapperClass), getValueDataConversion().withWrapping(wrapperClass));
    }
 
    @Override
    public AdvancedCache<K, V> withMediaType(String keyMediaType, String valueMediaType) {
       MediaType km = MediaType.fromString(keyMediaType);
       MediaType vm = MediaType.fromString(valueMediaType);
-      return new EncoderCache<>(this, DataConversion.DEFAULT_KEY.withRequestMediaType(km), DataConversion.DEFAULT_VALUE.withRequestMediaType(vm));
+      return new EncoderCache<>(this, getKeyDataConversion().withRequestMediaType(km), getValueDataConversion().withRequestMediaType(vm));
    }
 
 
@@ -667,17 +702,20 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public AdvancedCache<K, V> withWrapping(Class<? extends Wrapper> keyWrapperClass, Class<? extends Wrapper> valueWrapperClass) {
-      return new EncoderCache<>(this, DataConversion.DEFAULT_KEY.withWrapping(keyWrapperClass), DataConversion.DEFAULT_VALUE.withWrapping(valueWrapperClass));
+      if (keyWrapperClass == IdentityWrapper.class && valueWrapperClass == IdentityWrapper.class) {
+         return this;
+      }
+      return new EncoderCache<>(this, getKeyDataConversion().withWrapping(keyWrapperClass), getValueDataConversion().withWrapping(valueWrapperClass));
    }
 
    @Override
    public DataConversion getKeyDataConversion() {
-      return DataConversion.DEFAULT_KEY;
+      return DataConversion.IDENTITY_KEY;
    }
 
    @Override
    public DataConversion getValueDataConversion() {
-      return DataConversion.DEFAULT_VALUE;
+      return DataConversion.IDENTITY_VALUE;
    }
 
    @ManagedOperation(
@@ -1475,7 +1513,8 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return putAllAsync(data, metadata);
    }
 
-   final CompletableFuture<Void> putAllAsync(final Map<? extends K, ? extends V> data, final Metadata metadata) {
+   @Override
+   public final CompletableFuture<Void> putAllAsync(final Map<? extends K, ? extends V> data, final Metadata metadata) {
       return putAllAsync(data, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, data.size()));
    }
 
@@ -1505,7 +1544,8 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return putIfAbsentAsync(key, value, metadata);
    }
 
-   final CompletableFuture<V> putIfAbsentAsync(final K key, final V value, final Metadata metadata) {
+   @Override
+   public final CompletableFuture<V> putIfAbsentAsync(final K key, final V value, final Metadata metadata) {
       return putIfAbsentAsync(key, value, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
    }
 
@@ -1547,7 +1587,8 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return replaceAsync(key, value, metadata);
    }
 
-   final CompletableFuture<V> replaceAsync(final K key, final V value, final Metadata metadata) {
+   @Override
+   public final CompletableFuture<V> replaceAsync(final K key, final V value, final Metadata metadata) {
       return replaceAsync(key, value, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
    }
 
@@ -1566,7 +1607,8 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return replaceAsync(key, oldValue, newValue, metadata);
    }
 
-   final CompletableFuture<Boolean> replaceAsync(final K key, final V oldValue, final V newValue,
+   @Override
+   public final CompletableFuture<Boolean> replaceAsync(final K key, final V oldValue, final V newValue,
                                                  final Metadata metadata) {
       return replaceAsync(key, oldValue, newValue, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
    }
@@ -1607,6 +1649,24 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
          return this;
       else
          return new DecoratedCache<>(this, flags);
+   }
+
+   @Override
+   public AdvancedCache<K, V> withFlags(Collection<Flag> flags) {
+      if (flags == null || flags.isEmpty())
+         return this;
+      else
+         return new DecoratedCache<>(this, flags);
+   }
+
+   @Override
+   public AdvancedCache<K, V> noFlags() {
+      return this;
+   }
+
+   @Override
+   public AdvancedCache<K, V> transform(Function<AdvancedCache<K, V>, ? extends AdvancedCache<K, V>> transformation) {
+      return transformation.apply(this);
    }
 
    @Override

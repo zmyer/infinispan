@@ -130,7 +130,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    private boolean hasListeners = false;
 
    public SimpleCacheImpl(String cacheName) {
-      this(cacheName, DataConversion.DEFAULT_KEY, DataConversion.DEFAULT_VALUE);
+      this(cacheName, DataConversion.IDENTITY_KEY, DataConversion.IDENTITY_VALUE);
    }
 
    public SimpleCacheImpl(String cacheName, DataConversion keyDataConversion, DataConversion valueDataConversion) {
@@ -243,6 +243,11 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
+   public CompletableFuture<Map<K, V>> getAllAsync(Set<?> keys) {
+      return CompletableFuture.completedFuture(getAll(keys));
+   }
+
+   @Override
    public CacheEntry<K, V> getCacheEntry(Object k) {
       InternalCacheEntry<K, V> entry = getDataContainer().get(k);
       if (entry != null) {
@@ -254,6 +259,11 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          }
       }
       return entry;
+   }
+
+   @Override
+   public CompletableFuture<CacheEntry<K, V>> getCacheEntryAsync(Object key) {
+      return CompletableFuture.completedFuture(getCacheEntry(key));
    }
 
    @Override
@@ -823,6 +833,12 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
+   public CompletableFuture<Void> putAllAsync(Map<? extends K, ? extends V> map, Metadata metadata) {
+      putAll(map, metadata);
+      return CompletableFutures.completedNull();
+   }
+
+   @Override
    public CompletableFuture<Void> clearAsync() {
       clear();
       return CompletableFutures.completedNull();
@@ -841,6 +857,11 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    @Override
    public CompletableFuture<V> putIfAbsentAsync(K key, V value, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
       return CompletableFuture.completedFuture(putIfAbsent(key, value, lifespan, lifespanUnit, maxIdle, maxIdleUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> putIfAbsentAsync(K key, V value, Metadata metadata) {
+      return CompletableFuture.completedFuture(putIfAbsent(key, value, metadata));
    }
 
    @Override
@@ -881,6 +902,16 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    @Override
    public CompletableFuture<Boolean> replaceAsync(K key, V oldValue, V newValue, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
       return CompletableFuture.completedFuture(replace(key, oldValue, newValue, lifespan, lifespanUnit, maxIdle, maxIdleUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> replaceAsync(K key, V value, Metadata metadata) {
+      return CompletableFuture.completedFuture(replace(key, value, metadata));
+   }
+
+   @Override
+   public CompletableFuture<Boolean> replaceAsync(K key, V oldValue, V newValue, Metadata metadata) {
+      return CompletableFuture.completedFuture(replace(key, oldValue, newValue, metadata));
    }
 
    @Override
@@ -1019,6 +1050,21 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    public AdvancedCache<K, V> withFlags(Flag... flags) {
       // the flags are mostly ignored
       return this;
+   }
+
+   @Override
+   public AdvancedCache<K, V> withFlags(Collection<Flag> flags) {
+      return this;
+   }
+
+   @Override
+   public AdvancedCache<K, V> noFlags() {
+      return this;
+   }
+
+   @Override
+   public AdvancedCache<K, V> transform(Function<AdvancedCache<K, V>, ? extends AdvancedCache<K, V>> transformation) {
+      return transformation.apply(this);
    }
 
    @Override
@@ -1581,13 +1627,13 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
       @Override
       public CacheStream<Entry<K, V>> stream() {
-         return cacheStreamCast(new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this, null,
+         return cacheStreamCast(new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this, false, null,
                getStreamSupplier(false)), false, componentRegistry));
       }
 
       @Override
       public CacheStream<Entry<K, V>> parallelStream() {
-         return cacheStreamCast(new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this, null,
+         return cacheStreamCast(new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this, false, null,
                getStreamSupplier(false)), true, componentRegistry));
       }
    }
@@ -1621,13 +1667,13 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
       @Override
       public CacheStream<CacheEntry<K, V>> stream() {
-         return new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this, null, getStreamSupplier(false)),
+         return new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this, false, null, getStreamSupplier(false)),
                false, componentRegistry);
       }
 
       @Override
       public CacheStream<CacheEntry<K, V>> parallelStream() {
-         return new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this, null, getStreamSupplier(true)),
+         return new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this, false, null, getStreamSupplier(true)),
                true, componentRegistry);
       }
    }
@@ -1704,14 +1750,14 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       @Override
       public CacheStream<V> stream() {
          LocalCacheStream<CacheEntry<K, V>> lcs = new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this,
-               null, getStreamSupplier(false)), false, componentRegistry);
+               false, null, getStreamSupplier(false)), false, componentRegistry);
          return lcs.map(CacheEntry::getValue);
       }
 
       @Override
       public CacheStream<V> parallelStream() {
          LocalCacheStream<CacheEntry<K, V>> lcs = new LocalCacheStream<>(new EntryStreamSupplier<>(SimpleCacheImpl.this,
-               null, getStreamSupplier(false)), true, componentRegistry);
+               false, null, getStreamSupplier(false)), true, componentRegistry);
          return lcs.map(CacheEntry::getValue);
       }
    }

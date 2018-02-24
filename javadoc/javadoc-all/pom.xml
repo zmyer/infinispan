@@ -169,6 +169,11 @@
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-client-hotrod</artifactId>
       </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-tasks-api</artifactId>
+      </dependency>
       <!-- /javadoc-remote dependencies -->
    </dependencies>
 
@@ -191,7 +196,7 @@
                         <artifactId>infinispan-tools</artifactId>
                         <version>${project.version}</version>
                      </docletArtifact>
-                     <doctitle>Infinispan ${project.version} API</doctitle>
+                     <doctitle>Infinispan ${infinispan.base.version} API</doctitle>
                      <docfilessubdirs>true</docfilessubdirs>
                      <detectLinks>false</detectLinks>
                      <footer>${analytics.code}</footer>

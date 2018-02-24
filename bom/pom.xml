@@ -14,7 +14,7 @@
    </organization>
    <licenses>
       <license>
-         <name>Apache License</name>
+         <name>Apache License 2.0</name>
          <url>http://www.apache.org/licenses/LICENSE-2.0</url>
          <distribution>repo</distribution>
       </license>
@@ -76,11 +76,10 @@
       <version.groovy>2.4.8</version.groovy>
       <version.hibernate.core>5.2.11.Final</version.hibernate.core>
       <version.hibernate.javax.persistence>1.0.0.Final</version.hibernate.javax.persistence>
-      <version.hibernate.search>5.8.1.Final</version.hibernate.search>
+      <version.hibernate.search>5.9.0.Final</version.hibernate.search>
       <version.hikaricp>2.4.6</version.hikaricp>
-      <version.java>1.8</version.java>
       <version.javax.cache>1.1.0</version.javax.cache>
-      <version.jboss.logging>3.3.0.Final</version.jboss.logging>
+      <version.jboss.logging>3.3.1.Final</version.jboss.logging>
       <version.jboss.marshalling>2.0.2.Final</version.jboss.marshalling>
       <version.jgroups>4.0.10.Final</version.jgroups>
       <version.jta>1.0.1.Final</version.jta>
@@ -88,7 +87,7 @@
       <version.maven-compiler-plugin>3.6.1</version.maven-compiler-plugin>
       <version.maven.source>3.0.1</version.maven.source>
       <version.osgi>4.3.1</version.osgi>
-      <version.protostream>4.2.0.Alpha6</version.protostream>
+      <version.protostream>4.2.0.CR1</version.protostream>
       <version.reactivestreams>1.0.1</version.reactivestreams>
       <version.rocksdb>5.8.0</version.rocksdb>
       <version.rxjava>2.1.3</version.rxjava>
@@ -105,10 +104,10 @@
       <version.commons.logging>1.2</version.commons.logging>
       <version.commons.math>2.2</version.commons.math>
       <version.gnu.getopt>1.0.13</version.gnu.getopt>
+      <version.jgroups.azure>1.2.0.Final</version.jgroups.azure>
       <version.jgroups.kubernetes>1.0.5.Final</version.jgroups.kubernetes>
       <version.kryo>4.0.1</version.kryo>
-      <version.netty.tcp.native>2.0.0.Final</version.netty.tcp.native>
-      <version.netty>4.1.9.Final</version.netty>
+      <version.netty>4.1.21.Final</version.netty>
       <version.protostuff>1.6.0</version.protostuff>
       <version.xstream>1.4.9</version.xstream>
       <version.xpp3>1.1.4c</version.xpp3>
@@ -518,6 +517,11 @@
             <version>${version.jgroups}</version>
          </dependency>
          <dependency>
+            <groupId>org.jgroups.azure</groupId>
+            <artifactId>jgroups-azure</artifactId>
+            <version>${version.jgroups.azure}</version>
+         </dependency>
+         <dependency>
             <groupId>org.jgroups.kubernetes</groupId>
             <artifactId>jgroups-kubernetes</artifactId>
             <version>${version.jgroups.kubernetes}</version>
@@ -668,62 +672,6 @@
             <version>${version.reactivestreams}</version>
          </dependency>
          <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-buffer</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-codec</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-codec-http</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-codec-http2</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-common</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-handler</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-resolver</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-tcnative-boringssl-static</artifactId>
-            <version>${version.netty.tcp.native}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport-native-epoll</artifactId>
-            <version>${version.netty}</version>
-         </dependency>
-         <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport-native-epoll</artifactId>
-            <version>${version.netty}</version>
-            <classifier>linux-x86_64</classifier>
-         </dependency>
-         <dependency>
             <groupId>org.rocksdb</groupId>
             <artifactId>rocksdbjni</artifactId>
             <version>${version.rocksdb}</version>
@@ -757,6 +705,13 @@
             <groupId>org.jboss.slf4j</groupId>
             <artifactId>slf4j-jboss-logging</artifactId>
             <version>${version.slf4j-jboss-logging}</version>
+         </dependency>
+         <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-bom</artifactId>
+            <version>${version.netty}</version>
+            <type>pom</type>
+            <scope>import</scope>
          </dependency>
       </dependencies>
    </dependencyManagement>

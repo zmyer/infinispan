@@ -546,10 +546,19 @@ public final class InfinispanSubsystemXMLReader implements XMLElementReader<List
                     parseGlobalStatePath(reader, globalState, GlobalStateResource.TEMPORARY_STATE_PATH);
                     break;
                 }
+                case IMMUTABLE_CONFIGURATION_STORAGE: {
+                    if (storage != null) {
+                        throw ParseUtils.unexpectedElement(reader);
+                    }
+                    storage = ConfigurationStorage.IMMUTABLE;
+                    break;
+                }
                 case VOLATILE_CONFIGURATION_STORAGE: {
                     if (storage != null) {
                         throw ParseUtils.unexpectedElement(reader);
                     }
+                    ParseUtils.requireNoAttributes(reader);
+                    ParseUtils.requireNoContent(reader);
                     storage = ConfigurationStorage.VOLATILE;
                     break;
                 }
@@ -557,6 +566,8 @@ public final class InfinispanSubsystemXMLReader implements XMLElementReader<List
                     if (storage != null) {
                         throw ParseUtils.unexpectedElement(reader);
                     }
+                    ParseUtils.requireNoAttributes(reader);
+                    ParseUtils.requireNoContent(reader);
                     storage = ConfigurationStorage.OVERLAY;
                     break;
                 }
@@ -564,6 +575,8 @@ public final class InfinispanSubsystemXMLReader implements XMLElementReader<List
                     if (storage != null) {
                         throw ParseUtils.unexpectedElement(reader);
                     }
+                    ParseUtils.requireNoAttributes(reader);
+                    ParseUtils.requireNoContent(reader);
                     storage = ConfigurationStorage.MANAGED;
                     break;
                 }
@@ -572,7 +585,9 @@ public final class InfinispanSubsystemXMLReader implements XMLElementReader<List
                         throw ParseUtils.unexpectedElement(reader);
                     }
                     storage = ConfigurationStorage.CUSTOM;
+                    ParseUtils.requireSingleAttribute(reader, Attribute.CLASS.getLocalName());
                     String klass = ParseUtils.readStringAttributeElement(reader, Attribute.CLASS.getLocalName());
+                    ParseUtils.requireNoContent(reader);
                     GlobalStateResource.CONFIGURATION_STORAGE_CLASS.parseAndSetParameter(klass, globalState, reader);
                     break;
                 }

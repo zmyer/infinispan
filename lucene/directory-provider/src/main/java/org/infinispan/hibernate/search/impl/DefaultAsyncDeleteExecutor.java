@@ -9,7 +9,6 @@ import org.hibernate.search.engine.service.spi.Startable;
 import org.hibernate.search.engine.service.spi.Stoppable;
 import org.hibernate.search.spi.BuildContext;
 import org.hibernate.search.util.impl.Executors;
-import org.hibernate.search.util.logging.impl.LoggerFactory;
 import org.infinispan.hibernate.search.logging.Log;
 import org.kohsuke.MetaInfServices;
 
@@ -21,7 +20,7 @@ import org.kohsuke.MetaInfServices;
 @MetaInfServices(AsyncDeleteExecutorService.class)
 public class DefaultAsyncDeleteExecutor implements AsyncDeleteExecutorService, Startable, Stoppable {
 
-   private static final Log log = LoggerFactory.make(Log.class);
+   private static final Log log = LoggerFactory.make();
 
    private ThreadPoolExecutor threadPool;
 

@@ -5,12 +5,14 @@ import static java.util.Collections.singletonList;
 import static org.mockito.Mockito.mock;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNull;
+import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commons.hash.MurmurHash3;
 import org.infinispan.configuration.cache.CacheMode;
@@ -31,11 +33,14 @@ import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.MockTransport;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.test.AbstractInfinispanTest;
+import org.testng.annotations.AfterClass;
 import org.testng.annotations.Test;
 
 @Test(groups = "unit", testName = "topology.ClusterTopologyManagerImplTest")
 public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
    private static final String CACHE_NAME = "testCache";
+
+   ExecutorService transportExecutor = Executors.newSingleThreadExecutor(getTestThreadFactory("Transport"));
 
    private static final Address A = new TestAddress(0, "A");
    private static final Address B = new TestAddress(1, "B");
@@ -68,7 +73,6 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       PersistentUUIDManager persistentUUIDManager = new PersistentUUIDManagerImpl();
       gcr.registerComponent(persistentUUIDManager, PersistentUUIDManager.class);
 
-      ExecutorService transportExecutor = Executors.newSingleThreadExecutor(getTestThreadFactory("Transport"));
       gcr.registerComponent(transportExecutor, KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR);
 
       MockLocalTopologyManager ltm = new MockLocalTopologyManager(CACHE_NAME);
@@ -88,7 +92,7 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       transport.expectTopologyCommand(CacheTopologyControlCommand.Type.GET_STATUS).finish();
 
       // CTMI fetches rebalance status/confirm members are available
-      transport.expectTopologyCommand(CacheTopologyControlCommand.Type.POLICY_GET_STATUS).finish();
+      transport.expectHeartBeatCommand().finish();
 
       // First node joins the cache
       CacheStatusResponse joinResponseA = ctm.handleJoin(CACHE_NAME, A, joinInfoA, 1);
@@ -111,7 +115,7 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       managerNotifier.notifyViewChange(asList(A, B), singletonList(A), A, 2);
 
       // CTMI confirms availability
-      transport.expectTopologyCommand(CacheTopologyControlCommand.Type.POLICY_GET_STATUS).finish();
+      transport.expectHeartBeatCommand().finish();
 
       // Second node joins the cache, receives the initial topology
       CacheStatusResponse joinResponseB = ctm.handleJoin(CACHE_NAME, B, joinInfoB, 2);
@@ -143,7 +147,6 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       PersistentUUIDManager persistentUUIDManager = new PersistentUUIDManagerImpl();
       gcr.registerComponent(persistentUUIDManager, PersistentUUIDManager.class);
 
-      ExecutorService transportExecutor = Executors.newFixedThreadPool(2, getTestThreadFactory("Transport"));
       gcr.registerComponent(transportExecutor, KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR);
 
       MockLocalTopologyManager ltm = new MockLocalTopologyManager(CACHE_NAME);
@@ -174,7 +177,7 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
 
       // When CTMI starts as regular member it requests the rebalancing status from the coordinator
       runConcurrently(
-         () -> ctm.start(),
+         ctm::start,
          () -> transport.expectTopologyCommand(CacheTopologyControlCommand.Type.POLICY_GET_STATUS)
                         .singleResponse(A, SuccessfulResponse.create(true)));
 
@@ -207,15 +210,14 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       });
 
       // CTMI confirms members are available in case it needs to starts a rebalance
-      transport.expectTopologyCommand(CacheTopologyControlCommand.Type.POLICY_GET_STATUS).finish();
+      transport.expectHeartBeatCommand().finish();
 
       // Node A restarts
       transport.updateView(4, asList(B, A));
       managerNotifier.notifyViewChange(asList(B, A), singletonList(B), A, 4);
 
       // CTMI confirms members are available in case it needs to starts a rebalance
-      transport.expectTopologyCommand(CacheTopologyControlCommand.Type.POLICY_GET_STATUS)
-               .singleResponse(A, SuccessfulResponse.create(true));
+      transport.expectHeartBeatCommand().finish();
 
       // Node A rejoins
       ctm.handleJoin(CACHE_NAME, A, joinInfoA, 4);
@@ -291,4 +293,9 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       assertEquals(asList(members), ch.getMembers());
    }
 
+   @AfterClass(alwaysRun = true)
+   public void shutdownExecutor() throws InterruptedException {
+      transportExecutor.shutdownNow();
+      assertTrue(transportExecutor.awaitTermination(10, TimeUnit.SECONDS));
+   }
 }

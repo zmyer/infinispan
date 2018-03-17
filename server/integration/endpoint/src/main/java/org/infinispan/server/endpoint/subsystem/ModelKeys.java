@@ -52,6 +52,7 @@ public class ModelKeys {
    public static final String SECURITY_MODE = "security-mode"; // string
    public static final String EXTENDED_HEADERS = "extended-headers"; //enum
    public static final String MAX_CONTENT_LENGTH = "max-content-length"; //int
+   public static final String COMPRESSION_LEVEL = "compression-level"; //int
 
    public static final String TOPOLOGY_STATE_TRANSFER_NAME = "TOPOLOGY_STATE_TRANSFER";
    public static final String TOPOLOGY_STATE_TRANSFER = "topology-state-transfer";
@@ -103,4 +104,7 @@ public class ModelKeys {
    public static final String REST = "rest";
    public static final String MULTI_TENANCY = "multi-tenancy";
    public static final String MULTI_TENANCY_NAME = "MULTI_TENANCY";
+
+   public static final String MANAGEMENT_HTTP = "management-http";
+   public static final String MANAGEMENT_HTTPS = "management-https";
 }

@@ -1,10 +1,14 @@
 package org.infinispan.lock.impl.lock;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.commons.logging.LogFactory;
@@ -30,7 +34,6 @@ import org.infinispan.notifications.cachelistener.event.CacheEntryModifiedEvent;
 import org.infinispan.notifications.cachelistener.event.CacheEntryRemovedEvent;
 import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
 import org.infinispan.notifications.cachemanagerlistener.event.ViewChangedEvent;
-import org.infinispan.partitionhandling.AvailabilityException;
 import org.infinispan.remoting.RemoteException;
 import org.infinispan.remoting.transport.Address;
 
@@ -53,6 +56,7 @@ import org.infinispan.remoting.transport.Address;
  */
 public class ClusteredLockImpl implements ClusteredLock {
    private static final Log log = LogFactory.getLog(ClusteredLockImpl.class, Log.class);
+   private static final boolean trace = log.isTraceEnabled();
 
    private final String name;
    private final ClusteredLockKey lockKey;
@@ -60,6 +64,8 @@ public class ClusteredLockImpl implements ClusteredLock {
    private final FunctionalMap.ReadWriteMap<ClusteredLockKey, ClusteredLockValue> readWriteMap;
    private final Queue<RequestHolder> pendingRequests;
    private final Object originator;
+   private final AtomicInteger viewChangeUnlockHappening = new AtomicInteger(0);
+   private final RequestExpirationScheduler requestExpirationScheduler;
 
    public ClusteredLockImpl(String name,
                             ClusteredLockKey lockKey,
@@ -71,6 +77,7 @@ public class ClusteredLockImpl implements ClusteredLock {
       this.pendingRequests = new ConcurrentLinkedQueue<>();
       this.readWriteMap = ReadWriteMapImpl.create(FunctionalMapImpl.create(clusteredLockCache));
       originator = clusteredLockCache.getCacheManager().getAddress();
+      requestExpirationScheduler = new RequestExpirationScheduler(clusteredLockManager.getScheduledExecutorService());
       clusteredLockCache.getCacheManager().addListener(new ClusterChangeListener());
       clusteredLockCache.addListener(new LockReleasedListener(), new ClusteredLockFilter(lockKey));
    }
@@ -92,13 +99,15 @@ public class ClusteredLockImpl implements ClusteredLock {
 
       public void handleLockResult(Boolean result, Throwable ex) {
          if (ex != null) {
-            log.trace("Exception on lock request " + this, ex);
+            log.errorf(ex, "LOCK[%s] Exception on lock request %s", getName(), this.toString());
             request.completeExceptionally(handleException(ex));
             return;
          }
 
          if (result == null) {
-            log.trace("Result is null on request " + this);
+            if (trace) {
+               log.tracef("LOCK[%s] Result is null on request %s", getName(), this.toString());
+            }
             request.completeExceptionally(new ClusteredLockException("Lock result is null, something is wrong"));
             return;
          }
@@ -108,9 +117,8 @@ public class ClusteredLockImpl implements ClusteredLock {
 
       protected abstract void handle(Boolean result);
 
-      private String createRequestId() {
-         return Util.threadLocalRandomUUID().toString();
-      }
+      protected abstract void forceFailed();
+
    }
 
    public class LockRequestHolder extends RequestHolder<Void> {
@@ -125,8 +133,14 @@ public class ClusteredLockImpl implements ClusteredLock {
       }
 
       @Override
+      protected void forceFailed() {
+         request.complete(null);
+      }
+
+      @Override
       public String toString() {
          final StringBuilder sb = new StringBuilder("LockRequestHolder{");
+         sb.append("name=").append(getName());
          sb.append(", requestId=").append(requestId);
          sb.append(", requestor=").append(requestor);
          sb.append(", completed=").append(request.isDone());
@@ -134,6 +148,7 @@ public class ClusteredLockImpl implements ClusteredLock {
          sb.append('}');
          return sb.toString();
       }
+
    }
 
    public class TryLockRequestHolder extends RequestHolder<Boolean> {
@@ -158,11 +173,17 @@ public class ClusteredLockImpl implements ClusteredLock {
       protected void handle(Boolean result) {
          if (time <= 0) {
             // The answer has to be returned without holding the CompletableFuture
-            log.tracef("Return the request no for %s", this);
+            if(trace) {
+               log.tracef("LOCK[%s] Result[%b] for request %s", getName(), result, this);
+            }
             request.complete(result);
          } else if (result) {
             // The lock might have been acquired correctly
+            if(trace) {
+               log.tracef("LOCK[%s] LockResult[%b] for %s", getName(), result, this);
+            }
             request.complete(true);
+            requestExpirationScheduler.abortScheduling(requestId);
             Boolean tryLockRealResult = request.join();
             if (!tryLockRealResult) {
                // Even if we complete true just before, the lock request can be completed false just before by the scheduler.
@@ -170,18 +191,27 @@ public class ClusteredLockImpl implements ClusteredLock {
                // In this case, even if the lock was marked as acquired in the cache, it has to be released because the call expired.
                // We have to unlock the lock if the requestor and the requestId match.
                // Meanwhile another request for this owner might have locked it successfully and we don't want to unlock in that case
-               unlock(requestId, requestor);
+               unlock(requestId, Collections.singleton(requestor));
             }
-         } else if(!isScheduled){
+         } else if (!isScheduled) {
+            if(trace) {
+               log.tracef("LOCK[%s] Schedule for expiration %s", getName(), this);
+            }
             // If the lock was not acquired, then schedule a complete false for the given timeout
             isScheduled = true;
-            clusteredLockManager.schedule(() -> request.complete(false), time, unit);
+            requestExpirationScheduler.scheduleForCompletion(requestId, request, time, unit);
          }
+      }
+
+      @Override
+      protected void forceFailed() {
+         request.complete(false);
       }
 
       @Override
       public String toString() {
          final StringBuilder sb = new StringBuilder("TryLockRequestHolder{");
+         sb.append("name=").append(getName());
          sb.append(", requestId=").append(requestId);
          sb.append(", requestor=").append(requestor);
          sb.append(", time=").append(time);
@@ -204,21 +234,54 @@ public class ClusteredLockImpl implements ClusteredLock {
       public void entryModified(CacheEntryModifiedEvent event) {
          ClusteredLockValue value = (ClusteredLockValue) event.getValue();
          if (value.getState() == ClusteredLockState.RELEASED) {
-            RequestHolder nextRequestor = null;
-            while (!pendingRequests.isEmpty() && (nextRequestor == null || nextRequestor.isDone()))
-               nextRequestor = pendingRequests.poll();
-
-            final RequestHolder requestor = nextRequestor;
-            clusteredLockManager.execute(() -> lock(requestor));
+            if(trace) {
+               log.tracef("LOCK[%s] Lock has been released, %s notified", getName(), originator);
+            }
+            retryPendingRequests(value);
          }
       }
 
       @CacheEntryRemoved
       public void entryRemoved(CacheEntryRemovedEvent event) {
          while (!pendingRequests.isEmpty()) {
-            pendingRequests.poll().handleLockResult(null, log.lockDeleted());
+            RequestHolder requestHolder = pendingRequests.poll();
+            requestHolder.handleLockResult(null, log.lockDeleted());
+            requestExpirationScheduler.abortScheduling(requestHolder.requestId);
          }
       }
+   }
+
+   private void retryPendingRequests(ClusteredLockValue value) {
+      if (isChangeViewUnlockInProgress()) {
+         if(trace) {
+            log.tracef("LOCK[%s] Hold pending requests while view change unlock is happening in %s", getName(), originator);
+         }
+      } else {
+         RequestHolder nextRequestor = null;
+         if(trace) {
+            log.tracef("LOCK[%s] Pending requests size[%d] in %s", getName(), pendingRequests.size(), originator);
+         }
+         while (!pendingRequests.isEmpty() && (nextRequestor == null || nextRequestor.isDone() || isSameRequest(nextRequestor, value)))
+            nextRequestor = pendingRequests.poll();
+
+         if (nextRequestor != null) {
+            if(trace) {
+               log.tracef("LOCK[%s] About to retry lock for %s", getName(), nextRequestor);
+            }
+            final RequestHolder requestor = nextRequestor;
+            clusteredLockManager.execute(() -> lock(requestor));
+         }
+      }
+   }
+
+   private void retryPendingRequests() {
+      retryPendingRequests(null);
+   }
+
+   private boolean isSameRequest(RequestHolder nextRequestor, ClusteredLockValue value) {
+      if (value == null) return false;
+
+      return nextRequestor.requestId.equals(value.getRequestId()) && nextRequestor.requestor.equals(value.getOwner());
    }
 
    @Listener
@@ -226,34 +289,90 @@ public class ClusteredLockImpl implements ClusteredLock {
 
       @ViewChanged
       public void viewChange(ViewChangedEvent event) {
-         log.trace("viewChange event has been fired");
+         if(trace) {
+            log.tracef("LOCK[%s] ViewChange event has been fired %s", getName(), originator);
+         }
+
          List<Address> newMembers = event.getNewMembers();
          List<Address> oldMembers = event.getOldMembers();
-
-         // TODO: Split brain and leaving nodes, handle this better
-         if(newMembers.size() > 1 || (oldMembers.size() == 2 && newMembers.size() == 1)) {
-            // There has to be at least 2 members
-            // FIXME: Reentrant locks, can the node rejoin and reacquire the lock before the release actually happens ?? Use the requestId
-            oldMembers.stream().filter(a -> !newMembers.contains(a)).forEach(notPresent -> {
-               try {
-                  if (clusteredLockManager.isDefined(name)) {
-                     clusteredLockManager.execute(() -> unlock(null, notPresent)
-                           .exceptionally(ex -> {
-                              log.error("Unlock failed wrong", ex);
-                              return null;
-                           }));
-                  }
-               } catch (AvailabilityException ex) {
-                  log.error("Unable to release due to cluster change", ex);
-               }
-            });
+         if (newMembers.size() <= 1 && oldMembers.size() > 2) {
+            if(trace) {
+               log.tracef("LOCK[%s] A single new node %s is this notification. Do nothing", getName(), originator);
+            }
+            return;
          }
+
+         Set<Object> leavingNodes = oldMembers.stream().filter(a -> !newMembers.contains(a)).collect(Collectors.toSet());
+
+         if (leavingNodes.isEmpty()) {
+            if(trace) {
+               log.tracef("LOCK[%s] Nothing to do, all nodes are present %s", getName(), originator);
+            }
+            return;
+         }
+
+         if (leavingNodes.size() >= newMembers.size() && oldMembers.size() > 2) {
+            // If the oldMembers size is greater than 2, we do nothing because the other nodes will handle
+            // If the cluster was formed by 2 members and one leaves, we should not enter here
+            if(trace) {
+               log.tracef("LOCK[%s] Nothing to do, we are on a minority partition notification on %s", getName(), originator);
+            }
+            return;
+         }
+
+         if (clusteredLockManager.isDefined(name)) {
+            if(trace) {
+               log.tracef("LOCK[%s] %s launches unlock for each leaving node", getName(), originator);
+            }
+            forceUnlockForLeavingMembers(leavingNodes);
+         }
+      }
+
+      /**
+       * This method forces unlock for each of the Address that is not present in the cluster. We don't know which node
+       * holds the lock, so we force an unlock
+       *
+       * @param possibleOwners
+       */
+      private void forceUnlockForLeavingMembers(Set<Object> possibleOwners) {
+         clusteredLockManager.execute(() -> {
+                  if(trace) {
+                     log.tracef("LOCK[%s] Call force unlock for %s from %s ", getName(), possibleOwners, originator);
+                  }
+                  int viewChangeUnlockValue = viewChangeUnlockHappening.incrementAndGet();
+                  if(trace) {
+                     log.tracef("LOCK[%s] viewChangeUnlockHappening value in %s ", getName(), viewChangeUnlockValue, originator);
+                  }
+                  unlock(null, possibleOwners)
+                        .whenComplete((unlockResult, ex) -> {
+                           if(trace) {
+                              log.tracef("LOCK[%s] Force unlock call completed for %s from %s ", getName(), possibleOwners, originator);
+                           }
+                           int viewChangeUnlockValueAfterUnlock = viewChangeUnlockHappening.decrementAndGet();
+                           if(trace) {
+                              log.tracef("LOCK[%s] viewChangeUnlockHappening value in %s ", getName(), viewChangeUnlockValueAfterUnlock, originator);
+                           }
+                           if (ex == null) {
+                              if(trace) {
+                                 log.tracef("LOCK[%s] Force unlock result %b for %s from %s ", getName(), unlockResult, possibleOwners, originator);
+                              }
+                           } else {
+                              log.error(ex, log.unlockFailed(getName(), getOriginator()));
+                              // TODO: handle the exception. Retry ? End all the pending requests in this lock ?
+                           }
+
+                           retryPendingRequests();
+                        });
+               }
+         );
       }
    }
 
    @Override
    public CompletableFuture<Void> lock() {
-      log.tracef("lock called from %s", originator);
+      if(trace) {
+         log.tracef("LOCK[%s] lock called from %s", getName(), originator);
+      }
       CompletableFuture<Void> lockRequest = new CompletableFuture<>();
       lock(new LockRequestHolder(originator, lockRequest));
       return lockRequest;
@@ -264,13 +383,22 @@ public class ClusteredLockImpl implements ClusteredLock {
          return;
 
       pendingRequests.offer(requestHolder);
-      readWriteMap.eval(lockKey, new LockFunction(requestHolder.requestId, requestHolder.requestor))
-            .whenComplete((lockResult, ex) -> requestHolder.handleLockResult(lockResult, ex));
+      if (isChangeViewUnlockInProgress()) {
+         if(trace) {
+            log.tracef("LOCK[%s] View change unlock is happening in %s. Do not try to lock", getName(), originator);
+         }
+      } else {
+         readWriteMap.eval(lockKey, new LockFunction(requestHolder.requestId, requestHolder.requestor)).whenComplete((lockResult, ex) -> {
+            requestHolder.handleLockResult(lockResult, ex);
+         });
+      }
    }
 
    @Override
    public CompletableFuture<Boolean> tryLock() {
-      log.tracef("tryLock called from %s", originator);
+      if(trace) {
+         log.tracef("LOCK[%s] tryLock called from %s", getName(), originator);
+      }
       CompletableFuture<Boolean> tryLockRequest = new CompletableFuture<>();
       tryLock(new TryLockRequestHolder(originator, tryLockRequest));
       return tryLockRequest;
@@ -278,7 +406,9 @@ public class ClusteredLockImpl implements ClusteredLock {
 
    @Override
    public CompletableFuture<Boolean> tryLock(long time, TimeUnit unit) {
-      log.tracef("tryLock with timeout (%d, %s) called from %s", time, unit, originator);
+      if(trace) {
+         log.tracef("LOCK[%s] tryLock with timeout (%d, %s) called from %s", getName(), time, unit, originator);
+      }
       CompletableFuture<Boolean> tryLockRequest = new CompletableFuture<>();
       tryLock(new TryLockRequestHolder(originator, tryLockRequest, time, unit));
       return tryLockRequest;
@@ -290,17 +420,27 @@ public class ClusteredLockImpl implements ClusteredLock {
       }
       if (requestHolder.hasTimeout()) pendingRequests.offer(requestHolder);
 
-      readWriteMap.eval(lockKey, new LockFunction(requestHolder.requestId, requestHolder.requestor)).whenComplete((lockResult, ex) -> {
-         requestHolder.handleLockResult(lockResult, ex);
-      });
+      if (isChangeViewUnlockInProgress()) {
+         requestHolder.handleLockResult(false, null);
+      } else {
+         readWriteMap.eval(lockKey, new LockFunction(requestHolder.requestId, requestHolder.requestor)).whenComplete((lockResult, ex) -> {
+            requestHolder.handleLockResult(lockResult, ex);
+         });
+      }
    }
 
    @Override
    public CompletableFuture<Void> unlock() {
-      log.tracef("unlock called from %s", originator);
+      if(trace) {
+         log.tracef("LOCK[%s] unlock called from %s", getName(), originator);
+      }
       CompletableFuture<Void> unlockRequest = new CompletableFuture<>();
-      readWriteMap.eval(lockKey, new UnlockFunction(originator)).whenComplete((lockResult, ex) -> {
+
+      readWriteMap.eval(lockKey, new UnlockFunction(originator)).whenComplete((unlockResult, ex) -> {
          if (ex == null) {
+            if(trace) {
+               log.tracef("LOCK[%s] Unlock result for %s is %b", getName(), originator, unlockResult);
+            }
             unlockRequest.complete(null);
          } else {
             unlockRequest.completeExceptionally(handleException(ex));
@@ -311,7 +451,9 @@ public class ClusteredLockImpl implements ClusteredLock {
 
    @Override
    public CompletableFuture<Boolean> isLocked() {
-      log.tracef("isLocked called from %s", originator);
+      if(trace) {
+         log.tracef("LOCK[%s] isLocked called from %s", getName(), originator);
+      }
       CompletableFuture<Boolean> isLockedRequest = new CompletableFuture<>();
       readWriteMap.eval(lockKey, new IsLocked()).whenComplete((isLocked, ex) -> {
          if (ex == null) {
@@ -325,7 +467,9 @@ public class ClusteredLockImpl implements ClusteredLock {
 
    @Override
    public CompletableFuture<Boolean> isLockedByMe() {
-      log.tracef("isLockedByMe called from %s", originator);
+      if(trace) {
+         log.tracef("LOCK[%s] isLockedByMe called from %s", getName(), originator);
+      }
       CompletableFuture<Boolean> isLockedByMeRequest = new CompletableFuture<>();
       readWriteMap.eval(lockKey, new IsLocked(originator)).whenComplete((isLockedByMe, ex) -> {
          if (ex == null) {
@@ -337,17 +481,27 @@ public class ClusteredLockImpl implements ClusteredLock {
       return isLockedByMeRequest;
    }
 
-   private CompletableFuture<Void> unlock(String requestId, Object owner) {
-      log.tracef("unlock called for requestId %s for possible owner %s", owner);
-      CompletableFuture<Void> unlockRequest = new CompletableFuture<>();
-      readWriteMap.eval(lockKey, new UnlockFunction(requestId, owner)).whenComplete((lockResult, ex) -> {
+   private CompletableFuture<Boolean> unlock(String requestId, Set<Object> possibleOwners) {
+      if(trace) {
+         log.tracef("LOCK[%s] unlock called for %s %s", getName(), requestId, possibleOwners);
+      }
+      CompletableFuture<Boolean> unlockRequest = new CompletableFuture<>();
+      readWriteMap.eval(lockKey, new UnlockFunction(requestId, possibleOwners)).whenComplete((unlockResult, ex) -> {
          if (ex == null) {
-            unlockRequest.complete(null);
+            unlockRequest.complete(unlockResult);
          } else {
             unlockRequest.completeExceptionally(handleException(ex));
          }
       });
       return unlockRequest;
+   }
+
+   private String createRequestId() {
+      return Util.threadLocalRandomUUID().toString();
+   }
+
+   private boolean isChangeViewUnlockInProgress() {
+      return viewChangeUnlockHappening.get() > 0;
    }
 
    private Throwable handleException(Throwable ex) {
@@ -367,5 +521,14 @@ public class ClusteredLockImpl implements ClusteredLock {
 
    public Object getOriginator() {
       return originator;
+   }
+
+   @Override
+   public String toString() {
+      final StringBuilder sb = new StringBuilder("ClusteredLockImpl{");
+      sb.append("lock=").append(getName());
+      sb.append(", originator=").append(originator);
+      sb.append('}');
+      return sb.toString();
    }
 }

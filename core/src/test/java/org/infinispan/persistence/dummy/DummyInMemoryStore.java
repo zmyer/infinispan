@@ -134,21 +134,6 @@ public class DummyInMemoryStore implements AdvancedLoadWriteStore, AdvancedCache
    }
 
    @Override
-   public void purge(Executor threadPool, PurgeListener task) {
-      long currentTimeMillis = timeService.wallClockTime();
-      Set expired = new HashSet();
-      for (Iterator<Map.Entry<Object, byte[]>> i = store.entrySet().iterator(); i.hasNext();) {
-         Map.Entry<Object, byte[]> next = i.next();
-         MarshalledEntry se = deserialize(next.getKey(), next.getValue(), false, true);
-         if (isExpired(se, currentTimeMillis)) {
-            if (task != null) task.entryPurged(next.getKey());
-            i.remove();
-            expired.add(next.getKey());
-         }
-      }
-   }
-
-   @Override
    public void purge(Executor executor, ExpirationPurgeListener listener) {
       long currentTimeMillis = timeService.wallClockTime();
       Set expired = new HashSet();
@@ -366,9 +351,9 @@ public class DummyInMemoryStore implements AdvancedLoadWriteStore, AdvancedCache
       try {
          if (b == null)
             return null;
-         if (!fetchValue && !fetchMetadata) {
-            return ctx.getMarshalledEntryFactory().newMarshalledEntry(key, null, (InternalMetadata) null);
-         }
+         // We have to fetch metadata to tell if a key or entry is expired. Note this can be changed
+         // after API changes
+         fetchMetadata = true;
          KeyValuePair<Object, InternalMetadata> keyValuePair =
                (KeyValuePair<Object, InternalMetadata>) marshaller.objectFromByteBuffer(b);
          return ctx.getMarshalledEntryFactory().newMarshalledEntry(key,

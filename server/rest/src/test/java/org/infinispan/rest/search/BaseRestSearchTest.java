@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Random;
 import java.util.stream.IntStream;
 
-import org.apache.http.HttpStatus;
 import org.codehaus.jackson.JsonNode;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.codehaus.jackson.node.ArrayNode;
@@ -28,6 +27,7 @@ import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
+import org.eclipse.jetty.http.HttpStatus;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -54,7 +54,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
    private static final String PROTO_FILE_NAME = "person.proto";
    protected static final ObjectMapper MAPPER = new ObjectMapper();
 
-   private HttpClient client;
+   protected HttpClient client;
    private List<RestServerHelper> restServers = new ArrayList<>();
    private final Random random = new Random(1000);
 
@@ -65,8 +65,12 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
    @Override
    protected void createCacheManagers() {
       ConfigurationBuilder builder = getConfigBuilder();
-      createClusteredCaches(getNumNodes(), builder, true, CACHE_NAME, "default");
+      createClusteredCaches(getNumNodes(), builder, isServerMode(), CACHE_NAME, "default");
       waitForClusterToForm(CACHE_NAME);
+   }
+
+   protected boolean isServerMode() {
+      return true;
    }
 
    @DataProvider(name = "HttpMethodProvider")
@@ -74,15 +78,15 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
       return new Object[][]{{GET}, {POST}};
    }
 
-   private RestServerHelper pickServer() {
+   protected RestServerHelper pickServer() {
       return restServers.get(random.nextInt(getNumNodes()));
    }
 
-   private String getUrl(RestServerHelper restServerHelper) {
+   protected String getUrl(RestServerHelper restServerHelper) {
       return getUrl(restServerHelper, CACHE_NAME);
    }
 
-   private String getUrl(RestServerHelper restServerHelper, String cacheName) {
+   protected String getUrl(RestServerHelper restServerHelper, String cacheName) {
       return String.format("http://localhost:%d/rest/%s?action=search", restServerHelper.getPort(), cacheName);
    }
 
@@ -97,7 +101,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
       client = new HttpClient();
       client.start();
 
-      String protoFile = Util.read(IndexedRestSearchTest.class.getClassLoader().getResourceAsStream(PROTO_FILE_NAME));
+      String protoFile = Util.getResourceAsString(PROTO_FILE_NAME, getClass().getClassLoader());
       registerProtobuf(PROTO_FILE_NAME, protoFile);
       populateData();
    }
@@ -124,7 +128,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
                .method(GET)
                .send();
       }
-      assertEquals(response.getStatus(), HttpStatus.SC_BAD_REQUEST);
+      assertEquals(response.getStatus(), HttpStatus.BAD_REQUEST_400);
       String contentAsString = response.getContentAsString();
       assertTrue(contentAsString.contains("Message descriptor not found") ||
             contentAsString.contains("Unknown entity"));
@@ -272,7 +276,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
             .content(new StringContentProvider(contents))
             .header(HttpHeader.CONTENT_TYPE, contentType.toString())
             .send();
-      assertEquals(response.getStatus(), HttpStatus.SC_OK);
+      assertEquals(response.getStatus(), HttpStatus.OK_200);
    }
 
    protected ContentResponse get(String id, String accept) throws Exception {
@@ -310,12 +314,12 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
             .content(new StringContentProvider(protoFileContents))
             .method(POST)
             .send();
-      assertEquals(response.getStatus(), HttpStatus.SC_OK);
+      assertEquals(response.getStatus(), HttpStatus.OK_200);
       String errorKey = protoFileName.concat(".error");
 
       ContentResponse errorCheck = client.newRequest(getProtobufMetadataUrl(errorKey)).method(GET).send();
 
-      assertEquals(errorCheck.getStatus(), HttpStatus.SC_NOT_FOUND);
+      assertEquals(errorCheck.getStatus(), HttpStatus.NOT_FOUND_404);
    }
 
    private String getProtobufMetadataUrl(String key) {
@@ -352,7 +356,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
       }
       ContentResponse response = request.send();
       String contentAsString = response.getContentAsString();
-      assertEquals(response.getStatus(), HttpStatus.SC_OK);
+      assertEquals(response.getStatus(), HttpStatus.OK_200);
       return MAPPER.readTree(contentAsString);
    }
 

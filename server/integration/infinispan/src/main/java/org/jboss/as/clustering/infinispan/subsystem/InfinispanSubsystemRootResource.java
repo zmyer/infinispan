@@ -30,6 +30,7 @@ import org.jboss.as.controller.SimpleResourceDefinition;
 import org.jboss.as.controller.descriptions.ModelDescriptionConstants;
 import org.jboss.as.controller.operations.common.GenericSubsystemDescribeHandler;
 import org.jboss.as.controller.registry.ManagementResourceRegistration;
+import org.jboss.as.controller.registry.OperationEntry;
 import org.jboss.as.controller.services.path.PathManager;
 import org.jboss.as.controller.services.path.ResolvePathHandler;
 
@@ -45,11 +46,17 @@ public class InfinispanSubsystemRootResource extends SimpleResourceDefinition {
     private final ResolvePathHandler resolvePathHandler;
     private final PathManager pathManager;
     private final boolean runtimeRegistration;
-    public InfinispanSubsystemRootResource(final ResolvePathHandler resolvePathHandler, PathManager pathManager, boolean runtimeRegistration) {
-        super(PathElement.pathElement(SUBSYSTEM, InfinispanExtension.SUBSYSTEM_NAME),
-                new InfinispanResourceDescriptionResolver(),
-                InfinispanSubsystemAdd.INSTANCE,
-                ReloadRequiredRemoveStepHandler.INSTANCE);
+
+    public static InfinispanSubsystemRootResource create(ResolvePathHandler resolvePathHandler, PathManager pathManager, boolean runtimeRegistration) {
+        Parameters parameters = new Parameters(PathElement.pathElement(SUBSYSTEM, InfinispanExtension.SUBSYSTEM_NAME), new InfinispanResourceDescriptionResolver());
+        parameters.setAddHandler(new InfinispanSubsystemAdd());
+        parameters.setRemoveHandler(ReloadRequiredRemoveStepHandler.INSTANCE);
+        parameters.setAddRestartLevel(OperationEntry.Flag.RESTART_ALL_SERVICES);
+        return new InfinispanSubsystemRootResource(parameters, resolvePathHandler, pathManager, runtimeRegistration);
+    }
+
+    private InfinispanSubsystemRootResource(Parameters parameters, final ResolvePathHandler resolvePathHandler, PathManager pathManager, boolean runtimeRegistration) {
+        super(parameters);
         this.resolvePathHandler = resolvePathHandler;
         this.pathManager = pathManager;
         this.runtimeRegistration = runtimeRegistration;
@@ -59,12 +66,6 @@ public class InfinispanSubsystemRootResource extends SimpleResourceDefinition {
     public void registerOperations(ManagementResourceRegistration resourceRegistration) {
         super.registerOperations(resourceRegistration);
         resourceRegistration.registerOperationHandler(GenericSubsystemDescribeHandler.DEFINITION, GenericSubsystemDescribeHandler.INSTANCE);
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-        // resourceRegistration.registerReadWriteAttribute(DEFAULT_STACK, null, SubsystemWriteAttributeHandler.INSTANCE);
     }
 
     @Override

@@ -6,6 +6,7 @@ import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OCTET_
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OCTET_STREAM_TYPE;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_SERIALIZED_OBJECT;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_WWW_FORM_URLENCODED;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_XML_TYPE;
 import static org.infinispan.commons.dataconversion.MediaType.TEXT_PLAIN_TYPE;
 import static org.infinispan.commons.dataconversion.StandardConversions.bytesToHex;
 
@@ -17,7 +18,6 @@ import java.io.ObjectOutput;
 import java.io.ObjectOutputStream;
 import java.net.URLEncoder;
 import java.nio.ByteBuffer;
-import java.util.Base64;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
@@ -65,9 +65,12 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       client.start();
    }
 
+   private static final long DEFAULT_LIFESPAN = 45190;
+   private static final long DEFAULT_MAX_IDLE = 1859446;
+
    protected void defineCaches() {
       ConfigurationBuilder expirationConfiguration = getDefaultCacheBuilder();
-      expirationConfiguration.expiration().lifespan(100).maxIdle(100);
+      expirationConfiguration.expiration().lifespan(DEFAULT_LIFESPAN).maxIdle(DEFAULT_MAX_IDLE);
 
       ConfigurationBuilder xmlCacheConfiguration = getDefaultCacheBuilder();
       xmlCacheConfiguration.encoding().value().mediaType("application/xml");
@@ -338,15 +341,20 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       ResponseAssertion.assertThat(response).hasNoContent();
    }
 
-   protected void putInCache(String cacheName, String key, String value, String contentType) throws InterruptedException, ExecutionException, TimeoutException {
-      ContentResponse response = client
+   protected void putInCache(String cacheName, Object key, String keyContentType, String value, String contentType) throws InterruptedException, ExecutionException, TimeoutException {
+      Request request = client
             .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), cacheName, key))
             .content(new StringContentProvider(value))
             .header("Content-type", contentType)
-            .method(HttpMethod.PUT)
-            .send();
+            .method(HttpMethod.PUT);
+      if (keyContentType != null) request.header("Key-Content-type", keyContentType);
 
+      ContentResponse response = request.send();
       ResponseAssertion.assertThat(response).isOk();
+   }
+
+   protected void putInCache(String cacheName, Object key, String value, String contentType) throws InterruptedException, ExecutionException, TimeoutException {
+      putInCache(cacheName, key, null, value, contentType);
    }
 
    protected void putStringValueInCache(String cacheName, String key, String value) throws InterruptedException, ExecutionException, TimeoutException {
@@ -535,7 +543,7 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       //then
       ResponseAssertion.assertThat(response).isOk();
       ResponseAssertion.assertThat(response).hasContentType("application/json");
-      ResponseAssertion.assertThat(response).hasReturnedText("keys=[\"key1\",\"key2\"]");
+      ResponseAssertion.assertThat(response).hasReturnedText("keys=[key1,key2]");
    }
 
    @Test
@@ -811,8 +819,8 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
 
       //then
       ResponseAssertion.assertThat(response).isOk();
-      Assertions.assertThat(metadata.lifespan()).isEqualTo(100);
-      Assertions.assertThat(metadata.maxIdle()).isEqualTo(100);
+      Assertions.assertThat(metadata.lifespan()).isEqualTo(DEFAULT_LIFESPAN);
+      Assertions.assertThat(metadata.maxIdle()).isEqualTo(DEFAULT_MAX_IDLE);
    }
 
    @Test
@@ -849,13 +857,13 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
 
       //then
       ResponseAssertion.assertThat(response).isOk();
-      Assertions.assertThat(metadata.lifespan()).isEqualTo(100);
-      Assertions.assertThat(metadata.maxIdle()).isEqualTo(100);
+      Assertions.assertThat(metadata.lifespan()).isEqualTo(DEFAULT_LIFESPAN);
+      Assertions.assertThat(metadata.maxIdle()).isEqualTo(DEFAULT_MAX_IDLE);
    }
 
    @Test
    public void testErrorPropagation() throws Exception {
-      putStringValueInCache("xml", "key", "value");
+      putStringValueInCache("xml", "key", "<value/>");
 
       ContentResponse response = client
             .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "xml", "key"))
@@ -932,7 +940,21 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
 
    }
 
-   protected ContentResponse get(String cacheName, String key, String acceptHeader) throws Exception {
+   protected ContentResponse get(String cacheName, Object key, String keyContentType, String acceptHeader) throws Exception {
+      Request request = client.newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), cacheName, key))
+            .method(HttpMethod.GET);
+      if (acceptHeader != null) {
+         request.accept(acceptHeader);
+      }
+      if (keyContentType != null) {
+         request.header("Key-Content-Type", keyContentType);
+      }
+      ContentResponse response = request.send();
+      ResponseAssertion.assertThat(response).isOk();
+      return response;
+   }
+
+   protected ContentResponse get(String cacheName, Object key, String acceptHeader) throws Exception {
       Request request = client.newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), cacheName, key))
             .method(HttpMethod.GET);
       if (acceptHeader != null) {
@@ -974,10 +996,10 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       ResponseAssertion.assertThat(jsonResponse).hasReturnedText("\"test\"");
       ResponseAssertion.assertThat(jsonResponse).hasContentType("application/json");
 
-      ContentResponse xmlResponse = get("default", "test", "application/xml");
+      ContentResponse xmlResponse = get("default", "test", "text/plain");
 
-      ResponseAssertion.assertThat(xmlResponse).hasReturnedText("<byte-array>" + Base64.getUrlEncoder().encodeToString("test".getBytes()) + "</byte-array>");
-      ResponseAssertion.assertThat(xmlResponse).hasContentType("application/xml");
+      ResponseAssertion.assertThat(xmlResponse).hasReturnedText("test");
+      ResponseAssertion.assertThat(xmlResponse).hasContentType("text/plain");
 
       ContentResponse binaryResponse = get("default", "test", APPLICATION_OCTET_STREAM_TYPE);
 
@@ -1097,13 +1119,12 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
 
    @Test
    public void shouldNegotiateOnlySupportedFromDefaultCacheWithMultipleAccept() throws Exception {
-      String value = "test";
-      String encodedValue = Base64.getUrlEncoder().encodeToString(value.getBytes());
+      String value = "<test/>";
       putStringValueInCache("default", "test", value);
 
       ContentResponse getResponse = get("default", "test", "text/html, application/xml");
 
-      ResponseAssertion.assertThat(getResponse).hasReturnedText("<byte-array>" + encodedValue + "</byte-array>");
+      ResponseAssertion.assertThat(getResponse).hasReturnedText("<test/>");
       ResponseAssertion.assertThat(getResponse).hasContentType("application/xml");
    }
 
@@ -1125,4 +1146,58 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       ContentResponse response = req.send();
       ResponseAssertion.assertThat(response).isBadRequest();
    }
+
+   @Test
+   public void testIntegerKeysXmlToTextValues() throws Exception {
+      Integer key = 123;
+      String keyContentType = "application/x-java-object;type=java.lang.Integer";
+      String valueContentType = "application/xml; charset=UTF-8";
+      String value = "<root>test</root>";
+
+      putInCache("default", key, keyContentType, value, valueContentType);
+      ContentResponse response = get("default", key, keyContentType, "text/plain");
+
+      ResponseAssertion.assertThat(response).hasReturnedText(value);
+   }
+
+   @Test
+   public void testIntKeysAndJSONToTextValues() throws Exception {
+      Integer key = 1234;
+      String keyContentType = "application/x-java-object;type=java.lang.Integer";
+      String value = "{\"a\": 1}";
+
+      putInCache("default", key, keyContentType, value, APPLICATION_JSON_TYPE);
+      ContentResponse response = get("default", key, keyContentType, TEXT_PLAIN_TYPE);
+
+      ResponseAssertion.assertThat(response).hasReturnedText(value);
+   }
+
+   @Test
+   public void testIntKeysTextToXMLValues() throws Exception {
+      Integer key = 12345;
+      String keyContentType = "application/x-java-object;type=java.lang.Integer";
+      String value = "<foo>bar</foo>";
+
+      putInCache("default", key, keyContentType, value, TEXT_PLAIN_TYPE);
+      ContentResponse response = get("default", key, keyContentType, APPLICATION_XML_TYPE);
+
+      ResponseAssertion.assertThat(response).hasReturnedText(value);
+   }
+
+   @Test
+   public void testInvalidXMLConversion() throws Exception {
+      String key = "invalid-xml-key";
+      String invalidXML = "foo";
+
+      putInCache("default", key, invalidXML, TEXT_PLAIN_TYPE);
+
+      ContentResponse response = client
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "default", key))
+            .header(HttpHeader.ACCEPT, APPLICATION_XML_TYPE)
+            .method(HttpMethod.GET).send();
+
+      ResponseAssertion.assertThat(response).isNotAcceptable();
+      ResponseAssertion.assertThat(response).containsReturnedText("Content cannot be converted to XML");
+   }
+
 }

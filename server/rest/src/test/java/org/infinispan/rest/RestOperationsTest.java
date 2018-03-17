@@ -1,11 +1,16 @@
 package org.infinispan.rest;
 
+import static org.eclipse.jetty.http.HttpHeader.ACCEPT_ENCODING;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT_TYPE;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OCTET_STREAM_TYPE;
 import static org.infinispan.commons.dataconversion.MediaType.TEXT_PLAIN_TYPE;
+import static org.infinispan.commons.util.Util.getResourceAsString;
+import static org.infinispan.dataconversion.Gzip.decompress;
 import static org.infinispan.rest.JSONConstants.TYPE;
+import static org.testng.Assert.assertEquals;
 
 import org.assertj.core.api.Assertions;
+import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
@@ -257,4 +262,65 @@ public class RestOperationsTest extends BaseRestOperationsTest {
       ResponseAssertion.assertThat(response).isOk();
       Assertions.assertThat(restServer.getCacheManager().getCache("default")).isEmpty();
    }
+
+   @Test
+   public void testCORSPrefligh() throws Exception {
+      putValueInCache("default", "key", "value");
+
+      ContentResponse preFlight = client
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "default", "key"))
+            .method(HttpMethod.OPTIONS)
+            .header(HttpHeader.HOST, "localhost")
+            .header(HttpHeader.ORIGIN, "http://localhost:80")
+            .header("access-control-request-method", "GET")
+            .send();
+
+
+      ResponseAssertion.assertThat(preFlight).isOk();
+      ResponseAssertion.assertThat(preFlight).hasNoContent();
+      ResponseAssertion.assertThat(preFlight).containsAllHeaders("access-control-allow-origin", "access-control-allow-methods");
+   }
+
+   @Test
+   public void testCorsGET() throws Exception {
+      putStringValueInCache("default", "test", "test");
+
+      //when
+      ContentResponse response = client
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "default", "test"))
+            .header(HttpHeader.ORIGIN, "http://127.0.0.1:80")
+            .send();
+
+      ResponseAssertion.assertThat(response).isOk();
+      ResponseAssertion.assertThat(response).containsAllHeaders("access-control-allow-origin");
+   }
+
+   @Test
+   public void testCompression() throws Exception {
+      String payload = getResourceAsString("person.proto", getClass().getClassLoader());
+      putStringValueInCache("default", "k", payload);
+
+      HttpClient uncompressingClient = new HttpClient();
+      uncompressingClient.start();
+      uncompressingClient.getContentDecoderFactories().clear();
+
+      ContentResponse response = uncompressingClient
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "default", "k"))
+            .header(HttpHeader.ACCEPT, "text/plain")
+            .send();
+
+      ResponseAssertion.assertThat(response).hasNoContentEncoding();
+      ResponseAssertion.assertThat(response).hasContentLength(payload.getBytes().length);
+      client.getContentDecoderFactories().clear();
+
+      response = uncompressingClient
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "default", "k"))
+            .header(HttpHeader.ACCEPT, "text/plain")
+            .header(ACCEPT_ENCODING, "gzip")
+            .send();
+
+      ResponseAssertion.assertThat(response).hasGzipContentEncoding();
+      assertEquals(decompress(response.getContent()), payload);
+   }
+
 }

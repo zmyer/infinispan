@@ -27,6 +27,7 @@ import org.infinispan.lock.impl.log.Log;
 public class LockFunction implements Function<EntryView.ReadWriteEntryView<ClusteredLockKey, ClusteredLockValue>, Boolean> {
 
    private static final Log log = LogFactory.getLog(LockFunction.class, Log.class);
+   private static final boolean trace = log.isTraceEnabled();
 
    public static final AdvancedExternalizer<LockFunction> EXTERNALIZER = new Externalizer();
    private final String requestId;
@@ -40,9 +41,21 @@ public class LockFunction implements Function<EntryView.ReadWriteEntryView<Clust
    @Override
    public Boolean apply(EntryView.ReadWriteEntryView<ClusteredLockKey, ClusteredLockValue> entryView) {
       ClusteredLockValue lock = entryView.find().orElseThrow(() -> log.lockDeleted());
+      if (trace) {
+         log.tracef("LOCK[%s] lock request by reqId %s requestor %s", entryView.key().getName(), requestId, requestor);
+      }
       if (lock.getState() == ClusteredLockState.RELEASED) {
          entryView.set(new ClusteredLockValue(requestId, requestor, ClusteredLockState.ACQUIRED));
+         if (trace) {
+            log.tracef("LOCK[%s] lock acquired by %s %s", entryView.key().getName(), requestId, requestor);
+         }
          return Boolean.TRUE;
+      } else if (lock.getState() == ClusteredLockState.ACQUIRED && lock.getRequestId().equals(requestId) && lock.getOwner().equals(requestor)) {
+         log.tracef("LOCK[%s] lock already acquired by %s %s", entryView.key().getName(), requestId, requestor);
+         return Boolean.TRUE;
+      }
+      if (trace) {
+         log.tracef("LOCK[%s] lock not available, owned by %s %s", entryView.key().getName(), lock.getRequestId(), lock.getOwner());
       }
       return Boolean.FALSE;
    }

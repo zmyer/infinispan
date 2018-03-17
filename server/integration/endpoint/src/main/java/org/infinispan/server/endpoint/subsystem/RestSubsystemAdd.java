@@ -65,8 +65,9 @@ class RestSubsystemAdd extends AbstractAddStepHandler {
                .stream().map(ModelNode::asString).collect(Collectors.toSet());
       }
       int maxContentLength = RestConnectorResource.MAX_CONTENT_LENGTH.resolveModelAttribute(context, config).asInt();
+      int compressLevel = RestConnectorResource.COMPRESSION_LEVEL.resolveModelAttribute(context, config).asInt();
       // Create the service
-      final RestService service = new RestService(getServiceName(config), restAuthMethod, cleanContextPath(contextPath), extendedHeaders, ignoredCaches, maxContentLength);
+      final RestService service = new RestService(getServiceName(config), restAuthMethod, cleanContextPath(contextPath), extendedHeaders, ignoredCaches, maxContentLength, compressLevel);
 
       // Setup the various dependencies with injectors and install the service
       ServiceBuilder<?> builder = context.getServiceTarget().addService(EndpointUtils.getServiceName(operation, "rest"), service);
@@ -74,6 +75,8 @@ class RestSubsystemAdd extends AbstractAddStepHandler {
       EndpointUtils.addCacheContainerDependency(builder, cacheContainerName, service.getCacheManager());
       EndpointUtils.addCacheDependency(builder, cacheContainerName, null);
       EndpointUtils.addSocketBindingDependency(context, builder, getSocketBindingName(operation), service.getSocketBinding());
+      EndpointUtils.addSocketBindingDependency(context, builder, ModelKeys.MANAGEMENT_HTTP, service.getSocketBindingManagementPlain());
+      EndpointUtils.addSocketBindingDependency(context, builder, ModelKeys.MANAGEMENT_HTTPS, service.getSocketBindingManagementSecured());
 
       builder.addDependency(PathManagerService.SERVICE_NAME, PathManager.class, service.getPathManagerInjector());
 

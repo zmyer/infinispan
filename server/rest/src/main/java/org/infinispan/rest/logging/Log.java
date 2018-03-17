@@ -1,8 +1,9 @@
 package org.infinispan.rest.logging;
 
+import static org.jboss.logging.Logger.Level.ERROR;
 import static org.jboss.logging.Logger.Level.TRACE;
-import static org.jboss.logging.Logger.Level.WARN;
 
+import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.dataconversion.EncodingException;
 import org.infinispan.rest.cachemanager.exceptions.CacheUnavailableException;
 import org.infinispan.rest.operations.exceptions.NoCacheFoundException;
@@ -33,7 +34,7 @@ public interface Log extends BasicLogger {
    @Message(value = "An error occurred while responding to the client", id = 12005)
    void errorWhileResponding(@Cause Exception e);
 
-   @LogMessage(level = WARN)
+   @LogMessage(level = ERROR)
    @Message(value = "Uncaught exception in the pipeline", id = 12006)
    void uncaughtExceptionInThePipeline(@Cause Throwable e);
 
@@ -55,4 +56,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Remote requests are not allowed to internal caches when authorization is disabled. Do no send remote requests to cache '%s'", id = 12012)
    CacheUnavailableException requestNotAllowedToInternalCachesWithoutAuthz(String cacheName);
 
+   @Message(value = "Content cannot be converted to XML", id = 12013)
+   UnacceptableDataFormatException cannotConvertToXML(@Cause Throwable e);
+
+   @Message(value = "Illegal compression level '%d'. The value must be >= 0 and <= 9", id = 12014)
+   CacheConfigurationException illegalCompressionLevel(int compressionLevel);
 }

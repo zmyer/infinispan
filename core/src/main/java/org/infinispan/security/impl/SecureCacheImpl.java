@@ -176,6 +176,7 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
 
    @Override
    public AdvancedCache<K, V> transform(Function<AdvancedCache<K, V>, ? extends AdvancedCache<K, V>> transformation) {
+      authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
       AdvancedCache<K, V> newDelegate = delegate.transform(transformation);
       AdvancedCache<K, V> newInstance = newDelegate != delegate ? new SecureCacheImpl<>(newDelegate, authzManager, subject) : this;
       return transformation.apply(newInstance);
@@ -378,6 +379,18 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
       authzManager.checkPermission(subject, AuthorizationPermission.WRITE);
       return delegate.merge(key, value, remappingFunction);
+   }
+
+   @Override
+   public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      authzManager.checkPermission(subject, AuthorizationPermission.WRITE);
+      return delegate.merge(key, value, remappingFunction, lifespan, lifespanUnit);
+   }
+
+   @Override
+   public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      authzManager.checkPermission(subject, AuthorizationPermission.WRITE);
+      return delegate.merge(key, value, remappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
    }
 
    @Override

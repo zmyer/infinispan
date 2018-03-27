@@ -74,14 +74,14 @@
       <version.caffeine>2.4.0</version.caffeine>
       <version.cdi>1.2</version.cdi>
       <version.groovy>2.4.8</version.groovy>
-      <version.hibernate.core>5.2.11.Final</version.hibernate.core>
+      <version.hibernate.core>5.2.12.Final</version.hibernate.core>
       <version.hibernate.javax.persistence>1.0.0.Final</version.hibernate.javax.persistence>
       <version.hibernate.search>5.9.0.Final</version.hibernate.search>
       <version.hikaricp>2.4.6</version.hikaricp>
       <version.javax.cache>1.1.0</version.javax.cache>
       <version.jboss.logging>3.3.1.Final</version.jboss.logging>
       <version.jboss.marshalling>2.0.2.Final</version.jboss.marshalling>
-      <version.jgroups>4.0.10.Final</version.jgroups>
+      <version.jgroups>4.0.11.Final</version.jgroups>
       <version.jta>1.0.1.Final</version.jta>
       <version.lucene>5.5.5</version.lucene>
       <version.maven-compiler-plugin>3.6.1</version.maven-compiler-plugin>

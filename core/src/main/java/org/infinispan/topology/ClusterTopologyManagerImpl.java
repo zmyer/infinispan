@@ -3,6 +3,7 @@ package org.infinispan.topology;
 
 import static java.lang.String.format;
 import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
+import static org.infinispan.factories.KnownComponentNames.STATE_TRANSFER_EXECUTOR;
 import static org.infinispan.util.logging.LogFactory.CLUSTER;
 import static org.infinispan.util.logging.events.Messages.MESSAGES;
 
@@ -32,6 +33,7 @@ import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.global.GlobalConfiguration;
+import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.executors.LimitedExecutor;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.annotations.ComponentName;
@@ -111,6 +113,8 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
    @Inject private EmbeddedCacheManager cacheManager;
    @Inject @ComponentName(ASYNC_TRANSPORT_EXECUTOR)
    private ExecutorService asyncTransportExecutor;
+   @Inject @ComponentName(STATE_TRANSFER_EXECUTOR)
+   private ExecutorService stateTransferExecutor;
    @Inject private EventLogManager eventLogManager;
    @Inject private PersistentUUIDManager persistentUUIDManager;
 
@@ -410,23 +414,9 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
          // (including the coordinator) before it starts on any node.
          LostDataCheck lostDataCheck;
          if (cacheMode.isScattered()) {
-            lostDataCheck = (stableCH, newMembers) -> {
-               // data can be lost if more than one node is lost
-               Set<Address> lostMembers = new HashSet<>(stableCH.getMembers());
-               lostMembers.removeAll(newMembers);
-               log.debugf("Stable CH members: %s, actual members: %s, lost members: %s",
-                  stableCH.getMembers(), newMembers, lostMembers);
-               return lostMembers.size() > 1;
-            };
+            lostDataCheck = ClusterTopologyManagerImpl::scatteredLostDataCheck;
          } else {
-            lostDataCheck = (stableCH, newMembers) -> {
-               // data is lost when some segment lost all owners
-               for (int i = 0; i < stableCH.getNumSegments(); i++) {
-                  if (!InfinispanCollections.containsAny(newMembers, stableCH.locateOwnersForSegment(i)))
-                     return true;
-               }
-               return false;
-            };
+            lostDataCheck = ClusterTopologyManagerImpl::distLostDataCheck;
          }
          AvailabilityStrategy availabilityStrategy;
          Configuration config = cacheManager.getCacheConfiguration(cacheName);
@@ -510,7 +500,7 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
       // Compute the new consistent hashes on separate threads
       int maxThreads = Runtime.getRuntime().availableProcessors() / 2 + 1;
       CountDownLatch latch = new CountDownLatch(responsesByCache.size());
-      LimitedExecutor cs = new LimitedExecutor("Merge-" + newViewId, asyncTransportExecutor, maxThreads);
+      LimitedExecutor cs = new LimitedExecutor("Merge-" + newViewId, stateTransferExecutor, maxThreads);
       for (final Map.Entry<String, Map<Address, CacheStatusResponse>> e : responsesByCache.entrySet()) {
          CacheJoinInfo joinInfo = e.getValue().values().stream().findAny().get().getCacheJoinInfo();
          ClusterCacheStatus cacheStatus = initCacheStatusIfAbsent(e.getKey(), joinInfo.getCacheMode());
@@ -792,5 +782,21 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
       oldMembers.stream()
             .filter(address -> !newMembers.contains(address))
             .forEach(address -> logger.info(EventLogCategory.CLUSTER, MESSAGES.nodeLeft(address)));
+   }
+
+   public static boolean scatteredLostDataCheck(ConsistentHash stableCH, List<Address> newMembers) {
+      Set<Address> lostMembers = new HashSet<>(stableCH.getMembers());
+      lostMembers.removeAll(newMembers);
+      log.debugf("Stable CH members: %s, actual members: %s, lost members: %s",
+                 stableCH.getMembers(), newMembers, lostMembers);
+      return lostMembers.size() > 1;
+   }
+
+   public static boolean distLostDataCheck(ConsistentHash stableCH, List<Address> newMembers) {
+      for (int i = 0; i < stableCH.getNumSegments(); i++) {
+         if (!InfinispanCollections.containsAny(newMembers, stableCH.locateOwnersForSegment(i)))
+            return true;
+      }
+      return false;
    }
 }

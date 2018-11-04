@@ -4,14 +4,14 @@
 
    <parent>
       <groupId>org.infinispan</groupId>
-      <artifactId>infinispan-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
-      <relativePath>../../pom.xml</relativePath>
+      <artifactId>infinispan-integrationtests-parent</artifactId>
+      <version>10.0.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-security-integrationtests</artifactId>
-   <name>Integration tests: Security Tests</name>
-   <description>Integration tests: Security Tests</description>
+   <name>Integration tests - Security Tests</name>
+   <description>Integration tests - Security Tests</description>
 
    <dependencies>
       <dependency>
@@ -88,10 +88,7 @@
                <forkCount>1</forkCount>
                <reuseForks>false</reuseForks>
                <properties>
-                  <property>
-                     <name>listener</name>
-                     <value>org.infinispan.commons.test.JUnitTestListener</value>
-                  </property>
+                  <listener>${junitListener}</listener>
                </properties>
             </configuration>
             <executions>
@@ -137,25 +134,22 @@
                      <skip>${skipTests}</skip>
                      <artifactItems>
                         <artifactItem>
-                           <groupId>org.wildfly</groupId>
+                           <groupId>${appserver.groupId}</groupId>
                            <artifactId>wildfly-dist</artifactId>
-                           <version>${version.org.wildfly}</version>
                            <type>zip</type>
                            <overWrite>false</overWrite>
                            <outputDirectory>${project.build.directory}/testnode</outputDirectory>
                         </artifactItem>
                         <artifactItem>
-                           <groupId>org.wildfly</groupId>
+                           <groupId>${appserver.groupId}</groupId>
                            <artifactId>wildfly-dist</artifactId>
-                           <version>${version.org.wildfly}</version>
                            <type>zip</type>
                            <overWrite>false</overWrite>
                            <outputDirectory>${project.build.directory}/node0</outputDirectory>
                         </artifactItem>
                         <artifactItem>
-                           <groupId>org.wildfly</groupId>
+                           <groupId>${appserver.groupId}</groupId>
                            <artifactId>wildfly-dist</artifactId>
-                           <version>${version.org.wildfly}</version>
                            <type>zip</type>
                            <overWrite>false</overWrite>
                            <outputDirectory>${project.build.directory}/node1</outputDirectory>

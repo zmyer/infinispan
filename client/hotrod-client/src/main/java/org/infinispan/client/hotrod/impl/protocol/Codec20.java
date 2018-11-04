@@ -1,7 +1,8 @@
 package org.infinispan.client.hotrod.impl.protocol;
 
+import static org.infinispan.client.hotrod.impl.Util.await;
 import static org.infinispan.client.hotrod.impl.transport.netty.ByteBufUtil.hexDump;
-import static org.infinispan.commons.util.Util.printArray;
+import static org.infinispan.client.hotrod.marshall.MarshallerUtil.bytes2obj;
 
 import java.lang.annotation.Annotation;
 import java.net.InetSocketAddress;
@@ -11,26 +12,35 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
+import org.infinispan.client.hotrod.DataFormat;
+import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.annotation.ClientListener;
 import org.infinispan.client.hotrod.configuration.ClientIntelligence;
 import org.infinispan.client.hotrod.counter.impl.HotRodCounterEvent;
-import org.infinispan.client.hotrod.event.ClientCacheEntryCreatedEvent;
-import org.infinispan.client.hotrod.event.ClientCacheEntryCustomEvent;
-import org.infinispan.client.hotrod.event.ClientCacheEntryModifiedEvent;
-import org.infinispan.client.hotrod.event.ClientCacheEntryRemovedEvent;
 import org.infinispan.client.hotrod.event.ClientEvent;
+import org.infinispan.client.hotrod.event.impl.AbstractClientEvent;
+import org.infinispan.client.hotrod.event.impl.CreatedEventImpl;
+import org.infinispan.client.hotrod.event.impl.CustomEventImpl;
+import org.infinispan.client.hotrod.event.impl.ModifiedEventImpl;
+import org.infinispan.client.hotrod.event.impl.RemovedEventImpl;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
 import org.infinispan.client.hotrod.exceptions.InvalidResponseException;
 import org.infinispan.client.hotrod.exceptions.RemoteIllegalLifecycleStateException;
 import org.infinispan.client.hotrod.exceptions.RemoteNodeSuspectException;
+import org.infinispan.client.hotrod.impl.operations.BulkGetKeysOperation;
+import org.infinispan.client.hotrod.impl.operations.OperationsFactory;
+import org.infinispan.client.hotrod.impl.operations.PingOperation;
 import org.infinispan.client.hotrod.impl.transport.netty.ByteBufUtil;
 import org.infinispan.client.hotrod.impl.transport.netty.ChannelFactory;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
-import org.infinispan.client.hotrod.marshall.MarshallerUtil;
+import org.infinispan.commons.configuration.ClassWhiteList;
 import org.infinispan.commons.marshall.Marshaller;
-import org.infinispan.commons.util.Either;
+import org.infinispan.commons.util.CloseableIterator;
+import org.infinispan.commons.util.Closeables;
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.counter.api.CounterState;
 
 import io.netty.buffer.ByteBuf;
@@ -47,19 +57,6 @@ public class Codec20 implements Codec, HotRodConstants {
 
    final boolean trace = getLog().isTraceEnabled();
 
-   private static HotRodCounterEvent decodeCounterEvent(String counterName, ByteBuf buf) {
-      short encodedCounterState = buf.readByte();
-      long oldValue = buf.readLong();
-      long newValue = buf.readLong();
-      return new HotRodCounterEvent(counterName, oldValue, decodeOldState(encodedCounterState), newValue,
-            decodeNewState(encodedCounterState));
-   }
-
-   @Override
-   public <T> T readUnmarshallByteArray(ByteBuf buf, short status, List<String> whitelist, Marshaller marshaller) {
-      return CodecUtils.readUnmarshallByteArray(buf, status, whitelist, marshaller);
-   }
-
    public void writeClientListenerInterests(ByteBuf buf, Set<Class<? extends Annotation>> classes) {
       // No-op
    }
@@ -72,17 +69,17 @@ public class Codec20 implements Codec, HotRodConstants {
    @Override
    public void writeClientListenerParams(ByteBuf buf, ClientListener clientListener,
                                          byte[][] filterFactoryParams, byte[][] converterFactoryParams) {
-      buf.writeByte((short)(clientListener.includeCurrentState() ? 1 : 0));
+      buf.writeByte((short) (clientListener.includeCurrentState() ? 1 : 0));
       writeNamedFactory(buf, clientListener.filterFactoryName(), filterFactoryParams);
       writeNamedFactory(buf, clientListener.converterFactoryName(), converterFactoryParams);
    }
 
    @Override
    public void writeExpirationParams(ByteBuf buf, long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
-      if (!CodecUtils.isIntCompatible(lifespan)) {
+      if (!CodecUtils.isGreaterThan4bytes(lifespan)) {
          log.warn("Lifespan value greater than the max supported size (Integer.MAX_VALUE), this can cause precision loss");
       }
-      if (!CodecUtils.isIntCompatible(maxIdle)) {
+      if (!CodecUtils.isGreaterThan4bytes(maxIdle)) {
          log.warn("MaxIdle value greater than the max supported size (Integer.MAX_VALUE), this can cause precision loss");
       }
       int lifespanSeconds = CodecUtils.toSeconds(lifespan, lifespanTimeUnit);
@@ -127,7 +124,7 @@ public class Codec20 implements Codec, HotRodConstants {
 
       if (trace)
          getLog().tracef("[%s] Wrote header for messageId=%d to %s. Operation code: %#04x(%s). Flags: %#x. Topology id: %s",
-            new String(params.cacheName), params.messageId, buf, params.opCode,
+               new String(params.cacheName), params.messageId, buf, params.opCode,
                Names.of(params.opCode), joinedFlags, topologyId);
 
       return params;
@@ -158,19 +155,22 @@ public class Codec20 implements Codec, HotRodConstants {
    }
 
    @Override
-   public short readHeader(ByteBuf buf, HeaderParams params, ChannelFactory channelFactory, SocketAddress serverAddress) {
+   public short readOpCode(ByteBuf buf) {
       short receivedOpCode = buf.readUnsignedByte();
-      return readPartialHeader(buf, params, receivedOpCode, channelFactory, serverAddress);
+      if (trace)
+         getLog().tracef("Received operation code is: %#04x(%s)", receivedOpCode, Names.of(receivedOpCode));
+      return receivedOpCode;
    }
 
-   private short readPartialHeader(ByteBuf buf, HeaderParams params, short receivedOpCode, ChannelFactory channelFactory, SocketAddress serverAddress) {
+   @Override
+   public short readHeader(ByteBuf buf, double receivedOpCode, HeaderParams params, ChannelFactory channelFactory, SocketAddress serverAddress) {
       // Read both the status and new topology (if present),
       // before deciding how to react to error situations.
       short status = buf.readUnsignedByte();
       readNewTopologyIfPresent(buf, params, channelFactory);
 
       // Now that all headers values have been read, check the error responses.
-      // This avoids situatations where an exceptional return ends up with
+      // This avoids situations where an exceptional return ends up with
       // the socket containing data from previous request responses.
       if (receivedOpCode != params.opRespCode) {
          if (receivedOpCode == HotRodConstants.ERROR_RESPONSE) {
@@ -181,18 +181,7 @@ public class Codec20 implements Codec, HotRodConstants {
                new String(params.cacheName), params.opRespCode, receivedOpCode));
       }
 
-      if (trace)
-         getLog().tracef("[%s] Received operation code is: %#04x(%s)", new String(params.cacheName), receivedOpCode,
-               Names.of(receivedOpCode));
-
       return status;
-   }
-
-   @Override
-   public ClientEvent readEvent(ByteBuf buf, byte[] expectedListenerId, Marshaller marshaller, List<String> whitelist, SocketAddress serverAddress) {
-      readMessageId(buf);
-      short eventTypeId = buf.readUnsignedByte();
-      return readPartialEvent(buf, expectedListenerId, marshaller, eventTypeId, whitelist, serverAddress);
    }
 
    private static CounterState decodeOldState(short encoded) {
@@ -222,15 +211,38 @@ public class Codec20 implements Codec, HotRodConstants {
    }
 
    @Override
-   public HotRodCounterEvent readCounterEvent(ByteBuf buf, byte[] listenerId) {
-      readAndValidateHeader(buf);
+   public HotRodCounterEvent readCounterEvent(ByteBuf buf) {
+      short status = buf.readByte();
+      assert status == 0;
+      short topology = buf.readByte();
+      assert topology == 0;
       String counterName = ByteBufUtil.readString(buf);
-      byte[] receivedListenerId = ByteBufUtil.readArray(buf);
-      assert Arrays.equals(receivedListenerId, listenerId);
-      return decodeCounterEvent(counterName, buf);
+      byte[] listenerId = ByteBufUtil.readArray(buf);
+      short encodedCounterState = buf.readByte();
+      long oldValue = buf.readLong();
+      long newValue = buf.readLong();
+      return new HotRodCounterEvent(listenerId, counterName, oldValue, decodeOldState(encodedCounterState), newValue,
+            decodeNewState(encodedCounterState));
    }
 
-   protected ClientEvent readPartialEvent(ByteBuf buf, byte[] expectedListenerId, Marshaller marshaller, short eventTypeId, List<String> whitelist, SocketAddress serverAddress) {
+   @Override
+   public <K> CloseableIterator<K> keyIterator(RemoteCache<K, ?> remoteCache, OperationsFactory operationsFactory,
+         IntSet segments, int batchSize) {
+      if (segments != null) {
+         throw new UnsupportedOperationException("This version doesn't support iterating upon keys by segment!");
+      }
+      BulkGetKeysOperation<K> op = operationsFactory.newBulkGetKeysOperation(0, remoteCache.getDataFormat());
+      Set<K> keys = await(op.execute());
+      return Closeables.iterator(keys.iterator());
+   }
+
+   @Override
+   public boolean isObjectStorageHinted(PingOperation.PingResponse pingResponse) {
+      return false;
+   }
+
+   @Override
+   public AbstractClientEvent readCacheEvent(ByteBuf buf, Function<byte[], DataFormat> listenerDataFormat, short eventTypeId, ClassWhiteList whitelist, SocketAddress serverAddress) {
       short status = buf.readUnsignedByte();
       buf.readUnsignedByte(); // ignore, no topology expected
       ClientEvent.Type eventType;
@@ -252,28 +264,23 @@ public class Codec20 implements Codec, HotRodConstants {
       }
 
       byte[] listenerId = ByteBufUtil.readArray(buf);
-      if (!Arrays.equals(listenerId, expectedListenerId))
-         throw log.unexpectedListenerId(printArray(listenerId), printArray(expectedListenerId));
 
       short isCustom = buf.readUnsignedByte();
-      boolean isRetried = buf.readUnsignedByte() == 1 ? true : false;
-
+      boolean isRetried = buf.readUnsignedByte() == 1;
+      DataFormat dataFormat = listenerDataFormat.apply(listenerId);
       if (isCustom == 1) {
-         final Object eventData = MarshallerUtil.bytes2obj(marshaller, ByteBufUtil.readArray(buf), status, whitelist);
-         return createCustomEvent(eventData, eventType, isRetried);
+         final Object eventData = dataFormat.valueToObj(ByteBufUtil.readArray(buf), whitelist);
+         return createCustomEvent(listenerId, eventData, eventType, isRetried);
       } else {
          switch (eventType) {
             case CLIENT_CACHE_ENTRY_CREATED:
-               Object createdKey = MarshallerUtil.bytes2obj(marshaller, ByteBufUtil.readArray(buf), status, whitelist);
                long createdDataVersion = buf.readLong();
-               return createCreatedEvent(createdKey, createdDataVersion, isRetried);
+               return createCreatedEvent(listenerId, dataFormat.keyToObj(ByteBufUtil.readArray(buf), whitelist), createdDataVersion, isRetried);
             case CLIENT_CACHE_ENTRY_MODIFIED:
-               Object modifiedKey = MarshallerUtil.bytes2obj(marshaller, ByteBufUtil.readArray(buf), status, whitelist);
                long modifiedDataVersion = buf.readLong();
-               return createModifiedEvent(modifiedKey, modifiedDataVersion, isRetried);
+               return createModifiedEvent(listenerId, dataFormat.keyToObj(ByteBufUtil.readArray(buf), whitelist), modifiedDataVersion, isRetried);
             case CLIENT_CACHE_ENTRY_REMOVED:
-               Object removedKey = MarshallerUtil.bytes2obj(marshaller, ByteBufUtil.readArray(buf), status, whitelist);
-               return createRemovedEvent(removedKey, isRetried);
+               return createRemovedEvent(listenerId, dataFormat.keyToObj(ByteBufUtil.readArray(buf), whitelist), isRetried);
             default:
                throw log.unknownEvent(eventTypeId);
          }
@@ -281,78 +288,28 @@ public class Codec20 implements Codec, HotRodConstants {
    }
 
    @Override
-   public Either<Short, ClientEvent> readHeaderOrEvent(ByteBuf buf, HeaderParams params, byte[] expectedListenerId, Marshaller marshaller, List<String> whitelist, ChannelFactory channelFactory, SocketAddress serverAddress) {
-      short opCode = buf.readUnsignedByte();
-      switch (opCode) {
-         case CACHE_ENTRY_CREATED_EVENT_RESPONSE:
-         case CACHE_ENTRY_MODIFIED_EVENT_RESPONSE:
-         case CACHE_ENTRY_REMOVED_EVENT_RESPONSE:
-            ClientEvent clientEvent = readPartialEvent(buf, expectedListenerId, marshaller, opCode, whitelist, serverAddress);
-            return Either.newRight(clientEvent);
-         default:
-            return Either.newLeft(readPartialHeader(buf, params, opCode, channelFactory, serverAddress));
-      }
-   }
-
-   @Override
-   public Object returnPossiblePrevValue(ByteBuf buf, short status, int flags, List<String> whitelist, Marshaller marshaller) {
+   public Object returnPossiblePrevValue(ByteBuf buf, short status, DataFormat dataFormat, int flags, ClassWhiteList whitelist, Marshaller marshaller) {
       if (HotRodConstants.hasPrevious(status)) {
-         return CodecUtils.readUnmarshallByteArray(buf, status, whitelist, marshaller);
+         return bytes2obj(marshaller, ByteBufUtil.readArray(buf), dataFormat.isObjectStorage(), whitelist);
       } else {
          return null;
       }
    }
 
-   protected ClientEvent createRemovedEvent(final Object key, final boolean isRetried) {
-      return new ClientCacheEntryRemovedEvent() {
-         @Override public Object getKey() { return key; }
-         @Override public Type getType() { return Type.CLIENT_CACHE_ENTRY_REMOVED; }
-         @Override public boolean isCommandRetried() { return isRetried; }
-         @Override
-         public String toString() {
-            return "ClientCacheEntryRemovedEvent(" + "key=" + key + ")";
-         }
-      };
+   protected AbstractClientEvent createRemovedEvent(byte[] listenerId, final Object key, final boolean isRetried) {
+      return new RemovedEventImpl<>(listenerId, key, isRetried);
    }
 
-   protected ClientCacheEntryModifiedEvent createModifiedEvent(final Object key, final long dataVersion, final boolean isRetried) {
-      return new ClientCacheEntryModifiedEvent() {
-         @Override public Object getKey() { return key; }
-         @Override public long getVersion() { return dataVersion; }
-         @Override public Type getType() { return Type.CLIENT_CACHE_ENTRY_MODIFIED; }
-         @Override public boolean isCommandRetried() { return isRetried; }
-         @Override
-         public String toString() {
-            return "ClientCacheEntryModifiedEvent(" + "key=" + key
-                  + ",dataVersion=" + dataVersion + ")";
-         }
-      };
+   protected AbstractClientEvent createModifiedEvent(byte[] listenerId, final Object key, final long dataVersion, final boolean isRetried) {
+      return new ModifiedEventImpl<>(listenerId, key, dataVersion, isRetried);
    }
 
-   protected ClientCacheEntryCreatedEvent<Object> createCreatedEvent(final Object key, final long dataVersion, final boolean isRetried) {
-      return new ClientCacheEntryCreatedEvent<Object>() {
-         @Override public Object getKey() { return key; }
-         @Override public long getVersion() { return dataVersion; }
-         @Override public Type getType() { return Type.CLIENT_CACHE_ENTRY_CREATED; }
-         @Override public boolean isCommandRetried() { return isRetried; }
-         @Override
-         public String toString() {
-            return "ClientCacheEntryCreatedEvent(" + "key=" + key
-                  + ",dataVersion=" + dataVersion + ")";
-         }
-      };
+   protected AbstractClientEvent createCreatedEvent(byte[] listenerId, final Object key, final long dataVersion, final boolean isRetried) {
+      return new CreatedEventImpl<>(listenerId, key, dataVersion, isRetried);
    }
 
-   protected ClientCacheEntryCustomEvent<Object> createCustomEvent(final Object eventData, final ClientEvent.Type eventType, final boolean isRetried) {
-      return new ClientCacheEntryCustomEvent<Object>() {
-         @Override public Object getEventData() { return eventData; }
-         @Override public Type getType() { return eventType; }
-         @Override public boolean isCommandRetried() { return isRetried; }
-         @Override
-         public String toString() {
-            return "ClientCacheEntryCustomEvent(" + "eventData=" + eventData + ", eventType=" + eventType + ")";
-         }
-      };
+   protected AbstractClientEvent createCustomEvent(byte[] listenerId, final Object eventData, final ClientEvent.Type eventType, final boolean isRetried) {
+      return new CustomEventImpl<>(listenerId, eventData, isRetried, eventType);
    }
 
    @Override
@@ -390,7 +347,7 @@ public class Codec20 implements Codec, HotRodConstants {
                msgFromServer = ByteBufUtil.readString(buf);
                if (trace)
                   localLog.tracef("[%s] A remote node was suspected while executing messageId=%d. " +
-                        "Check if retry possible. Message from server: %s",
+                              "Check if retry possible. Message from server: %s",
                         new String(params.cacheName), params.messageId, msgFromServer);
 
                throw new RemoteNodeSuspectException(msgFromServer, params.messageId, status);
@@ -457,7 +414,7 @@ public class Codec20 implements Codec, HotRodConstants {
          List<SocketAddress> addressList = Arrays.asList(addresses);
          if (localLog.isInfoEnabled()) {
             localLog.newTopology(newTopologyId, topologyAge,
-               addresses.length, new HashSet<>(addressList));
+                  addresses.length, new HashSet<>(addressList));
          }
          channelFactory.updateServers(addressList, params.cacheName, false);
          if (hashFunctionVersion >= 0) {
@@ -474,7 +431,7 @@ public class Codec20 implements Codec, HotRodConstants {
       } else {
          if (trace)
             localLog.tracef("[%s] Outdated topology received (topology id = %s, topology age = %s), so ignoring it: %s",
-               new String(params.cacheName), newTopologyId, topologyAge, Arrays.toString(addresses));
+                  new String(params.cacheName), newTopologyId, topologyAge, Arrays.toString(addresses));
       }
    }
 
@@ -487,16 +444,6 @@ public class Codec20 implements Codec, HotRodConstants {
          addresses[i] = InetSocketAddress.createUnresolved(host, port);
       }
       return addresses;
-   }
-
-   private void readAndValidateHeader(ByteBuf buf) {
-      readMessageId(buf);
-      short responseCode = buf.readByte();
-      assert responseCode == COUNTER_EVENT_RESPONSE;
-      short status = buf.readByte();
-      assert status == 0;
-      short topology = buf.readByte();
-      assert topology == 0;
    }
 
 }

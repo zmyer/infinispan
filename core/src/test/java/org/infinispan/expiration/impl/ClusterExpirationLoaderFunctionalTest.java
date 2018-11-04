@@ -3,7 +3,6 @@ package org.infinispan.expiration.impl;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
-import org.infinispan.test.fwk.InCacheMode;
 import org.testng.annotations.Test;
 
 /**
@@ -13,11 +12,21 @@ import org.testng.annotations.Test;
  * @since 8.0
  */
 @Test(groups = "functional", testName = "expiration.impl.ClusterExpirationLoaderFunctionalTest")
-@InCacheMode({CacheMode.DIST_SYNC, CacheMode.REPL_SYNC, CacheMode.SCATTERED_SYNC})
 public class ClusterExpirationLoaderFunctionalTest extends ClusterExpirationFunctionalTest {
    @Override
    protected void createCluster(ConfigurationBuilder builder, int count) {
       builder.persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class);
       super.createCluster(builder, count);
+   }
+
+   @Override
+   public Object[] factory() {
+      return new Object[] {
+            new ClusterExpirationLoaderFunctionalTest().cacheMode(CacheMode.DIST_SYNC).transactional(true),
+            new ClusterExpirationLoaderFunctionalTest().cacheMode(CacheMode.DIST_SYNC).transactional(false),
+            new ClusterExpirationLoaderFunctionalTest().cacheMode(CacheMode.REPL_SYNC).transactional(true),
+            new ClusterExpirationLoaderFunctionalTest().cacheMode(CacheMode.REPL_SYNC).transactional(false),
+            new ClusterExpirationLoaderFunctionalTest().cacheMode(CacheMode.SCATTERED_SYNC).transactional(false),
+      };
    }
 }

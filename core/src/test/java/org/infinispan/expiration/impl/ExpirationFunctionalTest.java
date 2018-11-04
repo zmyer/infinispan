@@ -5,6 +5,7 @@ import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNull;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.StorageType;
@@ -14,7 +15,8 @@ import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
+import org.testng.annotations.Factory;
 import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "expiration.impl.ExpirationFunctionalTest")
@@ -24,6 +26,7 @@ public class ExpirationFunctionalTest extends SingleCacheManagerTest {
    protected ControlledTimeService timeService = new ControlledTimeService();
    protected StorageType storage;
 
+   @Factory
    public Object[] factory() {
       return new Object[]{
             new ExpirationFunctionalTest().withStorage(StorageType.BINARY),
@@ -130,18 +133,24 @@ public class ExpirationFunctionalTest extends SingleCacheManagerTest {
       }
       timeService.advance(2);
 
-      for (int i = 0; i < SIZE; i++) {
+      if (cache.getCacheConfiguration().clustering().cacheMode().isClustered()) {
+         AtomicInteger invocationCount = new AtomicInteger();
          cache.getAdvancedCache().getDataContainer().executeTask(KeyFilter.ACCEPT_ALL_FILTER,
-               (k, ice) -> { throw new RuntimeException("No task should be executed on expired entry"); });
+               (k, ice) -> invocationCount.incrementAndGet());
+         assertEquals(SIZE, invocationCount.get());
+      } else {
+         cache.getAdvancedCache().getDataContainer().executeTask(KeyFilter.ACCEPT_ALL_FILTER,
+               (k, ice) -> {
+                  throw new RuntimeException("No task should be executed on expired entry");
+               });
       }
    }
 
    public void testExpiredEntriesCleared() {
-      for (int i = 0; i < 2; i++) {
-         cache.put("key-" + i, "value-" + i,-1, null, i, TimeUnit.MILLISECONDS);
-      }
+      cache.put("key-" + 0, "value-" + 1, -1, null, 0, TimeUnit.MILLISECONDS);
+      cache.put("key-" + 1, "value-" + 1, -1, null, 1, TimeUnit.MILLISECONDS);
 
-      // This should expire approximately half of the entries
+      // This should expire 1 of the entries
       timeService.advance(1);
 
       cache.clear();

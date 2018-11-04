@@ -51,7 +51,7 @@ import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CheckPoint;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.mockito.AdditionalAnswers;
 import org.mockito.stubbing.Answer;
@@ -103,6 +103,14 @@ public abstract class AbstractClusterListenerUtilTest extends MultipleCacheManag
       TestingUtil.replaceComponent(manager(1), TimeService.class, ts1, true);
       ts2 = new ControlledTimeService(now);
       TestingUtil.replaceComponent(manager(2), TimeService.class, ts2, true);
+   }
+
+   void advanceTimeServices(long time, TimeUnit unit) {
+      long millis = unit.toMillis(time);
+
+      ts0.advance(millis);
+      ts1.advance(millis);
+      ts2.advance(millis);
    }
 
    @Listener(clustered = true)
@@ -308,7 +316,7 @@ public abstract class AbstractClusterListenerUtilTest extends MultipleCacheManag
    protected void waitUntilListenerInstalled(final Cache<?, ?> cache, final CheckPoint checkPoint) {
       CacheNotifier cn = TestingUtil.extractComponent(cache, CacheNotifier.class);
       final Answer<Object> forwardedAnswer = AdditionalAnswers.delegatesTo(cn);
-      CacheNotifier mockNotifier = mock(CacheNotifier.class, withSettings().defaultAnswer(forwardedAnswer));
+      ClusterCacheNotifier mockNotifier = mock(ClusterCacheNotifier.class, withSettings().defaultAnswer(forwardedAnswer));
       doAnswer(invocation -> {
          // Wait for main thread to sync up
          checkPoint.trigger("pre_add_listener_invoked_" + cache);
@@ -330,7 +338,9 @@ public abstract class AbstractClusterListenerUtilTest extends MultipleCacheManag
    protected void waitUntilNotificationRaised(final Cache<?, ?> cache, final CheckPoint checkPoint) {
       CacheNotifier cn = TestingUtil.extractComponent(cache, CacheNotifier.class);
       final Answer<Object> forwardedAnswer = AdditionalAnswers.delegatesTo(cn);
-      CacheNotifier mockNotifier = mock(CacheNotifier.class, withSettings().defaultAnswer(forwardedAnswer));
+      CacheNotifier mockNotifier = mock(CacheNotifier.class,
+                                        withSettings().extraInterfaces(ClusterCacheNotifier.class)
+                                                      .defaultAnswer(forwardedAnswer));
       Answer answer = invocation -> {
          // Wait for main thread to sync up
          checkPoint.trigger("pre_raise_notification_invoked");

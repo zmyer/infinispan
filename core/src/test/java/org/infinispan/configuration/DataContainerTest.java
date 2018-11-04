@@ -7,14 +7,19 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.Supplier;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
-import org.infinispan.container.DefaultDataContainer;
-import org.infinispan.container.InternalEntryFactoryImpl;
+import org.infinispan.container.impl.DefaultDataContainer;
+import org.infinispan.container.impl.DefaultSegmentedDataContainer;
+import org.infinispan.container.impl.InternalEntryFactoryImpl;
+import org.infinispan.container.impl.InternalDataContainerAdapter;
 import org.infinispan.eviction.ActivationManager;
-import org.infinispan.expiration.ExpirationManager;
+import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.TestingUtil;
@@ -22,6 +27,8 @@ import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.mockito.Mockito;
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import static org.testng.AssertJUnit.assertEquals;
 
 @Test(testName = "config.DataContainerTest", groups = "functional")
 public class DataContainerTest extends AbstractInfinispanTest {
@@ -73,15 +80,19 @@ public class DataContainerTest extends AbstractInfinispanTest {
          ActivationManager activationManager = mock(ActivationManager.class);
          doNothing().when(activationManager).onUpdate(Mockito.any(), Mockito.anyBoolean());
          TestingUtil.inject(ddc, new InternalEntryFactoryImpl(), activationManager,
-               TIME_SERVICE, mock(ExpirationManager.class));
+               TIME_SERVICE, mock(InternalExpirationManager.class));
          QueryableDataContainer.setDelegate(ddc);
 
          // Verify that the default is correctly established
          Assert.assertEquals(cm.getDefaultCacheConfiguration().dataContainer().dataContainer().getClass().getName(), QueryableDataContainer.class.getName());
 
-         Assert.assertEquals(cache.getDataContainer().getClass(), QueryableDataContainer.class);
+         DataContainer container = cache.getDataContainer();
+         Assert.assertEquals(container.getClass(), InternalDataContainerAdapter.class);
 
-         QueryableDataContainer dataContainer = QueryableDataContainer.class.cast(cache.getDataContainer());
+         DataContainer delegate = ((InternalDataContainerAdapter) container).delegate();
+         Assert.assertEquals(delegate.getClass(), QueryableDataContainer.class);
+
+         QueryableDataContainer dataContainer = QueryableDataContainer.class.cast(delegate);
 
          Assert.assertFalse(checkLoggedOperations(dataContainer.getLoggedOperations(), "setFoo(bar)"));
 
@@ -109,19 +120,39 @@ public class DataContainerTest extends AbstractInfinispanTest {
          ActivationManager activationManager = mock(ActivationManager.class);
          doNothing().when(activationManager).onUpdate(Mockito.any(), Mockito.anyBoolean());
          TestingUtil.inject(ddc, new InternalEntryFactoryImpl(), activationManager,
-                 TIME_SERVICE, mock(ExpirationManager.class));
+                 TIME_SERVICE, mock(InternalExpirationManager.class));
          QueryableDataContainer.setDelegate(ddc);
 
          // Verify that the config is correct
          Assert.assertEquals(cm.getDefaultCacheConfiguration().dataContainer().dataContainer().getClass(), QueryableDataContainer.class);
 
-         Assert.assertEquals(cache.getDataContainer().getClass(), QueryableDataContainer.class);
+         DataContainer container = cache.getDataContainer();
+         Assert.assertEquals(container.getClass(), InternalDataContainerAdapter.class);
 
-         QueryableDataContainer dataContainer = QueryableDataContainer.class.cast(cache.getDataContainer());
+         DataContainer delegate = ((InternalDataContainerAdapter) container).delegate();
+         Assert.assertEquals(delegate.getClass(), QueryableDataContainer.class);
+
+         QueryableDataContainer dataContainer = QueryableDataContainer.class.cast(delegate);
 
          cache.put("name", "Pete");
 
          Assert.assertTrue(checkLoggedOperations(dataContainer.getLoggedOperations(), "put(name, Pete", "compute(name,"));
+      } finally {
+         TestingUtil.killCacheManagers(cm);
+      }
+   }
+
+   @Test
+   public void testInternalDataContainer() {
+      DefaultSegmentedDataContainer container = new DefaultSegmentedDataContainer((Supplier<ConcurrentMap>) ConcurrentHashMap::new, 1);
+      ConfigurationBuilder configuration = new ConfigurationBuilder();
+      configuration.dataContainer().dataContainer(container);
+
+      EmbeddedCacheManager cm = TestCacheManagerFactory.createCacheManager(configuration);
+
+      try {
+         AdvancedCache<Object, Object> cache = cm.getCache().getAdvancedCache();
+         assertEquals(container, cache.getDataContainer());
       } finally {
          TestingUtil.killCacheManagers(cm);
       }

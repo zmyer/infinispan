@@ -6,8 +6,9 @@ import org.infinispan.commons.CacheException;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.marshall.WrappedBytes;
+import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.container.entries.ExpiryHelper;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.versioning.EntryVersion;
@@ -15,7 +16,7 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 
 /**
  * Factory that can create CacheEntry instances from off-heap memory.
@@ -25,7 +26,6 @@ import org.infinispan.util.TimeService;
  */
 public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
    private static final OffHeapMemory MEMORY = OffHeapMemory.INSTANCE;
-   private static final byte[] EMPTY_BYTES = new byte[0];
 
    @Inject private Marshaller marshaller;
    @Inject private OffHeapMemoryAllocator allocator;
@@ -81,7 +81,7 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
             }
          } else {
             type = 0;
-            versionBytes = EMPTY_BYTES;
+            versionBytes = Util.EMPTY_BYTE_ARRAY;
          }
 
          long lifespan = metadata.lifespan();
@@ -166,7 +166,7 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
    }
 
    @Override
-   public long getSize(long entryAddress) {
+   public long getSize(long entryAddress, boolean includeAllocationOverhead) {
       int headerOffset = evictionEnabled ? 24 : 8;
 
       byte type = MEMORY.getByte(entryAddress, headerOffset);
@@ -180,13 +180,25 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
          metadataLength = MEMORY.getInt(entryAddress, headerOffset);
          headerOffset += 4;
       } else {
-         metadataLength = 0;
+         switch (type) {
+            case MORTAL:
+            case TRANSIENT:
+               metadataLength = 16;
+               break;
+            case TRANSIENT_MORTAL:
+               metadataLength = 32;
+               break;
+            default:
+               metadataLength = 0;
+               break;
+         }
       }
 
       int valueLength = MEMORY.getInt(entryAddress, headerOffset);
       headerOffset += 4;
 
-      return UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(headerOffset + keyLength + metadataLength + valueLength);
+      int size = headerOffset + keyLength + metadataLength + valueLength;
+      return includeAllocationOverhead ? UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(size) : size;
    }
 
    @Override
@@ -206,6 +218,34 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
       // 1 for type
       int headerOffset = evictionEnabled ? 25 : 9;
       return MEMORY.getInt(entryAddress, headerOffset);
+   }
+
+   @Override
+   public byte[] getKey(long address) {
+      // 16 bytes for eviction if needed (optional)
+      // 8 bytes for linked pointer
+      int offset = evictionEnabled ? 24 : 8;
+
+      byte metadataType = MEMORY.getByte(address, offset);
+      offset += 1;
+      // Ignore hashCode bytes
+      offset += 4;
+      byte[] keyBytes = new byte[MEMORY.getInt(address, offset)];
+      offset += 4;
+
+      switch (metadataType) {
+         case CUSTOM:
+         case HAS_VERSION:
+            // These have additional 4 bytes for custom metadata
+            offset += 4;
+      }
+
+      // Ignore value bytes
+      offset += 4;
+
+      // Finally read the bytes and return
+      MEMORY.getBytes(address, offset, keyBytes, 0, keyBytes.length);
+      return keyBytes;
    }
 
    /**
@@ -229,7 +269,7 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
       byte[] metadataBytes;
       switch (metadataType) {
          case IMMORTAL:
-            metadataBytes = EMPTY_BYTES;
+            metadataBytes = Util.EMPTY_BYTE_ARRAY;
             break;
          case MORTAL:
             metadataBytes = new byte[16];

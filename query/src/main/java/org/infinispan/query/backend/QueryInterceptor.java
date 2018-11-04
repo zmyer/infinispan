@@ -18,7 +18,7 @@ import org.hibernate.search.backend.spi.Worker;
 import org.hibernate.search.spi.IndexedTypeIdentifier;
 import org.hibernate.search.spi.SearchIntegrator;
 import org.hibernate.search.spi.impl.PojoIndexedTypeIdentifier;
-import org.infinispan.Cache;
+import org.infinispan.AdvancedCache;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
@@ -51,7 +51,6 @@ import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.InvocationSuccessAction;
-import org.infinispan.query.Transformer;
 import org.infinispan.query.impl.DefaultSearchWorkCreator;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.remoting.rpc.RpcManager;
@@ -61,13 +60,13 @@ import org.infinispan.util.logging.LogFactory;
 
 /**
  * This interceptor will be created when the System Property "infinispan.query.indexLocalOnly" is "false"
- * <p/>
+ * <p>
  * This type of interceptor will allow the indexing of data even when it comes from other caches within a cluster.
- * <p/>
+ * <p>
  * However, if the a cache would not be putting the data locally, the interceptor will not index it.
  *
  * @author Navin Surtani
- * @author Sanne Grinovero <sanne@hibernate.org> (C) 2011 Red Hat Inc.
+ * @author Sanne Grinovero &lt;sanne@hibernate.org&gt; (C) 2011 Red Hat Inc.
  * @author Marko Luksa
  * @author anistor@redhat.com
  * @since 4.0
@@ -91,7 +90,7 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
 
    private final IndexModificationStrategy indexingMode;
    private final SearchIntegrator searchFactory;
-   private final KeyTransformationHandler keyTransformationHandler = new KeyTransformationHandler();
+   private final KeyTransformationHandler keyTransformationHandler;
    private final AtomicBoolean stopping = new AtomicBoolean(false);
    private final ConcurrentMap<GlobalTransaction, Map<Object, Object>> txOldValues;
    private QueryKnownClasses queryKnownClasses;
@@ -106,31 +105,36 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
     * were declared and we are running in the (deprecated) autodetect mode. Autodetect mode will be removed in 9.0.
     */
    private Class<?>[] indexedEntities;
-   private final Cache cache;
+
+   private final AdvancedCache<?, ?> cache;
 
    private final InvocationSuccessAction processClearCommand = this::processClearCommand;
 
-   public QueryInterceptor(SearchIntegrator searchFactory, IndexModificationStrategy indexingMode, ConcurrentMap<GlobalTransaction, Map<Object, Object>> txOldValues, Cache cache) {
+   public QueryInterceptor(SearchIntegrator searchFactory, KeyTransformationHandler keyTransformationHandler,
+                           IndexModificationStrategy indexingMode,
+                           ConcurrentMap<GlobalTransaction, Map<Object, Object>> txOldValues,
+                           AdvancedCache<?, ?> cache) {
       this.searchFactory = searchFactory;
+      this.keyTransformationHandler = keyTransformationHandler;
       this.indexingMode = indexingMode;
       this.txOldValues = txOldValues;
       this.cache = cache;
-      this.valueDataConversion = cache.getAdvancedCache().getValueDataConversion();
-      this.keyDataConversion = cache.getAdvancedCache().getKeyDataConversion();
+      this.valueDataConversion = cache.getValueDataConversion();
+      this.keyDataConversion = cache.getKeyDataConversion();
    }
 
    @Start
    protected void start() {
       Set<Class<?>> indexedEntities = cacheConfiguration.indexing().indexedEntities();
       this.indexedEntities = indexedEntities.isEmpty() ? null : indexedEntities.toArray(new Class<?>[indexedEntities.size()]);
-      queryKnownClasses = indexedEntities.isEmpty() ? new QueryKnownClasses(cache.getName(), cache.getCacheManager(), internalCacheRegistry) : new QueryKnownClasses(indexedEntities);
-      searchFactoryHandler = new SearchFactoryHandler(searchFactory, queryKnownClasses, new TransactionHelper(cache.getAdvancedCache().getTransactionManager()));
+      queryKnownClasses = indexedEntities.isEmpty() ? new QueryKnownClasses(cache.getName(), cache.getCacheManager(), internalCacheRegistry) : new QueryKnownClasses(cache.getName(), indexedEntities);
+      searchFactoryHandler = new SearchFactoryHandler(searchFactory, queryKnownClasses, new TransactionHelper(cache.getTransactionManager()));
       if (this.indexedEntities == null) {
          queryKnownClasses.start(searchFactoryHandler);
          Set<Class<?>> classes = queryKnownClasses.keys();
          Class<?>[] classesArray = classes.toArray(new Class<?>[classes.size()]);
          //Important to enable them all in a single call, much more efficient:
-         enableClasses(classesArray);
+         searchFactoryHandler.enableClasses(classesArray);
       }
       isPersistenceEnabled = cacheConfiguration.persistence().usingStores();
       stopping.set(false);
@@ -145,7 +149,7 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
       stopping.set(true);
    }
 
-   protected boolean shouldModifyIndexes(FlagAffectedCommand command, InvocationContext ctx, Object key) {
+   private boolean shouldModifyIndexes(FlagAffectedCommand command, InvocationContext ctx, Object key) {
       return indexingMode.shouldModifyIndexes(command, ctx, distributionManager, rpcManager, key);
    }
 
@@ -194,7 +198,7 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
       });
    }
 
-   protected Object handleManyWriteCommand(InvocationContext ctx, WriteCommand command) {
+   private Object handleManyWriteCommand(InvocationContext ctx, WriteCommand command) {
       if (command.hasAnyFlag(FlagBitSets.SKIP_INDEXING)) {
          return invokeNext(ctx, command);
       }
@@ -208,7 +212,7 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
          }
          return invokeNext(ctx, command);
       } else {
-         Map<Object, Object> oldValues = new HashMap();
+         Map<Object, Object> oldValues = new HashMap<>();
          for (Object key : command.getAffectedKeys()) {
             CacheEntry entry = ctx.lookupEntry(key);
             if (entry != null && (entry.getValue() != null || !unreliablePreviousValue(command))) {
@@ -239,79 +243,77 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
    }
 
    @Override
-   public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command)
-         throws Throwable {
+   public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
+   public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+   public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
+   public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) {
       return handleManyWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitClearCommand(final InvocationContext ctx, final ClearCommand command)
-         throws Throwable {
+   public Object visitClearCommand(InvocationContext ctx, ClearCommand command) {
       return invokeNextThenAccept(ctx, command, processClearCommand);
    }
 
    @Override
-   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
+   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitWriteOnlyKeyCommand(InvocationContext ctx, WriteOnlyKeyCommand command) throws Throwable {
+   public Object visitWriteOnlyKeyCommand(InvocationContext ctx, WriteOnlyKeyCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitReadWriteKeyValueCommand(InvocationContext ctx, ReadWriteKeyValueCommand command) throws Throwable {
+   public Object visitReadWriteKeyValueCommand(InvocationContext ctx, ReadWriteKeyValueCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) throws Throwable {
+   public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) {
       return handleManyWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitWriteOnlyKeyValueCommand(InvocationContext ctx, WriteOnlyKeyValueCommand command) throws Throwable {
+   public Object visitWriteOnlyKeyValueCommand(InvocationContext ctx, WriteOnlyKeyValueCommand command) {
       return handleDataWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitWriteOnlyManyCommand(InvocationContext ctx, WriteOnlyManyCommand command) throws Throwable {
+   public Object visitWriteOnlyManyCommand(InvocationContext ctx, WriteOnlyManyCommand command) {
       return handleManyWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) throws Throwable {
+   public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) {
       return handleManyWriteCommand(ctx, command);
    }
 
    @Override
-   public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) throws Throwable {
+   public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) {
       return handleManyWriteCommand(ctx, command);
    }
 
@@ -327,17 +329,19 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
    }
 
    /**
-    * Remove entries from all indexes by key
+    * Remove entries from all indexes by key.
     */
    void removeFromIndexes(TransactionContext transactionContext, Object key) {
-      Stream<IndexedTypeIdentifier> typeIdentifiers = getKnownClasses().stream().map(PojoIndexedTypeIdentifier::new);
+      Stream<IndexedTypeIdentifier> typeIdentifiers = getKnownClasses().stream()
+            .filter(searchFactoryHandler::hasIndex)
+            .map(PojoIndexedTypeIdentifier::new);
       Set<Work> deleteWorks = typeIdentifiers
             .map(e -> searchWorkCreator.createEntityWork(keyToString(key), e, WorkType.DELETE))
             .collect(Collectors.toSet());
       performSearchWorks(deleteWorks, transactionContext);
    }
 
-   public void purgeIndex(TransactionContext transactionContext, Class<?> entityType) {
+   private void purgeIndex(TransactionContext transactionContext, Class<?> entityType) {
       Boolean isIndexable = queryKnownClasses.get(entityType);
       if (isIndexable != null && isIndexable.booleanValue()) {
          if (searchFactoryHandler.hasIndex(entityType)) {
@@ -358,20 +362,17 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
    }
 
    // Method that will be called when data needs to be removed from Lucene.
-   protected void removeFromIndexes(final Object value, final Object key, final TransactionContext transactionContext) {
+   private void removeFromIndexes(Object value, Object key, TransactionContext transactionContext) {
       performSearchWork(value, keyToString(key), WorkType.DELETE, transactionContext);
    }
 
-
-   protected void updateIndexes(final boolean usingSkipIndexCleanupFlag, final Object value, final Object key,
-                                final TransactionContext transactionContext) {
+   private void updateIndexes(boolean usingSkipIndexCleanupFlag, Object value, Object key, TransactionContext transactionContext) {
       // Note: it's generally unsafe to assume there is no previous entry to cleanup: always use UPDATE
       // unless the specific flag is allowing this.
       performSearchWork(value, keyToString(key), usingSkipIndexCleanupFlag ? WorkType.ADD : WorkType.UPDATE, transactionContext);
    }
 
-   private void performSearchWork(Object value, Serializable id, WorkType workType,
-                                  TransactionContext transactionContext) {
+   private void performSearchWork(Object value, Serializable id, WorkType workType, TransactionContext transactionContext) {
       if (value == null) throw new NullPointerException("Cannot handle a null value!");
       Collection<Work> works = searchWorkCreator.createPerEntityWorks(value, id, workType);
       performSearchWorks(works, transactionContext);
@@ -401,16 +402,8 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
       return keyDataConversion.extractIndexable(storedKey);
    }
 
-   public void enableClasses(Class[] classes) {
+   public void enableClasses(Class... classes) {
       searchFactoryHandler.enableClasses(classes);
-   }
-
-   public boolean updateKnownTypesIfNeeded(Object value) {
-      return searchFactoryHandler.updateKnownTypesIfNeeded(value);
-   }
-
-   public void registerKeyTransformer(Class<?> keyClass, Class<? extends Transformer> transformerClass) {
-      keyTransformationHandler.registerTransformer(keyClass, transformerClass);
    }
 
    private String keyToString(Object key) {
@@ -421,8 +414,11 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
       return keyTransformationHandler;
    }
 
-   public SearchIntegrator getSearchFactory() {
-      return searchFactory;
+   /**
+    * Get the search work creator.
+    */
+   public SearchWorkCreator getSearchWorkCreator() {
+      return searchWorkCreator;
    }
 
    /**
@@ -434,34 +430,33 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
       this.searchWorkCreator = searchWorkCreator;
    }
 
-   public SearchWorkCreator getSearchWorkCreator() {
-      return searchWorkCreator;
-   }
-
    void processChange(InvocationContext ctx, FlagAffectedCommand command, Object storedKey, Object storedOldValue, Object storedNewValue, TransactionContext transactionContext) {
       Object key = extractKey(storedKey);
       Object oldValue = storedOldValue == UNKNOWN ? UNKNOWN : extractValue(storedOldValue);
       Object newValue = extractValue(storedNewValue);
       boolean skipIndexCleanup = command != null && command.hasAnyFlag(FlagBitSets.SKIP_INDEX_CLEANUP);
       if (!skipIndexCleanup) {
-         if (oldValue == UNKNOWN && shouldModifyIndexes(command, ctx, storedKey)) {
-            removeFromIndexes(transactionContext, key);
-         } else if (updateKnownTypesIfNeeded(oldValue) &&
-               (newValue == null && oldValue != null || shouldRemove(newValue, oldValue)) &&
-               shouldModifyIndexes(command,ctx, storedKey)) {
+         if (oldValue == UNKNOWN) {
+            if (shouldModifyIndexes(command, ctx, storedKey)) {
+               removeFromIndexes(transactionContext, key);
+            }
+         } else if (searchFactoryHandler.updateKnownTypesIfNeeded(oldValue) && (newValue == null || shouldRemove(newValue, oldValue))
+               && shouldModifyIndexes(command, ctx, storedKey)) {
             removeFromIndexes(oldValue, key, transactionContext);
          } else if (trace) {
             log.tracef("Index cleanup not needed for %s -> %s", oldValue, newValue);
          }
       } else if (trace) {
-        log.tracef("Skipped index cleanup for command %s", command);
+         log.tracef("Skipped index cleanup for command %s", command);
       }
-      if (updateKnownTypesIfNeeded(newValue)) {
+      if (searchFactoryHandler.updateKnownTypesIfNeeded(newValue)) {
          if (shouldModifyIndexes(command, ctx, storedKey)) {
             // This means that the entry is just modified so we need to update the indexes and not add to them.
             updateIndexes(skipIndexCleanup, newValue, key, transactionContext);
          } else {
-            log.tracef("Not modifying index for %s (%s)", storedKey, command);
+            if (trace) {
+               log.tracef("Not modifying index for %s (%s)", storedKey, command);
+            }
          }
       } else if (trace) {
          log.tracef("Update not needed for %s", newValue);
@@ -469,11 +464,11 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
    }
 
    private boolean shouldRemove(Object value, Object previousValue) {
-      if (getSearchWorkCreator() instanceof ExtendedSearchWorkCreator) {
-         ExtendedSearchWorkCreator eswc = ExtendedSearchWorkCreator.class.cast(getSearchWorkCreator());
+      if (searchWorkCreator instanceof ExtendedSearchWorkCreator) {
+         ExtendedSearchWorkCreator eswc = (ExtendedSearchWorkCreator) searchWorkCreator;
          return eswc.shouldRemove(new SearchWorkCreatorContext(previousValue, value));
       } else {
-         return !(value == null || previousValue == null) && !value.getClass().equals(previousValue.getClass());
+         return value != null && previousValue != null && value.getClass() != previousValue.getClass();
       }
    }
 
@@ -490,5 +485,4 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
    public boolean isStopping() {
       return stopping.get();
    }
-
 }

@@ -8,10 +8,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.codehaus.jackson.annotate.JsonTypeInfo;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.util.ProcessorInfo;
 import org.infinispan.commons.util.Util;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.marshall.core.MarshalledEntry;
@@ -21,6 +20,9 @@ import org.infinispan.upgrade.TargetMigrator;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.kohsuke.MetaInfServices;
+
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * // TODO: Document this
@@ -45,7 +47,7 @@ public class CLInterfaceTargetMigrator implements TargetMigrator {
 
    @Override
    public long synchronizeData(final Cache<Object, Object> cache) throws CacheException {
-      return synchronizeData(cache, 0, Runtime.getRuntime().availableProcessors());
+      return synchronizeData(cache, 0, ProcessorInfo.availableProcessors());
    }
 
    @Override

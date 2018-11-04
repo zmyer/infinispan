@@ -1,6 +1,7 @@
 package org.infinispan.configuration.cache;
 
 import static java.util.Arrays.asList;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT_TYPE;
 import static org.infinispan.configuration.cache.Configuration.SIMPLE_CACHE;
 
 import java.lang.reflect.Constructor;
@@ -182,6 +183,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
    }
 
    @Override
+   @Deprecated
    public CompatibilityModeConfigurationBuilder compatibility() {
       return compatibility;
    }
@@ -288,6 +290,10 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder {
    public Configuration build(boolean validate) {
       if (validate) {
          validate();
+      }
+      if (compatibility.isEnabled()) {
+         encoding.key().mediaType(APPLICATION_OBJECT_TYPE);
+         encoding.value().mediaType(APPLICATION_OBJECT_TYPE);
       }
       List<Object> modulesConfig = new LinkedList<>();
       for (Builder<?> module : modules)

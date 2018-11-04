@@ -6,7 +6,7 @@ pipeline {
     }
 
     options {
-        timeout(time: 3, unit: 'HOURS')
+        timeout(time: 4, unit: 'HOURS')
     }
 
     stages {
@@ -22,10 +22,11 @@ pipeline {
                 script {
                     env.MAVEN_HOME = tool('Maven')
                     env.MAVEN_OPTS = "-Xmx800m -XX:+HeapDumpOnOutOfMemoryError"
-                    env.JAVA_HOME = tool('Oracle JDK 8')
+                    env.JAVA_HOME = tool('JDK 8')
+                    env.JAVA10_HOME = tool('JDK 10')
                 }
 
-                sh returnStdout: true, script: 'cleanup.sh'
+                sh 'cleanup.sh'
             }
         }
 
@@ -38,7 +39,7 @@ pipeline {
         stage('Build') {
             steps {
                 configFileProvider([configFile(fileId: 'maven-settings-with-deploy-snapshot', variable: 'MAVEN_SETTINGS')]) {
-                    sh "$MAVEN_HOME/bin/mvn clean install -B -V -e -s $MAVEN_SETTINGS -DskipTests"
+                    sh "$MAVEN_HOME/bin/mvn clean install -B -V -e -s $MAVEN_SETTINGS -DskipTests -Djava10.home=$JAVA10_HOME"
                 }
                 warnings canRunOnFailed: true, consoleParsers: [[parserName: 'Maven'], [parserName: 'Java Compiler (javac)']], shouldDetectModules: true
                 checkstyle canRunOnFailed: true, pattern: '**/target/checkstyle-result.xml', shouldDetectModules: true
@@ -48,7 +49,7 @@ pipeline {
         stage('Tests') {
             steps {
                 configFileProvider([configFile(fileId: 'maven-settings-with-deploy-snapshot', variable: 'MAVEN_SETTINGS')]) {
-                    sh "$MAVEN_HOME/bin/mvn verify -B -V -e -s $MAVEN_SETTINGS -Dmaven.test.failure.ignore=true -Dansi.strip"
+                    sh "$MAVEN_HOME/bin/mvn verify -B -V -e -s $MAVEN_SETTINGS -Dmaven.test.failure.ignore=true -Dansi.strip=true -Djava10.home=$JAVA10_HOME"
                 }
                 // TODO Add StabilityTestDataPublisher after https://issues.jenkins-ci.org/browse/JENKINS-42610 is fixed
                 // Capture target/surefire-reports/*.xml, target/failsafe-reports/*.xml,
@@ -75,11 +76,62 @@ pipeline {
     post {
         always {
             // Archive logs and dump files
-            sh 'find . \\( -name "*.log" -o -name "*.dump*" -o -name "hs_err_*" \\) -exec xz {} \\;'
-            archiveArtifacts allowEmptyArchive: true, artifacts: '**/*.xz,documentation/target/generated-html/**'
+            sh 'find . \\( -name "*.log" -o -name "*.dump*" -o -name "hs_err_*" -o -name "*.hprof" \\) -exec xz {} \\;'
+            archiveArtifacts allowEmptyArchive: true, artifacts: '**/*.xz,documentation/target/generated-html/**,**/surefire-reports/TEST-*.xml'
 
             // Clean
-            sh 'git clean -fdx -e "*.hprof" || echo "git clean failed, exit code $?"'
+            sh 'git clean -qfdx || echo "git clean failed, exit code $?"'
+        }
+
+        changed {
+            script {
+              echo "post build status: changed"
+              changed = true
+            }
+        }
+
+        unstable {
+            echo "post build status: unstable"
+            script {
+                echo "Build result notify policy is: ${params.BUILD_RESULT_NOTIFY}"
+                if (params.BUILD_RESULT_NOTIFY == 'EMAIL') {
+                    echo 'Sending notify'
+                    emailext to: '${DEFAULT_RECIPIENTS}', subject: '${DEFAULT_SUBJECT}',
+                    body: '${DEFAULT_CONTENT}'
+                }
+            }
+        }
+
+        failure {
+            echo "post build status: failure"
+            script {
+                echo "Build result notify policy is: ${params.BUILD_RESULT_NOTIFY}"
+                if (params.BUILD_RESULT_NOTIFY == 'EMAIL') {
+                    echo 'Sending notify'
+                    emailext to: '${DEFAULT_RECIPIENTS}', subject: '${DEFAULT_SUBJECT}',
+                    body: '${DEFAULT_CONTENT}'
+                }
+            }
+        }
+
+        success {
+            echo "post build status: success"
+            script {
+                echo "changed = ${changed}"
+                if (changed) {
+                    echo "Build result notify policy is: ${params.BUILD_RESULT_NOTIFY}"
+                    if ( params.BUILD_RESULT_NOTIFY == 'EMAIL') {
+                        echo 'Sending notify'
+                        emailext to: '${DEFAULT_RECIPIENTS}', subject: '${DEFAULT_SUBJECT}',
+                        body: '${DEFAULT_CONTENT}'
+                    }
+                }
+                if (!env.BRANCH_NAME.startsWith('PR-')) {
+                    configFileProvider([configFile(fileId: 'maven-settings-with-deploy-snapshot', variable: 'MAVEN_SETTINGS')]) {
+                        sh "$MAVEN_HOME/bin/mvn deploy:deploy -B -V -e -s $MAVEN_SETTINGS -Dmaven.test.failure.ignore=true -Dansi.strip -DskipTests=true"
+                    }
+                }
+            }
         }
     }
 }

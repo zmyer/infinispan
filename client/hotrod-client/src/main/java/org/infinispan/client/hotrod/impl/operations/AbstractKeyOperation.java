@@ -4,7 +4,9 @@ import java.net.SocketAddress;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.infinispan.client.hotrod.DataFormat;
 import org.infinispan.client.hotrod.configuration.Configuration;
+import org.infinispan.client.hotrod.impl.ClientStatistics;
 import org.infinispan.client.hotrod.impl.VersionedOperationResponse;
 import org.infinispan.client.hotrod.impl.protocol.Codec;
 import org.infinispan.client.hotrod.impl.protocol.HotRodConstants;
@@ -21,13 +23,14 @@ import net.jcip.annotations.Immutable;
  * @since 4.1
  */
 @Immutable
-public abstract class AbstractKeyOperation<T> extends RetryOnFailureOperation<T> {
+public abstract class AbstractKeyOperation<T> extends StatsAffectingRetryingOperation<T> {
    protected final Object key;
    protected final byte[] keyBytes;
 
    protected AbstractKeyOperation(short requestCode, short responseCode, Codec codec, ChannelFactory channelFactory,
-                                  Object key, byte[] keyBytes, byte[] cacheName, AtomicInteger topologyId, int flags, Configuration cfg) {
-      super(requestCode, responseCode, codec, channelFactory, cacheName, topologyId, flags, cfg);
+                                  Object key, byte[] keyBytes, byte[] cacheName, AtomicInteger topologyId, int flags,
+                                  Configuration cfg, DataFormat dataFormat, ClientStatistics clientStatistics) {
+      super(requestCode, responseCode, codec, channelFactory, cacheName, topologyId, flags, cfg, dataFormat, clientStatistics);
       this.key = key;
       this.keyBytes = keyBytes;
    }
@@ -42,7 +45,7 @@ public abstract class AbstractKeyOperation<T> extends RetryOnFailureOperation<T>
    }
 
    protected T returnPossiblePrevValue(ByteBuf buf, short status) {
-      return (T) codec.returnPossiblePrevValue(buf, status, flags, cfg.serialWhitelist(), channelFactory.getMarshaller());
+      return (T) codec.returnPossiblePrevValue(buf, status, dataFormat, flags, cfg.getClassWhiteList(), channelFactory.getMarshaller());
    }
 
    protected VersionedOperationResponse returnVersionedOperationResponse(ByteBuf buf, short status) {

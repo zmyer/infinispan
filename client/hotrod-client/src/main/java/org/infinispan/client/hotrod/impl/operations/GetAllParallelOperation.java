@@ -9,7 +9,9 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import org.infinispan.client.hotrod.DataFormat;
 import org.infinispan.client.hotrod.configuration.Configuration;
+import org.infinispan.client.hotrod.impl.ClientStatistics;
 import org.infinispan.client.hotrod.impl.protocol.Codec;
 import org.infinispan.client.hotrod.impl.transport.netty.ChannelFactory;
 
@@ -21,8 +23,8 @@ public class GetAllParallelOperation<K, V> extends ParallelHotRodOperation<Map<K
    private final Set<byte[]> keys;
 
    protected GetAllParallelOperation(Codec codec, ChannelFactory channelFactory, Set<byte[]> keys, byte[]
-         cacheName, AtomicInteger topologyId, int flags, Configuration cfg) {
-      super(codec, channelFactory, cacheName, topologyId, flags, cfg);
+         cacheName, AtomicInteger topologyId, int flags, Configuration cfg, DataFormat dataFormat, ClientStatistics clientStatistics) {
+      super(codec, channelFactory, cacheName, topologyId, flags, cfg, dataFormat, clientStatistics);
       this.keys = keys;
    }
 
@@ -32,17 +34,13 @@ public class GetAllParallelOperation<K, V> extends ParallelHotRodOperation<Map<K
 
       for (byte[] key : keys) {
          SocketAddress socketAddress = channelFactory.getSocketAddress(key, cacheName);
-         Set<byte[]> keys = splittedKeys.get(socketAddress);
-         if (keys == null) {
-            keys = new HashSet<>();
-            splittedKeys.put(socketAddress, keys);
-         }
+         Set<byte[]> keys = splittedKeys.computeIfAbsent(socketAddress, k -> new HashSet<>());
          keys.add(key);
       }
 
       return splittedKeys.values().stream().map(
             keysSubset -> new GetAllOperation<K, V>(codec, channelFactory, keysSubset, cacheName, header.topologyId(),
-                  flags, cfg)).collect(Collectors.toList());
+                  flags, cfg, dataFormat, clientStatistics)).collect(Collectors.toList());
    }
 
    @Override

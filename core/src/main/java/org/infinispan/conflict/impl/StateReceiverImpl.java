@@ -1,7 +1,9 @@
 package org.infinispan.conflict.impl;
 
+import static org.infinispan.factories.KnownComponentNames.CACHE_NAME;
 import static org.infinispan.factories.KnownComponentNames.STATE_TRANSFER_EXECUTOR;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -10,16 +12,15 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.stream.Collectors;
 
-import org.infinispan.Cache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.logging.Log;
 import org.infinispan.commons.logging.LogFactory;
-import org.infinispan.container.DataContainer;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.NullCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.executors.LimitedExecutor;
 import org.infinispan.factories.annotations.ComponentName;
@@ -27,6 +28,7 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.notifications.Listener;
+import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.DataRehashed;
 import org.infinispan.notifications.cachelistener.event.DataRehashedEvent;
 import org.infinispan.remoting.rpc.RpcManager;
@@ -45,32 +47,37 @@ public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
    private static final Log log = LogFactory.getLog(StateReceiverImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private Cache<K, V> cache;
+   @ComponentName(CACHE_NAME)
+   @Inject private String cacheName;
+   @Inject private CacheNotifier cacheNotifier;
    @Inject private CommandsFactory commandsFactory;
-   @Inject private DataContainer<K, V> dataContainer;
+   @Inject private InternalDataContainer<K, V> dataContainer;
    @Inject private RpcManager rpcManager;
    @Inject @ComponentName(STATE_TRANSFER_EXECUTOR)
    private ExecutorService stateTransferExecutor;
 
-   private String cacheName;
    private LimitedExecutor stateReceiverExecutor;
 
    private final ConcurrentHashMap<Integer, SegmentRequest> requestMap = new ConcurrentHashMap<>();
 
    @Start
    public void start() {
-      this.cache.addListener(this);
-      this.cacheName = cache.getName();
-      this.stateReceiverExecutor = new LimitedExecutor("StateReceiver-" + cacheName, stateTransferExecutor, 1);
+      cacheNotifier.addListener(this);
+      stateReceiverExecutor = new LimitedExecutor("StateReceiver-" + cacheName, stateTransferExecutor, 1);
+   }
+
+   @Stop
+   public void stop() {
+      cancelRequests();
+      stateReceiverExecutor.shutdownNow();
    }
 
    @Override
-   @Stop
-   public void stop() {
+   public void cancelRequests() {
       if (trace) log.tracef("Cache %s stop() called on StateReceiverImpl", cacheName);
-      for (SegmentRequest request : requestMap.values())
+      for (SegmentRequest request : requestMap.values()) {
          request.cancel(null);
-      stateReceiverExecutor.cancelQueuedTasks();
+      }
    }
 
    @DataRehashed
@@ -81,7 +88,6 @@ public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
          for (SegmentRequest request : requestMap.values())
             request.cancel(new CacheException("Cancelling replica request as the owners of the requested " +
                "segment have changed."));
-         stateReceiverExecutor.cancelQueuedTasks();
       }
    }
 
@@ -118,7 +124,7 @@ public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
    }
 
    InboundTransferTask createTransferTask(int segmentId, Address source, CacheTopology topology, long transferTimeout) {
-      return new InboundTransferTask(Collections.singleton(segmentId), source, topology.getTopologyId(),
+      return new InboundTransferTask(IntSets.immutableSet(segmentId), source, topology.getTopologyId(),
             rpcManager, commandsFactory, transferTimeout, cacheName, false);
    }
 
@@ -139,9 +145,24 @@ public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
       }
 
       synchronized CompletableFuture<List<Map<Address, CacheEntry<K, V>>>> requestState() {
-         assert future == null;
-         if (trace) log.tracef("Cache %s attempting to receive replicas for segment %s from %s with topology %s",
-               cacheName, segmentId, replicaHosts, topology);
+         if (future != null) {
+            assert future.isCompletedExceptionally();
+            if (trace) log.tracef("Cache %s already cancelled replicas request for segment %s from %s with topology %s",
+                                  cacheName, segmentId, replicaHosts, topology);
+            return future;
+         }
+
+         if (trace) log.tracef("Cache %s attempting to receive replicas for segment %s from %s with topologyId=%s, timeout=%d",
+               cacheName, segmentId, replicaHosts, topology.getTopologyId(), timeout);
+
+         future = new CompletableFuture<>();
+         future.whenComplete((v, t) -> {
+            if (t != null) {
+               if (trace) log.tracef("Cache %s segment request(s) cancelled due to exception=%s", cacheName, t);
+               // If an exception has occurred, possibly a CancellationException, we must must cancel all ongoing transfers
+               cancel(t);
+            }
+         });
 
          for (final Address replica : replicaHosts) {
             if (replica.equals(rpcManager.getAddress())) {
@@ -151,18 +172,21 @@ public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
                      addKeyToReplicaMap(replica, entry);
                   }
                });
+               // numOwner == 1, then we cannot rely on receiveState to complete the future
+               if (replicaHosts.size() == 1) {
+                  completeRequest();
+               }
             } else {
                final InboundTransferTask transferTask = createTransferTask(segmentId, replica, topology, timeout);
                transferTaskMap.put(replica, transferTask);
 
-               stateReceiverExecutor.executeAsync(() -> {
+               stateReceiverExecutor.execute(() -> {
                   // If the transferTaskMap does not contain an entry for this replica, then it must have been cancelled
                   // before this request was executed..
                   if (!transferTaskMap.containsKey(replica))
-                     return null;
+                     return;
 
-                  CompletableFuture<Void> transferStarted = transferTask.requestSegments();
-                  return transferStarted.exceptionally(throwable -> {
+                  transferTask.requestSegments().exceptionally(throwable -> {
                      if (trace) log.tracef(throwable, "Cache %s exception when processing InboundTransferTask", cacheName);
                      cancel(throwable);
                      return null;
@@ -170,7 +194,6 @@ public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
                });
             }
          }
-         future = new CompletableFuture<>();
          return future;
       }
 
@@ -205,19 +228,21 @@ public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
                transferTaskMap.remove(sender);
 
                if (transferTaskMap.isEmpty()) {
-                  List<Map<Address, CacheEntry<K, V>>> retVal = keyReplicaMap.entrySet().stream()
-                        .map(Map.Entry::getValue)
-                        .collect(Collectors.toList());
-                  clear();
-
-                  future.complete(Collections.unmodifiableList(retVal));
+                  completeRequest();
                }
             }
          }
       }
 
       synchronized void cancel(Throwable throwable) {
+         if (future.isDone())
+            return;
+
          log.debugf(throwable, "Cache %s cancelling request for segment %s", cacheName, segmentId);
+         if (future == null) {
+            // requestState() has not run yet, so we create the future first
+            future = new CompletableFuture<>();
+         }
          transferTaskMap.forEach((address, inboundTransferTask) -> inboundTransferTask.cancel());
          if (throwable != null) {
             future.completeExceptionally(throwable);
@@ -225,6 +250,12 @@ public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
             future.cancel(true);
          }
          clear();
+      }
+
+      synchronized void completeRequest() {
+         List<Map<Address, CacheEntry<K, V>>> retVal = new ArrayList<>(keyReplicaMap.values());
+         clear();
+         future.complete(Collections.unmodifiableList(retVal));
       }
 
       void addKeyToReplicaMap(Address address, CacheEntry<K, V> ice) {

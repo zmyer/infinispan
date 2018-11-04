@@ -16,6 +16,8 @@ import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commands.remote.RenewBiasCommand;
 import org.infinispan.commands.remote.RevokeBiasCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
+import org.infinispan.commands.remote.expiration.RetrieveLastAccessCommand;
+import org.infinispan.commands.remote.expiration.UpdateLastAccessCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTransactionsCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTxInfoCommand;
@@ -47,7 +49,6 @@ import org.infinispan.stream.impl.StreamIteratorNextCommand;
 import org.infinispan.stream.impl.StreamIteratorRequestCommand;
 import org.infinispan.stream.impl.StreamRequestCommand;
 import org.infinispan.stream.impl.StreamResponseCommand;
-import org.infinispan.stream.impl.StreamSegmentResponseCommand;
 import org.infinispan.util.ByteString;
 import org.infinispan.xsite.SingleXSiteRpcCommand;
 import org.infinispan.xsite.XSiteAdminCommand;
@@ -87,7 +88,7 @@ public final class CacheRpcCommandExternalizer extends AbstractExternalizer<Cach
                TotalOrderVersionedCommitCommand.class, TotalOrderRollbackCommand.class,
                XSiteStateTransferControlCommand.class, XSiteStatePushCommand.class, SingleXSiteRpcCommand.class,
                ClusteredGetAllCommand.class,
-               StreamRequestCommand.class, StreamSegmentResponseCommand.class, StreamResponseCommand.class,
+               StreamRequestCommand.class, StreamResponseCommand.class,
                SingleKeyBackupWriteCommand.class,
                SingleKeyFunctionalBackupWriteCommand.class,
                PutMapBackupWriteCommand.class,
@@ -95,7 +96,8 @@ public final class CacheRpcCommandExternalizer extends AbstractExternalizer<Cach
                MultiKeyFunctionalBackupWriteCommand.class,
                InvalidateVersionsCommand.class, StreamIteratorRequestCommand.class,
                StreamIteratorNextCommand.class, StreamIteratorCloseCommand.class,
-               RevokeBiasCommand.class, RenewBiasCommand.class);
+               RevokeBiasCommand.class, RenewBiasCommand.class, RetrieveLastAccessCommand.class,
+               UpdateLastAccessCommand.class);
       // Only interested in cache specific replicable commands
       coreCommands.addAll(gcr.getModuleProperties().moduleCacheRpcCommands());
       return coreCommands;

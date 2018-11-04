@@ -1,12 +1,12 @@
 [[eviction_anchor]]
 ==  Eviction and Data Container
 
-Infinispan supports eviction of entries, such that you do not run out of memory.
+{brandname} supports eviction of entries, such that you do not run out of memory.
 Eviction is typically used in conjunction with a cache store, so that entries are
 not permanently lost when evicted, since eviction only removes entries from
 memory and not from cache stores or the rest of the cluster.
 
-Infinispan supports storing data in a few different formats.  Data can be
+{brandname} supports storing data in a few different formats.  Data can be
 stored as the object iself, binary as a byte[], and off-heap which stores the
 byte[] in native memory.
 
@@ -24,6 +24,7 @@ attribute of the eviction element to be greater than zero in order for eviction
 to be turned on. If size is too large you can run out of memory. The `size`
 attribute will probably take some tuning in each use case.
 
+[[eviction_enabling]]
 === Enabling Eviction
 
 Eviction is configured by adding the
@@ -34,6 +35,7 @@ API programmatic approach.
 
 All cache entry are evicted by piggybacking on user threads that are hitting the cache.
 
+[[eviction_strategy]]
 ==== Eviction strategy
 
 Strategies control how the eviction is handled.
@@ -64,6 +66,7 @@ a `ContainerFullException`. This strategy only works with transactional caches
 that always run with 2 phase commit, that is no 1 phase commit or synchronization
 optimizations allowed.
 
+[[eviction_types]]
 ==== Eviction types
 
 Eviction type applies only when the size is set to something greater than 0.
@@ -81,11 +84,12 @@ and will remove an entry when the total size of all entries is larger than
 the configured `size`.  This type does not work with `OBJECT` storage type
 below.
 
+[[eviction_storage_type]]
 ==== Storage type
 
-Infinispan allows the user to configure in what form their data is stored.  Each
-form supports the same features of Infinispan, however eviction can be limited
-for some forms.  There are currently three storage formats that Infinispan
+{brandname} allows the user to configure in what form their data is stored.  Each
+form supports the same features of {brandname}, however eviction can be limited
+for some forms.  There are currently three storage formats that {brandname}
 provides, they are:
 
 .`OBJECT`
@@ -105,6 +109,7 @@ Both `COUNT` and `MEMORY` eviction types are supported.
 WARNING: Both `BINARY` and `OFF-HEAP` violate equality and hashCode that they are
 dictated by the resulting byte[] they generate instead of the object instance.
 
+[[eviction_defaults]]
 ==== More defaults
 
 By default when no `<memory />` element is specified, no eviction takes place,
@@ -118,7 +123,7 @@ Supplied strategy column means that the attribute wasn't supplied)
 |===============
 |Supplied size|Example|Eviction behaviour
 |-| `<memory />` |no eviction as an object
-|-| `<memory strategy="MANUAL">` |no eviction as an object and won't log warning if passivation is enabled
+|-| `<memory> <object strategy="MANUAL" /> </memory>` |no eviction as an object and won't log warning if passivation is enabled
 |&gt; 0| `<memory> <object size="100" /> </memory>` |eviction takes place and stored as objects
 |&gt; 0| `<memory> <binary size="100" eviction="MEMORY"/> </memory>` |eviction takes place and stored as a binary removing to make sure memory doens't go higher than 100
 |&gt; 0| `<memory> <off-heap size="100" /> </memory>` |eviction takes place and stored in off-heap
@@ -128,6 +133,7 @@ Supplied strategy column means that the attribute wasn't supplied)
 
 |===============
 
+[[expiration_anchor]]
 === Expiration
 
 Similar to, but unlike eviction, is expiration. Expiration allows you to attach
@@ -145,43 +151,131 @@ times can be configured by adding the
 link:http://docs.jboss.org/infinispan/{infinispanversion}/configdocs/infinispan-config-{infinispanversion}.html[&lt;expiration /&gt;]
 element to your `<*-cache />`  configuration sections.
 
-When an entry expires it will reside in the data container or cache store
-until it is accessed again by a user request.  There is also an optional
-expiration reaper that can run at a given configurable interval of
-milliseconds which will check for expired entries and remove them.
+When an entry expires it resides in the data container or cache store until it
+is accessed again by a user request. An expiration reaper is also available to
+check for expired entries and remove them at a configurable interval of
+milliseconds.
 
+You can enable the expiration reaper declaratively with the `reaper-interval`
+attribute or programmatically with the `enableReaper` method in the
+`ExpirationConfigurationBuilder` class.
+
+[NOTE]
+====
+* The expiration reaper cannot be disabled when a cache store is present.
+* When using a maximum idle time in a clustered cache, you should always enable
+the expiration reaper. For more information, see
+link:#expiration_maxidle_clustered[Clustered Max Idle].
+====
+
+[[expiration_settings]]
 ==== Difference between Eviction and Expiration
 
 Both Eviction and Expiration are means of cleaning the cache of unused entries
-and thus guarding the heap against OutOfMemory exceptions, so now a brief
+and thus guarding the heap against `OutOfMemory` exceptions, so now a brief
 explanation of the difference.
 
-With _eviction_ you set _maximal number of entries_ you want to keep in the cache
-and if this limit is exceeded, some candidates are found to be removed according
-to a choosen _eviction strategy_ (LRU, LIRS, etc...). Eviction can be setup to
-work with passivation (evicting to a cache store).
+With _eviction_ you set _maximal number of entries_ you want to keep in the
+cache and if this limit is exceeded, some candidates are found to be removed
+according to a choosen _eviction strategy_ (LRU, LIRS, etc...). Eviction can be
+setup to work with passivation, which is eviction to a cache store.
 
-With _expiration_ you set _time criteria_ for entries, _how long you want to keep them_
-in cache. Either you set maximum _lifespan_ of the entry - time it is allowed to
-stay in the cache or _maximum idle time_ , time it's allowed to be untouched
-(no operation performed with given key).
+With _expiration_ you set _time criteria_ for entries to specify _how long you
+want to keep them_ in the cache.
 
+_lifespan_::
+Specifies how long entries can remain in the cache before they expire. The
+default value is `-1`, which is unlimited time.
+_maximum idle time_::
+Specifies how long entries can remain idle before they expire. An entry in the
+cache is idle when no operation is performed with the key. The default value is
+`-1`, which is unlimited time.
+
+[[expiration_details]]
 ===  Expiration details
 
-.  _Expiration_ is a top-level construct, represented in the configuration as well as in the cache API.
-.  While eviction is _local to each cache instance_ , expiration is _cluster-wide_ .  Expiration lifespans and maxIdle values are replicated along with the cache entry.
-.  While maxIdle is replicated, expiration due to maxIdle is not cluster wide, only lifespan.  As such it is not recommended to use maxIdle in a clustered cache.
-.  Expiration lifespan and maxIdle are also persisted in CacheStores, so this information survives eviction/passivation.
+.  _Expiration_ is a top-level construct, represented in the configuration as
+well as in the cache API.
+.  While eviction is _local to each cache instance_ , expiration is
+_cluster-wide_ .  Expiration `lifespan` and `maxIdle` values are replicated
+along with the cache entry.
+.  Maximum idle times for cache entries require additional network messages in
+clustered environments. For this reason, setting `maxIdle` in clustered caches
+can result in slower operation times.
+.  Expiration lifespan and `maxIdle` are also persisted in CacheStores, so this information survives eviction/passivation.
 
+[[expiration_maxidle]]
+==== Maximum Idle Expiration
+
+Maximum idle expiration has different behavior in local and clustered cache environments.
+
+[[expiration_maxidle_local]]
+===== Local Max Idle
+
+In non-clustered cache environments, the `maxIdle` configuration expires entries when:
+
+* accessed directly (`Cache.get`).
+* iterated upon (`Cache.size`).
+* the expiration reaper thread runs.
+
+[[expiration_maxidle_clustered]]
+===== Clustered Max Idle
+
+In clustered environments, nodes in the cluster can have different access times
+for the same entry. Entries do not expire from the cache until they reach the
+maxium idle time for all owners across the cluster.
+
+When a node detects that an entry has reached the maximum idle time and is
+expired, the node gets the last time that the entry was accessed from the other
+owners in the cluster. If the other owners indicate that the entry is expired,
+that entry is not returned to the requester and removed from the cache.
+
+The following points apply to using the `maxIdle` configuration with clustered
+caches:
+
+* If one or more owner in the cluster detects that an entry is not expired,
+then a `Cache.get` operation returns the entry. The last access time for that
+entry is also updated to the current time.
+* When the expiration reaper finds entries that might be expired with the
+maximum idle time, all nodes update the last access time for those entries
+to the most recent access time before the `maxIdle` time. In this way, the
+reaper prevents invalid expiration of entries.
+* Clustered transactional caches do *not* remove entries that are expired
+with the maximum idle time on `Cache.get` operations. These expired entries
+are removed with the expiration reaper thread only, otherwise deadlocking
+can occur.
+* Iteration across a clustered cache returns entries that might be expired
+with the maximum idle time. This behavior ensures performance because no
+remote invocations are performed during the iteration. However this does not
+refresh any expired entries, which are removed by the expiration reaper or
+when accessed directly (`Cache.get`).
+
+[IMPORTANT]
+====
+* Clustered caches should always use the expiration reaper with the `maxIdle`
+configuration.
+* When using `maxIdle` expiration with exception-based eviction, entries that
+are expired but not removed from the cache count towards the size of the data
+container.
+* Entries that are transferred to the cache via state transfer are created on
+the new node with a last access time that is equal to the current time. As a
+result those entries are refreshed.
+====
+
+[[eviction_expiration_config]]
 ==== Configuration
 
-Eviction may be configured using the Configuration bean or the XML file.  Eviction configuration is on a per-cache basis.  Valid eviction-related configuration elements are:
+Eviction and Expiration may be configured using the programmatic or
+declarative XML configuration. This configuration is on a per-cache basis.
+Valid eviction/expiration-related configuration elements are:
 
 [source,xml]
 ----
+<!-- Eviction -->
 <memory>
    <object size="2000"/>
 </memory>
+<!-- Expiration -->
 <expiration lifespan="1000" max-idle="500" interval="1000" />
 
 ----
@@ -197,11 +291,12 @@ Configuration c = new ConfigurationBuilder()
 
 ----
 
+[[eviction_expiration_config_mem]]
 ==== Memory Based Eviction Configuration
 
 Memory based eviction may require some additional configuration options if you
-are using your own custom types (as Infinispan is normally used).  In this case
-Infinispan cannot estimate the memory usage of your classes and as such you are
+are using your own custom types (as {brandname} is normally used).  In this case
+{brandname} cannot estimate the memory usage of your classes and as such you are
 required to use `storeAsBinary` when memory based eviction is used.
 
 [source,xml]
@@ -222,6 +317,7 @@ Configuration c = new ConfigurationBuilder()
                .build();
 ----
 
+[[eviction_expiration_config_default]]
 ==== Default values
 
 Eviction is disabled by default. Default values are used:
@@ -229,8 +325,9 @@ Eviction is disabled by default. Default values are used:
 * size: -1 is used if not specified, which means unlimited entries.
 * 0 means no entries, and the eviction thread will strive to keep the cache empty.
 
-Expiration lifespan and maxIdle both default to -1.
+Expiration lifespan and maxIdle both default to -1, which means that entries will be created immortal by default. This can be overridden per entry with the API.
 
+[[expiration_using]]
 ==== Using expiration
 
 Expiration allows you to set either a lifespan or a maximum idle time on each key/value pair stored in the cache.  This can either be set cache-wide using the configuration, as described above, or it can be defined per-key/value pair using the Cache interface.  Any values defined per key/value pair overrides the cache-wide default for the specific entry in question.
@@ -262,7 +359,7 @@ cache.put("riesling", rieslingPrice, 5,
 
 ----
 
-
+[[expiration_designs]]
 === Expiration designs
 
 Central to expiration is an ExpirationManager.
@@ -277,4 +374,6 @@ The expiration manager processes expirations in the following manner:
 
 . Causes the data container to purge expired entries
 . Causes cache stores (if any) to purge expired entries
-
+//////////////////////
+//terminate list
+//////////////////////

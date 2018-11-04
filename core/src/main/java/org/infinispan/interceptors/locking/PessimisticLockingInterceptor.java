@@ -16,7 +16,7 @@ import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.interceptors.InvocationSuccessAction;
 import org.infinispan.interceptors.InvocationSuccessFunction;
-import org.infinispan.statetransfer.StateTransferManager;
+import org.infinispan.topology.CacheTopology;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.util.concurrent.locks.KeyAwareLockPromise;
 import org.infinispan.util.concurrent.locks.LockPromise;
@@ -48,7 +48,6 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
          (rCtx, rCommand, rv) -> releaseLockOnTxCompletion((TxInvocationContext) rCtx);
 
    @Inject private CommandsFactory cf;
-   @Inject private StateTransferManager stateTransferManager;
 
    @Override
    protected Log getLog() {
@@ -88,6 +87,7 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
       final TxInvocationContext txContext = (TxInvocationContext) ctx;
       Object key = command.getKey();
       txContext.addAffectedKey(key);
+      txContext.getCacheTransaction().removeBackupLock(key);
       return lockOrRegisterBackupLock(txContext, key, getLockTimeoutMillis(command));
    }
 
@@ -104,8 +104,10 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
 
    private KeyAwareLockPromise acquireLocalLocks(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys)
          throws InterruptedException {
-      ((TxInvocationContext<?>) ctx).addAllAffectedKeys(keys);
-      return lockAllOrRegisterBackupLock((TxInvocationContext<?>) ctx, keys, getLockTimeoutMillis(command));
+      final TxInvocationContext<?> txContext = (TxInvocationContext) ctx;
+      txContext.addAllAffectedKeys(keys);
+      txContext.getCacheTransaction().removeBackupLocks(keys);
+      return lockAllOrRegisterBackupLock(txContext, keys, getLockTimeoutMillis(command));
    }
 
    @Override
@@ -201,6 +203,7 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
                "There's no advancedCache.unlock so this must have originated remotely.");
          return false;
       }
+      ((TxInvocationContext<?>) ctx).getCacheTransaction().removeBackupLocks(command.getKeys());
 
       lockAllOrRegisterBackupLock(txInvocationContext, command.getKeys(), getLockTimeoutMillis(command)).lock();
       return true;
@@ -249,7 +252,7 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
    }
 
    private boolean isStateTransferInProgress() {
-      return stateTransferManager != null && stateTransferManager.isStateTransferInProgress();
+      return cdl.getCacheTopology().getPhase() == CacheTopology.Phase.READ_OLD_WRITE_ALL;
    }
 
    private Object lockAndRecordForManyKeysCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys)

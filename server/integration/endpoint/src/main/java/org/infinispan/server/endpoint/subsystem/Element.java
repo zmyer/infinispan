@@ -35,8 +35,9 @@ public enum Element {
     HOTROD_CONNECTOR(ModelKeys.HOTROD_CONNECTOR),
     MEMCACHED_CONNECTOR(ModelKeys.MEMCACHED_CONNECTOR),
     REST_CONNECTOR(ModelKeys.REST_CONNECTOR),
-    WEBSOCKET_CONNECTOR(ModelKeys.WEBSOCKET_CONNECTOR),
     ROUTER_CONNECTOR(ModelKeys.ROUTER_CONNECTOR),
+    @Deprecated
+    WEBSOCKET_CONNECTOR(ModelKeys.WEBSOCKET_CONNECTOR),
     ALLOWED_ORIGINS(ModelKeys.ALLOWED_ORIGINS),
     ALLOWED_METHODS(ModelKeys.ALLOWED_METHODS),
     ALLOWED_HEADERS(ModelKeys.ALLOWED_HEADERS),
@@ -66,7 +67,7 @@ public enum Element {
     NO_PLAIN_TEXT(ModelKeys.NO_PLAIN_TEXT),
     PASS_CREDENTIALS(ModelKeys.PASS_CREDENTIALS),
     MULTI_TENANCY(ModelKeys.MULTI_TENANCY),
-    ;
+    SINGLE_PORT(ModelKeys.SINGLE_PORT);
 
     private final String name;
     private final AttributeDefinition definition;

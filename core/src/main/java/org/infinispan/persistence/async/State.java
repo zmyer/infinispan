@@ -1,10 +1,11 @@
 package org.infinispan.persistence.async;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 
+import org.infinispan.commons.util.ByRef;
 import org.infinispan.persistence.modifications.Clear;
 import org.infinispan.persistence.modifications.Modification;
 import org.infinispan.persistence.modifications.ModificationsList;
@@ -66,6 +67,19 @@ public class State {
       return null;
    }
 
+   Map<Object, Modification> flattenModifications(ByRef<Boolean> containsClear) {
+      Map<Object, Modification> map = new HashMap<>();
+      for (State state = this; state != null; state = state.next) {
+         // Make sure to add these before checking clear - as these are write operations done after the clear
+         state.modifications.forEach(map::putIfAbsent);
+         if (state.clear) {
+            containsClear.set(Boolean.TRUE);
+            break;
+         }
+      }
+      return map;
+   }
+
    /**
     * Adds the Modification(s) to the state map.
     *
@@ -88,34 +102,4 @@ public class State {
             throw new IllegalArgumentException("Unknown modification type " + mod.getType());
       }
    }
-
-
-   public Set getKeysInTransit() {
-      Set result = new HashSet();
-      _loadKeys(this, result);
-      return result;
-   }
-
-   private void _loadKeys(State s, Set result) {
-      // if not cleared, get keys from next State or the back-end store
-      if (!s.clear) {
-         State next = s.next;
-         if (next != null)
-            _loadKeys(next, result);
-      }
-
-      // merge keys of the current State
-      for (Modification mod : s.modifications.values()) {
-         switch (mod.getType()) {
-            case STORE:
-               Object key = ((Store) mod).getKey();
-                  result.add(key);
-               break;
-            case REMOVE:
-               result.remove(((Remove) mod).getKey());
-               break;
-         }
-      }
-   }
-
 }

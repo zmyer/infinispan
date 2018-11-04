@@ -1,5 +1,10 @@
 package org.infinispan.scripting.impl;
 
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JSON_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_XML_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.TEXT_PLAIN_TYPE;
+import static org.infinispan.commons.util.CollectionFactory.makeSet;
+
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
@@ -8,6 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.metadata.Metadata;
@@ -30,11 +36,12 @@ public class ScriptMetadata implements Metadata {
    private final Optional<String> reducer;
    private final Optional<String> collator;
    private final Optional<String> combiner;
-   private final DataType dataType;
+   private final MediaType dataType;
+   private final Set<String> textBasedMedia = makeSet(TEXT_PLAIN_TYPE, APPLICATION_JSON_TYPE, APPLICATION_XML_TYPE);
 
    ScriptMetadata(String name, Optional<String> language, String extension, ExecutionMode mode, Set<String> parameters,
-         Optional<String> role, Optional<String> reducer, Optional<String> collator, Optional<String> combiner,
-         DataType dataType) {
+                  Optional<String> role, Optional<String> reducer, Optional<String> collator, Optional<String> combiner,
+                  MediaType dataType) {
       this.name = name;
       this.language = language;
       this.extension = extension;
@@ -83,7 +90,10 @@ public class ScriptMetadata implements Metadata {
       return collator;
    }
 
-   public DataType dataType() {
+   public MediaType dataType() {
+      if (textBasedMedia.contains(dataType.getTypeSubtype())) {
+         return dataType.withClassType(String.class);
+      }
       return dataType;
    }
 
@@ -124,7 +134,7 @@ public class ScriptMetadata implements Metadata {
       Optional<String> combiner = Optional.empty();
       Optional<String> collator = Optional.empty();
       Optional<String> reducer = Optional.empty();
-      DataType dataType = DataType.DEFAULT;
+      MediaType dataType = MediaType.APPLICATION_OBJECT;
 
       public ScriptMetadata.Builder name(String name) {
          this.name = name;
@@ -171,7 +181,7 @@ public class ScriptMetadata implements Metadata {
          return this;
       }
 
-      public ScriptMetadata.Builder dataType(DataType dataType) {
+      public ScriptMetadata.Builder dataType(MediaType dataType) {
          this.dataType = dataType;
          return this;
       }
@@ -257,7 +267,7 @@ public class ScriptMetadata implements Metadata {
          Optional<String> reducer = (Optional<String>) input.readObject();
          Optional<String> collator = (Optional<String>) input.readObject();
          Optional<String> combiner = (Optional<String>) input.readObject();
-         DataType dataType = (DataType) input.readObject();
+         MediaType dataType = (MediaType) input.readObject();
 
          return new ScriptMetadata(name, language, extension, mode, parameters, role, reducer, collator, combiner, dataType);
       }

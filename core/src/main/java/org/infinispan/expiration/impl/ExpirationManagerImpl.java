@@ -1,6 +1,7 @@
 package org.infinispan.expiration.impl;
 
 import java.util.Iterator;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledExecutorService;
@@ -9,26 +10,28 @@ import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.expiration.ExpirationManager;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.persistence.manager.PersistenceManager;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 import net.jcip.annotations.ThreadSafe;
 
 @ThreadSafe
-public class ExpirationManagerImpl<K, V> implements ExpirationManager<K, V> {
+public class ExpirationManagerImpl<K, V> implements InternalExpirationManager<K, V> {
    private static final Log log = LogFactory.getLog(ExpirationManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
@@ -36,9 +39,10 @@ public class ExpirationManagerImpl<K, V> implements ExpirationManager<K, V> {
    protected ScheduledExecutorService executor;
    @Inject protected Configuration configuration;
    @Inject protected PersistenceManager persistenceManager;
-   @Inject protected DataContainer<K, V> dataContainer;
+   @Inject protected ComponentRef<InternalDataContainer<K, V>> dataContainer;
    @Inject protected CacheNotifier<K, V> cacheNotifier;
    @Inject protected TimeService timeService;
+   @Inject protected KeyPartitioner keyPartitioner;
 
    protected boolean enabled;
    protected String cacheName;
@@ -87,11 +91,11 @@ public class ExpirationManagerImpl<K, V> implements ExpirationManager<K, V> {
                start = timeService.time();
             }
             long currentTimeMillis = timeService.wallClockTime();
-            for (Iterator<InternalCacheEntry<K, V>> purgeCandidates = dataContainer.iteratorIncludingExpired();
+            for (Iterator<InternalCacheEntry<K, V>> purgeCandidates = dataContainer.running().iteratorIncludingExpired();
                  purgeCandidates.hasNext();) {
                InternalCacheEntry<K, V> e = purgeCandidates.next();
                if (e.isExpired(currentTimeMillis)) {
-                  handleInMemoryExpiration(e, currentTimeMillis);
+                  entryExpiredInMemory(e, currentTimeMillis, false);
                }
             }
             if (trace) {
@@ -114,8 +118,12 @@ public class ExpirationManagerImpl<K, V> implements ExpirationManager<K, V> {
    }
 
    @Override
-   public void handleInMemoryExpiration(InternalCacheEntry<K, V> entry, long currentTime) {
-      dataContainer.compute(entry.getKey(), ((k, oldEntry, factory) -> {
+   public CompletableFuture<Boolean> entryExpiredInMemory(InternalCacheEntry<K, V> entry, long currentTime,
+         boolean hasLock) {
+      // We ignore the return from this method. It is possible for the entry to no longer be expired, but this means
+      // it was updated by another thread. In that case it is a completely valid value for it to be expired then not.
+      // So for this we just tell the caller it was expired.
+      dataContainer.running().compute(entry.getKey(), ((k, oldEntry, factory) -> {
          if (oldEntry != null) {
             synchronized (oldEntry) {
                if (oldEntry.isExpired(currentTime)) {
@@ -127,6 +135,19 @@ public class ExpirationManagerImpl<K, V> implements ExpirationManager<K, V> {
          }
          return null;
       }));
+      return CompletableFutures.completedTrue();
+   }
+
+   @Override
+   public CompletableFuture<Boolean> entryExpiredInMemoryFromIteration(InternalCacheEntry<K, V> entry, long currentTime) {
+      // Local we just remove the entry as we see them
+      return entryExpiredInMemory(entry, currentTime, false);
+   }
+
+   @Override
+   public void handleInMemoryExpiration(InternalCacheEntry<K, V> entry, long currentTime) {
+      // Just invoke the new method and join
+      entryExpiredInMemory(entry, currentTime, false).join();
    }
 
    @Override
@@ -143,7 +164,7 @@ public class ExpirationManagerImpl<K, V> implements ExpirationManager<K, V> {
    }
 
    private void handleInStoreExpiration(K key, V value, Metadata metadata) {
-      dataContainer.compute(key, (oldKey, oldEntry, factory) -> {
+      dataContainer.running().compute(key, (oldKey, oldEntry, factory) -> {
          boolean shouldRemove = false;
          if (oldEntry == null) {
             shouldRemove = true;
@@ -188,17 +209,25 @@ public class ExpirationManagerImpl<K, V> implements ExpirationManager<K, V> {
 
    private void deleteFromStores(K key) {
       // We have to delete from shared stores as well to make sure there are not multiple expiration events
-      persistenceManager.deleteFromAllStores(key, PersistenceManager.AccessMode.BOTH);
+      persistenceManager.deleteFromAllStores(key, keyPartitioner.getSegment(key), PersistenceManager.AccessMode.BOTH);
+   }
+
+   protected Long localLastAccess(Object key, Object value, int segment) {
+      InternalCacheEntry ice = dataContainer.running().peek(segment, key);
+      if (ice != null && (value == null || value.equals(ice.getValue())) &&
+            !ice.isExpired(timeService.wallClockTime())) {
+         return ice.getLastUsed();
+      }
+      return null;
    }
 
    @Override
-   public void registerWriteIncoming(K key) {
-      expiring.put(key, key);
-   }
-
-   @Override
-   public void unregisterWrite(K key) {
-      expiring.remove(key);
+   public CompletableFuture<Long> retrieveLastAccess(Object key, Object value, int segment) {
+      Long lastAccess = localLastAccess(key, value, segment);
+      if (lastAccess != null) {
+         return CompletableFuture.completedFuture(lastAccess);
+      }
+      return CompletableFutures.completedNull();
    }
 
    @Stop(priority = 5)

@@ -24,7 +24,7 @@ import org.testng.annotations.Test;
 /**
  * Test that CommandAwareRpcManager detects members who left the cluster and throws an exception.
  *
- * @author Dan Berindei <dan@infinispan.org>
+ * @author Dan Berindei &lt;dan@infinispan.org&gt;
  */
 @Test (testName = "remoting.MessageSentToLeaverTest", groups = "functional")
 public class MessageSentToLeaverTest extends AbstractInfinispanTest {
@@ -53,7 +53,7 @@ public class MessageSentToLeaverTest extends AbstractInfinispanTest {
          Collection<Address>  addresses = cm1.getMembers();
 
          CommandsFactory cf = TestingUtil.extractCommandsFactory(c1);
-         PutKeyValueCommand cmd = cf.buildPutKeyValueCommand("k", "v2",
+         PutKeyValueCommand cmd = cf.buildPutKeyValueCommand("k", "v2", 0,
                new EmbeddedMetadata.Builder().build(), EnumUtil.EMPTY_BIT_SET);
 
          Map<Address,Response> responseMap = rpcManager.invokeRemotely(addresses, cmd, rpcManager.getDefaultRpcOptions(true, DeliverOrder.NONE));

@@ -23,7 +23,9 @@ import org.infinispan.Cache;
 import org.infinispan.client.hotrod.CacheTopologyInfo;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.configuration.ClassWhiteList;
 import org.infinispan.commons.marshall.Marshaller;
+import org.infinispan.commons.util.ProcessorInfo;
 import org.infinispan.commons.util.Util;
 import org.infinispan.distexec.DefaultExecutorService;
 import org.infinispan.distexec.DistributedExecutorService;
@@ -53,18 +55,19 @@ public class HotRodTargetMigrator implements TargetMigrator {
 
    @Override
    public long synchronizeData(final Cache<Object, Object> cache) throws CacheException {
-      return synchronizeData(cache, DEFAULT_READ_BATCH_SIZE, Runtime.getRuntime().availableProcessors());
+      return synchronizeData(cache, DEFAULT_READ_BATCH_SIZE, ProcessorInfo.availableProcessors());
    }
 
    @Override
    public long synchronizeData(Cache<Object, Object> cache, int readBatch, int threads) throws CacheException {
       ComponentRegistry cr = cache.getAdvancedCache().getComponentRegistry();
+      ClassWhiteList whiteList = cache.getCacheManager().getClassWhiteList();
       PersistenceManager loaderManager = cr.getComponent(PersistenceManager.class);
       Set<RemoteStore> stores = loaderManager.getStores(RemoteStore.class);
       if (stores.size() != 1) {
          throw log.couldNotMigrateData(cache.getName());
       }
-      Marshaller marshaller = new MigrationMarshaller();
+      Marshaller marshaller = new MigrationMarshaller(whiteList);
       byte[] knownKeys;
       try {
          knownKeys = marshaller.objectToByteBuffer(MIGRATION_MANAGER_HOT_ROD_KNOWN_KEYS);

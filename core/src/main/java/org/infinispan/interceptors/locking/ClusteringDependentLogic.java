@@ -8,17 +8,20 @@ import java.util.Collections;
 import java.util.Iterator;
 
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.SegmentSpecificCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderPrepareCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.cache.StoreConfiguration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.ClearCacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.MVCCEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.container.versioning.EntryVersionsMap;
 import org.infinispan.container.versioning.VersionGenerator;
 import org.infinispan.context.Flag;
@@ -27,6 +30,7 @@ import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.LocalizedCacheTopology;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.scopes.Scope;
@@ -44,7 +48,7 @@ import org.infinispan.statetransfer.CommitManager;
 import org.infinispan.statetransfer.StateTransferLock;
 import org.infinispan.transaction.impl.WriteSkewHelper;
 import org.infinispan.transaction.xa.CacheTransaction;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 
 /**
  * Abstractization for logic related to different clustering modes: replicated or distributed. This implements the <a
@@ -118,7 +122,16 @@ public interface ClusteringDependentLogic {
 
    void commitEntry(CacheEntry entry, FlagAffectedCommand command, InvocationContext ctx, Flag trackFlag, boolean l1Invalidation);
 
-   Commit commitType(FlagAffectedCommand command, InvocationContext ctx, Object key, boolean removed);
+   /**
+    * Determines what type of commit this is. Whether we shouldn't commit, or if this is a commit due to owning the key
+    * or not
+    * @param command
+    * @param ctx
+    * @param segment if 0 or greater assumes the underlying container is segmented.
+    * @param removed
+    * @return
+    */
+   Commit commitType(FlagAffectedCommand command, InvocationContext ctx, int segment, boolean removed);
 
    /**
     * @deprecated Since 9.0, please use {@code getCacheTopology().getWriteOwners(keys)} instead.
@@ -143,13 +156,14 @@ public interface ClusteringDependentLogic {
 
    abstract class AbstractClusteringDependentLogic implements ClusteringDependentLogic {
       @Inject protected DistributionManager distributionManager;
-      @Inject protected DataContainer<Object, Object> dataContainer;
+      @Inject protected InternalDataContainer<Object, Object> dataContainer;
       @Inject protected CacheNotifier<Object, Object> notifier;
       @Inject protected CommitManager commitManager;
       @Inject protected PersistenceManager persistenceManager;
       @Inject protected TimeService timeService;
       @Inject protected FunctionalNotifier<Object, Object> functionalNotifier;
       @Inject protected Configuration configuration;
+      @Inject protected KeyPartitioner keyPartitioner;
 
       protected boolean totalOrder;
       private WriteSkewHelper.KeySpecificLogic keySpecificLogic;
@@ -192,12 +206,12 @@ public interface ClusteringDependentLogic {
       protected abstract void commitSingleEntry(CacheEntry entry, FlagAffectedCommand command,
                                                 InvocationContext ctx, Flag trackFlag, boolean l1Invalidation);
 
-      @Override
-      public Commit commitType(FlagAffectedCommand command, InvocationContext ctx, Object key, boolean removed) {
+      protected Commit clusterCommitType(FlagAffectedCommand command, InvocationContext ctx, int segment, boolean removed) {
          // ignore locality for removals, even if skipOwnershipCheck is not true
          if (command != null && command.hasAnyFlag(FlagBitSets.SKIP_OWNERSHIP_CHECK)) {
             return Commit.COMMIT_LOCAL;
          }
+
          boolean transactional = ctx.isInTxScope() && (command == null || !command.hasAnyFlag(FlagBitSets.PUT_FOR_EXTERNAL_READ));
          // When a command is local-mode, it does not get written by replicating origin -> primary -> backup but
          // when origin == backup it's written right from the original context
@@ -208,16 +222,21 @@ public interface ClusteringDependentLogic {
             // During ST, entries whose ownership is lost are invalidated by InvalidateCommand
             // and at that point we're no longer owners - the only information is that the origin
             // is local and the entry is removed.
-            if (getCacheTopology().isWriteOwner(key)) {
+            if (getCacheTopology().isSegmentWriteOwner(segment)) {
                return Commit.COMMIT_LOCAL;
             } else if (removed) {
                return Commit.COMMIT_NON_LOCAL;
             }
          } else {
             // in non-tx mode, on backup we don't commit in original context, backup command has its own context.
-            return getCacheTopology().getDistribution(key).isPrimary() ? Commit.COMMIT_LOCAL : Commit.NO_COMMIT;
+            return getCacheTopology().getSegmentDistribution(segment).isPrimary() ? Commit.COMMIT_LOCAL : Commit.NO_COMMIT;
          }
          return Commit.NO_COMMIT;
+      }
+
+      @Override
+      public Commit commitType(FlagAffectedCommand command, InvocationContext ctx, int segment, boolean removed) {
+         return clusterCommitType(command, ctx, segment, removed);
       }
 
       protected abstract WriteSkewHelper.KeySpecificLogic initKeySpecificLogic(boolean totalOrder);
@@ -233,12 +252,14 @@ public interface ClusteringDependentLogic {
          if (!((TotalOrderPrepareCommand) prepareCommand).skipWriteSkewCheck()) {
             updatedVersionMap = performTotalOrderWriteSkewCheckAndReturnNewVersions(prepareCommand, dataContainer,
                                                                                     persistenceManager, versionGenerator,
-                                                                                    context, keySpecificLogic, timeService);
+                                                                                    context, keySpecificLogic, timeService,
+                                                                                    keyPartitioner);
          }
 
          for (WriteCommand c : prepareCommand.getModifications()) {
             for (Object k : c.getAffectedKeys()) {
-               if (keySpecificLogic.performCheckOnKey(k)) {
+               int segment = SegmentSpecificCommand.extractSegment(c, k, keyPartitioner);
+               if (keySpecificLogic.performCheckOnSegment(segment)) {
                   if (!updatedVersionMap.containsKey(k)) {
                      updatedVersionMap.put(k, null);
                   }
@@ -255,7 +276,7 @@ public interface ClusteringDependentLogic {
          // Perform a write skew check on mapped entries.
          EntryVersionsMap uv = performWriteSkewCheckAndReturnNewVersions(prepareCommand, dataContainer,
                                                                          persistenceManager, versionGenerator, context,
-                                                                         keySpecificLogic, timeService);
+                                                                         keySpecificLogic, timeService, keyPartitioner);
 
          CacheTransaction cacheTransaction = context.getCacheTransaction();
          EntryVersionsMap uvOld = cacheTransaction.getUpdatedEntryVersions();
@@ -285,9 +306,15 @@ public interface ClusteringDependentLogic {
       private LocalizedCacheTopology localTopology;
 
       @Inject
-      public void init(Transport transport) {
+      public void init(Transport transport, Configuration configuration, KeyPartitioner keyPartitioner) {
          Address address = transport != null ? transport.getAddress() : LocalModeAddress.INSTANCE;
-         this.localTopology = LocalizedCacheTopology.makeSingletonTopology(CacheMode.LOCAL, address);
+         boolean segmented = configuration.persistence().stores().stream().filter(StoreConfiguration::segmented).findAny().isPresent();
+         if (segmented) {
+            this.localTopology = LocalizedCacheTopology.makeSegmentedSingletonTopology(keyPartitioner,
+                  configuration.clustering().hash().numSegments(), address);
+         } else {
+            this.localTopology = LocalizedCacheTopology.makeSingletonTopology(CacheMode.LOCAL, address);
+         }
       }
 
       @Override
@@ -298,6 +325,11 @@ public interface ClusteringDependentLogic {
       @Override
       public Address getAddress() {
          return localTopology.getLocalAddress();
+      }
+
+      @Override
+      public Commit commitType(FlagAffectedCommand command, InvocationContext ctx, int segment, boolean removed) {
+         return Commit.COMMIT_LOCAL;
       }
 
       @Override
@@ -314,14 +346,17 @@ public interface ClusteringDependentLogic {
             expired = false;
          }
 
-         InternalCacheEntry previousEntry = dataContainer.peek(entry.getKey());
+         Object key = entry.getKey();
+         int segment = SegmentSpecificCommand.extractSegment(command, key, keyPartitioner);
+
+         InternalCacheEntry previousEntry = dataContainer.peek(segment, entry.getKey());
          Object previousValue = null;
          Metadata previousMetadata = null;
          if (previousEntry != null) {
             previousValue = previousEntry.getValue();
             previousMetadata = previousEntry.getMetadata();
          }
-         commitManager.commit(entry, trackFlag, l1Invalidation, ctx);
+         commitManager.commit(entry, trackFlag, segment, l1Invalidation, ctx);
 
          // Notify after events if necessary
          NotifyHelper.entryCommitted(notifier, functionalNotifier, created, removed, expired,
@@ -330,7 +365,7 @@ public interface ClusteringDependentLogic {
 
       @Override
       protected WriteSkewHelper.KeySpecificLogic initKeySpecificLogic(boolean totalOrder) {
-         return key -> true;
+         return WriteSkewHelper.ALWAYS_TRUE_LOGIC;
       }
    }
 
@@ -338,6 +373,11 @@ public interface ClusteringDependentLogic {
     * This logic is used in invalidation mode caches.
     */
    class InvalidationLogic extends AbstractClusteringDependentLogic {
+
+      @Override
+      public Commit commitType(FlagAffectedCommand command, InvocationContext ctx, int segment, boolean removed) {
+         return Commit.COMMIT_LOCAL;
+      }
 
       @Override
       protected void commitSingleEntry(CacheEntry entry, FlagAffectedCommand command,
@@ -353,14 +393,17 @@ public interface ClusteringDependentLogic {
             expired = false;
          }
 
-         InternalCacheEntry previousEntry = dataContainer.peek(entry.getKey());
+         Object key = entry.getKey();
+         int segment = SegmentSpecificCommand.extractSegment(command, key, keyPartitioner);
+
+         InternalCacheEntry previousEntry = dataContainer.peek(segment, entry.getKey());
          Object previousValue = null;
          Metadata previousMetadata = null;
          if (previousEntry != null) {
             previousValue = previousEntry.getValue();
             previousMetadata = previousEntry.getMetadata();
          }
-         commitManager.commit(entry, trackFlag, l1Invalidation, ctx);
+         commitManager.commit(entry, trackFlag, segment, l1Invalidation, ctx);
 
          // Notify after events if necessary
          NotifyHelper.entryCommitted(notifier, functionalNotifier, created, removed, expired,
@@ -380,7 +423,7 @@ public interface ClusteringDependentLogic {
       @Inject private StateTransferLock stateTransferLock;
 
       private final WriteSkewHelper.KeySpecificLogic localNodeIsPrimaryOwner =
-            (key) -> getCacheTopology().getDistribution(key).isPrimary();
+            segment -> getCacheTopology().getSegmentDistribution(segment).isPrimary();
 
       @Override
       public Collection<Address> getOwners(Object key) {
@@ -396,40 +439,47 @@ public interface ClusteringDependentLogic {
       }
 
       @Override
+      public Commit commitType(FlagAffectedCommand command, InvocationContext ctx, int segment, boolean removed) {
+         return clusterCommitType(command, ctx, segment, removed);
+      }
+
+      @Override
       protected void commitSingleEntry(CacheEntry entry, FlagAffectedCommand command,
                                        InvocationContext ctx, Flag trackFlag, boolean l1Invalidation) {
+         Object key = entry.getKey();
+         int segment = SegmentSpecificCommand.extractSegment(command, key, keyPartitioner);
+
+         Commit doCommit;
+         Object previousValue = null;
+         Metadata previousMetadata = null;
+
          // Don't allow the CH to change (and state transfer to invalidate entries)
          // between the ownership check and the commit
          stateTransferLock.acquireSharedTopologyLock();
          try {
-            Commit doCommit = commitType(command, ctx, entry.getKey(), entry.isRemoved());
+            doCommit = commitType(command, ctx, segment, entry.isRemoved());
             if (doCommit.isCommit()) {
-               boolean created = false;
-               boolean removed = false;
-               boolean expired = false;
-               if (doCommit.isLocal()) {
-                  created = entry.isCreated();
-                  removed = entry.isRemoved();
-                  if (removed && entry instanceof MVCCEntry) {
-                     expired = ((MVCCEntry) entry).isExpired();
-                  }
-               }
-
-               InternalCacheEntry previousEntry = dataContainer.peek(entry.getKey());
-               Object previousValue = null;
-               Metadata previousMetadata = null;
+               InternalCacheEntry previousEntry = dataContainer.peek(segment, key);
                if (previousEntry != null) {
                   previousValue = previousEntry.getValue();
                   previousMetadata = previousEntry.getMetadata();
                }
-               commitManager.commit(entry, trackFlag, l1Invalidation, ctx);
-               if (doCommit.isLocal()) {
-                  NotifyHelper.entryCommitted(notifier, functionalNotifier, created, removed, expired,
-                        entry, ctx, command, previousValue, previousMetadata);
-               }
+               commitManager.commit(entry, trackFlag, segment, l1Invalidation, ctx);
             }
          } finally {
             stateTransferLock.releaseSharedTopologyLock();
+         }
+
+         if (doCommit.isCommit() && doCommit.isLocal()) {
+            boolean created = entry.isCreated();
+            boolean removed = entry.isRemoved();
+            boolean expired = false;
+            if (removed && entry instanceof MVCCEntry) {
+               expired = ((MVCCEntry) entry).isExpired();
+            }
+
+            NotifyHelper.entryCommitted(notifier, functionalNotifier, created, removed, expired,
+                                        entry, ctx, command, previousValue, previousMetadata);
          }
       }
 
@@ -437,7 +487,7 @@ public interface ClusteringDependentLogic {
       protected WriteSkewHelper.KeySpecificLogic initKeySpecificLogic(boolean totalOrder) {
          return totalOrder
                //in total order, all nodes perform the write skew check
-               ? key -> true
+               ? WriteSkewHelper.ALWAYS_TRUE_LOGIC
                //in two phase commit, only the primary owner should perform the write skew check
                : localNodeIsPrimaryOwner;
       }
@@ -449,18 +499,34 @@ public interface ClusteringDependentLogic {
    class DistributionLogic extends AbstractClusteringDependentLogic {
       @Inject private StateTransferLock stateTransferLock;
 
-      private final WriteSkewHelper.KeySpecificLogic localNodeIsOwner = (key) -> getCacheTopology().isWriteOwner(key);
-      private final WriteSkewHelper.KeySpecificLogic localNodeIsPrimaryOwner =
-            (key) -> getCacheTopology().getDistribution(key).isPrimary();
+      private final WriteSkewHelper.KeySpecificLogic localNodeIsOwner = new WriteSkewHelper.KeySpecificLogic() {
+         @Override
+         public boolean performCheckOnSegment(int segment) {
+            return getCacheTopology().getSegmentDistribution(segment).isWriteOwner();
+         }
+      };
+      private final WriteSkewHelper.KeySpecificLogic localNodeIsPrimaryOwner = new WriteSkewHelper.KeySpecificLogic() {
+         @Override
+         public boolean performCheckOnSegment(int segment) {
+            return getCacheTopology().getSegmentDistribution(segment).isPrimary();
+         }
+      };
 
       @Override
       protected void commitSingleEntry(CacheEntry entry, FlagAffectedCommand command,
                                        InvocationContext ctx, Flag trackFlag, boolean l1Invalidation) {
+         Object key = entry.getKey();
+         int segment = SegmentSpecificCommand.extractSegment(command, key, keyPartitioner);
+
+         Commit doCommit;
+         Object previousValue = null;
+         Metadata previousMetadata = null;
+
          // Don't allow the CH to change (and state transfer to invalidate entries)
          // between the ownership check and the commit
          stateTransferLock.acquireSharedTopologyLock();
          try {
-            Commit doCommit = commitType(command, ctx, entry.getKey(), entry.isRemoved());
+            doCommit = commitType(command, ctx, segment, entry.isRemoved());
 
             boolean isL1Write = false;
             if (!doCommit.isCommit() && configuration.clustering().l1().enabled()) {
@@ -469,8 +535,8 @@ public interface ClusteringDependentLogic {
                   long lifespan = entry.getLifespan();
                   if (lifespan < 0 || lifespan > configuration.clustering().l1().lifespan()) {
                      Metadata metadata = entry.getMetadata().builder()
-                        .lifespan(configuration.clustering().l1().lifespan())
-                        .build();
+                                              .lifespan(configuration.clustering().l1().lifespan())
+                                              .build();
                      entry.setMetadata(new L1Metadata(metadata));
                   }
                }
@@ -481,38 +547,34 @@ public interface ClusteringDependentLogic {
             }
 
             if (doCommit.isCommit()) {
-               boolean created = false;
-               boolean removed = false;
-               boolean expired = false;
-               if (doCommit.isLocal()) {
-                  created = entry.isCreated();
-                  removed = entry.isRemoved();
-                  if (removed && entry instanceof MVCCEntry) {
-                     expired = ((MVCCEntry) entry).isExpired();
-                  }
-               }
-
                // TODO use value from the entry
-               InternalCacheEntry previousEntry = dataContainer.peek(entry.getKey());
-               Object previousValue = null;
-               Metadata previousMetadata = null;
+               InternalCacheEntry previousEntry = dataContainer.peek(segment, key);
                if (previousEntry != null) {
                   previousValue = previousEntry.getValue();
                   previousMetadata = previousEntry.getMetadata();
                }
-               if (isL1Write && previousEntry != null && !previousEntry.isL1Entry()) {
-                  // don't overwrite non-L1 entry with L1 (e.g. when originator == backup
-                  // and therefore we have two contexts on one node)
-               } else {
-                  commitManager.commit(entry, trackFlag, l1Invalidation || isL1Write, ctx);
-                  if (doCommit.isLocal()) {
-                     NotifyHelper.entryCommitted(notifier, functionalNotifier, created, removed, expired,
-                           entry, ctx, command, previousValue, previousMetadata);
-                  }
+
+               // don't overwrite non-L1 entry with L1 (e.g. when originator == backup
+               // and therefore we have two contexts on one node)
+               boolean skipL1Write = isL1Write && previousEntry != null && !previousEntry.isL1Entry();
+               if (!skipL1Write) {
+                  commitManager.commit(entry, trackFlag, segment, l1Invalidation || isL1Write, ctx);
                }
             }
          } finally {
             stateTransferLock.releaseSharedTopologyLock();
+         }
+
+         if (doCommit.isCommit() && doCommit.isLocal()) {
+            boolean created = entry.isCreated();
+            boolean removed = entry.isRemoved();
+            boolean expired = false;
+            if (removed && entry instanceof MVCCEntry) {
+               expired = ((MVCCEntry) entry).isExpired();
+            }
+
+            NotifyHelper.entryCommitted(notifier, functionalNotifier, created, removed, expired,
+                                        entry, ctx, command, previousValue, previousMetadata);
          }
       }
 

@@ -36,8 +36,7 @@ public final class ExternallyMarshallable {
       whiteListClasses.add("org.hibernate.search.query.engine.impl.LuceneHSQuery"); // prod
       whiteListClasses.add("org.infinispan.distexec.RunnableAdapter"); // prod
       whiteListClasses.add("org.infinispan.jcache.annotation.DefaultCacheKey"); // prod
-      whiteListClasses.add("org.infinispan.query.clustered.QueryResponse"); // prod
-      whiteListClasses.add("org.infinispan.server.core.transport.NettyTransport$ConnectionAdderTask"); // prod
+      whiteListClasses.add("org.infinispan.server.core.transport.NettyTransportConnectionStats$ConnectionAdderTask"); // prod
       whiteListClasses.add("org.infinispan.server.hotrod.CheckAddressTask"); // prod
       whiteListClasses.add("org.infinispan.server.infinispan.task.DistributedServerTask"); // prod
       whiteListClasses.add("org.infinispan.scripting.impl.DataType"); // prod
@@ -59,6 +58,7 @@ public final class ExternallyMarshallable {
       whiteListClasses.add("org.infinispan.it"); // test
       whiteListClasses.add("org.infinispan.all"); // test
       whiteListClasses.add("org.infinispan.query.api"); // test
+      whiteListClasses.add("org.infinispan.stream.BaseStreamTest$TestClass"); // test
       whiteListClasses.add("org.jboss.as.quickstarts.datagrid"); // quickstarts testing
    }
 

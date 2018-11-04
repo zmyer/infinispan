@@ -11,10 +11,11 @@ import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.IteratorMapper;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.impl.ImmutableContext;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.eviction.PassivationManager;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
@@ -23,7 +24,7 @@ import org.infinispan.marshall.core.MarshalledEntryFactory;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.spi.PersistenceException;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -34,10 +35,11 @@ public class PassivationManagerImpl implements PassivationManager {
    @Inject private PersistenceManager persistenceManager;
    @Inject private CacheNotifier notifier;
    @Inject private Configuration cfg;
-   @Inject private DataContainer<Object, Object> container;
+   @Inject private InternalDataContainer<Object, Object> container;
    @Inject private TimeService timeService;
    @Inject private MarshalledEntryFactory marshalledEntryFactory;
    @Inject private DistributionManager distributionManager;
+   @Inject private KeyPartitioner keyPartitioner;
 
    private volatile boolean skipOnStop = false;
 
@@ -72,9 +74,9 @@ public class PassivationManagerImpl implements PassivationManager {
                ImmutableContext.INSTANCE, null);
          if (trace) log.tracef("Passivating entry %s", toStr(key));
          try {
-            MarshalledEntry marshalledEntry = marshalledEntryFactory.newMarshalledEntry(entry.getKey(), entry.getValue(),
+            MarshalledEntry marshalledEntry = marshalledEntryFactory.newMarshalledEntry(key, entry.getValue(),
                                                                                         internalMetadata(entry));
-            persistenceManager.writeToAllNonTxStores(marshalledEntry, BOTH);
+            persistenceManager.writeToAllNonTxStores(marshalledEntry, keyPartitioner.getSegment(key), BOTH);
             if (statsEnabled) passivations.getAndIncrement();
          } catch (CacheException e) {
             log.unableToPassivateEntry(key, e);

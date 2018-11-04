@@ -21,30 +21,33 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.infinispan.client.hotrod.CacheTopologyInfo;
+import org.infinispan.client.hotrod.FailoverRequestBalancingStrategy;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.Configuration;
 import org.infinispan.client.hotrod.configuration.ServerConfiguration;
+import org.infinispan.client.hotrod.event.impl.ClientListenerNotifier;
 import org.infinispan.client.hotrod.impl.ConfigurationProperties;
+import org.infinispan.client.hotrod.impl.MarshallerRegistry;
 import org.infinispan.client.hotrod.impl.TopologyInfo;
 import org.infinispan.client.hotrod.impl.consistenthash.ConsistentHash;
 import org.infinispan.client.hotrod.impl.consistenthash.ConsistentHashFactory;
 import org.infinispan.client.hotrod.impl.operations.OperationsFactory;
 import org.infinispan.client.hotrod.impl.protocol.Codec;
 import org.infinispan.client.hotrod.impl.protocol.HotRodConstants;
-import org.infinispan.client.hotrod.impl.transport.tcp.FailoverRequestBalancingStrategy;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.WrappedByteArray;
+import org.infinispan.commons.util.ProcessorInfo;
 import org.infinispan.commons.util.Util;
 
 import io.netty.bootstrap.Bootstrap;
@@ -93,9 +96,12 @@ public class ChannelFactory {
    // updates won't be allowed to apply since they refer to older views.
    private final AtomicInteger topologyAge = new AtomicInteger(0);
 
+   private MarshallerRegistry marshallerRegistry;
+
    public void start(Codec codec, Configuration configuration, AtomicInteger defaultCacheTopologyId,
                      Marshaller marshaller, ExecutorService executorService,
-                     Collection<Consumer<Set<SocketAddress>>> failedServerNotifier) {
+                     ClientListenerNotifier listenerNotifier, Collection<Consumer<Set<SocketAddress>>> failedServerNotifier, MarshallerRegistry marshallerRegistry) {
+      this.marshallerRegistry = marshallerRegistry;
       lock.writeLock().lock();
       try {
          this.marshaller = marshaller;
@@ -104,7 +110,7 @@ public class ChannelFactory {
          this.failedServerNotifier = failedServerNotifier;
          int asyncThreads = maxAsyncThreads(executorService, configuration);
          // static field with default is private in MultithreadEventLoopGroup
-         int eventLoopThreads = SecurityActions.getIntProperty("io.netty.eventLoopThreads", Runtime.getRuntime().availableProcessors() * 2);
+         int eventLoopThreads = SecurityActions.getIntProperty("io.netty.eventLoopThreads", ProcessorInfo.availableProcessors() * 2);
          // Note that each event loop opens a selector which counts
          int maxExecutors = Math.min(asyncThreads, eventLoopThreads);
          this.eventLoopGroup = TransportHelper.createEventLoopGroup(maxExecutors, executorService);
@@ -128,12 +134,11 @@ public class ChannelFactory {
          }
          currentClusterName = DEFAULT_CLUSTER_NAME;
          topologyInfo = new TopologyInfo(defaultCacheTopologyId, Collections.unmodifiableCollection(servers), configuration);
-         operationsFactory = new OperationsFactory(this, codec, configuration);
+         operationsFactory = new OperationsFactory(this, codec, listenerNotifier, configuration);
          maxRetries = configuration.maxRetries();
 
          if (log.isDebugEnabled()) {
             log.debugf("Statically configured servers: %s", servers);
-            log.debugf("Load balancer class: %s", configuration.balancingStrategyClass().getName());
             log.debugf("Tcp no delay = %b; client socket timeout = %d ms; connect timeout = %d ms",
                     configuration.tcpNoDelay(), configuration.socketTimeout(), configuration.connectionTimeout());
          }
@@ -153,6 +158,10 @@ public class ChannelFactory {
       // Note: this is quite dangerous, if someone sets different executor factory and does not update this setting
       // we might deadlock
       return new ConfigurationProperties(configuration.asyncExecutorFactory().properties()).getDefaultExecutorFactoryPoolSize();
+   }
+
+   public MarshallerRegistry getMarshallerRegistry() {
+      return marshallerRegistry;
    }
 
    private ChannelPool newPool(SocketAddress address) {
@@ -178,14 +187,7 @@ public class ChannelFactory {
    }
 
    private FailoverRequestBalancingStrategy createBalancer(WrappedByteArray cacheName) {
-      FailoverRequestBalancingStrategy balancer;
-
-      FailoverRequestBalancingStrategy cfgBalancerInstance = configuration.balancingStrategy();
-      if (cfgBalancerInstance != null) {
-         balancer = cfgBalancerInstance;
-      } else {
-         balancer = Util.getInstance(configuration.balancingStrategyClass());
-      }
+      FailoverRequestBalancingStrategy balancer = configuration.balancingStrategyFactory().get();
       balancer.setServers(topologyInfo.getServers(cacheName));
       return balancer;
    }
@@ -323,7 +325,7 @@ public class ChannelFactory {
    private void updateServers(Collection<SocketAddress> newServers) {
       lock.writeLock().lock();
       try {
-         Collection<SocketAddress> servers = updateTopologyInfo(null, newServers, true);
+         Collection<SocketAddress> servers = updateTopologyInfo(Util.EMPTY_BYTE_ARRAY, newServers, true);
          if (!servers.isEmpty()) {
             for (FailoverRequestBalancingStrategy balancer : balancers.values())
                balancer.setServers(servers);
@@ -414,9 +416,6 @@ public class ChannelFactory {
    }
 
    public int getMaxRetries() {
-      if (Thread.currentThread().isInterrupted()) {
-         return -1;
-      }
       return maxRetries;
    }
 
@@ -494,7 +493,7 @@ public class ChannelFactory {
                }
             } else {
                // One successful response is enough to be able to switch to this cluster
-               log.tracef("Ping to server %s succeeded");
+               log.tracef("Ping to server %s succeeded", server);
                allFuture.complete(true);
             }
          });
@@ -583,6 +582,10 @@ public class ChannelFactory {
 
    public int getNumIdle() {
       return channelPoolMap.values().stream().mapToInt(ChannelPool::getIdle).sum();
+   }
+
+   public Configuration getConfiguration() {
+      return configuration;
    }
 
    public enum ClusterSwitchStatus {

@@ -20,6 +20,7 @@ import org.infinispan.notifications.cachelistener.event.CacheEntryRemovedEvent;
 import org.infinispan.notifications.cachelistener.event.CacheEntryVisitedEvent;
 import org.infinispan.notifications.cachelistener.event.DataRehashedEvent;
 import org.infinispan.notifications.cachelistener.event.PartitionStatusChangedEvent;
+import org.infinispan.notifications.cachelistener.event.PersistenceAvailabilityChangedEvent;
 import org.infinispan.notifications.cachelistener.event.TopologyChangedEvent;
 import org.infinispan.notifications.cachelistener.event.TransactionCompletedEvent;
 import org.infinispan.notifications.cachelistener.event.TransactionRegisteredEvent;
@@ -38,7 +39,8 @@ import net.jcip.annotations.NotThreadSafe;
 @NotThreadSafe
 public class EventImpl<K, V> implements CacheEntryActivatedEvent, CacheEntryCreatedEvent, CacheEntriesEvictedEvent, CacheEntryLoadedEvent, CacheEntryModifiedEvent,
                                         CacheEntryPassivatedEvent, CacheEntryRemovedEvent, CacheEntryVisitedEvent, TransactionCompletedEvent, TransactionRegisteredEvent,
-                                        CacheEntryInvalidatedEvent, DataRehashedEvent, TopologyChangedEvent, CacheEntryExpiredEvent, PartitionStatusChangedEvent, Cloneable {
+                                        CacheEntryInvalidatedEvent, DataRehashedEvent, TopologyChangedEvent, CacheEntryExpiredEvent, PartitionStatusChangedEvent,
+                                        PersistenceAvailabilityChangedEvent, Cloneable {
    private boolean pre = false; // by default events are after the fact
    private transient Cache<K, V> cache;
    private K key;
@@ -55,7 +57,9 @@ public class EventImpl<K, V> implements CacheEntryActivatedEvent, CacheEntryCrea
    private Map<? extends K, ? extends V> entries;
    private boolean created;
    private boolean commandRetried;
+   private boolean isCurrentState;
    private AvailabilityMode mode;
+   private boolean available;
 
    public EventImpl() {
    }
@@ -160,6 +164,15 @@ public class EventImpl<K, V> implements CacheEntryActivatedEvent, CacheEntryCrea
       return metadata;
    }
 
+   @Override
+   public boolean isCurrentState() {
+      return isCurrentState;
+   }
+
+   public void setCurrentState(boolean currentState) {
+      isCurrentState = currentState;
+   }
+
    public void setOldMetadata(Metadata metadata) {
       this.oldMetadata = metadata;
    }
@@ -211,6 +224,14 @@ public class EventImpl<K, V> implements CacheEntryActivatedEvent, CacheEntryCrea
       this.oldValue = oldValue;
    }
 
+   public boolean isAvailable() {
+      return available;
+   }
+
+   public void setAvailable(boolean available) {
+      this.available = available;
+   }
+
    @Override
    public boolean equals(Object o) {
       if (this == o) return true;
@@ -233,9 +254,10 @@ public class EventImpl<K, V> implements CacheEntryActivatedEvent, CacheEntryCrea
       if (!Util.safeEquals(unionConsistentHash, event.unionConsistentHash)) return false;
       if (newTopologyId != event.newTopologyId) return false;
       if (created != event.created) return false;
+      if (isCurrentState != event.isCurrentState) return false;
       if (oldValue != null ? !oldValue.equals(event.oldValue) : event.oldValue != null) return false;
 
-      return true;
+      return available == event.available;
    }
 
    @Override
@@ -254,8 +276,9 @@ public class EventImpl<K, V> implements CacheEntryActivatedEvent, CacheEntryCrea
       result = 31 * result + (writeConsistentHashAtEnd != null ? writeConsistentHashAtEnd.hashCode() : 0);
       result = 31 * result + (unionConsistentHash != null ? unionConsistentHash.hashCode() : 0);
       result = 31 * result + newTopologyId;
-      result = 31 * result + (created ? 1 : 0);
+      result = 31 * result + (created ? 1 : 0) + (isCurrentState ? 2 : 0);
       result = 31 * result + (oldValue != null ? oldValue.hashCode() : 0);
+      result = 31 * result + (available ? 1 : 0);
       return result;
    }
 
@@ -285,6 +308,8 @@ public class EventImpl<K, V> implements CacheEntryActivatedEvent, CacheEntryCrea
             ", transactionSuccessful=" + transactionSuccessful +
             ", entries=" + entries +
             ", created=" + created +
+            ", isCurrentState=" + isCurrentState +
+            ", available=" + available +
             '}';
    }
 

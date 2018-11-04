@@ -150,8 +150,12 @@ public class MemoryConfigurationBuilder extends AbstractConfigurationChildBuilde
    @Override
    public void validate() {
       StorageType type = attributes.attribute(STORAGE_TYPE).get();
-      if (type != StorageType.OBJECT && getBuilder().compatibility().isEnabled()) {
-         throw log.compatibilityModeOnlyCompatibleWithObjectStorage(type);
+      if (type != StorageType.OBJECT) {
+         if (getBuilder().compatibility().isEnabled()) {
+            throw log.compatibilityModeOnlyCompatibleWithObjectStorage(type);
+         } else if (getBuilder().clustering().hash().groups().isEnabled()) {
+            throw log.groupingOnlyCompatibleWithObjectStorage(type);
+         }
       }
 
       long size = attributes.attribute(SIZE).get();
@@ -174,8 +178,9 @@ public class MemoryConfigurationBuilder extends AbstractConfigurationChildBuilde
       EvictionStrategy strategy = attributes.attribute(EVICTION_STRATEGY).get();
       if (!strategy.isEnabled()) {
          if (size > 0) {
-            evictionStrategy(EvictionStrategy.REMOVE);
-            log.debugf("Max entries configured (%d) without eviction strategy. Eviction strategy overridden to %s", size, strategy);
+            EvictionStrategy newStrategy = EvictionStrategy.REMOVE;
+            evictionStrategy(newStrategy);
+            log.debugf("Max entries configured (%d) without eviction strategy. Eviction strategy overridden to %s", size, newStrategy);
          } else if (getBuilder().persistence().passivation() && strategy != EvictionStrategy.MANUAL &&
                !getBuilder().template()) {
             log.passivationWithoutEviction();

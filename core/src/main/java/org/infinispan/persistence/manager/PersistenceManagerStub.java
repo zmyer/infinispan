@@ -3,16 +3,17 @@ package org.infinispan.persistence.manager;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Set;
-import java.util.concurrent.Executor;
+import java.util.function.Predicate;
 
 import javax.transaction.Transaction;
 
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.factories.annotations.SurvivesRestarts;
-import org.infinispan.filter.KeyFilter;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.support.BatchModification;
+import org.reactivestreams.Publisher;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
@@ -64,37 +65,47 @@ public class PersistenceManagerStub implements PersistenceManager {
    }
 
    @Override
-   public boolean deleteFromAllStores(Object key, AccessMode mode) {
+   public boolean deleteFromAllStores(Object key, int segment, AccessMode mode) {
       return false;
    }
 
    @Override
-   public void processOnAllStores(KeyFilter keyFilter, AdvancedCacheLoader.CacheLoaderTask task, boolean fetchValue, boolean fetchMetadata) {
-   }
-
-   @Override
-   public void processOnAllStores(Executor executor, KeyFilter keyFilter, AdvancedCacheLoader.CacheLoaderTask task, boolean fetchValue, boolean fetchMetadata) {
-   }
-
-   @Override
-   public void processOnAllStores(KeyFilter keyFilter, AdvancedCacheLoader.CacheLoaderTask task, boolean fetchValue, boolean fetchMetadata, AccessMode mode) {
-   }
-
-   @Override
-   public void processOnAllStores(Executor executor, KeyFilter keyFilter, AdvancedCacheLoader.CacheLoaderTask task, boolean fetchValue, boolean fetchMetadata, AccessMode mode) {
-   }
-
-   @Override
-   public MarshalledEntry loadFromAllStores(Object key, boolean localContext) {
+   public <K, V> Publisher<MarshalledEntry<K, V>> publishEntries(Predicate<? super K> filter, boolean fetchValue,
+         boolean fetchMetadata, AccessMode mode) {
       return null;
    }
 
    @Override
-   public void writeToAllNonTxStores(MarshalledEntry marshalledEntry, AccessMode modes) {
+   public <K, V> Publisher<MarshalledEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata, AccessMode mode) {
+      return null;
    }
 
    @Override
-   public void writeToAllNonTxStores(MarshalledEntry marshalledEntry, AccessMode modes, long flags) {
+   public <K> Publisher<K> publishKeys(Predicate<? super K> filter, AccessMode mode) {
+      return null;
+   }
+
+   @Override
+   public <K> Publisher<K> publishKeys(IntSet segments, Predicate<? super K> filter, AccessMode mode) {
+      return null;
+   }
+
+   @Override
+   public MarshalledEntry loadFromAllStores(Object key, boolean localInvocation, boolean includeStores) {
+      return null;
+   }
+
+   @Override
+   public MarshalledEntry loadFromAllStores(Object key, int segment, boolean localInvocation, boolean includeStores) {
+      return null;
+   }
+
+   @Override
+   public void writeToAllNonTxStores(MarshalledEntry marshalledEntry, int segment, AccessMode modes) {
+   }
+
+   @Override
+   public void writeToAllNonTxStores(MarshalledEntry marshalledEntry, int segment, AccessMode modes, long flags) {
    }
 
    @Override
@@ -104,6 +115,11 @@ public class PersistenceManagerStub implements PersistenceManager {
 
    @Override
    public int size() {
+      return 0;
+   }
+
+   @Override
+   public int size(IntSet segments) {
       return 0;
    }
 
@@ -129,5 +145,10 @@ public class PersistenceManagerStub implements PersistenceManager {
 
    @Override
    public void deleteBatchFromAllNonTxStores(Iterable<Object> keys, AccessMode accessMode, long flags) {
+   }
+
+   @Override
+   public boolean isAvailable() {
+      return true;
    }
 }

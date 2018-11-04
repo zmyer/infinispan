@@ -1,10 +1,10 @@
+[[clustered_counters]]
 == Clustered Counters
 
-Clustered counters is a new building block introduced in Infinispan 9.
-It is a counter distributed and shared among all nodes in the Infinispan cluster and it provides counters with
-different consistency levels: strong and weak.
+_Clustered counters_ are counters which are distributed and shared among all nodes in the {brandname} cluster.
+Counters can have different consistency levels: strong and weak.
 
-Although strong/weak consistent counter has a separate interfaces, both support updating its value,
+Although a strong/weak consistent counter has separate interfaces, both support updating its value,
 return the current value and they provide events when its value is updated.
 Details are provided below in this document to help you choose which one fits best your uses-case.
 
@@ -18,13 +18,13 @@ In order to start using the counters, you needs to add the dependency in your Ma
 <dependency>
    <groupId>org.infinispan</groupId>
    <artifactId>infinispan-clustered-counter</artifactId>
-   <version>...</version> <!-- 9.0.0.Final or higher -->
+   <version>...</version>
 </dependency>
 ----
 
-The counters can be configured Infinispan configuration file or on-demand via the `CounterManager` interface detailed
+The counters can be configured {brandname} configuration file or on-demand via the `CounterManager` interface detailed
 later in this document.
-A counters configured in Infinispan configuration file is created at boot time when the `EmbeddedCacheManager` is starting.
+A counters configured in {brandname} configuration file is created at boot time when the `EmbeddedCacheManager` is starting.
 Theses counters are started eagerly and they are available in all the cluster's nodes.
 
 .configuration.xml
@@ -173,7 +173,7 @@ RemoteCacheManager manager = ...;
 CounterManager counterManager = RemoteCounterManagerFactory.asCounterManager(manager);
 ----
 
-NOTE: Hot Rod messages format can be found in link:#_hot_rod_protocol_2_7[Hot Rod Protocol 2.7]
+NOTE: Hot Rod messages format can be found in link:#hot_rod_protocol_2_7[Hot Rod Protocol 2.7]
 
 ==== Remove a counter via CounterManager
 
@@ -215,17 +215,16 @@ SyncStrongCounter sync(); //SyncWeakCounter for WeakCounter
 * `getValue()` returns the current counter's value.
 * `reset()` allows to reset the counter's value to its initial value.
 * `addListener()` register a listener to receive update events.
-More details about it in the <<_notifications_and_events,Notification section>>.
+More details about it in the link:#clustered_counters_notify_events[Notification and Events] section.
 * `getConfiguration()` returns the configuration used by the counter.
 * `remove()` removes the counter value from the cluster. The instance can still be used and the listeners are kept.
 * `sync()` creates a synchronous counter.
 
 NOTE: The counter is re-created if it is accessed after a removal.
 
-
 ==== The `StrongCounter` interface: when the consistency or bounds matters.
 
-The strong counter provides uses a single key stored in Infinispan cache to provide the consistency needed.
+The strong counter provides uses a single key stored in {brandname} cache to provide the consistency needed.
 All the updates are performed under the key lock to updates its values.
 On other hand, the reads don't acquire any locks and reads the current value.
 Also, with this scheme, it allows to bound the counter value and provide atomic operations like compare-and-set/swap.
@@ -386,7 +385,7 @@ do {
 
 ==== The `WeakCounter` interface: when speed is needed
 
-The `WeakCounter` stores the counter's value in multiple keys in Infinispan cache.
+The `WeakCounter` stores the counter's value in multiple keys in {brandname} cache.
 The number of keys created is configured by the `concurrency-level` attribute.
 Each key stores a partial state of the counter's value and it can be updated concurrently.
 It main advantage over the `StrongCounter` is the lower contention in the cache.
@@ -452,6 +451,7 @@ counter.reset().whenComplete((aVoid, throwable) -> System.out.println("Reset don
 System.out.println("current value is " + counter.getValue().get());
 ----
 
+[[clustered_counters_notify_events]]
 === Notifications and Events
 
 Both strong and weak counter supports a listener to receive its updates events.
@@ -500,4 +500,3 @@ NOTE: The state is always `State.VALID` for unbounded strong counter and weak co
 `State.LOWER_BOUND_REACHED` and `State.UPPER_BOUND_REACHED` are only valid for bounded strong counters.
 
 WARNING: The weak counter `reset()` operation will trigger multiple notification with intermediate values.
-

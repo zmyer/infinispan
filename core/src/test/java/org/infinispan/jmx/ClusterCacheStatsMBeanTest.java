@@ -9,6 +9,7 @@ import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
 import org.infinispan.Cache;
+import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.stats.impl.AbstractClusterStats;
 import org.infinispan.test.TestingUtil;
 import org.testng.annotations.Test;
@@ -54,9 +55,9 @@ public class ClusterCacheStatsMBeanTest extends AbstractClusterMBeanTest {
       //sleep so we pick up refreshed values after remove
       TestingUtil.sleepThread(AbstractClusterStats.DEFAULT_STALE_STATS_THRESHOLD + 1000);
 
-      assertAttributeValueGreaterThanOrEqualTo(mBeanServer, clusterStats, "AverageWriteTime", 1);
-      assertAttributeValueGreaterThanOrEqualTo(mBeanServer, clusterStats, "AverageReadTime", 1);
-      assertAttributeValueGreaterThanOrEqualTo(mBeanServer, clusterStats, "AverageRemoveTime", 1);
+      assertAttributeValueGreaterThanOrEqualTo(mBeanServer, clusterStats, "AverageWriteTime", 0);
+      assertAttributeValueGreaterThanOrEqualTo(mBeanServer, clusterStats, "AverageReadTime", 0);
+      assertAttributeValueGreaterThanOrEqualTo(mBeanServer, clusterStats, "AverageRemoveTime", 0);
 
       assertAttributeValue(mBeanServer, clusterStats, "HitRatio", 0.5);
       assertAttributeValue(mBeanServer, clusterStats, "RemoveHits", 1);

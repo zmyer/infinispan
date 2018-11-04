@@ -19,7 +19,8 @@ import org.infinispan.marshall.core.EncoderRegistry;
  * Helper class for marshalling, also hiding implementations of {@link Mutation} from the interface.
  */
 final class Mutations {
-   private Mutations() {}
+   private Mutations() {
+   }
 
    // No need to occupy externalizer ids when we have a limited set of options
    static <K, V, T, R> void writeTo(ObjectOutput output, Mutation<K, V, R> mutation) throws IOException {

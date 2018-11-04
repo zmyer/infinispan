@@ -49,6 +49,8 @@ import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.remote.RenewBiasCommand;
 import org.infinispan.commands.remote.RevokeBiasCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
+import org.infinispan.commands.remote.expiration.RetrieveLastAccessCommand;
+import org.infinispan.commands.remote.expiration.UpdateLastAccessCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTransactionsCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTxInfoCommand;
@@ -72,7 +74,6 @@ import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateVersionsCommand;
-import org.infinispan.commands.write.PrimaryAckCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -159,8 +160,7 @@ public class ControlledCommandFactory implements CommandsFactory {
    public static ControlledCommandFactory registerControlledCommandFactory(Cache cache, Class<? extends ReplicableCommand> toBlock) {
       ComponentRegistry componentRegistry = cache.getAdvancedCache().getComponentRegistry();
       final ControlledCommandFactory ccf = new ControlledCommandFactory(componentRegistry.getCommandsFactory(), toBlock);
-      TestingUtil.replaceField(ccf, "commandsFactory", componentRegistry, ComponentRegistry.class);
-      componentRegistry.registerComponent(ccf, CommandsFactory.class);
+      TestingUtil.replaceComponent(cache, CommandsFactory.class, ccf, true);
 
       //hack: re-add the component registry to the GlobalComponentRegistry's "namedComponents" (CHM) in order to correctly publish it for
       // when it will be read by the InboundInvocationHandlder. InboundInvocationHandlder reads the value from the GlobalComponentRegistry.namedComponents before using it
@@ -169,13 +169,14 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public PutKeyValueCommand buildPutKeyValueCommand(Object key, Object value, Metadata metadata, long flagsBitSet) {
-      return actual.buildPutKeyValueCommand(key, value, metadata, flagsBitSet);
+   public PutKeyValueCommand buildPutKeyValueCommand(Object key, Object value, int segment, Metadata metadata,
+         long flagsBitSet) {
+      return actual.buildPutKeyValueCommand(key, value, segment, metadata, flagsBitSet);
    }
 
    @Override
-   public RemoveCommand buildRemoveCommand(Object key, Object value, long flagsBitSet) {
-      return actual.buildRemoveCommand(key, value, flagsBitSet);
+   public RemoveCommand buildRemoveCommand(Object key, Object value, int segment, long flagsBitSet) {
+      return actual.buildRemoveCommand(key, value, segment, flagsBitSet);
    }
 
    @Override
@@ -194,23 +195,41 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public RemoveExpiredCommand buildRemoveExpiredCommand(Object key, Object value, Long lifespan) {
-      return actual.buildRemoveExpiredCommand(key, value, lifespan);
+   public RemoveExpiredCommand buildRemoveExpiredCommand(Object key, Object value, int segment, Long lifespan,
+         long flagsBitSet) {
+      return actual.buildRemoveExpiredCommand(key, value, segment, lifespan, flagsBitSet);
    }
 
    @Override
-   public ReplaceCommand buildReplaceCommand(Object key, Object oldValue, Object newValue, Metadata metadata, long flagsBitSet) {
-      return actual.buildReplaceCommand(key, oldValue, newValue, metadata, flagsBitSet);
+   public RemoveExpiredCommand buildRemoveExpiredCommand(Object key, Object value, int segment, long flagsBitSet) {
+      return actual.buildRemoveExpiredCommand(key, value, segment, flagsBitSet);
    }
 
    @Override
-   public ComputeCommand buildComputeCommand(Object key, BiFunction mappingFunction, boolean computeIfPresent, Metadata metadata, long flagsBitSet) {
-      return actual.buildComputeCommand(key, mappingFunction, computeIfPresent, metadata, flagsBitSet);
+   public RetrieveLastAccessCommand buildRetrieveLastAccessCommand(Object key, Object value, int segment) {
+      return actual.buildRetrieveLastAccessCommand(key, value, segment);
    }
 
    @Override
-   public ComputeIfAbsentCommand buildComputeIfAbsentCommand(Object key, Function mappingFunction, Metadata metadata, long flagsBitSet) {
-      return actual.buildComputeIfAbsentCommand(key, mappingFunction, metadata, flagsBitSet);
+   public UpdateLastAccessCommand buildUpdateLastAccessCommand(Object key, int segment, long accessTime) {
+      return actual.buildUpdateLastAccessCommand(key, segment, accessTime);
+   }
+
+   @Override
+   public ReplaceCommand buildReplaceCommand(Object key, Object oldValue, Object newValue, int segment, Metadata metadata, long flagsBitSet) {
+      return actual.buildReplaceCommand(key, oldValue, newValue, segment, metadata, flagsBitSet);
+   }
+
+   @Override
+   public ComputeCommand buildComputeCommand(Object key, BiFunction mappingFunction, boolean computeIfPresent,
+         int segment, Metadata metadata, long flagsBitSet) {
+      return actual.buildComputeCommand(key, mappingFunction, computeIfPresent, segment, metadata, flagsBitSet);
+   }
+
+   @Override
+   public ComputeIfAbsentCommand buildComputeIfAbsentCommand(Object key, Function mappingFunction, int segment,
+         Metadata metadata, long flagsBitSet) {
+      return actual.buildComputeIfAbsentCommand(key, mappingFunction, segment, metadata, flagsBitSet);
    }
 
    @Override
@@ -219,8 +238,8 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public GetKeyValueCommand buildGetKeyValueCommand(Object key, long flagsBitSet) {
-      return actual.buildGetKeyValueCommand(key, flagsBitSet);
+   public GetKeyValueCommand buildGetKeyValueCommand(Object key, int segment, long flagsBitSet) {
+      return actual.buildGetKeyValueCommand(key, segment, flagsBitSet);
    }
 
    @Override
@@ -249,8 +268,8 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public EvictCommand buildEvictCommand(Object key, long flagsBitSet) {
-      return actual.buildEvictCommand(key, flagsBitSet);
+   public EvictCommand buildEvictCommand(Object key, int segment, long flagsBitSet) {
+      return actual.buildEvictCommand(key, segment, flagsBitSet);
    }
 
    @Override
@@ -284,8 +303,8 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public ClusteredGetCommand buildClusteredGetCommand(Object key, long flagsBitSet) {
-      return actual.buildClusteredGetCommand(key, flagsBitSet);
+   public ClusteredGetCommand buildClusteredGetCommand(Object key, int segment, long flagsBitSet) {
+      return actual.buildClusteredGetCommand(key, segment, flagsBitSet);
    }
 
    @Override
@@ -309,7 +328,7 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public StateRequestCommand buildStateRequestCommand(StateRequestCommand.Type subtype, Address sender, int topologyId, Set<Integer> segments) {
+   public StateRequestCommand buildStateRequestCommand(StateRequestCommand.Type subtype, Address sender, int topologyId, IntSet segments) {
       return actual.buildStateRequestCommand(subtype, sender, topologyId, segments);
    }
 
@@ -397,7 +416,7 @@ public class ControlledCommandFactory implements CommandsFactory {
 
    @Override
    public <K> StreamRequestCommand<K> buildStreamRequestCommand(Object id, boolean parallelStream,
-           StreamRequestCommand.Type type, Set<Integer> segments, Set<K> keys, Set<K> excludedKeys,
+           StreamRequestCommand.Type type, IntSet segments, Set<K> keys, Set<K> excludedKeys,
            boolean includeLoader, boolean entryStream, Object terminalOperation) {
       return actual.buildStreamRequestCommand(id, parallelStream, type, segments, keys, excludedKeys, includeLoader,
               entryStream, terminalOperation);
@@ -405,7 +424,7 @@ public class ControlledCommandFactory implements CommandsFactory {
 
    @Override
    public <R> StreamResponseCommand<R> buildStreamResponseCommand(Object identifier, boolean complete,
-                                                                  Set<Integer> lostSegments, R response) {
+         IntSet lostSegments, R response) {
       return actual.buildStreamResponseCommand(identifier, complete, lostSegments, response);
    }
 
@@ -428,13 +447,14 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public GetCacheEntryCommand buildGetCacheEntryCommand(Object key, long flagsBitSet) {
-      return actual.buildGetCacheEntryCommand(key, flagsBitSet);
+   public GetCacheEntryCommand buildGetCacheEntryCommand(Object key, int segment, long flagsBitSet) {
+      return actual.buildGetCacheEntryCommand(key, segment, flagsBitSet);
    }
 
    @Override
-   public <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(Object key, Function<EntryView.ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return actual.buildReadOnlyKeyCommand(key, f, params, keyDataConversion, valueDataConversion);
+   public <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(Object key, Function<EntryView.ReadEntryView<K, V>, R> f,
+         int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return actual.buildReadOnlyKeyCommand(key, f, segment, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
@@ -444,14 +464,14 @@ public class ControlledCommandFactory implements CommandsFactory {
 
    @Override
    public <K, V, T, R> ReadWriteKeyValueCommand<K, V, T, R> buildReadWriteKeyValueCommand(Object key, Object argument, BiFunction<T, EntryView.ReadWriteEntryView<K, V>, R> f,
-                                                                                          Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return actual.buildReadWriteKeyValueCommand(key, argument, f, params, keyDataConversion, valueDataConversion);
+         int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return actual.buildReadWriteKeyValueCommand(key, argument, f, segment, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
    public <K, V, R> ReadWriteKeyCommand<K, V, R> buildReadWriteKeyCommand(
-         Object key, Function<EntryView.ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return actual.buildReadWriteKeyCommand(key, f, params, keyDataConversion, valueDataConversion);
+         Object key, Function<EntryView.ReadWriteEntryView<K, V>, R> f, int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return actual.buildReadWriteKeyCommand(key, f, segment, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
@@ -466,13 +486,14 @@ public class ControlledCommandFactory implements CommandsFactory {
 
    @Override
    public <K, V> WriteOnlyKeyCommand<K, V> buildWriteOnlyKeyCommand(
-         Object key, Consumer<EntryView.WriteEntryView<K, V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return actual.buildWriteOnlyKeyCommand(key, f, params, keyDataConversion, valueDataConversion);
+         Object key, Consumer<EntryView.WriteEntryView<K, V>> f, int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return actual.buildWriteOnlyKeyCommand(key, f, segment, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
-   public <K, V, T> WriteOnlyKeyValueCommand<K, V, T> buildWriteOnlyKeyValueCommand(Object key, Object argument, BiConsumer<T, EntryView.WriteEntryView<K, V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return actual.buildWriteOnlyKeyValueCommand(key, argument, f, params, keyDataConversion, valueDataConversion);
+   public <K, V, T> WriteOnlyKeyValueCommand<K, V, T> buildWriteOnlyKeyValueCommand(Object key, Object argument, BiConsumer<T, EntryView.WriteEntryView<K, V>> f,
+         int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return actual.buildWriteOnlyKeyValueCommand(key, argument, f, segment, params, keyDataConversion, valueDataConversion);
    }
 
    @Override
@@ -494,11 +515,6 @@ public class ControlledCommandFactory implements CommandsFactory {
    @Override
    public BackupMultiKeyAckCommand buildBackupMultiKeyAckCommand(long id, int segment, int topologyId) {
       return actual.buildBackupMultiKeyAckCommand(id, segment, topologyId);
-   }
-
-   @Override
-   public PrimaryAckCommand buildPrimaryAckCommand(long id, boolean success, Object value, Address[] waitFor) {
-      return actual.buildPrimaryAckCommand(id, success, value, waitFor);
    }
 
    @Override

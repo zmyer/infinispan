@@ -1,5 +1,6 @@
 package org.infinispan.persistence.remote.configuration;
 
+import static org.infinispan.configuration.cache.AbstractStoreConfiguration.SEGMENTED;
 import static org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration.BALANCING_STRATEGY;
 import static org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration.CONNECTION_TIMEOUT;
 import static org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration.FORCE_RETURN_VALUES;
@@ -17,6 +18,7 @@ import static org.infinispan.persistence.remote.configuration.RemoteStoreConfigu
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 
 import org.infinispan.client.hotrod.ProtocolVersion;
 import org.infinispan.client.hotrod.impl.transport.netty.ChannelFactory;
@@ -106,6 +108,7 @@ public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationB
       return this;
    }
 
+   @Deprecated
    @Override
    public RemoteStoreConfigurationBuilder protocolVersion(String protocolVersion) {
       attributes.attribute(PROTOCOL_VERSION).set(ProtocolVersion.parseVersion(protocolVersion));
@@ -197,6 +200,16 @@ public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationB
    }
 
    @Override
+   public RemoteStoreConfigurationBuilder withProperties(Properties props) {
+      String version = (String) props.remove(RemoteStoreConfiguration.PROTOCOL_VERSION.name());
+      if (version != null) {
+         this.protocolVersion(ProtocolVersion.parseVersion(version));
+      }
+
+      return super.withProperties(props);
+   }
+
+   @Override
    public void validate() {
       this.connectionPool.validate();
       this.asyncExecutorFactory.validate();
@@ -206,6 +219,12 @@ public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationB
 
       if (attributes.attribute(HOTROD_WRAPPING).get() && attributes.attribute(MARSHALLER).get() != null) {
          throw log.cannotEnableHotRodWrapping();
+      }
+
+      ProtocolVersion version = attributes.attribute(PROTOCOL_VERSION).get();
+      ProtocolVersion minimumVersion = ProtocolVersion.PROTOCOL_VERSION_23;
+      if (attributes.attribute(SEGMENTED).get() && version.compareTo(minimumVersion) < 0) {
+         throw log.segmentationNotSupportedInThisVersion(minimumVersion);
       }
    }
 }

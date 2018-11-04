@@ -1,9 +1,20 @@
+[[rocksdb_cache_store]]
 === RocksDB Cache Store
-The Infinispan Community
+{brandname} supports using RocksDB as a cache store.
 
 ==== Introduction
 link:http://rocksdb.org/[RocksDB] is a fast key-value filesystem-based storage from Facebook. It started as a fork of
 Google's LevelDB, but provides superior performance and reliability, especially in highly concurrent scenarios.
+
+==== Segmentation support
+This store supports being segmented, as it will create a separate column family per
+segment. This should improve lookup performance and iteration substantially. However
+writes are a little slower in this mode.
+
+Another thing to note is that you should not configure more than a few hundred segments.
+RocksDB is not designed to have as many column families as you want. This will also
+adversely affect startup time of the store and could take many seconds to minutes
+if you have too many segments.
 
 ===== Sample Usage
 The RocksDB cache store requires 2 filesystem directories to be configured - each directory contains a RocksDB database:
@@ -22,15 +33,28 @@ usersCache.put("raytsang", new User(...));
 ----
 
 ==== Configuration
+
+It is also possible to configure the underlying rocks db instance. This can be done
+via properties in the store configuration. Any property that is prefixed with the
+name `database` will configure the rocks db database. Data is now stored in column
+families, these can be configured independently of the database by setting
+a property prefixed with the name `data`.
+
+Note that you do not have to supply properties and this is entirely optional.
+
 ===== Sample Programatic Configuration
 
 [source,java]
 ----
+Properties props = new Properties();
+props.put("database.max_background_compactions", "2");
+props.put("data.write_buffer_size", "512MB");
 
 Configuration cacheConfig = new ConfigurationBuilder().persistence()
 				.addStore(RocksDBStoreConfigurationBuilder.class)
 				.location("/tmp/rocksdb/data")
 				.expiredLocation("/tmp/rocksdb/expired")
+        .properties(props)
 				.build();
 
 ----
@@ -59,6 +83,8 @@ Configuration cacheConfig = new ConfigurationBuilder().persistence()
    <persistence>
       <rocksdb-store path="/tmp/rocksdb/data">
          <expiration path="/tmp/rocksdb/expired"/>
+         <property name="database.max_background_compactions">2</property>
+         <property name="data.write_buffer_size">512MB</property>
       </rocksdb-store>
    </persistence>
 </local-cache>
@@ -70,4 +96,3 @@ Configuration cacheConfig = new ConfigurationBuilder().persistence()
 Refer to the link:$$https://github.com/infinispan/infinispan/blob/master/persistence/rocksdb/src/test/java/org/infinispan/persistence/rocksdb/config/ConfigurationTest.java$$[test case] for code samples in action.
 
 Refer to link:$$https://github.com/infinispan/infinispan/tree/master/persistence/rocksdb/src/test/resources/config/$$[test configurations] for configuration samples.
-

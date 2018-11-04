@@ -5,9 +5,10 @@
   ~ License: GNU Lesser General Public License (LGPL), version 2.1 or later.
   ~ See the lgpl.txt file in the root directory or <http://www.gnu.org/licenses/lgpl-2.1.html>.
   -->
-<infinispan xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-            xmlns="urn:infinispan:config:8.2"
-            xsi:schemaLocation="urn:infinispan:config:8.2 http://www.infinispan.org/schemas/infinispan-config-8.2.xsd">
+<infinispan
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} http://www.infinispan.org/schemas/infinispan-config-${infinispan.core.schema.version}.xsd"
+        xmlns="urn:infinispan:config:${infinispan.core.schema.version}">
 
    <jgroups>
       <stack-file name="hibernate-jgroups" path="${hibernate.cache.infinispan.jgroups_cfg:default-configs/default-jgroups-tcp.xml}"/>
@@ -22,32 +23,40 @@
       <invalidation-cache name="entity" mode="SYNC" remote-timeout="20000">
          <locking concurrency-level="1000" acquire-timeout="15000"/>
          <transaction mode="NONE" />
-         <eviction size="10000" strategy="LRU"/>
          <expiration max-idle="100000" interval="5000"/>
+         <memory>
+            <object size="10000" strategy="LRU" />
+         </memory>
       </invalidation-cache>
 
       <!-- Default configuration for immutable entities -->
       <invalidation-cache name="immutable-entity" mode="SYNC" remote-timeout="20000">
          <locking concurrency-level="1000" acquire-timeout="15000"/>
          <transaction mode="NONE"/>
-         <eviction size="10000" strategy="LRU"/>
          <expiration max-idle="100000" interval="5000"/>
+         <memory>
+            <object size="10000" strategy="LRU" />
+         </memory>
       </invalidation-cache>
 
       <!-- A config appropriate for query caching. Does not replicate queries. -->
       <local-cache name="local-query">
          <locking concurrency-level="1000" acquire-timeout="15000"/>
          <transaction mode="NONE" />
-         <eviction size="10000" strategy="LRU"/>
          <expiration max-idle="100000" interval="5000"/>
+         <memory>
+            <object size="10000" strategy="LRU" />
+         </memory>
       </local-cache>
 
       <!-- A query cache that replicates queries. Replication is asynchronous. -->
       <replicated-cache name="replicated-query" mode="ASYNC">
          <locking concurrency-level="1000" acquire-timeout="15000"/>
          <transaction mode="NONE" />
-         <eviction size="10000" strategy="LRU"/>
          <expiration max-idle="100000" interval="5000"/>
+         <memory>
+            <object size="10000" strategy="LRU" />
+         </memory>
       </replicated-cache>
 
       <!-- Optimized for timestamp caching. A clustered timestamp cache
@@ -57,9 +66,11 @@
          <locking concurrency-level="1000" acquire-timeout="15000"/>
          <!-- Explicitly non transactional -->
          <transaction mode="NONE"/>
-         <!--  Don't ever evict modification timestamps -->
-         <eviction strategy="NONE"/>
          <expiration interval="0"/>
+         <!--  Don't ever evict modification timestamps -->
+         <memory>
+            <object strategy="NONE" />
+         </memory>
       </replicated-cache>
 
       <!-- This configuration should match to InfinispanRegionFactory.DEFAULT_PENDING_PUTS_CACHE_CONFIGURATION -->
@@ -67,6 +78,24 @@
          <transaction mode="NONE"/>
          <expiration max-idle="120000" />
       </local-cache>
+
+      <!-- ISPN-8836 check what happens when custom region name matches cache name -->
+      <invalidation-cache-configuration name="myregion" remote-timeout="20000" statistics="false" statistics-available="false">
+         <locking concurrency-level="1000" acquire-timeout="15000"/>
+         <transaction mode="NONE" />
+         <expiration max-idle="100000" interval="5000"/>
+         <memory>
+            <object size="10000" strategy="LRU" />
+         </memory>
+      </invalidation-cache-configuration>
+      <invalidation-cache-configuration name="otherregion" remote-timeout="20000" statistics="false" statistics-available="false">
+         <locking concurrency-level="1000" acquire-timeout="15000"/>
+         <transaction mode="NONE" />
+         <expiration max-idle="100000" interval="5000"/>
+         <memory>
+            <object size="10000" strategy="LRU" />
+         </memory>
+      </invalidation-cache-configuration>
    </cache-container>
 
 </infinispan>

@@ -93,20 +93,9 @@ import org.kohsuke.MetaInfServices;
  * @since 9.0
  */
 @MetaInfServices
-@Namespaces({
-      @Namespace(uri = "urn:infinispan:config:9.2", root = "infinispan"),
-      @Namespace(uri = "urn:infinispan:config:9.1", root = "infinispan"),
-      @Namespace(uri = "urn:infinispan:config:9.0", root = "infinispan"),
-      @Namespace(root = "infinispan"),
 
-      @Namespace(uri = "urn:infinispan:config:8.0", root = "infinispan"),
-      @Namespace(uri = "urn:infinispan:config:8.1", root = "infinispan"),
-      @Namespace(uri = "urn:infinispan:config:8.2", root = "infinispan"),
-
-      @Namespace(uri = "urn:infinispan:config:7.0", root = "infinispan"),
-      @Namespace(uri = "urn:infinispan:config:7.1", root = "infinispan"),
-      @Namespace(uri = "urn:infinispan:config:7.2", root = "infinispan"),
-})
+@Namespace(root = "infinispan")
+@Namespace(uri = "urn:infinispan:config:*", root = "infinispan")
 public class Parser implements ConfigurationParser {
 
    static final Log log = LogFactory.getLog(Parser.class);
@@ -1885,6 +1874,13 @@ public class Parser implements ConfigurationParser {
    }
 
    protected void parseTransaction(XMLExtendedStreamReader reader, ConfigurationBuilder builder, ConfigurationBuilderHolder holder) throws XMLStreamException {
+      if (!reader.getSchema().since(9, 0)) {
+         CacheMode cacheMode = builder.clustering().cacheMode();
+         if (!cacheMode.isSynchronous()) {
+            log.unsupportedAsyncCacheMode(cacheMode, cacheMode.toSync());
+            builder.clustering().cacheMode(cacheMode.toSync());
+         }
+      }
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          String value = replaceProperties(reader.getAttributeValue(i));
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
@@ -2327,6 +2323,15 @@ public class Parser implements ConfigurationParser {
             case PASSIVATION:
                builder.persistence().passivation(Boolean.parseBoolean(value));
                break;
+            case AVAILABILITY_INTERVAL:
+               builder.persistence().availabilityInterval(Integer.parseInt(value));
+               break;
+            case CONNECTION_ATTEMPTS:
+               builder.persistence().connectionAttempts(Integer.parseInt(value));
+               break;
+            case CONNECTION_INTERVAL:
+               builder.persistence().connectionInterval(Integer.parseInt(value));
+               break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
          }
@@ -2443,6 +2448,10 @@ public class Parser implements ConfigurationParser {
             storeBuilder.maxBatchSize(Integer.parseInt(value));
             break;
          }
+         case SEGMENTED: {
+            storeBuilder.segmented(Boolean.parseBoolean(value));
+            break;
+         }
          default: {
             throw ParseUtils.unexpectedAttribute(reader, index);
          }
@@ -2489,6 +2498,9 @@ public class Parser implements ConfigurationParser {
                storeBuilder.modificationQueueSize(Integer.parseInt(value));
                break;
             }
+            case FAIL_SILENTLY:
+               storeBuilder.failSilently(Boolean.parseBoolean(value));
+               break;
             case SHUTDOWN_TIMEOUT: {
                if (reader.getSchema().since(9, 0)) {
                   throw ParseUtils.unexpectedAttribute(reader, attribute.getLocalName());

@@ -275,7 +275,7 @@ public class PolarionJUnitXMLReporter implements IResultListener2, ISuiteListene
       }
       StringBuilder result = new StringBuilder();
       while (idx != -1) {
-         result.append(str.substring(start, idx));
+         result.append(str, start, idx);
          if (pattern.matcher(str.substring(idx)).matches()) {
             // do nothing it is an entity;
             result.append("&");
@@ -328,7 +328,7 @@ public class PolarionJUnitXMLReporter implements IResultListener2, ISuiteListene
                }
             }
          } else {
-            System.out.println(
+            System.err.println(
                   "[" + this.getClass().getSimpleName() + "] Test suite '" + name + "' results have no test methods");
          }
       }
@@ -391,8 +391,8 @@ public class PolarionJUnitXMLReporter implements IResultListener2, ISuiteListene
       report.addComment("Environment variables");
       for (String key : System.getenv().keySet()) {
          Properties property = new Properties();
-         property.setProperty(XMLConstants.ATTR_NAME, key.toString());
-         property.setProperty(XMLConstants.ATTR_VALUE, System.getenv(key.toString()));
+         property.setProperty(XMLConstants.ATTR_NAME, key);
+         property.setProperty(XMLConstants.ATTR_VALUE, System.getenv(key));
          report.addEmptyElement(XMLConstants.PROPERTY, property);
       }
 
@@ -406,18 +406,21 @@ public class PolarionJUnitXMLReporter implements IResultListener2, ISuiteListene
 
    private void checkDuplicatesAndAdd(ITestResult tr) {
       // Need fully qualified name to guarantee uniqueness in the results map
-      String key = tr.getTestClass().getRealClass().getName() + "." + testName(tr);
+      String instanceName = tr.getInstanceName();
+      String key = instanceName + "." + testName(tr);
       if (m_allTests.containsKey(key)) {
          if (tr.getMethod().getCurrentInvocationCount() == 1) {
-            System.out.println("[" + this.getClass().getSimpleName() + "] Test case '" + testName(tr)
+            System.err.println("[" + this.getClass().getSimpleName() + "] Test case '" + key
                   + "' already exists in the results");
-         } else {
-            List<ITestResult> itrList = m_allTests.get(key);
-            itrList.add(tr);
-            m_allTests.put(key, itrList);
+            tr.setStatus(ITestResult.FAILURE);
+            tr.setThrowable(new IllegalStateException("Duplicate test: " + key));
          }
+
+         List<ITestResult> itrList = m_allTests.get(key);
+         itrList.add(tr);
+         m_allTests.put(key, itrList);
       } else {
-         ArrayList<ITestResult> itrList = new ArrayList<ITestResult>();
+         ArrayList<ITestResult> itrList = new ArrayList<>();
          itrList.add(tr);
          m_allTests.put(key, itrList);
       }

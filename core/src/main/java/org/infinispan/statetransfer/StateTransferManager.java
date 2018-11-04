@@ -4,6 +4,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.infinispan.commands.TopologyAffectedCommand;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.jmx.annotations.DataType;
@@ -16,7 +17,7 @@ import org.infinispan.topology.CacheTopology;
 /**
  * A component that manages the state transfer when the topology of the cluster changes.
  *
- * @author Dan Berindei <dan@infinispan.org>
+ * @author Dan Berindei &lt;dan@infinispan.org&gt;
  * @author Mircea Markus
  * @author anistor@redhat.com
  * @since 5.1
@@ -43,10 +44,15 @@ public interface StateTransferManager {
     */
    boolean isStateTransferInProgressForKey(Object key);
 
+   /**
+    * @deprecated Since 9.3, please use {@link DistributionManager#getCacheTopology()} instead.
+    */
    @Deprecated
    CacheTopology getCacheTopology();
 
    void start() throws Exception;
+
+   void waitForInitialStateTransferToComplete();
 
    void stop();
 
@@ -58,13 +64,18 @@ public interface StateTransferManager {
 
    /**
     * @return  true if this node has already received the first rebalance start
+    * @deprecated Since 9.4, will be removed.
     */
+   @Deprecated
    boolean ownsData();
 
    /**
     * @return The id of the first cache topology in which the local node was a member
     *    (even if it didn't own any data).
+    *
+    * @deprecated Since 9.4, will be removed.
     */
+   @Deprecated
    int getFirstTopologyAsMember();
 
    @ManagedAttribute(description = "Retrieves the rebalancing status for this cache. Possible values are PENDING, SUSPENDED, IN_PROGRESS, BALANCED", displayName = "Rebalancing progress", dataType = DataType.TRAIT)

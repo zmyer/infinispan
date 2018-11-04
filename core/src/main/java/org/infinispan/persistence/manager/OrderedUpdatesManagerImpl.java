@@ -8,7 +8,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.infinispan.commons.util.ByRef;
-import org.infinispan.container.DataContainer;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.container.versioning.InequalVersionComparisonResult;
 import org.infinispan.distribution.DistributionInfo;
@@ -18,7 +18,7 @@ import org.infinispan.metadata.Metadata;
 import org.infinispan.util.concurrent.CompletableFutures;
 
 public class OrderedUpdatesManagerImpl implements OrderedUpdatesManager {
-   @Inject private DataContainer<Object, Object> dataContainer;
+   @Inject private InternalDataContainer<Object, Object> dataContainer;
    @Inject private DistributionManager distributionManager;
    @Inject private PersistenceManager persistenceManager;
 
@@ -86,7 +86,7 @@ public class OrderedUpdatesManagerImpl implements OrderedUpdatesManager {
             lf.complete(null);
          }
       }
-      return null;
+      return CompletableFutures.completedNull();
    }
 
    @Override
@@ -134,7 +134,7 @@ public class OrderedUpdatesManagerImpl implements OrderedUpdatesManager {
             DistributionInfo info = distributionManager.getCacheTopology().getDistribution(key);
             PersistenceManager.AccessMode mode = info.isPrimary() ?
                   PersistenceManager.AccessMode.BOTH : PersistenceManager.AccessMode.PRIVATE;
-            persistenceManager.deleteFromAllStores(key, mode);
+            persistenceManager.deleteFromAllStores(key, info.segmentId(), mode);
          } finally {
             if (!locks.remove(key, lf)) {
                throw new IllegalStateException("No one but me should be able to replace the future");

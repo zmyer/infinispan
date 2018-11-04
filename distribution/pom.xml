@@ -4,12 +4,16 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-distribution</artifactId>
    <name>Infinispan Distribution</name>
    <packaging>pom</packaging>
+
+   <properties>
+      <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
+   </properties>
 
    <dependencies>
       <dependency>
@@ -62,12 +66,7 @@
          <artifactId>infinispan-server-rest</artifactId>
       </dependency>
 
-      <dependency>
-         <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-server-websocket</artifactId>
-      </dependency>
-
-      <dependency>
+         <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-spring4-embedded</artifactId>
       </dependency>
@@ -90,27 +89,32 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-extended-statistics</artifactId>
-         <version>${project.version}</version>
       </dependency>
 
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-javadoc-embedded</artifactId>
-         <version>${project.version}</version>
+         <version>${version.infinispan}</version>
          <classifier>javadoc</classifier>
       </dependency>
 
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-javadoc-remote</artifactId>
-         <version>${project.version}</version>
+         <version>${version.infinispan}</version>
          <classifier>javadoc</classifier>
       </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-javadoc-all</artifactId>
-         <version>${project.version}</version>
+         <version>${version.infinispan}</version>
          <classifier>javadoc</classifier>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-feature-pack-wf-modules</artifactId>
+         <type>zip</type>
       </dependency>
 
       <dependency>
@@ -178,51 +182,9 @@
                   <configuration>
                      <sortByGroupIdAndArtifactId>true</sortByGroupIdAndArtifactId>
                      <licensesOutputFile>${project.build.directory}/docs/licenses/licenses.xml</licensesOutputFile>
-                  </configuration>
-               </execution>
-            </executions>
-         </plugin>
-         <!-- Generate license file -->
-         <!-- Create HTML (parameters: product, version) -->
-         <plugin>
-            <groupId>org.codehaus.mojo</groupId>
-            <artifactId>xml-maven-plugin</artifactId>
-            <version>1.0.1</version>
-            <inherited>false</inherited>
-            <executions>
-               <execution>
-                  <id>generate-licenses-html</id>
-                  <goals>
-                     <goal>transform</goal>
-                  </goals>
-                  <phase>prepare-package</phase>
-                  <configuration>
-                     <transformationSets>
-                        <transformationSet>
-                           <dir>${project.build.directory}/docs/licenses</dir>
-                           <includes>
-                              <include>licenses.xml</include>
-                           </includes>
-                           <stylesheet>${project.basedir}/src/main/resources/template/licenses.xsl</stylesheet>
-                           <outputDir>${project.build.directory}/docs/licenses</outputDir>
-                           <fileMappers>
-                              <fileMapper
-                                      implementation="org.codehaus.plexus.components.io.filemappers.FileExtensionMapper">
-                                 <targetExtension>.html</targetExtension>
-                              </fileMapper>
-                           </fileMappers>
-                           <parameters>
-                              <parameter>
-                                 <name>product</name>
-                                 <value>${project.name}</value>
-                              </parameter>
-                              <parameter>
-                                 <name>version</name>
-                                 <value>${project.version}</value>
-                              </parameter>
-                           </parameters>
-                        </transformationSet>
-                     </transformationSets>
+                     <excludedGroups>org.kohsuke</excludedGroups>
+                     <excludedArtifacts>jboss-logging-processor|jdeparser|jcip-annotations|jboss-logging-annotations</excludedArtifacts>
+                     <excludedScopes>system,test,runtime</excludedScopes>
                   </configuration>
                </execution>
             </executions>
@@ -247,7 +209,7 @@
                               <!-- make sure core comes first -->
                               <include name="core/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
                               <include name="persistence/*/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
-                              <include name="spring/spring/src/main/resources/org/infinispan/spring/config/*-${infinispan.core.schema.version}.xsd" />
+                              <include name="spring/spring4/spring4-common/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
                            </fileset>
                         </path>
                         <pathconvert pathsep=" " property="xsd.fileset" refid="xsd.fileset.path" />
@@ -271,10 +233,12 @@
                   </goals>
                   <configuration>
                      <target>
-                        <property name="plugin_classpath" refid="maven.plugin.classpath" />
+			<property name="plugin_classpath" refid="maven.plugin.classpath" />
+                        <property name="server.output.dir.prefix" value="${infinispan.brand.prefix}-server" />
+			<property name="server.thin.dir.path" value="${basedir}/../server/integration/build/target/server-distribution-thin/${server.output.dir.prefix}-${infinispan.brand.version}"/>
                         <echo message="Base dir: ${basedir}" />
                         <path id="xsd.fileset.path">
-                           <fileset casesensitive="yes" dir="${basedir}/../server/integration/build/target/infinispan-server-${project.version}/docs/schema">
+                           <fileset casesensitive="yes" dir="${server.thin.dir.path}/docs/schema">
                               <include name="*.xsd" />
                            </fileset>
                         </path>
@@ -299,7 +263,55 @@
                   </goals>
                   <configuration>
                      <target>
-                        <ant antfile="package.xml" inheritRefs="true" />
+                        <ant antfile="package.xml" inheritRefs="true">
+                           <property name="infinispan.brand.version" value="${infinispan.brand.version}"/>
+                           <property name="infinispan.brand.prefix" value="${infinispan.brand.prefix}"/>
+                           <property name="infinispan.brand.name" value="${infinispan.brand.name}"/>
+                        </ant>
+                     </target>
+                  </configuration>
+               </execution>
+               <execution>
+                  <id>upload-distributions</id>
+                  <phase>deploy</phase>
+                  <goals>
+                     <goal>run</goal>
+                  </goals>
+                  <configuration>
+                     <skip>${skipArtifactUpload}</skip>
+                     <target>
+                        <echo message="Creating checksums of distribution files"/>
+                        <checksum algorithm="SHA-1" fileext=".sha1">
+                           <fileset dir="${project.build.directory}/distribution">
+                              <include name="*.zip"/>
+                           </fileset>
+                        </checksum>
+                        <echo message="Uploading Distributions to ${upload.downloadsDir}"/>
+                        <exec dir="${project.build.directory}/distribution" executable="rsync">
+                           <arg value="-rvm"/>
+                           <arg line="--protocol=29"/>
+                           <arg line="-e &quot;ssh -i ${upload.keyFile}&quot;"/>
+                           <arg line="--include='*.zip'"/>
+                           <arg line="--include='*.sha1'"/>
+                           <arg line="--exclude='*'"/>
+                           <arg value="."/>
+                           <arg value="${upload.downloadsDir}"/>
+                        </exec>
+                        <echo message="Uploading Schema docs to ${upload.docsDir}"/>
+                        <exec dir="${project.build.directory}/site" executable="rsync">
+                           <arg value="-rvm"/>
+                           <arg line="--protocol=29"/>
+                           <arg line="-e &quot;ssh -i ${upload.keyFile}&quot;"/>
+                           <arg value="configdocs"/>
+                           <arg value="${upload.docsDir}"/>
+                        </exec>
+                        <exec dir="${project.build.directory}/site" executable="rsync">
+                           <arg value="-rvm"/>
+                           <arg line="--protocol=29"/>
+                           <arg line="-e &quot;ssh -i ${upload.keyFile}&quot;"/>
+                           <arg value="serverconfigdocs"/>
+                           <arg value="${upload.docsDir}"/>
+                        </exec>
                      </target>
                   </configuration>
                </execution>
@@ -308,9 +320,26 @@
                <dependency>
                   <groupId>org.infinispan</groupId>
                   <artifactId>infinispan-tools</artifactId>
-                  <version>${project.version}</version>
+                  <version>${version.infinispan}</version>
                </dependency>
             </dependencies>
+         </plugin>
+         <plugin>
+            <groupId>org.wildfly.build</groupId>
+            <artifactId>wildfly-server-provisioning-maven-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>provision-modules</id>
+                  <goals>
+                     <goal>build</goal>
+                  </goals>
+                  <phase>compile</phase>
+                  <configuration>
+                     <config-file>wildfly-provisioning.xml</config-file>
+                     <server-name>wildfly-modules</server-name>
+                  </configuration>
+               </execution>
+            </executions>
          </plugin>
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
@@ -322,23 +351,89 @@
                   <goals>
                      <goal>single</goal>
                   </goals>
+                  <configuration>
+                     <descriptors>
+                        <descriptor>src/main/assemblies/minimal.xml</descriptor>
+                        <descriptor>src/main/assemblies/all.xml</descriptor>
+                        <descriptor>src/main/assemblies/remote.xml</descriptor>
+                        <descriptor>src/main/assemblies/src.xml</descriptor>
+                     </descriptors>
+                     <finalName>${infinispan.brand.prefix}-${infinispan.brand.version}</finalName>
+                  </configuration>
+               </execution>
+               <execution>
+                  <id>assemble-modules</id>
+                  <phase>package</phase>
+                  <goals>
+                     <goal>single</goal>
+                  </goals>
+                  <configuration>
+                     <appendAssemblyId>false</appendAssemblyId>
+                     <finalName>${infinispan.brand.prefix}-wildfly-modules-${infinispan.brand.version}</finalName>
+                     <descriptors>
+                        <descriptor>src/main/assemblies/wildfly.xml</descriptor>
+                     </descriptors>
+                  </configuration>
+               </execution>
+               <execution>
+                  <id>assemble-server</id>
+                  <phase>package</phase>
+                  <goals>
+                     <goal>single</goal>
+                  </goals>
+                  <configuration>
+                     <descriptors>
+                        <descriptor>src/main/assemblies/server.xml</descriptor>
+                     </descriptors>
+                     <finalName>${infinispan.brand.prefix}-server-${infinispan.brand.version}</finalName>
+                     <appendAssemblyId>false</appendAssemblyId>
+                  </configuration>
                </execution>
             </executions>
             <configuration>
-               <descriptors>
-                  <descriptor>src/main/assemblies/minimal.xml</descriptor>
-                  <descriptor>src/main/assemblies/all.xml</descriptor>
-                  <descriptor>src/main/assemblies/remote.xml</descriptor>
-                  <descriptor>src/main/assemblies/src.xml</descriptor>
-               </descriptors>
-               <finalName>infinispan-${project.version}</finalName>
-               <outputDirectory>${buildDirectory}/distribution</outputDirectory>
-               <workDirectory>${buildDirectory}/assembly/work</workDirectory>
-
-               <!-- Do not attach ZIP files to the Maven repository -->
-               <attach>false</attach>
+               <outputDirectory>${project.build.directory}/distribution</outputDirectory>
+               <workDirectory>${project.build.directory}/assembly/work</workDirectory>
+               <!-- (Do not attach ZIP files to the Maven repository) -->
+               <attach>${org.infinispan.attachServerZip}</attach>
             </configuration>
          </plugin>
       </plugins>
    </build>
+
+   <profiles>
+      <profile>
+         <id>nexus-staging</id>
+         <activation>
+            <property><name>skipNexusStaging</name></property>
+         </activation>
+         <build>
+            <plugins>
+               <!-- Deploy the file we've explicitly installed.
+                    MUST provide properties repositoryId and url
+               -->
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-deploy-plugin</artifactId>
+                  <executions>
+                     <execution>
+                        <id>deploy-fat-server</id>
+                        <phase>deploy</phase>
+                        <goals>
+                           <goal>deploy-file</goal>
+                        </goals>
+                        <configuration>
+                           <groupId>org.infinispan.server</groupId>
+                           <artifactId>infinispan-server</artifactId>
+                           <version>${project.version}</version>
+                           <packaging>zip</packaging>
+                           <file>${project.build.directory}/distribution/${infinispan.brand.prefix}-server-${infinispan.brand.version}.zip</file>
+                           <generatePom>false</generatePom>
+                        </configuration>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

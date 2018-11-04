@@ -59,6 +59,9 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
       AVERAGE_READ_TIME(ClusterWideMetricKeys.AVERAGE_READ_TIME, ModelType.LONG, true),
       AVERAGE_WRITE_TIME(ClusterWideMetricKeys.AVERAGE_WRITE_TIME, ModelType.LONG, true),
       AVERAGE_REMOVE_TIME(ClusterWideMetricKeys.AVERAGE_REMOVE_TIME, ModelType.LONG, true),
+      AVERAGE_READ_TIME_NANOS(ClusterWideMetricKeys.AVERAGE_READ_TIME_NANOS, ModelType.LONG, true),
+      AVERAGE_WRITE_TIME_NANOS(ClusterWideMetricKeys.AVERAGE_WRITE_TIME_NANOS, ModelType.LONG, true),
+      AVERAGE_REMOVE_TIME_NANOS(ClusterWideMetricKeys.AVERAGE_REMOVE_TIME_NANOS, ModelType.LONG, true),
       TIME_SINCE_START(ClusterWideMetricKeys.TIME_SINCE_START, ModelType.LONG, true),
       EVICTIONS(ClusterWideMetricKeys.EVICTIONS, ModelType.LONG, true),
       HIT_RATIO(ClusterWideMetricKeys.HIT_RATIO, ModelType.DOUBLE, true),
@@ -66,6 +69,7 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
       MISSES(ClusterWideMetricKeys.MISSES, ModelType.LONG, true),
       NUMBER_OF_ENTRIES(ClusterWideMetricKeys.NUMBER_OF_ENTRIES, ModelType.INT, true),
       NUMBER_OF_ENTRIES_IN_MEMORY(ClusterWideMetricKeys.NUMBER_OF_ENTRIES_IN_MEMORY, ModelType.INT, true),
+      DATA_MEMORY_USED(ClusterWideMetricKeys.DATA_MEMORY_USED, ModelType.LONG, true),
       OFF_HEAP_MEMORY_USED(ClusterWideMetricKeys.OFF_HEAP_MEMORY_USED, ModelType.LONG, true),
       MINIMUM_REQUIRED_NODES(ClusterWideMetricKeys.MINIMUM_REQUIRED_NODES, ModelType.INT, true),
       READ_WRITE_RATIO(ClusterWideMetricKeys.READ_WRITE_RATIO,ModelType.DOUBLE, true),
@@ -152,12 +156,12 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
             result.set(clusterCacheStats.getNumberOfLocksHeld());
             break;
          }
+            case TIME_SINCE_START: {
+               result.set(clusterCacheStats.getTimeSinceStart());
+               break;
+            }
          case AVERAGE_READ_TIME: {
             result.set(clusterCacheStats.getAverageReadTime());
-            break;
-         }
-         case TIME_SINCE_START: {
-            result.set(clusterCacheStats.getTimeSinceStart());
             break;
          }
          case AVERAGE_WRITE_TIME: {
@@ -166,6 +170,18 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
          }
          case AVERAGE_REMOVE_TIME: {
             result.set(clusterCacheStats.getAverageRemoveTime());
+            break;
+         }
+         case AVERAGE_READ_TIME_NANOS: {
+            result.set(clusterCacheStats.getAverageReadTimeNanos());
+            break;
+         }
+         case AVERAGE_WRITE_TIME_NANOS: {
+            result.set(clusterCacheStats.getAverageWriteTimeNanos());
+            break;
+         }
+         case AVERAGE_REMOVE_TIME_NANOS: {
+            result.set(clusterCacheStats.getAverageRemoveTimeNanos());
             break;
          }
          case EVICTIONS: {
@@ -192,6 +208,9 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
             result.set(clusterCacheStats.getCurrentNumberOfEntriesInMemory());
             break;
          }
+         case DATA_MEMORY_USED:
+            result.set(clusterCacheStats.getDataMemoryUsed());
+            break;
          case OFF_HEAP_MEMORY_USED:
             result.set(clusterCacheStats.getOffHeapMemoryUsed());
             break;

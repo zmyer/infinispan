@@ -11,11 +11,16 @@ import javax.cache.Caching;
 import javax.cache.configuration.MutableConfiguration;
 import javax.cache.spi.CachingProvider;
 
+import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
 import org.infinispan.client.hotrod.test.SingleHotRodServerTest;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.server.core.admin.embeddedserver.EmbeddedServerAdminOperationHandler;
+import org.infinispan.server.hotrod.HotRodServer;
+import org.infinispan.server.hotrod.configuration.HotRodServerConfigurationBuilder;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
 
+@Test(groups = "functional", testName = "jcache.remote.JCacheCreateCachePredefinedTest")
 public class JCacheCreateCachePredefinedTest extends SingleHotRodServerTest {
    static String CACHE_NAME_UNTOUCHED = "jcache-remote-predefined-untouched";
    static String CACHE_NAME_TOUCHED = "jcache-remote-predefined-touched";
@@ -29,6 +34,12 @@ public class JCacheCreateCachePredefinedTest extends SingleHotRodServerTest {
       return cm;
    }
 
+   protected HotRodServer createHotRodServer() {
+      HotRodServerConfigurationBuilder serverBuilder = new HotRodServerConfigurationBuilder();
+      serverBuilder.adminOperationsHandler(new EmbeddedServerAdminOperationHandler());
+      return HotRodClientTestingUtil.startHotRodServer(cacheManager, serverBuilder);
+   }
+
    @Override
    protected void setup() throws Exception {
       super.setup();
@@ -38,7 +49,6 @@ public class JCacheCreateCachePredefinedTest extends SingleHotRodServerTest {
 
       Properties properties = new Properties();
       properties.put("infinispan.client.hotrod.server_list", hotrodServer.getHost() + ":" + hotrodServer.getPort());
-      properties.put("infinispan.jcache.remote.managed_access", "false");
       jcacheManager = provider.getCacheManager(name, cl, properties);
    }
 
@@ -48,9 +58,9 @@ public class JCacheCreateCachePredefinedTest extends SingleHotRodServerTest {
       jcacheManager.createCache(CACHE_NAME_TOUCHED, new MutableConfiguration<>());
    }
 
-   @Test(expectedExceptions = CacheException.class, expectedExceptionsMessageRegExp = ".*ISPN021052:.*")
+   @Test(expectedExceptions = CacheException.class, expectedExceptionsMessageRegExp = ".*ISPN021052:.*", enabled = false, description = "ISPN-9237")
    public void testCreateCachePredefinedUntouched() {
-      jcacheManager.createCache(CACHE_NAME_UNTOUCHED, new MutableConfiguration<>());
+         jcacheManager.createCache(CACHE_NAME_UNTOUCHED, new MutableConfiguration<>());
    }
 
 }

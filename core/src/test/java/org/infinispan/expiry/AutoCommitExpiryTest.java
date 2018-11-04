@@ -1,5 +1,7 @@
 package org.infinispan.expiry;
 
+import static org.testng.AssertJUnit.assertEquals;
+
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -24,7 +26,7 @@ import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.annotations.Test;
 
@@ -62,7 +64,7 @@ public abstract class AutoCommitExpiryTest extends SingleCacheManagerTest {
       ExpirationManager manager = applicationCache.getAdvancedCache().getExpirationManager();
       manager.processExpiration();
 
-      eventually(() -> 2 == expiryListener.getCount());
+      assertEquals(2, expiryListener.getCount());
    }
 
    @Override

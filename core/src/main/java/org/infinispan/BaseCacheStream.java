@@ -11,7 +11,8 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.BaseStream;
 
-import org.infinispan.commons.util.SmallIntSet;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.IntSets;
 
 /**
  * Interface that defines the base methods of all streams returned from a {@link Cache}.  This interface
@@ -23,7 +24,7 @@ public interface BaseCacheStream<T, S extends BaseStream<T, S>> extends BaseStre
    /**
     * This would disable sending requests to all other remote nodes compared to one at a time. This can reduce memory
     * pressure on the originator node at the cost of performance.
-    * <p>Parallel distribution is enabled by default except for {@link CacheStream#iterator()} &
+    * <p>Parallel distribution is enabled by default except for {@link CacheStream#iterator()} and
     * {@link CacheStream#spliterator()}</p>
     * @return a stream with parallel distribution disabled
     */
@@ -33,7 +34,7 @@ public interface BaseCacheStream<T, S extends BaseStream<T, S>> extends BaseStre
     * This would enable sending requests to all other remote nodes when a terminal operator is performed.  This
     * requires additional overhead as it must process results concurrently from various nodes, but should perform
     * faster in the majority of cases.
-    * <p>Parallel distribution is enabled by default except for {@link CacheStream#iterator()} &
+    * <p>Parallel distribution is enabled by default except for {@link CacheStream#iterator()} and
     * {@link CacheStream#spliterator()}</p>
     * @return a stream with parallel distribution enabled.
     */
@@ -45,8 +46,19 @@ public interface BaseCacheStream<T, S extends BaseStream<T, S>> extends BaseStre
     * asked for data and what entries are read from the underlying CacheStore if present.
     * @param segments The segments to use for this stream operation.  Any segments not in this set will be ignored.
     * @return a stream with the segments filtered.
+    * @deprecated since 9.3 This is to be replaced by {@link #filterKeySegments(IntSet)}
     */
    BaseCacheStream filterKeySegments(Set<Integer> segments);
+
+   /**
+    * Filters which entries are returned by what segment they are present in.  This method can be substantially more
+    * efficient than using a regular {@link CacheStream#filter(Predicate)} method as this can control what nodes are
+    * asked for data and what entries are read from the underlying CacheStore if present.
+    * @param segments The segments to use for this stream operation.  Any segments not in this set will be ignored.
+    * @return a stream with the segments filtered.
+    * @since 9.3
+    */
+   BaseCacheStream filterKeySegments(IntSet segments);
 
    /**
     * Filters which entries are returned by only returning ones that map to the given key.  This method will
@@ -129,12 +141,12 @@ public interface BaseCacheStream<T, S extends BaseStream<T, S>> extends BaseStre
       void segmentCompleted(Set<Integer> segments);
 
       /**
-       * Invoked each time a given number of segments have completed and the terminal opearation has consumed all
+       * Invoked each time a given number of segments have completed and the terminal operation has consumed all
        * entries in the given segment
        * @param segments The segments that were completed
        */
       default void accept(Supplier<PrimitiveIterator.OfInt> segments) {
-         segmentCompleted(SmallIntSet.of(segments.get()));
+         segmentCompleted(IntSets.from(segments.get()));
       }
    }
 }

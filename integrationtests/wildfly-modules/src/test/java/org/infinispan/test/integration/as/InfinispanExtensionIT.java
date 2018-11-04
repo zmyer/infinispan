@@ -8,6 +8,7 @@ import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.REA
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.SUCCESS;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
 
@@ -16,7 +17,7 @@ import javax.enterprise.context.ApplicationScoped;
 
 import org.infinispan.Cache;
 import org.infinispan.Version;
-import org.infinispan.server.infinispan.spi.CacheContainer;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.container.test.api.OperateOnDeployment;
 import org.jboss.arquillian.junit.Arquillian;
@@ -45,14 +46,13 @@ import org.junit.runner.RunWith;
 public class InfinispanExtensionIT {
 
    @Resource(lookup = "java:jboss/datagrid-infinispan/container/infinispan_container")
-   CacheContainer container;
+   EmbeddedCacheManager container;
 
    @Resource(lookup = "java:jboss/datagrid-infinispan/container/infinispan_container/cache/default")
    Cache cache;
 
    @ContainerResource("container.active-1")
    ManagementClient managementClient;
-
 
    @Deployment(name = "dep1", order = 1)
    public static Archive<?> dep1() {
@@ -74,7 +74,7 @@ public class InfinispanExtensionIT {
 
    private static Asset manifest() {
       String manifest = Descriptors.create(ManifestDescriptor.class)
-            .attribute("Dependencies", createDepString("org.infinispan.extension", "org.infinispan.server.endpoint",
+            .attribute("Dependencies", createDepString("org.infinispan", "org.infinispan.server.endpoint",
                   "org.jgroups.extension")).exportAsString();
       return new StringAsset(manifest);
    }
@@ -90,6 +90,7 @@ public class InfinispanExtensionIT {
    @OperateOnDeployment("dep1")
    public void testDep1() {
       assertNotNull(container);
+      assertTrue(container.getCacheManagerConfiguration().isClustered());
       assertNotNull(cache);
       cache.put("1", 1);
       assertEquals(1, cache.get("1"));
@@ -99,6 +100,7 @@ public class InfinispanExtensionIT {
    @OperateOnDeployment("dep2")
    public void testDep2() {
       assertNotNull(container);
+      assertTrue(container.getCacheManagerConfiguration().isClustered());
       assertNotNull(cache);
       assertEquals(1, cache.get("1"));
    }

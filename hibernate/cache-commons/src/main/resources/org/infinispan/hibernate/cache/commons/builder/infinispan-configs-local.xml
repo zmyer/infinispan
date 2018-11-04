@@ -5,9 +5,11 @@
   ~ License: GNU Lesser General Public License (LGPL), version 2.1 or later.
   ~ See the lgpl.txt file in the root directory or <http://www.gnu.org/licenses/lgpl-2.1.html>.
   -->
-<infinispan xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-            xmlns="urn:infinispan:config:9.2"
-            xsi:schemaLocation="urn:infinispan:config:9.2 http://www.infinispan.org/schemas/infinispan-config-9.2.xsd">
+<infinispan
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} http://www.infinispan.org/schemas/infinispan-config-${infinispan.core.schema.version}.xsd"
+        xmlns="urn:infinispan:config:${infinispan.core.schema.version}">
+
 
    <!-- This configuration is suitable for non-clustered environments, where only single instance accesses the DB -->
    <cache-container name="SampleCacheManager" statistics="false" default-cache="the-default-cache" shutdown-hook="DEFAULT">
@@ -18,24 +20,30 @@
       <!-- Default configuration is appropriate for entity/collection caching. -->
       <local-cache-configuration name="entity" simple-cache="true" statistics="false" statistics-available="false">
          <transaction mode="NONE" />
-         <eviction size="10000" strategy="LRU"/>
          <expiration max-idle="100000" interval="5000"/>
+         <memory>
+            <object size="10000" strategy="LRU" />
+         </memory>
       </local-cache-configuration>
 
       <!-- A config appropriate for query caching. Does not replicate queries. -->
       <local-cache-configuration name="local-query" simple-cache="true" statistics="false" statistics-available="false">
          <transaction mode="NONE"/>
-         <eviction size="10000" strategy="LRU"/>
          <expiration max-idle="100000" interval="5000"/>
+         <memory>
+            <object size="10000" strategy="LRU" />
+         </memory>
       </local-cache-configuration>
 
       <local-cache-configuration name="timestamps" simple-cache="true" statistics="false" statistics-available="false">
          <locking concurrency-level="1000" acquire-timeout="15000"/>
          <!-- Explicitly non transactional -->
          <transaction mode="NONE"/>
-         <!--  Don't ever evict modification timestamps -->
-         <eviction strategy="NONE"/>
          <expiration interval="0"/>
+         <!--  Don't ever evict modification timestamps -->
+         <memory>
+            <object strategy="NONE"/>
+         </memory>
       </local-cache-configuration>
 
       <!-- When providing custom configuration, always make this cache local and non-transactional.

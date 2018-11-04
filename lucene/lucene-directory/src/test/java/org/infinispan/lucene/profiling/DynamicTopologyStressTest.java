@@ -35,7 +35,7 @@ import org.jgroups.protocols.DISCARD;
 import org.testng.annotations.Test;
 
 /**
- * @author Sanne Grinovero <sanne@infinispan.org> (C) 2011 Red Hat Inc.
+ * @author Sanne Grinovero &lt;sanne@infinispan.org&gt; (C) 2011 Red Hat Inc.
  */
 @SuppressWarnings("deprecation")
 @Test(groups = "profiling", testName = "lucene.profiling.DynamicTopologyStressTest", sequential = true)
@@ -79,7 +79,7 @@ public class DynamicTopologyStressTest extends MultipleCacheManagersTest {
       for (int i = 0; i < READERS; i++) {
          readers[i] = addClusterEnabledCacheManager(cb, transportFlags);
          Cache<Object, Object> cache = readers[i].getCache();
-         discardPerNode[i] = TestingUtil.getDiscardForCache(cache);
+         discardPerNode[i] = TestingUtil.getDiscardForCache(readers[i]);
          TestingUtil.setDelayForCache(cache, 1, 1);
          TestingUtil.blockUntilViewReceived(cache, i + 1);
       }

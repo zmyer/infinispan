@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-all-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -63,10 +63,10 @@
                            <exclude>org.infinispan:infinispan-embedded</exclude>
                            <exclude>net.jcip:jcip-annotations:jar:</exclude>
                            <exclude>org.jboss.marshalling:jboss-marshalling-osgi</exclude>
-                           <exclude>org.jboss.spec.javax.transaction:jboss-transaction-api_1.1_spec:jar:</exclude>
+                           <exclude>org.jboss.spec.javax.transaction:jboss-transaction-api_1.2_spec:jar:</exclude>
                            <exclude>org.osgi:org.osgi.core:jar:</exclude>
                            <exclude>org.osgi:org.osgi.compendium:jar:</exclude>
-                           <exclude>org.hibernate.javax.persistence:hibernate-jpa-2.1-api:jar:</exclude>
+                           <exclude>javax.persistence:javax.persistence-api:jar:</exclude>
                            <exclude>org.infinispan:infinispan-license:jar:</exclude>
                            <exclude>com.github.ben-manes.caffeine:caffeine:jar:</exclude>
                         </excludes>

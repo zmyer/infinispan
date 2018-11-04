@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
 
+import javax.transaction.xa.Xid;
+
 import org.infinispan.client.hotrod.event.IncorrectClientListenerException;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
 import org.infinispan.client.hotrod.exceptions.TransportException;
@@ -133,7 +135,7 @@ public interface Log extends BasicLogger {
    CacheConfigurationException invalidSaslMechanism(String saslMechanism);
 
    @Message(value = "Connection dedicated to listener with id=%s but received event for listener with id=%s", id = 4033)
-   IllegalStateException unexpectedListenerId(String listenerId, String expectedListenerId);
+   IllegalStateException unexpectedListenerId(String expectedListenerId, String receivedListenerId);
 
    @Message(value = "Unable to unmarshall bytes %s", id = 4034)
    HotRodClientException unableToUnmarshallBytes(String bytes, @Cause Exception e);
@@ -240,9 +242,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Classpath does not look correct. Make sure you are not mixing uber and jars", id = 4065)
    void warnAboutUberJarDuplicates();
 
-   @LogMessage(level = WARN)
+   /*@LogMessage(level = WARN)
    @Message(value = "Unable to convert property [%s] to an enum! Using default value of %d", id = 4066)
-   void unableToConvertStringPropertyToEnum(String value, String defaultValue);
+   void unableToConvertStringPropertyToEnum(String value, String defaultValue);*/
 
    @Message(value = "Cannot specify both a callback handler and a username for authentication", id = 4067)
    CacheConfigurationException callbackHandlerAndUsernameMutuallyExclusive();
@@ -282,4 +284,34 @@ public interface Log extends BasicLogger {
 
    @Message(value = "This channel is about to be closed and does not accept any further operations.", id = 4078)
    HotRodClientException noMoreOperationsAllowed();
+
+   @Message(value = "Unexpected listenerId %s", id = 4079)
+   IllegalStateException unexpectedListenerId(String listenerId);
+
+   @Message(value = "Event should use messageId of previous Add Client Listener operation but id is %d and operation is %s", id = 4080)
+   IllegalStateException operationIsNotAddClientListener(long messageId, String operation);
+
+   @Message(value = "TransactionMode must be non-null.", id = 4082)
+   CacheConfigurationException invalidTransactionMode();
+
+   @Message(value = "TransactionManagerLookup must be non-null", id = 4083)
+   CacheConfigurationException invalidTransactionManagerLookup();
+
+   @Message(value = "Cache %s doesn't support transactions. Please check the documentation how to configure it properly.", id = 4084)
+   HotRodClientException cacheDoesNotSupportTransactions(String name);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Error checking server configuration for transactional cache %s", id = 4085)
+   void invalidTxServerConfig(String name, @Cause Throwable throwable);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Exception caught while preparing transaction %s", id = 4086)
+   void exceptionDuringPrepare(Xid xid, @Cause Exception e);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Use of maxIdle expiration with a near cache is unsupported.", id = 4087)
+   void nearCacheMaxIdleUnsupported();
+
+   @Message(value = "Transactions timeout must be positive", id = 4088)
+   HotRodClientException invalidTransactionTimeout();
 }

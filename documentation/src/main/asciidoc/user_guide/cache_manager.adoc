@@ -1,15 +1,16 @@
+[[cache_manager]]
 == The Embedded CacheManager
-The CacheManager is Infinispan's main entry point. You use a CacheManager to
+The CacheManager is {brandname}'s main entry point. You use a CacheManager to
 
 * configure and obtain caches
 * manage and monitor your nodes
 * execute code across a cluster
 * more...
 
-Depending on whether you are embedding Infinispan in your application or you are using it remotely, you will be
+Depending on whether you are embedding {brandname} in your application or you are using it remotely, you will be
 dealing with either an `EmbeddedCacheManager` or a `RemoteCacheManager`. While they share some methods and properties,
 be aware that there are semantic differences between them. The following chapters focus mostly on the _embedded_
-implementation. For details on the _remote_ implementation refer to <<hotrod:java-client>>.
+implementation. For details on the _remote_ implementation refer to link:#hotrod_java_client[Hot Rod Java Client].
 
 CacheManagers are heavyweight objects, and we foresee no more than one CacheManager being used per JVM
 (unless specific setups require more than one; but either way, this would be a minimal and finite
@@ -94,7 +95,7 @@ The available configuration stores are:
 - `MANAGED`: this is only supported in server deployments, and will store +PERMANENT+ caches in the server model.
 - `CUSTOM`: a custom configuration store.
 
-See .link:{javadocroot}/org/infinispan/configuration/global/GlobalStateConfigurationBuilder.html#
+See link:{javadocroot}/org/infinispan/configuration/global/GlobalStateConfigurationBuilder.html#configurationStorage-org.infinispan.globalstate.ConfigurationStorage-[GlobalStateConfigurationBuilder#configurationStorage()]
 for details.
 
 === Clustering Information
@@ -128,5 +129,3 @@ case JGroups) you can use this mechanism.
 The stats provided here are coalesced from all of the active caches in this manager.
 These stats can be useful to see if there is something wrong going on with your
 cluster overall.
-
-

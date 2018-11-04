@@ -1,15 +1,18 @@
 package org.infinispan.query.remote.impl;
 
-import java.util.List;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_PROTOSTREAM;
 
-import org.infinispan.commons.dataconversion.Encoder;
+import java.util.Map;
+
+import org.infinispan.AdvancedCache;
+import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.encoding.DataConversion;
 import org.infinispan.objectfilter.Matcher;
 import org.infinispan.query.dsl.IndexedQueryMode;
-import org.infinispan.query.dsl.Query;
 import org.infinispan.query.dsl.embedded.impl.QueryEngine;
 import org.infinispan.query.remote.client.FilterResult;
 import org.infinispan.query.remote.client.QueryRequest;
-import org.infinispan.query.remote.client.QueryResponse;
 
 /**
  * Manages components used during indexed and index-less query.
@@ -18,27 +21,24 @@ import org.infinispan.query.remote.client.QueryResponse;
  */
 public interface RemoteQueryManager {
 
+   MediaType PROTOSTREAM_UNWRAPPED = APPLICATION_PROTOSTREAM.withParameter("wrapped", "false");
+   MediaType QUERY_REQUEST_TYPE = APPLICATION_OBJECT.withClassType(QueryRequest.class);
+
    /**
     * @return {@link Matcher} to be used during non-indexed query and filter operations.
     */
-   Matcher getMatcher();
+   Class<? extends Matcher> getMatcherClass(MediaType mediaType);
 
    /**
     * @return {@link QueryEngine}
     */
-   BaseRemoteQueryEngine getQueryEngine();
+   BaseRemoteQueryEngine getQueryEngine(AdvancedCache<?, ?> cache);
 
    /**
     * @param queryRequest serialized {@link QueryRequest} provided by the remote client.
     * @return decoded {@link QueryRequest}.
     */
-   QueryRequest decodeQueryRequest(byte[] queryRequest);
-
-   /**
-    * @param queryResponse {@link QueryResponse} carrying the result of the remote query.
-    * @return encoded response to send back to the remote client.
-    */
-   byte[] encodeQueryResponse(QueryResponse queryResponse);
+   QueryRequest decodeQueryRequest(byte[] queryRequest, MediaType requestType);
 
    /**
     * @param filterResult the {@link FilterResult} from filtering and continuous query operations.
@@ -46,32 +46,18 @@ public interface RemoteQueryManager {
     */
    Object encodeFilterResult(Object filterResult);
 
-   /**
-    * @return the {@link Encoder} associated with the cache's keys.
-    */
-   Encoder getKeyEncoder();
-
-   /**
-    * @return the {@link Encoder} associated with the cache's values.
-    */
-   Encoder getValueEncoder();
-
-   /**
-    * @return apply optional encoding to query hits
-    */
-   default List<Object> encodeQueryResults(List<Object> results) {
-      return results;
+   default boolean isQueryEnabled(AdvancedCache<byte[], byte[]> cache) {
+      return getQueryEngine(cache) != null;
    }
 
-   default RemoteQueryResult executeQuery(String q, Integer offset, Integer maxResults, IndexedQueryMode queryMode) {
-      Query query = getQueryEngine().makeQuery(q, null, offset, maxResults, queryMode);
-      List<Object> results = query.list();
-      String[] projection = query.getProjection();
-      int totalResults = query.getResultSize();
-      if (projection == null) {
-         return new RemoteQueryResult(null, totalResults, encodeQueryResults(results));
-      } else {
-         return new RemoteQueryResult(projection, totalResults, results);
-      }
-   }
+   Object convertKey(Object key, MediaType destinationFormat);
+
+   Object convertValue(Object value, MediaType destinationFormat);
+
+   DataConversion getKeyDataConversion();
+
+   DataConversion getValueDataConversion();
+
+   byte[] executeQuery(String queryString, Map<String, Object> namedParametersMap, Integer offset, Integer maxResults,
+                       IndexedQueryMode queryMode, AdvancedCache cache, MediaType outputFormat);
 }

@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-integrationtests-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -30,14 +30,18 @@
       </dependency>
       <!-- JPA test dependencies -->
       <dependency>
-         <groupId>org.hibernate.javax.persistence</groupId>
-         <artifactId>hibernate-jpa-2.1-api</artifactId>
+         <groupId>javax.persistence</groupId>
+         <artifactId>javax.persistence-api</artifactId>
          <scope>provided</scope>
       </dependency>
       <dependency>
          <groupId>org.hibernate</groupId>
          <artifactId>hibernate-core</artifactId>
       </dependency>
+       <dependency>
+           <groupId>org.glassfish.jaxb</groupId>
+           <artifactId>jaxb-runtime</artifactId>
+       </dependency>
       <!-- JDBC test dependecies -->
        <dependency>
            <groupId>com.mchange</groupId>
@@ -52,7 +56,6 @@
        <dependency>
           <groupId>junit</groupId>
           <artifactId>junit</artifactId>
-          <version>4.12</version>
           <scope>test</scope>
        </dependency>
    </dependencies>
@@ -67,7 +70,6 @@
                 <dependency>
                     <groupId>com.h2database</groupId>
                     <artifactId>h2</artifactId>
-                    <version>1.4.180</version>
                     <scope>test</scope>
                 </dependency>
             </dependencies>
@@ -117,8 +119,21 @@
                     <groups combine.self="override">${defaultJUnitGroups}</groups>
                     <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
                     <systemPropertyVariables>
-                        <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
-                        <build.directory>${project.build.directory}</build.directory>
+                       <!-- Copied from parent POM -->
+                       <infinispan.test.jgroups.protocol>${infinispan.test.jgroups.protocol}</infinispan.test.jgroups.protocol>
+                       <jgroups.bind_addr>127.0.0.1</jgroups.bind_addr>
+                       <jgroups.join_timeout>2000</jgroups.join_timeout>
+                       <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
+                       <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
+                       <build.directory>${project.build.directory}</build.directory>
+                       <com.arjuna.ats.arjuna.common.propertiesFile>test-jbossts-properties.xml</com.arjuna.ats.arjuna.common.propertiesFile>
+
+                       <!-- this is picked up in the log4j xml which prepends it to each module's log file-->
+                       <infinispan.module-suffix>${infinispan.module-suffix}</infinispan.module-suffix>
+                       <ansi.strip>${ansi.strip}</ansi.strip>
+                       <!-- Log the correct thread name after we call Thread.setName(),
+                            see https://issues.apache.org/jira/browse/LOG4J2-2052 -->
+                       <AsyncLogger.ThreadNameStrategy>UNCACHED</AsyncLogger.ThreadNameStrategy>
                     </systemPropertyVariables>
                     <trimStackTrace>false</trimStackTrace>
                     <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>

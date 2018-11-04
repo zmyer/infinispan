@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-jcache-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -15,6 +15,8 @@
    <description>JCACHE (JSR-107) TCK runner for Infinispan implementations</description>
 
    <properties>
+      <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
+
       <domain-lib-dir>${project.build.directory}/domainlib</domain-lib-dir>
       <domain-jar>domain.jar</domain-jar>
       <tck.mbean.builder>org.infinispan.jcache.tck.TckMbeanServerBuilder</tck.mbean.builder>
@@ -76,7 +78,6 @@
       <dependency>
          <groupId>org.infinispan.server</groupId>
          <artifactId>infinispan-server-build</artifactId>
-         <version>${project.version}</version>
          <type>pom</type>
          <scope>test</scope>
       </dependency>
@@ -127,7 +128,7 @@
                      <outputDirectory>${server.dir}</outputDirectory>
                         <resources>
                            <resource>
-                              <directory>../../server/integration/build/target/infinispan-server-${project.version}/</directory>
+                              <directory>../../server/integration/build/target/server-distribution-thin/${infinispan.brand.prefix}-server-${infinispan.brand.version}</directory>
                               <filtering>false</filtering>
                            </resource>
                         </resources>
@@ -216,10 +217,7 @@
                </systemPropertyVariables>
                <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
                <properties>
-                  <property>
-                     <name>listener</name>
-                     <value>org.infinispan.commons.test.JUnitTestListener</value>
-                  </property>
+                  <listener>${junitListener}</listener>
                </properties>
             </configuration>
             <executions>

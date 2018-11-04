@@ -8,16 +8,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.infinispan.commons.hash.MurmurHash3;
-import org.infinispan.commons.util.ImmutableIntSet;
+import org.infinispan.commons.util.ImmutableHopscotchHashSet;
 import org.infinispan.commons.util.Immutables;
 import org.infinispan.commons.util.IntSet;
-import org.infinispan.commons.util.RangeSet;
-import org.infinispan.commons.util.SmallIntSet;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.KeyPartitioner;
-import org.infinispan.distribution.ch.impl.ReplicatedConsistentHash;
+import org.infinispan.distribution.ch.impl.SingleSegmentKeyPartitioner;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.topology.CacheTopology;
 
@@ -30,25 +28,43 @@ import org.infinispan.topology.CacheTopology;
 public class LocalizedCacheTopology extends CacheTopology {
 
    private final Address localAddress;
+   private boolean connected;
+   private final Set<Address> membersSet;
    private final KeyPartitioner keyPartitioner;
    private final boolean isDistributed;
    private final boolean allLocal;
-   private final boolean isSegmented;
    private final int numSegments;
    private final int maxOwners;
    private final DistributionInfo[] distributionInfos;
    private final boolean isScattered;
    private final IntSet localReadSegments;
 
+   /**
+    * @param cacheMode Ignored, the result topology is always LOCAL
+    * @param localAddress Address of the local node
+    */
    public static LocalizedCacheTopology makeSingletonTopology(CacheMode cacheMode, Address localAddress) {
       List<Address> members = Collections.singletonList(localAddress);
-      ConsistentHash ch = new ReplicatedConsistentHash(MurmurHash3.getInstance(), members, new int[]{0});
-      CacheTopology cacheTopology = new CacheTopology(0, 0, ch, null, Phase.NO_REBALANCE, members, null);
-      return new LocalizedCacheTopology(cacheMode, cacheTopology, key -> 0, localAddress);
+       CacheTopology cacheTopology = new CacheTopology(-1, -1, null, null, Phase.NO_REBALANCE, members, null);
+       return new LocalizedCacheTopology(CacheMode.LOCAL, cacheTopology, SingleSegmentKeyPartitioner.getInstance(),
+             localAddress, false);
+   }
+
+   /**
+    * Creates a new local topology that has a single address but multiple segments. This is useful when the data
+    * storage is segmented in some way (ie. segmented store)
+    * @param keyPartitioner partitioner to decide which segment a given key maps to
+    * @param numSegments how many segments there are
+    * @param localAddress the address of this node
+    * @return segmented topology
+    */
+   public static LocalizedCacheTopology makeSegmentedSingletonTopology(KeyPartitioner keyPartitioner, int numSegments,
+         Address localAddress) {
+      return new LocalizedCacheTopology(keyPartitioner, numSegments, localAddress);
    }
 
    public LocalizedCacheTopology(CacheMode cacheMode, CacheTopology cacheTopology, KeyPartitioner keyPartitioner,
-                                 Address localAddress) {
+                                 Address localAddress, boolean connected) {
       super(cacheTopology.getTopologyId(), cacheTopology.getRebalanceId(), cacheTopology.getCurrentCH(),
             cacheTopology.getPendingCH(), cacheTopology.getUnionCH(), cacheTopology.getPhase(), cacheTopology.getActualMembers(),
             cacheTopology.getMembersPersistentUUIDs());
@@ -57,17 +73,19 @@ public class LocalizedCacheTopology extends CacheTopology {
       ConsistentHash writeCH = getWriteConsistentHash();
 
       this.localAddress = localAddress;
+      this.connected = connected;
+      this.membersSet = new ImmutableHopscotchHashSet<>(cacheTopology.getMembers());
       this.keyPartitioner = keyPartitioner;
       this.isDistributed = cacheMode.isDistributed();
       isScattered = cacheMode.isScattered();
       boolean isReplicated = cacheMode.isReplicated();
-      this.isSegmented = isDistributed || isReplicated || isScattered;
-      this.numSegments = readCH.getNumSegments();
+
 
       if (isDistributed || isScattered) {
+         this.numSegments = readCH.getNumSegments();
          this.distributionInfos = new DistributionInfo[numSegments];
          int maxOwners = 1;
-         IntSet localReadSegments = new SmallIntSet(numSegments);
+         IntSet localReadSegments = IntSets.mutableEmptySet(numSegments);
          for (int segmentId = 0; segmentId < numSegments; segmentId++) {
             Address primary = readCH.locatePrimaryOwnerForSegment(segmentId);
             List<Address> readOwners = readCH.locateOwnersForSegment(segmentId);
@@ -82,8 +100,9 @@ public class LocalizedCacheTopology extends CacheTopology {
          }
          this.maxOwners = maxOwners;
          this.allLocal = false;
-         this.localReadSegments = new ImmutableIntSet(localReadSegments);
+         this.localReadSegments = IntSets.immutableSet(localReadSegments);
       } else if (isReplicated) {
+         this.numSegments = readCH.getNumSegments();
          // Writes must be broadcast to the entire cluster
          Map<Address, List<Address>> readOwnersMap = new HashMap<>();
          Map<Address, List<Address>> writeOwnersMap = new HashMap<>();
@@ -101,9 +120,10 @@ public class LocalizedCacheTopology extends CacheTopology {
          }
          this.maxOwners = cacheTopology.getMembers().size();
          this.allLocal = readOwnersMap.containsKey(localAddress);
-         this.localReadSegments = new RangeSet(allLocal ? numSegments : 0);
+         this.localReadSegments = IntSets.immutableRangeSet(allLocal ? numSegments : 0);
       } else { // Invalidation/Local
          assert cacheMode.isInvalidation() || cacheMode == CacheMode.LOCAL;
+         this.numSegments = 1;
          // Reads and writes are local, only the invalidation is replicated
          List<Address> owners = Collections.singletonList(localAddress);
          List<Address> writeBackups = Collections.emptyList();
@@ -112,8 +132,27 @@ public class LocalizedCacheTopology extends CacheTopology {
          };
          this.maxOwners = 1;
          this.allLocal = true;
-         this.localReadSegments = new RangeSet(numSegments);
+         this.localReadSegments = IntSets.immutableRangeSet(numSegments);
       }
+   }
+
+   private LocalizedCacheTopology(KeyPartitioner keyPartitioner, int numSegments, Address localAddress) {
+      super(-1, -1, null, null, null, Collections.singletonList(localAddress), null);
+      this.localAddress = localAddress;
+      this.numSegments = numSegments;
+      this.keyPartitioner = keyPartitioner;
+      this.membersSet = Collections.unmodifiableSet(Collections.singleton(localAddress));
+      this.isDistributed = false;
+      this.isScattered = false;
+      // Reads and writes are local, only the invalidation is replicated
+      List<Address> owners = Collections.singletonList(localAddress);
+      this.distributionInfos = new DistributionInfo[numSegments];
+      for (int i = 0; i < distributionInfos.length; ++i) {
+         distributionInfos[i] = new DistributionInfo(i, localAddress, owners, owners, Collections.emptyList(), localAddress);
+      }
+      this.maxOwners = 1;
+      this.allLocal = true;
+      this.localReadSegments = IntSets.immutableRangeSet(numSegments);
    }
 
    /**
@@ -125,6 +164,10 @@ public class LocalizedCacheTopology extends CacheTopology {
 
       int segmentId = keyPartitioner.getSegment(key);
       return distributionInfos[segmentId].isReadOwner();
+   }
+
+   public boolean isSegmentReadOwner(int segment) {
+      return allLocal || distributionInfos[segment].isReadOwner();
    }
 
 
@@ -139,6 +182,10 @@ public class LocalizedCacheTopology extends CacheTopology {
       return distributionInfos[segmentId].isWriteOwner();
    }
 
+   public boolean isSegmentWriteOwner(int segment) {
+      return allLocal || distributionInfos[segment].isWriteOwner();
+   }
+
    /**
     * @return The consistent hash segment of key {@code key}
     */
@@ -148,8 +195,14 @@ public class LocalizedCacheTopology extends CacheTopology {
 
    /**
     * @return Information about the ownership of segment {@code segment}, including the primary owner.
+    * @deprecated since 9.3 please use {@link #getSegmentDistribution(int)} instead.
     */
+   @Deprecated
    public DistributionInfo getDistributionForSegment(int segmentId) {
+      return getSegmentDistribution(segmentId);
+   }
+
+   public DistributionInfo getSegmentDistribution(int segmentId) {
       return distributionInfos[segmentId];
    }
 
@@ -157,7 +210,7 @@ public class LocalizedCacheTopology extends CacheTopology {
     * @return Information about the ownership of key {@code key}, including the primary owner.
     */
    public DistributionInfo getDistribution(Object key) {
-      int segmentId = isSegmented ? keyPartitioner.getSegment(key) : 0;
+      int segmentId = keyPartitioner.getSegment(key);
       return distributionInfos[segmentId];
    }
 
@@ -181,19 +234,19 @@ public class LocalizedCacheTopology extends CacheTopology {
             Object singleKey = keys.iterator().next();
             return getDistribution(singleKey).writeOwners();
          } else {
-            SmallIntSet segments = new SmallIntSet(numSegments);
+            IntSet segments = IntSets.mutableEmptySet(numSegments);
             // Expecting some overlap between keys
             Set<Address> owners = new HashSet<>(2 * maxOwners);
             for (Object key : keys) {
                int segment = keyPartitioner.getSegment(key);
                if (segments.add(segment)) {
-                  owners.addAll(getDistributionForSegment(segment).writeOwners());
+                  owners.addAll(getSegmentDistribution(segment).writeOwners());
                }
             }
             return owners;
          }
       } else {
-         return getDistributionForSegment(0).writeOwners();
+         return getSegmentDistribution(0).writeOwners();
       }
    }
 
@@ -209,5 +262,17 @@ public class LocalizedCacheTopology extends CacheTopology {
     */
    public Address getLocalAddress() {
       return localAddress;
+   }
+
+   public Set<Address> getMembersSet() {
+      return membersSet;
+   }
+
+   /**
+    * @return {@code true} if the local node received this topology from the coordinator,
+    * {@code false} otherwise (e.g. during preload).
+    */
+   public boolean isConnected() {
+      return connected;
    }
 }

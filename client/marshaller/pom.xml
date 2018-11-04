@@ -5,13 +5,13 @@
     <parent>
         <groupId>org.infinispan</groupId>
         <artifactId>infinispan-parent</artifactId>
-        <version>9.2.1-SNAPSHOT</version>
+        <version>10.0.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>infinispan-marshaller-parent</artifactId>
     <packaging>pom</packaging>
-    <name>Parent pom for alternative client marshaller implementation</name>
+    <name>Alternative client marshallers</name>
 
     <modules>
         <module>marshaller-tests</module>
@@ -48,7 +48,7 @@
         </dependency>
         <dependency>
             <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-compatibility-mode-it</artifactId>
+            <artifactId>infinispan-endpoint-interop-it</artifactId>
             <scope>test</scope>
             <type>test-jar</type>
         </dependency>

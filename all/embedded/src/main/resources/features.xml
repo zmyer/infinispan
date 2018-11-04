@@ -2,6 +2,7 @@
 <features name="infinispan-embedded-${project.version}" xmlns="http://karaf.apache.org/xmlns/features/v1.4.0">
    <feature name="infinispan-embedded" version="${project.version}">
       <feature>transaction</feature>
+      <feature>aries-blueprint</feature>
       <bundle>mvn:org.infinispan/infinispan-embedded/${project.version}</bundle>
    </feature>
    <!-- c3p0 dependencies required only when using PooledConnectionFactory with JDBC cache store -->
@@ -22,13 +23,14 @@
       <!-- hibernate -->
       <bundle>mvn:org.hibernate/hibernate-core/${version.hibernate.core}</bundle>
       <bundle>mvn:org.hibernate/hibernate-osgi/${version.hibernate.osgi}</bundle>
-      <bundle>mvn:org.hibernate.javax.persistence/hibernate-jpa-2.1-api/${version.hibernate.javax.persistence}</bundle>
+      <bundle>mvn:javax.persistence/javax.persistence-api/${version.javax.persistence}</bundle>
       <!-- hibernate's dependencies -->
       <!-- jboss logging not included as it conflicts with pax-logging-api in Karaf -->
       <bundle>mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.antlr/${version.hibernate_dep.antlr}</bundle>
       <bundle>mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.dom4j/${version.hibernate_dep.dom4j}</bundle>
       <bundle>mvn:com.fasterxml/classmate/${version.hibernate_dep.classmate}</bundle>
       <bundle>mvn:org.javassist/javassist/${version.hibernate_dep.javassist}</bundle>
+      <bundle>mvn:net.bytebuddy/byte-buddy/${version.mockito_dep.bytebuddy}</bundle>
       <bundle>mvn:org.hibernate.common/hibernate-commons-annotations/${version.hibernate_dep.hibernate-commons-annotations}</bundle>
       <bundle>mvn:org.jboss/jandex/${version.hibernate_dep.jandex}</bundle>
    </feature>

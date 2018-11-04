@@ -1,11 +1,14 @@
 package org.infinispan.persistence.spi;
 
+import java.util.concurrent.ExecutorService;
+
 import org.infinispan.Cache;
 import org.infinispan.commons.io.ByteBufferFactory;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.StoreConfiguration;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.marshall.core.MarshalledEntryFactory;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 
 import net.jcip.annotations.ThreadSafe;
 
@@ -22,6 +25,13 @@ public interface InitializationContext {
 
    Cache getCache();
 
+   /**
+    * The configured partitioner that can be used to determine which segment a given key belongs to. This is useful
+    * when a store is segmented (ie. implements {@link SegmentedAdvancedLoadWriteStore}).
+    * @return partitioner that can provide what segment a key maps to
+    */
+   KeyPartitioner getKeyPartitioner();
+
    StreamingMarshaller getMarshaller();
 
    TimeService getTimeService();
@@ -35,4 +45,11 @@ public interface InitializationContext {
     * To be used for building {@link org.infinispan.marshall.core.MarshalledEntry} objects.
     */
    MarshalledEntryFactory getMarshalledEntryFactory();
+
+   /**
+    * Returns the preferred executor to be used by stores if needed. Stores normally shouldn't need this unless they
+    * *must* perform some blocking code asynchronously.
+    * @return the executor to be used with stores
+    */
+   ExecutorService getExecutor();
 }

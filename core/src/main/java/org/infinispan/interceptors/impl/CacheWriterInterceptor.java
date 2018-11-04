@@ -14,6 +14,7 @@ import javax.transaction.Transaction;
 import javax.transaction.TransactionManager;
 
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.SegmentSpecificCommand;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.functional.FunctionalCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
@@ -35,19 +36,21 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.functional.Param;
-import org.infinispan.functional.Param.PersistenceMode;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.PersistenceConfiguration;
-import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheValue;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.functional.Param;
+import org.infinispan.functional.Param.PersistenceMode;
 import org.infinispan.interceptors.InvocationSuccessAction;
+import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
@@ -56,6 +59,7 @@ import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.marshall.core.MarshalledEntryImpl;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.support.BatchModification;
+import org.infinispan.stream.StreamMarshalling;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -80,6 +84,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
    @Inject private InternalEntryFactory entryFactory;
    @Inject private TransactionManager transactionManager;
    @Inject private StreamingMarshaller marshaller;
+   @Inject private KeyPartitioner keyPartitioner;
 
    PersistenceConfiguration loaderConfig = null;
    final AtomicLong cacheStores = new AtomicLong(0);
@@ -153,7 +158,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
          if (!isProperWriter(rCtx, removeCommand, removeCommand.getKey())) return;
 
          Object key = removeCommand.getKey();
-         boolean resp = persistenceManager.deleteFromAllStores(key, BOTH);
+         boolean resp = persistenceManager.deleteFromAllStores(key, command.getSegment(), BOTH);
          if (trace)
             getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
       });
@@ -210,7 +215,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
 
          Object key = computeCommand.getKey();
          if(rv == null) {
-            boolean resp = persistenceManager.deleteFromAllStores(key, BOTH);
+            boolean resp = persistenceManager.deleteFromAllStores(key, command.getSegment(), BOTH);
             if (trace)
                getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
          } else {
@@ -259,7 +264,8 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
 
       Iterable<MarshalledEntry> iterable = () -> cmd.getMap().keySet().stream()
             .filter(filter)
-            .map(key -> createMarshalledEntry(ctx, key))
+            .map(key -> marshalledEntry(ctx, key))
+            .filter(StreamMarshalling.nonNullPredicate())
             .iterator();
       persistenceManager.writeBatchToAllNonTxStores(iterable, mode, cmd.getFlagsBitSet());
    }
@@ -305,7 +311,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
                CacheEntry entry = rCtx.lookupEntry(key);
                if (entry != null) {
                   if (entry.isRemoved()) {
-                     boolean resp = persistenceManager.deleteFromAllStores(key, BOTH);
+                     boolean resp = persistenceManager.deleteFromAllStores(key, dataWriteCommand.getSegment(), BOTH);
                      if (trace)
                         getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key,
                               resp);
@@ -362,7 +368,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
                   CacheEntry entry = rCtx.lookupEntry(key);
                   if (entry != null) {
                      if (entry.isRemoved()) {
-                        boolean resp = persistenceManager.deleteFromAllStores(key, BOTH);
+                        boolean resp = persistenceManager.deleteFromAllStores(key, keyPartitioner.getSegment(key), BOTH);
                         if (trace) getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
                      } else {
                         if (entry.isChanged() && isProperWriter(rCtx, manyEntriesCommand, key)) {
@@ -446,15 +452,27 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       return cacheStores.get();
    }
 
-   void storeEntry(InvocationContext ctx, Object key, FlagAffectedCommand command) {
-      MarshalledEntry entry = createMarshalledEntry(ctx, key);
-      persistenceManager.writeToAllNonTxStores(entry, skipSharedStores(ctx, key, command) ? PRIVATE : BOTH, command.getFlagsBitSet());
-      if (trace) getLog().tracef("Stored entry %s under key %s", entry.getValue(), key);
+   @ManagedAttribute(
+         description = "Number of entries currently persisted excluding expired entries",
+         displayName = "Number of persisted entries",
+         displayType = DisplayType.SUMMARY
+   )
+   public int getNumberOfPersistedEntries() {
+      return persistenceManager.size();
    }
 
-   MarshalledEntry createMarshalledEntry(InvocationContext ctx, Object key) {
-      InternalCacheValue sv = entryFactory.getValueFromCtxOrCreateNew(key, ctx);
-      return new MarshalledEntryImpl(key, sv.getValue(), internalMetadata(sv), marshaller);
+   void storeEntry(InvocationContext ctx, Object key, FlagAffectedCommand command) {
+      MarshalledEntry entry = marshalledEntry(ctx, key);
+      if (entry != null) {
+         persistenceManager.writeToAllNonTxStores(entry, SegmentSpecificCommand.extractSegment(command, key, keyPartitioner),
+               skipSharedStores(ctx, key, command) ? PRIVATE : BOTH, command.getFlagsBitSet());
+         if (trace) getLog().tracef("Stored entry %s under key %s", entry.getValue(), key);
+      }
+   }
+
+   MarshalledEntry marshalledEntry(InvocationContext ctx, Object key) {
+      InternalCacheValue sv = entryFactory.getValueFromCtx(key, ctx);
+      return sv != null ? new MarshalledEntryImpl(key, sv.getValue(), internalMetadata(sv), marshaller) : null;
    }
 
    protected boolean skipSharedStores(InvocationContext ctx, Object key, FlagAffectedCommand command) {

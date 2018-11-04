@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.util.ProcessorInfo;
 import org.infinispan.commons.util.Util;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.persistence.PersistenceUtil;
@@ -19,7 +20,11 @@ import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.kohsuke.MetaInfServices;
 
+/**
+ * This migrator should no longer be used and the HotRodTargetMigrator should be used instead
+ */
 @MetaInfServices
+@Deprecated
 public class RestTargetMigrator implements TargetMigrator {
    private static final Log log = LogFactory.getLog(RestTargetMigrator.class, Log.class);
 
@@ -33,7 +38,7 @@ public class RestTargetMigrator implements TargetMigrator {
 
    @Override
    public long synchronizeData(final Cache<Object, Object> cache) throws CacheException {
-      return synchronizeData(cache, 0, Runtime.getRuntime().availableProcessors());
+      return synchronizeData(cache, 0, ProcessorInfo.availableProcessors());
 
    }
 

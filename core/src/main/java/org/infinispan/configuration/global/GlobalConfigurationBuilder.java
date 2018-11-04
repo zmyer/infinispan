@@ -1,6 +1,5 @@
 package org.infinispan.configuration.global;
 
-import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -11,11 +10,12 @@ import java.util.Optional;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.configuration.BuiltBy;
+import org.infinispan.commons.util.Features;
 import org.infinispan.commons.util.Util;
 
 public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuilder {
 
-   private WeakReference<ClassLoader> cl;
+   private ClassLoader cl;
    private final TransportConfigurationBuilder transport;
    private final GlobalJmxStatisticsConfigurationBuilder globalJmxStatistics;
    private final SerializationConfigurationBuilder serialization;
@@ -31,13 +31,14 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
    private final List<Builder<?>> modules = new ArrayList<>();
    private final SiteConfigurationBuilder site;
    private Optional<String> defaultCacheName;
+   private Features features;
 
    public GlobalConfigurationBuilder() {
       // In OSGi contexts the TCCL should not be used. Use the infinispan-core bundle as default instead.
       ClassLoader defaultCL = null;
       if (!Util.isOSGiContext()) defaultCL = Thread.currentThread().getContextClassLoader();
       if (defaultCL == null) defaultCL = GlobalConfigurationBuilder.class.getClassLoader();
-      this.cl = new WeakReference<>(defaultCL);
+      this.cl = defaultCL;
       this.transport = new TransportConfigurationBuilder(this);
       this.globalJmxStatistics = new GlobalJmxStatisticsConfigurationBuilder(this);
       this.serialization = new SerializationConfigurationBuilder(this);
@@ -80,11 +81,11 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
    }
 
    protected ClassLoader getClassLoader() {
-      return cl.get();
+      return cl;
    }
 
    public GlobalConfigurationBuilder classLoader(ClassLoader cl) {
-      this.cl = new WeakReference<>(cl);
+      this.cl = cl;
       return this;
    }
 
@@ -194,6 +195,7 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
 
    @SuppressWarnings("unchecked")
    public void validate() {
+      features = new Features(cl);
       List<RuntimeException> validationExceptions = new ArrayList<>();
       Arrays.asList(
             expirationThreadPool,
@@ -248,11 +250,12 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
             modulesConfig,
             site.create(),
             defaultCacheName,
-            cl.get());
+            cl,
+            features);
    }
 
    public GlobalConfigurationBuilder read(GlobalConfiguration template) {
-      this.cl = new WeakReference<>(template.classLoader());
+      this.cl = template.classLoader();
       this.defaultCacheName = template.defaultCacheName();
 
       for (Object c : template.modules().values()) {

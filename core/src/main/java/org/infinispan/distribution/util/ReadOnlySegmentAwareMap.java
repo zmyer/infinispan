@@ -6,9 +6,10 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.distribution.ch.ConsistentHash;
-import org.infinispan.util.AbstractDelegatingCollection;
-import org.infinispan.util.AbstractDelegatingMap;
+import org.infinispan.commons.util.AbstractDelegatingCollection;
+import org.infinispan.commons.util.AbstractDelegatingMap;
 
 /**
  * Map implementation that shows a read only view of the provided entry by only allowing
@@ -29,13 +30,12 @@ public class ReadOnlySegmentAwareMap<K, V> extends AbstractDelegatingMap<K, V> {
 
    protected final Map<K, V> map;
    protected final ConsistentHash ch;
-   protected final Set<Integer> allowedSegments;
+   protected final IntSet allowedSegments;
 
    protected Set<K> segmentAwareKeySet;
    protected Set<Map.Entry<K, V>> segmentAwareEntrySet;
 
-   public ReadOnlySegmentAwareMap(Map<K, V> map, ConsistentHash ch,
-         Set<Integer> allowedSegments) {
+   public ReadOnlySegmentAwareMap(Map<K, V> map, ConsistentHash ch, IntSet allowedSegments) {
       super();
       this.map = Collections.unmodifiableMap(map);
       this.ch = ch;

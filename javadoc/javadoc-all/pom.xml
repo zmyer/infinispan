@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-javadoc-all</artifactId>
@@ -25,7 +25,7 @@
 -ga('send', 'pageview');
 -} catch(err) {}&lt;/script&gt;
       </analytics.code>
-      <maven.deploy.skip>true</maven.deploy.skip>
+      <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
    </properties>
 
    <dependencies>
@@ -134,11 +134,6 @@
 
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-server-websocket</artifactId>
-      </dependency>
-
-      <dependency>
-         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-spring4-common</artifactId>
       </dependency>
 
@@ -160,7 +155,6 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-extended-statistics</artifactId>
-         <version>${project.version}</version>
       </dependency>
       <!-- /javadoc-embedded dependencies -->
 
@@ -190,13 +184,13 @@
                      <goal>jar</goal>
                   </goals>
                   <configuration>
-                     <doclet>org.infinispan.tools.doclet.DocletMultiplexer</doclet>
+                     <doclet>org.infinispan.doclets.DocletMultiplexer</doclet>
                      <docletArtifact>
                         <groupId>org.infinispan</groupId>
-                        <artifactId>infinispan-tools</artifactId>
+                        <artifactId>infinispan-doclets</artifactId>
                         <version>${project.version}</version>
                      </docletArtifact>
-                     <doctitle>Infinispan ${infinispan.base.version} API</doctitle>
+                     <doctitle>${infinispan.brand.name} ${infinispan.base.version} API</doctitle>
                      <docfilessubdirs>true</docfilessubdirs>
                      <detectLinks>false</detectLinks>
                      <footer>${analytics.code}</footer>
@@ -265,7 +259,7 @@
                      <stylesheetfile>${basedir}/src/main/javadoc/stylesheet.css</stylesheetfile>
                      <subpackages>org.infinispan</subpackages>
                      <additionalparam>-Xdoclint:none</additionalparam>
-                     
+
                      <additionalDependencies>
                         <additionalDependency>
                            <groupId>javax.enterprise</groupId>
@@ -321,8 +315,8 @@
             <dependencies>
                <dependency>
                   <groupId>org.infinispan</groupId>
-                  <artifactId>infinispan-tools</artifactId>
-                  <version>${project.version}</version>
+                  <artifactId>infinispan-doclets</artifactId>
+                  <version>${version.infinispan}</version>
                </dependency>
             </dependencies>
          </plugin>
@@ -334,4 +328,61 @@
          </plugin>
       </plugins>
    </build>
+
+   <profiles>
+
+      <profile>
+         <id>nexus-staging</id>
+         <activation>
+            <property><name>!skipNexusStaging</name></property>
+         </activation>
+         <build>
+            <plugins>
+               <plugin>
+                  <artifactId>maven-deploy-plugin</artifactId>
+                  <configuration>
+                     <skip>true</skip>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+
+      <profile>
+         <id>distribution</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-antrun-plugin</artifactId>
+                  <executions>
+                     <execution>
+                        <id>upload</id>
+                        <phase>deploy</phase>
+                        <goals>
+                           <goal>run</goal>
+                        </goals>
+                        <configuration>
+                           <skip>${skipArtifactUpload}</skip>
+                           <target>
+                              <echo message="Uploading JavaDocs"/>
+                              <exec dir="${project.build.directory}" executable="rsync">
+                                 <arg value="-rvm"/>
+                                 <arg line="--protocol=29"/>
+                                 <arg line="-e &quot;ssh -i ${upload.keyFile}&quot;"/>
+                                 <arg value="apidocs"/>
+                                 <arg value="${upload.docsDir}"/>
+                              </exec>
+                              <scp todir="${upload.docsDir}/apidocs" keyfile="${upload.keyFile}" verbose="true" compressed="true">
+                                 <fileset dir="${project.build.directory}/apidocs"/>
+                              </scp>
+                           </target>
+                        </configuration>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

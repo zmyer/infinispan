@@ -24,7 +24,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-
 import javax.security.auth.Subject;
 import javax.transaction.SystemException;
 import javax.transaction.Transaction;
@@ -80,6 +79,7 @@ import org.infinispan.configuration.format.PropertyFormatter;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.InvocationContextContainer;
@@ -87,10 +87,12 @@ import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.eviction.EvictionManager;
 import org.infinispan.eviction.PassivationManager;
 import org.infinispan.expiration.ExpirationManager;
+import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.SurvivesRestarts;
@@ -112,10 +114,12 @@ import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.ListenerHolder;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
+import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.security.AuthorizationManager;
+import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.stats.Stats;
 import org.infinispan.stats.impl.StatsImpl;
 import org.infinispan.stream.StreamMarshalling;
@@ -129,6 +133,7 @@ import org.infinispan.transaction.xa.TransactionXaAdapter;
 import org.infinispan.transaction.xa.XaTransactionTable;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.concurrent.locks.LockManager;
+import org.infinispan.util.concurrent.locks.RemoteLockCommand;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -152,14 +157,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @Inject protected AsyncInterceptorChain invoker;
    @Inject protected Configuration config;
    @Inject protected CacheNotifier notifier;
+   @Inject protected CacheManagerNotifier cacheManagerNotifier;
    @Inject protected BatchContainer batchContainer;
    @Inject protected ComponentRegistry componentRegistry;
    @Inject protected TransactionManager transactionManager;
    @Inject protected RpcManager rpcManager;
    @Inject protected StreamingMarshaller marshaller;
+   @Inject protected KeyPartitioner keyPartitioner;
    @Inject private EvictionManager evictionManager;
-   @Inject private ExpirationManager<K, V> expirationManager;
-   @Inject private DataContainer dataContainer;
+   @Inject private InternalExpirationManager<K, V> expirationManager;
+   @Inject private InternalDataContainer dataContainer;
    @Inject private EmbeddedCacheManager cacheManager;
    @Inject private LockManager lockManager;
    @Inject private DistributionManager distributionManager;
@@ -168,12 +175,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @Inject private PartitionHandlingManager partitionHandlingManager;
    @Inject private GlobalConfiguration globalCfg;
    @Inject private LocalTopologyManager localTopologyManager;
+   @Inject private StateTransferManager stateTransferManager;
 
    protected Metadata defaultMetadata;
    private final String name;
    private volatile boolean stopping = false;
    private boolean transactional;
    private boolean batchingEnabled;
+   private final ContextBuilder contextBuilder = this::getInvocationContextWithImplicitTransaction;
+   private final ContextBuilder expiredContextBuilder = i -> this.getInvocationContextWithImplicitTransaction(i, true);
+   private final ContextBuilder pferContextBuilder = this::putForExternalReadContext;
 
    public CacheImpl(String name) {
       this.name = name;
@@ -266,6 +277,22 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
+   public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(defaultMetadata.maxIdle(), MILLISECONDS).build();
+      return computeInternal(key, remappingFunction, false, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET));
+   }
+
+   @Override
+   public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(maxIdleTime, maxIdleTimeUnit).build();
+      return computeInternal(key, remappingFunction, false, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET));
+   }
+
+   @Override
    public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
       return computeInternal(key, remappingFunction, false, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET));
    }
@@ -273,6 +300,21 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @Override
    public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
       return compute(key, remappingFunction, true);
+   }
+
+   @Override
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit).build();
+      return computeInternal(key, remappingFunction, true, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET));
+   }
+
+   @Override
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(maxIdleTime, maxIdleTimeUnit).build();
+      return computeInternal(key, remappingFunction, true, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET));
    }
 
    @Override
@@ -285,17 +327,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    private V computeInternal(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, boolean computeIfPresent, Metadata metadata, long flags) {
-      return computeInternal(key, remappingFunction, computeIfPresent, metadata, flags, getInvocationContextWithImplicitTransaction(false, 1));
+      return computeInternal(key, remappingFunction, computeIfPresent, metadata, flags, contextBuilder);
    }
 
-   V computeInternal(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, boolean computeIfPresent, Metadata metadata, long flags, InvocationContext ctx) {
+   V computeInternal(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, boolean computeIfPresent,
+                     Metadata metadata, long flags, ContextBuilder contextBuilder) {
       assertKeyNotNull(key);
       assertFunctionNotNull(remappingFunction);
-      ComputeCommand command = commandsFactory.buildComputeCommand(key, remappingFunction, computeIfPresent, metadata, flags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return (V) executeCommandAndCommitIfNeeded(ctx, command);
+      ComputeCommand command = commandsFactory.buildComputeCommand(key, remappingFunction, computeIfPresent,
+            keyPartitioner.getSegment(key), metadata, flags);
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
    @Override
@@ -304,26 +345,39 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
-   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata) {
-      return computeIfAbsentInternal(key, mappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
-            getInvocationContextWithImplicitTransaction(false, 1));
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit).build();
+      return computeIfAbsent(key, mappingFunction, metadata);
    }
 
-   V computeIfAbsentInternal(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata, long flags, InvocationContext ctx) {
+   @Override
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(maxIdleTime, maxIdleTimeUnit).build();
+      return computeIfAbsent(key, mappingFunction, metadata);
+   }
+
+   @Override
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata) {
+      return computeIfAbsentInternal(key, mappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
+   }
+
+   V computeIfAbsentInternal(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata, long flags,
+                             ContextBuilder contextBuilder) {
       assertKeyNotNull(key);
       assertFunctionNotNull(mappingFunction);
-      ComputeIfAbsentCommand command = commandsFactory.buildComputeIfAbsentCommand(key, mappingFunction, metadata, flags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return (V) executeCommandAndCommitIfNeeded(ctx, command);
+      ComputeIfAbsentCommand command = commandsFactory.buildComputeIfAbsentCommand(key, mappingFunction,
+            keyPartitioner.getSegment(key), metadata, flags);
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
    @Override
    public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
-      return mergeInternal(key, value, remappingFunction,
-            defaultMetadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
-            getInvocationContextWithImplicitTransaction(false, 1));
+      return mergeInternal(key, value, remappingFunction, defaultMetadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
    }
 
    @Override
@@ -331,9 +385,8 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       Metadata metadata = new EmbeddedMetadata.Builder()
             .lifespan(lifespan, lifespanUnit)
             .maxIdle(defaultMetadata.maxIdle(), MILLISECONDS).build();
-      return mergeInternal(key, value, remappingFunction,
-            metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
-            getInvocationContextWithImplicitTransaction(false, 1));
+      return mergeInternal(key, value, remappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
    }
 
    @Override
@@ -341,29 +394,26 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       Metadata metadata = new EmbeddedMetadata.Builder()
             .lifespan(lifespan, lifespanUnit)
             .maxIdle(maxIdleTime, idleTimeUnit).build();
-      return mergeInternal(key, value, remappingFunction,
-            metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
-            getInvocationContextWithImplicitTransaction(false, 1));
+      return mergeInternal(key, value, remappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
    }
 
    @Override
    public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, Metadata metadata) {
-      return mergeInternal(key, value, remappingFunction,
-            metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
-            getInvocationContextWithImplicitTransaction(false, 1));
+      return mergeInternal(key, value, remappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
    }
 
-   V mergeInternal(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, Metadata metadata, long flags, InvocationContext ctx) {
+   V mergeInternal(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, Metadata metadata,
+                   long flags, ContextBuilder contextBuilder) {
       assertKeyNotNull(key);
       assertValueNotNull(value);
       assertFunctionNotNull(remappingFunction);
-      ReadWriteKeyCommand<K, V, V> command = commandsFactory.buildReadWriteKeyCommand(key, new MergeFunction(value, remappingFunction, metadata), Params.fromFlagsBitSet(flags), getKeyDataConversion(), getValueDataConversion());
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return (V) executeCommandAndCommitIfNeeded(ctx, command);
+      ReadWriteKeyCommand<K, V, V> command = commandsFactory.buildReadWriteKeyCommand(key,
+            new MergeFunction<>(value, remappingFunction, metadata), keyPartitioner.getSegment(key),
+            Params.fromFlagsBitSet(flags), getKeyDataConversion(), getValueDataConversion());
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
-
 
    @Override
    public final CompletableFuture<V> putAsync(K key, V value) {
@@ -422,21 +472,13 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public final boolean remove(Object key, Object value) {
-      return remove(key, value, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return remove(key, value, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
-   final boolean remove(Object key, Object value, long explicitFlags, InvocationContext ctx) {
+   final boolean remove(Object key, Object value, long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
-      RemoveCommand command = createRemoveConditionalCommand(key, value, explicitFlags, ctx);
-      return (Boolean) executeCommandAndCommitIfNeeded(ctx, command);
-   }
-
-   private RemoveCommand createRemoveConditionalCommand(Object key, Object value, long explicitFlags, InvocationContext ctx) {
-      RemoveCommand command = commandsFactory.buildRemoveCommand(key, value, explicitFlags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return command;
+      RemoveCommand command = commandsFactory.buildRemoveCommand(key, value, keyPartitioner.getSegment(key), explicitFlags);
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
    @Override
@@ -481,13 +523,14 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @SuppressWarnings("unchecked")
    final V get(Object key, long explicitFlags, InvocationContext ctx) {
       assertKeyNotNull(key);
-      GetKeyValueCommand command = commandsFactory.buildGetKeyValueCommand(key, explicitFlags);
+      GetKeyValueCommand command = commandsFactory.buildGetKeyValueCommand(key, keyPartitioner.getSegment(key), explicitFlags);
       return (V) invoker.invoke(ctx, command);
    }
 
    final CacheEntry getCacheEntry(Object key, long explicitFlags, InvocationContext ctx) {
       assertKeyNotNull(key);
-      GetCacheEntryCommand command = commandsFactory.buildGetCacheEntryCommand(key, explicitFlags);
+      GetCacheEntryCommand command = commandsFactory.buildGetCacheEntryCommand(key, keyPartitioner.getSegment(key),
+            explicitFlags);
       Object ret = invoker.invoke(ctx, command);
       return (CacheEntry) ret;
    }
@@ -502,9 +545,10 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return getCacheEntryAsync(key, EnumUtil.EMPTY_BIT_SET, invocationContextFactory.createInvocationContext(false, 1));
    }
 
-   final CompletableFuture<CacheEntry<K,V>> getCacheEntryAsync(Object key, long explicitFlags, InvocationContext ctx) {
+   final CompletableFuture<CacheEntry<K, V>> getCacheEntryAsync(Object key, long explicitFlags, InvocationContext ctx) {
       assertKeyNotNull(key);
-      GetCacheEntryCommand command = commandsFactory.buildGetCacheEntryCommand(key, explicitFlags);
+      GetCacheEntryCommand command = commandsFactory.buildGetCacheEntryCommand(key, keyPartitioner.getSegment(key),
+            explicitFlags);
       return invoker.invokeAsync(ctx, command).thenApply(CacheEntry.class::cast);
    }
 
@@ -590,17 +634,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    private void transactionalRemoveGroup(String groupName, long explicitFlagsBitSet) {
-      final boolean onGoingTransaction = getOngoingTransaction() != null;
+      final boolean onGoingTransaction = getOngoingTransaction(true) != null;
       if (!onGoingTransaction) {
          tryBegin();
       }
       try {
-         InvocationContext context = getInvocationContextWithImplicitTransaction(false, UNBOUNDED);
+         InvocationContext context = getInvocationContextWithImplicitTransaction(UNBOUNDED);
          Map<K, V> keys = internalGetGroup(groupName, explicitFlagsBitSet, context);
          long removeFlags = addIgnoreReturnValuesFlag(explicitFlagsBitSet);
          for (K key : keys.keySet()) {
-            RemoveCommand command = createRemoveCommand(key, removeFlags, context);
-            executeCommandAndCommitIfNeeded(context, command);
+            executeCommandAndCommitIfNeeded(i -> context, createRemoveCommand(key, removeFlags), UNBOUNDED);
          }
          if (!onGoingTransaction) {
             tryCommit();
@@ -622,42 +665,62 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
          //executed. If the context is already populated, it throws a ClassCastException because the wrapForRemove is
          //not invoked.
          assertKeyNotNull(key);
-         InvocationContext ctx = getInvocationContextWithImplicitTransaction(false, 1);
-         RemoveCommand command = createRemoveCommand(key, removeFlags, ctx);
-         executeCommandAndCommitIfNeeded(ctx, command);
+         executeCommandAndCommitIfNeeded(contextBuilder, createRemoveCommand(key, removeFlags), 1);
       }
    }
 
    @Override
    public final V remove(Object key) {
-      return remove(key, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return remove(key, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
-   final V remove(Object key, long explicitFlags, InvocationContext ctx) {
+   final V remove(Object key, long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyNotNull(key);
-      RemoveCommand command = createRemoveCommand(key, explicitFlags, ctx);
-      return (V) executeCommandAndCommitIfNeeded(ctx, command);
+      RemoveCommand command = createRemoveCommand(key, explicitFlags);
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
-   @SuppressWarnings("unchecked")
-   private RemoveCommand createRemoveCommand(Object key, long explicitFlags, InvocationContext ctx) {
+   private RemoveCommand createRemoveCommand(Object key, long explicitFlags) {
       long flags = addUnsafeFlags(explicitFlags);
-      RemoveCommand command = commandsFactory.buildRemoveCommand(key, null, flags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return command;
+      return commandsFactory.buildRemoveCommand(key, null, keyPartitioner.getSegment(key), flags);
    }
 
    @Override
-   public void removeExpired(K key, V value, Long lifespan) {
-      InvocationContext ctx = getInvocationContextWithImplicitTransaction(false, 1);
-      RemoveExpiredCommand command = commandsFactory.buildRemoveExpiredCommand(key, value, lifespan);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
+   public CompletableFuture<Void> removeLifespanExpired(K key, V value, Long lifespan) {
+      return removeLifespanExpired(key, value, lifespan, EnumUtil.EMPTY_BIT_SET);
+   }
+
+   final CompletableFuture<Void> removeLifespanExpired(K key, V value, Long lifespan, long explicitFlags) {
+      RemoveExpiredCommand command = commandsFactory.buildRemoveExpiredCommand(key, value, keyPartitioner.getSegment(key),
+            lifespan, explicitFlags | FlagBitSets.SKIP_CACHE_LOAD);
+      // Remove expired returns a boolean - just ignore it, the caller just needs to know that the expired
+      // entry is removed when this completes
+      CompletableFuture<Boolean> completableFuture = performRemoveExpiredCommand(command);
+      return completableFuture.thenApply(b -> null);
+   }
+
+   @Override
+   public CompletableFuture<Boolean> removeMaxIdleExpired(K key, V value) {
+      return removeMaxIdleExpired(key, value, EnumUtil.EMPTY_BIT_SET);
+   }
+
+   final CompletableFuture<Boolean> removeMaxIdleExpired(K key, V value, long explicitFlags) {
+      RemoveExpiredCommand command = commandsFactory.buildRemoveExpiredCommand(key, value, keyPartitioner.getSegment(key),
+            explicitFlags | FlagBitSets.SKIP_CACHE_LOAD);
+      return performRemoveExpiredCommand(command);
+   }
+
+   private CompletableFuture<Boolean> performRemoveExpiredCommand(RemoveExpiredCommand command) {
+      Transaction ongoingTransaction = null;
+      try {
+         ongoingTransaction = suspendOngoingTransactionIfExists();
+         return executeCommandAndCommitIfNeededAsync(expiredContextBuilder, command, 1);
+      } catch (Exception e) {
+         if (log.isDebugEnabled()) log.debug("Caught exception while doing removeExpired()", e);
+         return CompletableFutures.completedExceptionFuture(e);
+      } finally {
+         resumePreviousOngoingTransaction(ongoingTransaction, true, "Had problems trying to resume a transaction after removeExpired()");
       }
-      // Send an expired remove command to everyone
-      executeCommandAndCommitIfNeeded(ctx, command);
    }
 
    @Override
@@ -855,7 +918,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       try {
          ongoingTransaction = suspendOngoingTransactionIfExists();
          // if the entry exists then this should be a no-op.
-         putIfAbsent(key, value, metadata, EnumUtil.mergeBitSets(PFER_FLAGS, explicitFlags));
+         putIfAbsent(key, value, metadata, EnumUtil.mergeBitSets(PFER_FLAGS, explicitFlags), pferContextBuilder);
       } catch (Exception e) {
          if (log.isDebugEnabled()) log.debug("Caught exception while doing putForExternalRead()", e);
       } finally {
@@ -874,7 +937,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
          log.evictionDisabled(name);
       }
       InvocationContext ctx = createSingleKeyNonTxInvocationContext();
-      EvictCommand command = commandsFactory.buildEvictCommand(key, explicitFlags);
+      EvictCommand command = commandsFactory.buildEvictCommand(key, keyPartitioner.getSegment(key), explicitFlags);
       invoker.invoke(ctx, command);
    }
 
@@ -899,6 +962,10 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    <C> void addListener(ListenerHolder listenerHolder, CacheEventFilter<? super K, ? super V> filter,
                         CacheEventConverter<? super K, ? super V, C> converter) {
       notifier.addListener(listenerHolder, filter, converter, null);
+   }
+
+   <C> void addListener(ListenerHolder listenerHolder, KeyFilter<? super K> filter) {
+      notifier.addListener(listenerHolder, filter);
    }
 
 
@@ -930,6 +997,13 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       notifier.addFilteredListener(listener, filter, converter, filterAnnotations);
    }
 
+   @Override
+   public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter,
+                                                    CacheEventConverter<? super K, ? super V, C> converter,
+                                                    Set<Class<? extends Annotation>> filterAnnotations) {
+      notifier.addStorageFormatFilteredListener(listener, filter, converter, filterAnnotations);
+   }
+
    <C> void addFilteredListener(ListenerHolder listener,
                                 CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter,
                                 Set<Class<? extends Annotation>> filterAnnotations) {
@@ -937,27 +1011,44 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    /**
-    * If this is a transactional cache and autoCommit is set to true then starts a transaction if this is not a
-    * transactional call.
+    * Creates an invocation context with an implicit transaction if it is required. An implicit transaction is created
+    * if there is no current transaction and autoCommit is enabled.
+    *
+    * @param keyCount how many keys are expected to be changed
+    * @return the invocation context
     */
-   InvocationContext getInvocationContextWithImplicitTransaction(boolean isPutForExternalRead, int keyCount) {
+   InvocationContext getInvocationContextWithImplicitTransaction(int keyCount) {
+      return getInvocationContextWithImplicitTransaction(keyCount, false);
+   }
+
+   /**
+    * Same as {@link #getInvocationContextWithImplicitTransaction(int)} except if <b>forceCreateTransaction</b> is true
+    * then autoCommit doesn't have to be enabled to start a new transaction.
+    *
+    * @param keyCount               how many keys are expected to be changed
+    * @param forceCreateTransaction if true then a transaction is always started if there wasn't one
+    * @return the invocation context
+    */
+   InvocationContext getInvocationContextWithImplicitTransaction(int keyCount, boolean forceCreateTransaction) {
       InvocationContext invocationContext;
       boolean txInjected = false;
       if (transactional) {
-         if (!isPutForExternalRead) {
-            Transaction transaction = getOngoingTransaction();
-            if (transaction == null && config.transaction().autoCommit()) {
-               transaction = tryBegin();
-               txInjected = true;
-            }
-            invocationContext = invocationContextFactory.createInvocationContext(transaction, txInjected);
-         } else {
-            invocationContext = invocationContextFactory.createSingleKeyNonTxInvocationContext();
+         Transaction transaction = getOngoingTransaction(true);
+         if (transaction == null && (forceCreateTransaction || config.transaction().autoCommit())) {
+            transaction = tryBegin();
+            txInjected = true;
          }
+         invocationContext = invocationContextFactory.createInvocationContext(transaction, txInjected);
       } else {
          invocationContext = invocationContextFactory.createInvocationContext(true, keyCount);
       }
       return invocationContext;
+   }
+
+   private InvocationContext putForExternalReadContext(int keyCount) {
+      return transactional ?
+            invocationContextFactory.createSingleKeyNonTxInvocationContext() :
+            invocationContextFactory.createInvocationContext(true, keyCount);
    }
 
    @Override
@@ -997,17 +1088,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       }
       assertKeyNotNull(deltaAwareValueKey);
       InvocationContext ctx = invocationContextFactory.createInvocationContext(true, 1);
-      ReadWriteKeyValueCommand<K, Object, Object, Object> command = createApplyDelta(deltaAwareValueKey, delta, FlagBitSets.IGNORE_RETURN_VALUES, ctx);
+      ReadWriteKeyValueCommand<K, Object, Object, Object> command = createApplyDelta(deltaAwareValueKey, delta, FlagBitSets.IGNORE_RETURN_VALUES);
+      checkLockOwner(ctx, command);
       invoker.invoke(ctx, command);
    }
 
-   private ReadWriteKeyValueCommand<K, Object, Object, Object> createApplyDelta(K deltaAwareValueKey, Delta delta, long explicitFlags, InvocationContext ctx) {
+   private ReadWriteKeyValueCommand<K, Object, Object, Object> createApplyDelta(K deltaAwareValueKey, Delta delta, long explicitFlags) {
       ReadWriteKeyValueCommand<K, Object, Object, Object> command = commandsFactory.buildReadWriteKeyValueCommand(
-            deltaAwareValueKey, delta, new ApplyDelta<>(marshaller), Params.create(), getKeyDataConversion(), getValueDataConversion());
+            deltaAwareValueKey, delta, new ApplyDelta<>(marshaller), keyPartitioner.getSegment(deltaAwareValueKey),
+            Params.create(), getKeyDataConversion(), getValueDataConversion());
       command.setFlagsBitSet(explicitFlags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
       return command;
    }
 
@@ -1018,6 +1108,10 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    )
    public void start() {
       componentRegistry.start();
+
+      if (stateTransferManager != null) {
+         stateTransferManager.waitForInitialStateTransferToComplete();
+      }
       if (log.isDebugEnabled()) log.debugf("Started cache %s on %s", getName(), getCacheManager().getAddress());
    }
 
@@ -1045,7 +1139,6 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
             requestClusterWideShutdown();
          }
       }
-
    }
 
    private void requestClusterWideShutdown() {
@@ -1143,8 +1236,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public AdvancedCache<K, V> lockAs(Object lockOwner) {
-      Objects.nonNull(lockOwner);
-      return new DecoratedCache<>(this, lockOwner);
+      return new DecoratedCache<>(this, requireNonNull(lockOwner, "lockOwner can't be null"));
    }
 
    @Override
@@ -1275,7 +1367,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public String toString() {
-      return "Cache '" + name + "'@" + (config != null && config.clustering().cacheMode().isClustered() ? getCacheManager().getAddress() : Util.hexIdHashCode(getCacheManager()));
+      return "Cache '" + name + "'@" + (config != null && config.clustering().cacheMode().isClustered() ? getRpcManager().getAddress() : Util.hexIdHashCode(getCacheManager()));
    }
 
    @Override
@@ -1326,31 +1418,26 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return put(key, value, metadata);
    }
 
-   @SuppressWarnings("unchecked")
-   final V put(K key, V value, Metadata metadata, long explicitFlags, InvocationContext ctx) {
+   final V put(K key, V value, Metadata metadata, long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
       DataWriteCommand command;
       // CACHE_MODE_LOCAL is used for example when preloading - the entry has empty changeset (unless it's better
       // defined) and that wouldn't store the value properly.
       if (value instanceof Delta) {
-         command = createApplyDelta(key, (Delta) value, explicitFlags, ctx);
+         command = createApplyDelta(key, (Delta) value, explicitFlags);
       } else if (value instanceof DeltaAware && (explicitFlags & FlagBitSets.CACHE_MODE_LOCAL) == 0) {
-         command = createApplyDelta(key, ((DeltaAware) value).delta(), explicitFlags, ctx);
+         command = createApplyDelta(key, ((DeltaAware) value).delta(), explicitFlags);
       } else {
-         command = createPutCommand(key, value, metadata, explicitFlags, ctx);
+         command = createPutCommand(key, value, metadata, explicitFlags);
       }
-      return (V) executeCommandAndCommitIfNeeded(ctx, command);
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
    @SuppressWarnings("unchecked")
-   private PutKeyValueCommand createPutCommand(K key, V value, Metadata metadata, long explicitFlags, InvocationContext ctx) {
+   private PutKeyValueCommand createPutCommand(K key, V value, Metadata metadata, long explicitFlags) {
       long flags = addUnsafeFlags(explicitFlags);
       Metadata merged = applyDefaultMetadata(metadata);
-      PutKeyValueCommand command = commandsFactory.buildPutKeyValueCommand(key, value, merged, flags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return command;
+      return commandsFactory.buildPutKeyValueCommand(key, value, keyPartitioner.getSegment(key), merged, flags);
    }
 
    private long addIgnoreReturnValuesFlag(long flagBitSet) {
@@ -1370,36 +1457,30 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return putIfAbsent(key, value, metadata, EnumUtil.EMPTY_BIT_SET);
    }
 
-   private final V putIfAbsent(K key, V value, Metadata metadata, long explicitFlags) {
-      return putIfAbsent(key, value, metadata, explicitFlags, getInvocationContextWithImplicitTransaction(
-            EnumUtil.containsAny(explicitFlags, FlagBitSets.PUT_FOR_EXTERNAL_READ), 1));
+   private V putIfAbsent(K key, V value, Metadata metadata, long explicitFlags) {
+      return putIfAbsent(key, value, metadata, explicitFlags, contextBuilder);
    }
 
-   @SuppressWarnings("unchecked")
-   final V putIfAbsent(K key, V value, Metadata metadata, long explicitFlags, InvocationContext ctx) {
+   final V putIfAbsent(K key, V value, Metadata metadata, long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
       DataWriteCommand command;
       if (value instanceof Delta) {
-         command = createApplyDelta(key, (Delta) value, explicitFlags, ctx);
+         command = createApplyDelta(key, (Delta) value, explicitFlags);
       } else if (value instanceof DeltaAware && (explicitFlags & FlagBitSets.CACHE_MODE_LOCAL) == 0) {
-         command = createApplyDelta(key, ((DeltaAware) value).delta(), explicitFlags, ctx);
+         command = createApplyDelta(key, ((DeltaAware) value).delta(), explicitFlags);
       } else {
-         command = createPutIfAbsentCommand(key, value, metadata, explicitFlags, ctx);
+         command = createPutIfAbsentCommand(key, value, metadata, explicitFlags);
       }
-      return (V) executeCommandAndCommitIfNeeded(ctx, command);
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
-   @SuppressWarnings("unchecked")
-   private PutKeyValueCommand createPutIfAbsentCommand(K key, V value, Metadata metadata,
-                                                       long explicitFlags, InvocationContext ctx) {
+   private PutKeyValueCommand createPutIfAbsentCommand(K key, V value, Metadata metadata, long explicitFlags) {
       long flags = addUnsafeFlags(explicitFlags);
       Metadata merged = applyDefaultMetadata(metadata);
-      PutKeyValueCommand command = commandsFactory.buildPutKeyValueCommand(key, value, merged, flags);
+      PutKeyValueCommand command = commandsFactory.buildPutKeyValueCommand(key, value, keyPartitioner.getSegment(key),
+            merged, flags);
       command.setPutIfAbsent(true);
       command.setValueMatcher(ValueMatcher.MATCH_EXPECTED);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
       return command;
    }
 
@@ -1411,32 +1492,29 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       putAll(map, metadata);
    }
 
-   final void putAll(Map<? extends K, ? extends V> map, Metadata metadata, long explicitFlags, InvocationContext ctx) {
+   final void putAll(Map<? extends K, ? extends V> map, Metadata metadata, long explicitFlags, ContextBuilder contextBuilder) {
       // Vanilla PutMapCommand returns previous values; add IGNORE_RETURN_VALUES as the API will drop the return value.
       // Interceptors are free to clear this flag if appropriate (since interceptors are the only consumers of the
       // return value).
       explicitFlags = EnumUtil.mergeBitSets(explicitFlags, FlagBitSets.IGNORE_RETURN_VALUES);
-      PutMapCommand command = createPutAllCommand(map, metadata, explicitFlags, ctx);
-      executeCommandAndCommitIfNeeded(ctx, command);
+      PutMapCommand command = createPutAllCommand(map, metadata, explicitFlags);
+      executeCommandAndCommitIfNeeded(contextBuilder, command, map.size());
    }
 
    public final Map<K, V> getAndPutAll(Map<? extends K, ? extends V> map) {
-      return getAndPutAll(map, defaultMetadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, map.size()));
+      return getAndPutAll(map, defaultMetadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
-   final Map<K, V> getAndPutAll(Map<? extends K, ? extends V> map, Metadata metadata, long explicitFlags, InvocationContext ctx) {
-      PutMapCommand command = createPutAllCommand(map, metadata, explicitFlags, ctx);
-      return dropNullEntries((Map<K, V>) executeCommandAndCommitIfNeeded(ctx, command));
+   final Map<K, V> getAndPutAll(Map<? extends K, ? extends V> map, Metadata metadata, long explicitFlags,
+                                ContextBuilder contextBuilder) {
+      PutMapCommand command = createPutAllCommand(map, metadata, explicitFlags);
+      return dropNullEntries(executeCommandAndCommitIfNeeded(contextBuilder, command, map.size()));
    }
 
-   private PutMapCommand createPutAllCommand(Map<? extends K, ? extends V> map, Metadata metadata, long explicitFlags, InvocationContext ctx) {
+   private PutMapCommand createPutAllCommand(Map<? extends K, ? extends V> map, Metadata metadata, long explicitFlags) {
       InfinispanCollections.assertNotNullEntries(map, "map");
       Metadata merged = applyDefaultMetadata(metadata);
-      PutMapCommand command = commandsFactory.buildPutMapCommand(map, merged, explicitFlags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return command;
+      return commandsFactory.buildPutMapCommand(map, merged, explicitFlags);
    }
 
    @Override
@@ -1447,22 +1525,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return replace(key, value, metadata);
    }
 
-   @SuppressWarnings("unchecked")
-   final V replace(K key, V value, Metadata metadata, long explicitFlags, InvocationContext ctx) {
+   final V replace(K key, V value, Metadata metadata, long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
-      ReplaceCommand command = createReplaceCommand(key, value, metadata, explicitFlags, ctx);
-      return (V) executeCommandAndCommitIfNeeded(ctx, command);
+      ReplaceCommand command = createReplaceCommand(key, value, metadata, explicitFlags);
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
-   @SuppressWarnings("unchecked")
-   private ReplaceCommand createReplaceCommand(K key, V value, Metadata metadata, long explicitFlags, InvocationContext ctx) {
+   private ReplaceCommand createReplaceCommand(K key, V value, Metadata metadata, long explicitFlags) {
       long flags = addUnsafeFlags(explicitFlags);
       Metadata merged = applyDefaultMetadata(metadata);
-      ReplaceCommand command = commandsFactory.buildReplaceCommand(key, null, value, merged, flags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return command;
+      return commandsFactory.buildReplaceCommand(key, null, value, keyPartitioner.getSegment(key), merged, flags);
    }
 
    @Override
@@ -1473,42 +1545,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return replace(key, oldValue, value, metadata);
    }
 
-   final boolean replace(K key, V oldValue, V value, Metadata metadata, long explicitFlags, InvocationContext ctx) {
+   final boolean replace(K key, V oldValue, V value, Metadata metadata, long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
       assertValueNotNull(oldValue);
-      ReplaceCommand command = createReplaceConditionalCommand(key, oldValue, value, metadata, explicitFlags, ctx);
-      return (Boolean) executeCommandAndCommitIfNeeded(ctx, command);
+      ReplaceCommand command = createReplaceConditionalCommand(key, oldValue, value, metadata, explicitFlags);
+      return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
-   private ReplaceCommand createReplaceConditionalCommand(K key, V oldValue, V value, Metadata metadata,
-                                                          long explicitFlags, InvocationContext ctx) {
+   private ReplaceCommand createReplaceConditionalCommand(K key, V oldValue, V value, Metadata metadata, long explicitFlags) {
       Metadata merged = applyDefaultMetadata(metadata);
-      ReplaceCommand command = commandsFactory.buildReplaceCommand(key, oldValue, value, merged, explicitFlags);
-      if (ctx.getLockOwner() == null) {
-         ctx.setLockOwner(command.getKeyLockOwner());
-      }
-      return command;
-   }
-
-   /**
-    * Wraps a return value as a future, if needed.  Typically, if the stack, operation and configuration support
-    * handling of futures, this retval is already a future in which case this method does nothing except cast to
-    * future.
-    * <p/>
-    * Otherwise, a future wrapper is created, which has already completed and simply returns the retval.  This is used
-    * for API consistency.
-    *
-    * @param retval return value to wrap
-    * @param <X>    contents of the future
-    * @return a future
-    */
-   @SuppressWarnings("unchecked")
-   private <X> CompletableFuture<X> wrapInFuture(final Object retval) {
-      if (retval instanceof CompletableFuture) {
-         return (CompletableFuture<X>) retval;
-      } else {
-         return CompletableFuture.completedFuture((X) retval);
-      }
+      return commandsFactory.buildReplaceCommand(key, oldValue, value, keyPartitioner.getSegment(key), merged, explicitFlags);
    }
 
    @Override
@@ -1519,10 +1565,10 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return putAsync(key, value, metadata);
    }
 
-   final CompletableFuture<V> putAsync(final K key, final V value, final Metadata metadata, final long explicitFlags, InvocationContext ctx) {
+   final CompletableFuture<V> putAsync(final K key, final V value, final Metadata metadata, final long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
-      PutKeyValueCommand command = createPutCommand(key, value, metadata, explicitFlags, ctx);
-      return executeCommandAndCommitIfNeededAsync(ctx, command);
+      PutKeyValueCommand command = createPutCommand(key, value, metadata, explicitFlags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
    }
 
    @Override
@@ -1535,14 +1581,14 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public final CompletableFuture<Void> putAllAsync(final Map<? extends K, ? extends V> data, final Metadata metadata) {
-      return putAllAsync(data, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, data.size()));
+      return putAllAsync(data, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    final CompletableFuture<Void> putAllAsync(final Map<? extends K, ? extends V> data, final Metadata metadata,
-                                             long explicitFlags, InvocationContext ctx) {
+                                             long explicitFlags, ContextBuilder contextBuilder) {
       explicitFlags = EnumUtil.mergeBitSets(explicitFlags, FlagBitSets.IGNORE_RETURN_VALUES);
-      PutMapCommand command = createPutAllCommand(data, metadata, explicitFlags, ctx);
-      return executeCommandAndCommitIfNeededAsync(ctx, command);
+      PutMapCommand command = createPutAllCommand(data, metadata, explicitFlags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, data.size());
    }
 
    @Override
@@ -1566,37 +1612,37 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public final CompletableFuture<V> putIfAbsentAsync(final K key, final V value, final Metadata metadata) {
-      return putIfAbsentAsync(key, value, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return putIfAbsentAsync(key, value, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    final CompletableFuture<V> putIfAbsentAsync(final K key, final V value, final Metadata metadata,
-                                               final long explicitFlags, InvocationContext ctx) {
+                                               final long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
-      PutKeyValueCommand command = createPutIfAbsentCommand(key, value, metadata, explicitFlags, ctx);
-      return executeCommandAndCommitIfNeededAsync(ctx, command);
+      PutKeyValueCommand command = createPutIfAbsentCommand(key, value, metadata, explicitFlags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
    }
 
    @Override
    public final CompletableFuture<V> removeAsync(Object key) {
-      return removeAsync(key, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return removeAsync(key, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
-   final CompletableFuture<V> removeAsync(final Object key, final long explicitFlags, InvocationContext ctx) {
+   final CompletableFuture<V> removeAsync(final Object key, final long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyNotNull(key);
-      RemoveCommand command = createRemoveCommand(key, explicitFlags, ctx);
-      return executeCommandAndCommitIfNeededAsync(ctx, command);
+      RemoveCommand command = createRemoveCommand(key, explicitFlags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
    }
 
    @Override
    public final CompletableFuture<Boolean> removeAsync(Object key, Object value) {
-      return removeAsync(key, value, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return removeAsync(key, value, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    final CompletableFuture<Boolean> removeAsync(final Object key, final Object value, final long explicitFlags,
-                                                InvocationContext ctx) {
+                                                ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
-      RemoveCommand command = createRemoveConditionalCommand(key, value, explicitFlags, ctx);
-      return executeCommandAndCommitIfNeededAsync(ctx, command);
+      RemoveCommand command = commandsFactory.buildRemoveCommand(key, value, keyPartitioner.getSegment(key), explicitFlags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
    }
 
    @Override
@@ -1609,14 +1655,14 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public final CompletableFuture<V> replaceAsync(final K key, final V value, final Metadata metadata) {
-      return replaceAsync(key, value, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return replaceAsync(key, value, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    final CompletableFuture<V> replaceAsync(final K key, final V value, final Metadata metadata,
-                                           final long explicitFlags, InvocationContext ctx) {
+                                           final long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
-      ReplaceCommand command = createReplaceCommand(key, value, metadata, explicitFlags, ctx);
-      return executeCommandAndCommitIfNeededAsync(ctx, command);
+      ReplaceCommand command = createReplaceCommand(key, value, metadata, explicitFlags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
    }
 
    @Override
@@ -1628,17 +1674,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
-   public final CompletableFuture<Boolean> replaceAsync(final K key, final V oldValue, final V newValue,
-                                                 final Metadata metadata) {
-      return replaceAsync(key, oldValue, newValue, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+   public final CompletableFuture<Boolean> replaceAsync(final K key, final V oldValue, final V newValue, final Metadata metadata) {
+      return replaceAsync(key, oldValue, newValue, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    final CompletableFuture<Boolean> replaceAsync(final K key, final V oldValue, final V newValue,
-                                                 final Metadata metadata, final long explicitFlags, InvocationContext ctx) {
+                                                 final Metadata metadata, final long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, newValue);
       assertValueNotNull(oldValue);
-      ReplaceCommand command = createReplaceConditionalCommand(key, oldValue, newValue, metadata, explicitFlags, ctx);
-      return executeCommandAndCommitIfNeededAsync(ctx, command);
+      ReplaceCommand command = createReplaceConditionalCommand(key, oldValue, newValue, metadata, explicitFlags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
    }
 
    @Override
@@ -1649,8 +1694,154 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @SuppressWarnings("unchecked")
    CompletableFuture<V> getAsync(final K key, final long explicitFlags, InvocationContext ctx) {
       assertKeyNotNull(key);
-      GetKeyValueCommand command = commandsFactory.buildGetKeyValueCommand(key, explicitFlags);
+      GetKeyValueCommand command = commandsFactory.buildGetKeyValueCommand(key, keyPartitioner.getSegment(key), explicitFlags);
       return (CompletableFuture<V>) invoker.invokeAsync(ctx, command);
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+      return computeAsync(key, remappingFunction, false);
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return computeAsyncInternal(key, remappingFunction, false, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET));
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(defaultMetadata.maxIdle(), MILLISECONDS).build();
+      return computeAsyncInternal(key, remappingFunction, false, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET), contextBuilder);
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(maxIdle, maxIdleUnit).build();
+      return computeAsyncInternal(key, remappingFunction, false, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET), contextBuilder);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+      return computeAsync(key, remappingFunction, true);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return computeAsyncInternal(key, remappingFunction, true, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET));
+   }
+
+   private CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, boolean computeIfPresent) {
+      return computeAsyncInternal(key, remappingFunction, computeIfPresent, applyDefaultMetadata(defaultMetadata), addUnsafeFlags(EnumUtil.EMPTY_BIT_SET));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(defaultMetadata.maxIdle(), MILLISECONDS).build();
+      return computeAsyncInternal(key, remappingFunction, false, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET), contextBuilder);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(maxIdle, maxIdleUnit).build();
+      return computeAsyncInternal(key, remappingFunction, true, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET), contextBuilder);
+   }
+
+   private CompletableFuture<V> computeAsyncInternal(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, boolean computeIfPresent, Metadata metadata, long flags) {
+      return computeAsyncInternal(key, remappingFunction, computeIfPresent, metadata, flags, contextBuilder);
+   }
+
+   CompletableFuture<V> computeAsyncInternal(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, boolean computeIfPresent,
+                                             Metadata metadata, long flags, ContextBuilder contextBuilder) {
+      assertKeyNotNull(key);
+      assertFunctionNotNull(remappingFunction);
+      ComputeCommand command = commandsFactory.buildComputeCommand(key, remappingFunction, computeIfPresent,
+            keyPartitioner.getSegment(key), metadata, flags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction) {
+      return computeIfAbsentAsync(key, mappingFunction, defaultMetadata);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata) {
+      return computeIfAbsentAsyncInternal(key, mappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(defaultMetadata.maxIdle(), MILLISECONDS).build();
+      return computeIfAbsentAsyncInternal(key, mappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET), contextBuilder);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(maxIdle, maxIdleUnit).build();
+      return computeIfAbsentAsyncInternal(key, mappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET), contextBuilder);
+   }
+
+   CompletableFuture<V> computeIfAbsentAsyncInternal(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata, long flags,
+                                                     ContextBuilder contextBuilder) {
+      assertKeyNotNull(key);
+      assertFunctionNotNull(mappingFunction);
+      ComputeIfAbsentCommand command = commandsFactory.buildComputeIfAbsentCommand(key, mappingFunction,
+            keyPartitioner.getSegment(key), metadata, flags);
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
+      return mergeInternalAsync(key, value, remappingFunction, defaultMetadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(defaultMetadata.maxIdle(), MILLISECONDS).build();
+      return mergeInternalAsync(key, value, remappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit idleTimeUnit) {
+      Metadata metadata = new EmbeddedMetadata.Builder()
+            .lifespan(lifespan, lifespanUnit)
+            .maxIdle(maxIdleTime, idleTimeUnit).build();
+      return mergeInternalAsync(key, value, remappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return mergeInternalAsync(key, value, remappingFunction, metadata, addUnsafeFlags(EnumUtil.EMPTY_BIT_SET),
+            contextBuilder);
+   }
+
+   CompletableFuture<V> mergeInternalAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, Metadata metadata,
+                                           long flags, ContextBuilder contextBuilder) {
+      assertKeyNotNull(key);
+      assertValueNotNull(value);
+      assertFunctionNotNull(remappingFunction);
+      ReadWriteKeyCommand<K, V, V> command = commandsFactory.buildReadWriteKeyCommand(key,
+            new MergeFunction<>(value, remappingFunction, metadata), keyPartitioner.getSegment(key),
+            Params.fromFlagsBitSet(flags), getKeyDataConversion(), getValueDataConversion());
+      return executeCommandAndCommitIfNeededAsync(contextBuilder, command, 1);
    }
 
    @Override
@@ -1694,12 +1885,12 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return this; // NO-OP
    }
 
-   private Transaction getOngoingTransaction() {
+   private Transaction getOngoingTransaction(boolean includeBatchTx) {
       try {
          Transaction transaction = null;
          if (transactionManager != null) {
             transaction = transactionManager.getTransaction();
-            if (transaction == null && batchingEnabled) {
+            if (includeBatchTx && transaction == null && batchingEnabled) {
                transaction = batchContainer.getBatchTransaction();
             }
          }
@@ -1709,64 +1900,87 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       }
    }
 
-   Object executeCommandAndCommitIfNeeded(InvocationContext ctx, VisitableCommand command) {
-      final boolean txInjected = isTxInjected(ctx);
-      Object result;
+   /**
+    * Executes a {@link VisitableCommand}.
+    * <p>
+    * This method creates the {@link InvocationContext} using {@link ContextBuilder} and initializes it.
+    * <p>
+    * If the cache is transactional and no transaction is running, a transaction is created and committed for the
+    * command (i.e. an injected transaction)
+    */
+   private <T> T executeCommandAndCommitIfNeeded(ContextBuilder contextBuilder, VisitableCommand command,
+                                                 int keyCount) {
+      InvocationContext ctx = contextBuilder.create(keyCount);
+      checkLockOwner(ctx, command);
+      //noinspection unchecked
+      return isTxInjected(ctx) ?
+            (T) executeCommandWithInjectedTx(ctx, command) :
+            (T) invoker.invoke(ctx, command);
+   }
+
+   /**
+    * The asynchronous method of {@link #executeCommandAndCommitIfNeeded(ContextBuilder, VisitableCommand, int)}.
+    */
+   private <T> CompletableFuture<T> executeCommandAndCommitIfNeededAsync(ContextBuilder contextBuilder, VisitableCommand command, int keyCount) {
+      InvocationContext ctx = contextBuilder.create(keyCount);
+      checkLockOwner(ctx, command);
+      //noinspection unchecked
+      return isTxInjected(ctx) ?
+            executeCommandAsyncWithInjectedTx(ctx, command) :
+            (CompletableFuture<T>) invoker.invokeAsync(ctx, command);
+   }
+
+   /**
+    * Executes the {@link VisitableCommand} with an injected transaction.
+    */
+   private Object executeCommandWithInjectedTx(InvocationContext ctx, VisitableCommand command) {
+      final Object result;
       try {
          result = invoker.invoke(ctx, command);
       } catch (Throwable e) {
-         if (txInjected) tryRollback();
+         tryRollback();
          throw e;
       }
-
-      if (txInjected) {
-         tryCommit();
-      }
-
+      tryCommit();
       return result;
    }
 
-   private <T> CompletableFuture<T> executeCommandAndCommitIfNeededAsync(InvocationContext ctx, VisitableCommand command) {
-      final boolean txInjected = isTxInjected(ctx);
+   /**
+    * The asynchronous method of {@link #executeCommandWithInjectedTx(InvocationContext, VisitableCommand)}
+    */
+   private <T> CompletableFuture<T> executeCommandAsyncWithInjectedTx(InvocationContext ctx, VisitableCommand command) {
       CompletableFuture<T> cf;
       final Transaction implicitTransaction;
       try {
          // interceptors must not access thread-local transaction anyway
-         if (txInjected) {
-            implicitTransaction = transactionManager.suspend();
-            assert implicitTransaction != null;
-         } else {
-            implicitTransaction = null;
-         }
+         implicitTransaction = transactionManager.suspend();
+         assert implicitTransaction != null;
+         //noinspection unchecked
          cf = (CompletableFuture<T>) invoker.invokeAsync(ctx, command);
       } catch (SystemException e) {
          throw new CacheException("Cannot suspend implicit transaction", e);
       } catch (Throwable e) {
-         if (txInjected) tryRollback();
+         tryRollback();
          throw e;
       }
-      if (txInjected) {
-         return cf.handle((result, throwable) -> {
-            if (throwable != null) {
-               try {
-                  implicitTransaction.rollback();
-               } catch (SystemException e) {
-                  log.trace("Could not rollback", e);
-                  throwable.addSuppressed(e);
-               }
-               throw CompletableFutures.asCompletionException(throwable);
-            }
+      return cf.handle((result, throwable) -> {
+         if (throwable != null) {
             try {
-               implicitTransaction.commit();
-            } catch (Exception e) {
-               log.couldNotCompleteInjectedTransaction(e);
-               throw CompletableFutures.asCompletionException(e);
+               implicitTransaction.rollback();
+            } catch (SystemException e) {
+               log.trace("Could not rollback", e);
+               throwable.addSuppressed(e);
             }
-            return result;
-         });
-      } else {
-         return cf;
-      }
+            throw CompletableFutures.asCompletionException(throwable);
+         }
+         try {
+            implicitTransaction.commit();
+         } catch (Exception e) {
+            log.couldNotCompleteInjectedTransaction(e);
+            throw CompletableFutures.asCompletionException(e);
+         }
+         return result;
+      });
    }
 
 
@@ -1780,7 +1994,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       }
       try {
          transactionManager.begin();
-         final Transaction transaction = getOngoingTransaction();
+         final Transaction transaction = getOngoingTransaction(true);
          if (trace) {
             log.tracef("Implicit transaction started! Transaction: %s", transaction);
          }
@@ -1805,7 +2019,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
          return;
       }
       if (trace)
-         log.tracef("Committing transaction as it was implicit: %s", getOngoingTransaction());
+         log.tracef("Committing transaction as it was implicit: %s", getOngoingTransaction(true));
       try {
          transactionManager.commit();
       } catch (Throwable e) {
@@ -1816,8 +2030,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public ClassLoader getClassLoader() {
-      ClassLoader classLoader = globalCfg.classLoader();
-      return classLoader != null ? classLoader : Thread.currentThread().getContextClassLoader();
+      return globalCfg.classLoader();
    }
 
    @Override
@@ -1827,12 +2040,12 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public V put(K key, V value, Metadata metadata) {
-      return put(key, value, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return put(key, value, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    @Override
    public void putAll(Map<? extends K, ? extends V> map, Metadata metadata) {
-      putAll(map, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, map.size()));
+      putAll(map, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    private Metadata applyDefaultMetadata(Metadata metadata) {
@@ -1845,12 +2058,12 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public V replace(K key, V value, Metadata metadata) {
-      return replace(key, value, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return replace(key, value, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    @Override
    public boolean replace(K key, V oldValue, V value, Metadata metadata) {
-      return replace(key, oldValue, value, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return replace(key, oldValue, value, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    @Override
@@ -1860,11 +2073,11 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public CompletableFuture<V> putAsync(K key, V value, Metadata metadata) {
-      return putAsync(key, value, metadata, EnumUtil.EMPTY_BIT_SET, getInvocationContextWithImplicitTransaction(false, 1));
+      return putAsync(key, value, metadata, EnumUtil.EMPTY_BIT_SET, contextBuilder);
    }
 
    private Transaction suspendOngoingTransactionIfExists() {
-      final Transaction tx = getOngoingTransaction();
+      final Transaction tx = getOngoingTransaction(false);
       if (tx != null) {
          try {
             transactionManager.suspend();
@@ -1899,6 +2112,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    )
    public Properties getConfigurationAsProperties() {
       return new PropertyFormatter().format(config);
+   }
+
+   private static void checkLockOwner(InvocationContext context, VisitableCommand command) {
+      if (context.getLockOwner() == null && command instanceof RemoteLockCommand) {
+         context.setLockOwner(((RemoteLockCommand) command).getKeyLockOwner());
+      }
+   }
+
+   interface ContextBuilder {
+      InvocationContext create(int keyCount);
    }
 
 }

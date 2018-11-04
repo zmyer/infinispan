@@ -1,8 +1,6 @@
 package org.infinispan.xsite.statetransfer;
 
 import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
-import static org.infinispan.persistence.spi.AdvancedCacheLoader.CacheLoaderTask;
-import static org.infinispan.persistence.spi.AdvancedCacheLoader.TaskContext;
 import static org.infinispan.remoting.transport.RetryOnFailureXSiteCommand.MaxRetriesPolicy;
 import static org.infinispan.remoting.transport.RetryOnFailureXSiteCommand.RetryPolicy;
 import static org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand.StateTransferControl.FINISH_SEND;
@@ -24,12 +22,12 @@ import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.configuration.cache.BackupConfiguration;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.XSiteStateTransferConfiguration;
-import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
-import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.remoting.rpc.RpcManager;
@@ -37,10 +35,11 @@ import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.RetryOnFailureXSiteCommand;
 import org.infinispan.statetransfer.StateTransferLock;
 import org.infinispan.util.concurrent.CompletableFutures;
-import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.infinispan.xsite.XSiteBackup;
+
+import io.reactivex.Flowable;
 
 /**
  * It contains the logic to send state to another site.
@@ -51,14 +50,13 @@ import org.infinispan.xsite.XSiteBackup;
 public class XSiteStateProviderImpl implements XSiteStateProvider {
 
    private static final int DEFAULT_CHUNK_SIZE = 1024;
-   private static final ExecutorService EXECUTOR_SERVICE = new WithinThreadExecutor();
    private static final Log log = LogFactory.getLog(XSiteStateProviderImpl.class);
    private static final boolean trace = log.isTraceEnabled();
    private static final boolean debug = log.isDebugEnabled();
 
    private final ConcurrentMap<String, StatePushTask> runningStateTransfer;
 
-   @Inject private DataContainer<?, ?> dataContainer;
+   @Inject private InternalDataContainer<?, ?> dataContainer;
    @Inject private PersistenceManager persistenceManager;
    @Inject private ClusteringDependentLogic clusteringDependentLogic;
    @Inject private CommandsFactory commandsFactory;
@@ -66,7 +64,7 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
    @Inject @ComponentName(value = ASYNC_TRANSPORT_EXECUTOR)
    private ExecutorService executorService;
    @Inject private Configuration configuration;
-   @Inject private XSiteStateTransferManager stateTransferManager;
+   @Inject private ComponentRef<XSiteStateTransferManager> stateTransferManager;
    @Inject private StateTransferLock stateTransferLock;
 
    public XSiteStateProviderImpl() {
@@ -99,7 +97,7 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
 
       //in case of the coordinator leaves before the command is processed!
       if (rpcManager.getAddress().equals(rpcManager.getMembers().get(0)) && !rpcManager.getMembers().contains(origin)) {
-         stateTransferManager.becomeCoordinator(siteName);
+         stateTransferManager.running().becomeCoordinator(siteName);
       }
    }
 
@@ -137,7 +135,7 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
       if (rpcManager.getAddress().equals(origin)) {
          executorService.submit((Callable<Void>) () -> {
             try {
-               stateTransferManager.notifyStatePushFinished(siteName, origin, !error);
+               stateTransferManager.running().notifyStatePushFinished(siteName, origin, !error);
             } catch (Throwable throwable) {
                //ignored
             }
@@ -257,14 +255,25 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
                if (debug) {
                   log.debugf("[X-Site State Transfer - %s] start Persistence iteration", xSiteBackup.getSiteName());
                }
-               StateTransferCacheLoaderTask task = new StateTransferCacheLoaderTask(xSiteBackup, chunk, this);
                try {
-                  stProvider.process(k -> shouldSendKey(k) && !dataContainer.containsKey(k), task, EXECUTOR_SERVICE, true, true);
+                  Flowable.fromPublisher(stProvider.publishEntries(k -> shouldSendKey(k) && !dataContainer.containsKey(k), true, true))
+                        .map(XSiteState::fromCacheLoader)
+                        .takeUntil(l -> canceled)
+                        .buffer(chunkSize <= 0 ? Integer.MAX_VALUE : chunkSize)
+                        // We want the CacheException to be thrown to the catch block
+                        .blockingForEach(l -> {
+                           try {
+                              sendFromSharedBuffer(xSiteBackup, l, this);
+                           } catch (Throwable throwable) {
+                              // This will terminate the flowable early
+                              throw new CacheException(throwable);
+                           }
+                        });
+
                   if (canceled) {
                      log.debugf("[X-Site State Transfer - %s] State transfer canceled!", xSiteBackup.getSiteName());
                      return;
                   }
-                  task.sendRemainingState();
                } catch (CacheException e) {
                   error = true;
                   log.failedLoadingKeysFromCacheStore(e);
@@ -298,46 +307,6 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
                "origin=" + origin +
                ", canceled=" + canceled +
                '}';
-      }
-   }
-
-   private class StateTransferCacheLoaderTask implements CacheLoaderTask<Object, Object> {
-
-      private final List<XSiteState> chunk;
-      private final XSiteBackup xSiteBackup;
-      private final StatePushTask task;
-
-      private StateTransferCacheLoaderTask(XSiteBackup xSiteBackup, List<XSiteState> chunk, StatePushTask task) {
-         this.xSiteBackup = xSiteBackup;
-         this.chunk = chunk;
-         this.task = task;
-      }
-
-      @Override
-      public void processEntry(MarshalledEntry<Object, Object> marshalledEntry, TaskContext taskContext)
-            throws InterruptedException {
-         if (task.canceled) {
-            taskContext.stop();
-            log.debugf("[X-Site State Transfer - %s] State transfer canceled!", xSiteBackup.getSiteName());
-            return;
-         }
-         if (task.chunkSize > 0 && chunk.size() == task.chunkSize) {
-            try {
-               sendFromSharedBuffer(xSiteBackup, chunk, task);
-            } catch (Throwable t) {
-               log.unableToSendXSiteState(xSiteBackup.getSiteName(), t);
-               taskContext.stop();
-            }
-            chunk.clear();
-         }
-
-         chunk.add(XSiteState.fromCacheLoader(marshalledEntry));
-      }
-
-      public void sendRemainingState() throws Throwable {
-         if (chunk.size() > 0) {
-            sendFromSharedBuffer(xSiteBackup, chunk, task);
-         }
       }
    }
 }

@@ -2,6 +2,7 @@ package org.infinispan.rest;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JSON_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT_TYPE;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OCTET_STREAM;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OCTET_STREAM_TYPE;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_SERIALIZED_OBJECT;
@@ -54,8 +55,6 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
 
    protected abstract ConfigurationBuilder getDefaultCacheBuilder();
 
-   protected abstract boolean enableCompatibility();
-
    @BeforeClass
    public void beforeSuite() throws Exception {
       restServer = RestServerHelper.defaultRestServer(getDefaultCacheBuilder(), "default");
@@ -91,8 +90,9 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       text.encoding().key().mediaType(TEXT_PLAIN_TYPE);
       text.encoding().value().mediaType(TEXT_PLAIN_TYPE);
 
-      ConfigurationBuilder compat = getDefaultCacheBuilder();
-      compat.compatibility().enabled(enableCompatibility());
+      ConfigurationBuilder pojoCache = getDefaultCacheBuilder();
+      pojoCache.encoding().key().mediaType(APPLICATION_OBJECT_TYPE);
+      pojoCache.encoding().value().mediaType(APPLICATION_OBJECT_TYPE);
 
       restServer.defineCache("expiration", expirationConfiguration);
       restServer.defineCache("xml", xmlCacheConfiguration);
@@ -101,10 +101,8 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       restServer.defineCache("unknown", unknownContentCacheConfiguration);
       restServer.defineCache("serialized", javaSerialized);
       restServer.defineCache("textCache", text);
-      restServer.defineCache("compatCache", compat);
-
+      restServer.defineCache("pojoCache", pojoCache);
    }
-
 
    @AfterClass
    public void afterSuite() throws Exception {
@@ -489,7 +487,7 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       //then
       ResponseAssertion.assertThat(response).isOk();
       ResponseAssertion.assertThat(response).hasContentType("text/plain");
-      ResponseAssertion.assertThat(response).hasReturnedText("key1\nkey2");
+      ResponseAssertion.assertThat(response).hasReturnedText("key1\nkey2", "key2\nkey1");
    }
 
    @Test
@@ -507,7 +505,7 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       //then
       ResponseAssertion.assertThat(response).isOk();
       ResponseAssertion.assertThat(response).hasContentType("text/plain;charset=UTF-8");
-      ResponseAssertion.assertThat(response).hasReturnedText("key1\nkey2");
+      ResponseAssertion.assertThat(response).hasReturnedText("key1\nkey2", "key2\nkey1");
    }
 
    @Test
@@ -525,7 +523,7 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       //then
       ResponseAssertion.assertThat(response).isOk();
       ResponseAssertion.assertThat(response).hasContentType("text/plain; charset=ISO-8859-1");
-      ResponseAssertion.assertThat(response).hasReturnedText("key1\nkey2");
+      ResponseAssertion.assertThat(response).hasReturnedText("key1\nkey2", "key2\nkey1");
    }
 
    @Test
@@ -543,7 +541,8 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       //then
       ResponseAssertion.assertThat(response).isOk();
       ResponseAssertion.assertThat(response).hasContentType("application/json");
-      ResponseAssertion.assertThat(response).hasReturnedText("keys=[key1,key2]");
+      // keys can be returned in any order
+      ResponseAssertion.assertThat(response).hasReturnedText("keys=[key1,key2]", "keys=[key2,key1]");
    }
 
    @Test
@@ -561,7 +560,9 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       //then
       ResponseAssertion.assertThat(response).isOk();
       ResponseAssertion.assertThat(response).hasContentType("application/xml");
-      ResponseAssertion.assertThat(response).hasReturnedText("<?xml version=\"1.0\" encoding=\"UTF-8\"?><keys><key>key1</key><key>key2</key></keys>");
+      ResponseAssertion.assertThat(response).hasReturnedText(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><keys><key>key1</key><key>key2</key></keys>",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><keys><key>key2</key><key>key1</key></keys>");
    }
 
    @Test
@@ -579,7 +580,10 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
       //then
       ResponseAssertion.assertThat(response).isOk();
       ResponseAssertion.assertThat(response).hasContentType(MediaType.APPLICATION_OCTET_STREAM_TYPE);
-      ResponseAssertion.assertThat(response).hasReturnedText(String.format("%s\n%s", bytesToHex("key1".getBytes()), bytesToHex("key2".getBytes())));
+      // keys can be returned in any order
+      ResponseAssertion.assertThat(response).hasReturnedText(
+            String.format("%s\n%s", bytesToHex("key1".getBytes()), bytesToHex("key2".getBytes())),
+            String.format("%s\n%s", bytesToHex("key2".getBytes()), bytesToHex("key1".getBytes())));
    }
 
    @Test
@@ -1196,8 +1200,7 @@ public abstract class BaseRestOperationsTest extends AbstractInfinispanTest {
             .header(HttpHeader.ACCEPT, APPLICATION_XML_TYPE)
             .method(HttpMethod.GET).send();
 
-      ResponseAssertion.assertThat(response).isNotAcceptable();
-      ResponseAssertion.assertThat(response).containsReturnedText("Content cannot be converted to XML");
+      ResponseAssertion.assertThat(response).containsReturnedText("<string>foo</string>");
    }
 
 }

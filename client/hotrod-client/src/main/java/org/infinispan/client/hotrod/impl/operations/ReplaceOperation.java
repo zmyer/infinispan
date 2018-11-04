@@ -3,8 +3,11 @@ package org.infinispan.client.hotrod.impl.operations;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.infinispan.client.hotrod.DataFormat;
 import org.infinispan.client.hotrod.configuration.Configuration;
+import org.infinispan.client.hotrod.impl.ClientStatistics;
 import org.infinispan.client.hotrod.impl.protocol.Codec;
+import org.infinispan.client.hotrod.impl.protocol.HotRodConstants;
 import org.infinispan.client.hotrod.impl.transport.netty.ChannelFactory;
 import org.infinispan.client.hotrod.impl.transport.netty.HeaderDecoder;
 
@@ -25,9 +28,10 @@ public class ReplaceOperation<V> extends AbstractKeyValueOperation<V> {
    public ReplaceOperation(Codec codec, ChannelFactory channelFactory,
                            Object key, byte[] keyBytes, byte[] cacheName, AtomicInteger topologyId,
                            int flags, Configuration cfg, byte[] value,
-                           long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
+                           long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit,
+                           DataFormat dataFormat, ClientStatistics clientStatistics) {
       super(REPLACE_REQUEST, REPLACE_RESPONSE, codec, channelFactory, key, keyBytes, cacheName, topologyId, flags, cfg, value,
-            lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit);
+            lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit, dataFormat, clientStatistics);
    }
 
    @Override
@@ -38,6 +42,12 @@ public class ReplaceOperation<V> extends AbstractKeyValueOperation<V> {
 
    @Override
    public void acceptResponse(ByteBuf buf, short status, HeaderDecoder decoder) {
+      if (HotRodConstants.isSuccess(status)) {
+         statsDataStore();
+      }
+      if (HotRodConstants.hasPrevious(status)) {
+         statsDataRead(true);
+      }
       complete(returnPossiblePrevValue(buf, status));
    }
 }

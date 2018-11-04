@@ -1,6 +1,5 @@
 package org.infinispan.configuration.global;
 
-import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -8,6 +7,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import org.infinispan.Version;
+import org.infinispan.commons.util.Features;
 import org.infinispan.factories.annotations.SurvivesRestarts;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
@@ -34,7 +34,10 @@ public class GlobalConfiguration {
 
    /**
     * Default replication version, from {@link org.infinispan.Version#getVersionShort}.
+    *
+    * @deprecated Since 9.4, use {@code Version.getVersionShort()} instead.
     */
+   @Deprecated
    public static final short DEFAULT_MARSHALL_VERSION = Version.getVersionShort();
 
    private final GlobalJmxStatisticsConfiguration globalJmxStatistics;
@@ -45,7 +48,7 @@ public class GlobalConfiguration {
    private final GlobalStateConfiguration globalState;
    private final Map<Class<?>, ?> modules;
    private final SiteConfiguration site;
-   private final WeakReference<ClassLoader> cl;
+   private final ClassLoader cl;
    private final ThreadPoolConfiguration expirationThreadPool;
    private final ThreadPoolConfiguration listenerThreadPool;
    private final ThreadPoolConfiguration replicationQueueThreadPool;
@@ -53,18 +56,19 @@ public class GlobalConfiguration {
    private final ThreadPoolConfiguration stateTransferThreadPool;
    private final ThreadPoolConfiguration asyncThreadPool;
    private final Optional<String> defaultCacheName;
+   private final Features features;
 
    GlobalConfiguration(ThreadPoolConfiguration expirationThreadPool,
-         ThreadPoolConfiguration listenerThreadPool,
-         ThreadPoolConfiguration replicationQueueThreadPool,
-         ThreadPoolConfiguration persistenceThreadPool,
-         ThreadPoolConfiguration stateTransferThreadPool,
-         ThreadPoolConfiguration asyncThreadPool,
-         GlobalJmxStatisticsConfiguration globalJmxStatistics,
-         TransportConfiguration transport, GlobalSecurityConfiguration security,
-         SerializationConfiguration serialization, ShutdownConfiguration shutdown,
-         GlobalStateConfiguration globalState,
-         List<?> modules, SiteConfiguration site, Optional<String> defaultCacheName, ClassLoader cl) {
+                       ThreadPoolConfiguration listenerThreadPool,
+                       ThreadPoolConfiguration replicationQueueThreadPool,
+                       ThreadPoolConfiguration persistenceThreadPool,
+                       ThreadPoolConfiguration stateTransferThreadPool,
+                       ThreadPoolConfiguration asyncThreadPool,
+                       GlobalJmxStatisticsConfiguration globalJmxStatistics,
+                       TransportConfiguration transport, GlobalSecurityConfiguration security,
+                       SerializationConfiguration serialization, ShutdownConfiguration shutdown,
+                       GlobalStateConfiguration globalState,
+                       List<?> modules, SiteConfiguration site, Optional<String> defaultCacheName, ClassLoader cl, Features features) {
       this.expirationThreadPool = expirationThreadPool;
       this.listenerThreadPool = listenerThreadPool;
       this.replicationQueueThreadPool = replicationQueueThreadPool;
@@ -84,7 +88,8 @@ public class GlobalConfiguration {
       this.modules = Collections.unmodifiableMap(moduleMap);
       this.site = site;
       this.defaultCacheName = defaultCacheName;
-      this.cl = new WeakReference<>(cl);
+      this.cl = cl;
+      this.features = features;
    }
 
    /**
@@ -207,7 +212,7 @@ public class GlobalConfiguration {
     * Get the classloader in use by this configuration.
     */
    public ClassLoader classLoader() {
-      return cl.get();
+      return cl;
    }
 
    public SiteConfiguration sites() {
@@ -216,6 +221,10 @@ public class GlobalConfiguration {
 
    public Optional<String> defaultCacheName() {
       return defaultCacheName;
+   }
+
+   public Features features() {
+      return features;
    }
 
    @Override

@@ -45,7 +45,6 @@ import org.infinispan.configuration.global.ShutdownHookBehavior;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ConfigurationParser;
 import org.infinispan.configuration.parsing.Namespace;
-import org.infinispan.configuration.parsing.Namespaces;
 import org.infinispan.configuration.parsing.ParseUtils;
 import org.infinispan.configuration.parsing.ParsedCacheMode;
 import org.infinispan.configuration.parsing.XMLExtendedStreamReader;
@@ -64,7 +63,7 @@ import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.TransactionProtocol;
-import org.infinispan.transaction.lookup.TransactionManagerLookup;
+import org.infinispan.commons.tx.lookup.TransactionManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.kohsuke.MetaInfServices;
 
@@ -75,9 +74,7 @@ import org.kohsuke.MetaInfServices;
  * @since 6.0
  */
 @MetaInfServices
-@Namespaces({
-      @Namespace(uri = "urn:infinispan:config:6.0", root = "infinispan"),
-})
+@Namespace(uri = "urn:infinispan:config:6.0", root = "infinispan")
 public class Parser60 implements ConfigurationParser {
    public static final String INFINISPAN_FACTORY = "infinispan-factory";
 

@@ -1,9 +1,10 @@
 package org.infinispan.factories;
 
 import org.infinispan.configuration.cache.CacheMode;
-import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.expiration.impl.ClusterExpirationManager;
 import org.infinispan.expiration.impl.ExpirationManagerImpl;
+import org.infinispan.expiration.impl.InternalExpirationManager;
+import org.infinispan.expiration.impl.TxClusterExpirationManager;
 import org.infinispan.factories.annotations.DefaultFactoryFor;
 
 /**
@@ -12,18 +13,21 @@ import org.infinispan.factories.annotations.DefaultFactoryFor;
  * @author William Burns
  * @since 8.0
  */
-@DefaultFactoryFor(classes = ExpirationManager.class)
+@DefaultFactoryFor(classes = InternalExpirationManager.class)
 public class ExpirationManagerFactory extends AbstractNamedCacheComponentFactory implements
          AutoInstantiableFactory {
 
    @Override
    @SuppressWarnings("unchecked")
-   public <T> T construct(Class<T> componentType) {
+   public Object construct(String componentName) {
       CacheMode cacheMode = configuration.clustering().cacheMode();
       if (cacheMode.needsStateTransfer()) {
-         return componentType.cast(new ClusterExpirationManager<>());
+         if (configuration.transaction().transactionMode().isTransactional()) {
+            return new TxClusterExpirationManager<>();
+         }
+         return new ClusterExpirationManager<>();
       } else {
-         return componentType.cast(new ExpirationManagerImpl<>());
+         return new ExpirationManagerImpl<>();
       }
    }
 }

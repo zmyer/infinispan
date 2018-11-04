@@ -11,9 +11,10 @@ import org.infinispan.api.APINonTxTest;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.DataContainer.ComputeAction;
-import org.infinispan.container.InternalEntryFactory;
-import org.infinispan.container.InternalEntryFactoryImpl;
+import org.infinispan.container.impl.InternalEntryFactory;
+import org.infinispan.container.impl.InternalEntryFactoryImpl;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
+import org.testng.annotations.Test;
 
 /**
  * Test that ensure that when persistence is used with an always empty data container that various operations
@@ -21,6 +22,7 @@ import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
  * @author wburns
  * @since 9.2
  */
+@Test(groups = "functional", testName = "persistence.APINonTxPersistenceTest")
 public class APINonTxPersistenceTest extends APINonTxTest {
    @Override
    protected void configure(ConfigurationBuilder builder) {

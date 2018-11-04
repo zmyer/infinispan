@@ -1,11 +1,14 @@
 package org.infinispan.distribution.impl;
 
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.infinispan.commons.hash.MurmurHash3;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.distribution.DataLocality;
@@ -14,6 +17,7 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.KeyPartitioner;
+import org.infinispan.distribution.ch.impl.ReplicatedConsistentHash;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.jmx.annotations.MBean;
@@ -33,7 +37,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author Vladimir Blagojevic
  * @author Mircea.Markus@jboss.com
  * @author Bela Ban
- * @author Dan Berindei <dan@infinispan.org>
+ * @author Dan Berindei &lt;dan@infinispan.org&gt;
  * @author anistor@redhat.com
  * @since 4.0
  */
@@ -59,7 +63,8 @@ public class DistributionManagerImpl implements DistributionManager {
       cacheMode = configuration.clustering().cacheMode();
       // We need an extended topology for preload, before the start of StateTransferManagerImpl
       Address localAddress = transport == null ? LocalModeAddress.INSTANCE : transport.getAddress();
-      extendedTopology = LocalizedCacheTopology.makeSingletonTopology(cacheMode, localAddress);
+      extendedTopology = makeSingletonTopology(cacheMode, keyPartitioner, configuration.clustering().hash().numSegments(),
+            localAddress);
    }
 
    private Address getAddress() {
@@ -134,7 +139,7 @@ public class DistributionManagerImpl implements DistributionManager {
 
    @Override
    public boolean isJoinComplete() {
-      return extendedTopology != null;
+      return extendedTopology.isConnected();
    }
 
    @ManagedOperation(
@@ -165,11 +170,22 @@ public class DistributionManagerImpl implements DistributionManager {
 
    @Override
    public void setCacheTopology(CacheTopology cacheTopology) {
+      if (trace) log.tracef("Topology updated to %s", cacheTopology);
       this.extendedTopology = createLocalizedCacheTopology(cacheTopology);
    }
 
    @Override
    public LocalizedCacheTopology createLocalizedCacheTopology(CacheTopology cacheTopology) {
-      return new LocalizedCacheTopology(cacheMode, cacheTopology, keyPartitioner, transport.getAddress());
+      return new LocalizedCacheTopology(cacheMode, cacheTopology, keyPartitioner, transport.getAddress(), true);
+   }
+
+   public static LocalizedCacheTopology makeSingletonTopology(CacheMode cacheMode, KeyPartitioner keyPartitioner,
+         int numSegments, Address localAddress) {
+      List<Address> members = Collections.singletonList(localAddress);
+      int[] owners = new int[numSegments];
+      Arrays.fill(owners, 0);
+      ConsistentHash ch = new ReplicatedConsistentHash(MurmurHash3.getInstance(), members, owners);
+      CacheTopology cacheTopology = new CacheTopology(-1, -1, ch, null, CacheTopology.Phase.NO_REBALANCE, members, null);
+      return new LocalizedCacheTopology(cacheMode, cacheTopology, keyPartitioner, localAddress, false);
    }
 }

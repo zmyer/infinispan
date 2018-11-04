@@ -82,6 +82,9 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
         AVERAGE_READ_TIME(MetricKeys.AVERAGE_READ_TIME, ModelType.LONG, true),
         AVERAGE_WRITE_TIME(MetricKeys.AVERAGE_WRITE_TIME, ModelType.LONG, true),
         AVERAGE_REMOVE_TIME(MetricKeys.AVERAGE_REMOVE_TIME, ModelType.LONG, true),
+        AVERAGE_READ_TIME_NANOS(MetricKeys.AVERAGE_READ_TIME_NANOS, ModelType.LONG, true),
+        AVERAGE_WRITE_TIME_NANOS(MetricKeys.AVERAGE_WRITE_TIME_NANOS, ModelType.LONG, true),
+        AVERAGE_REMOVE_TIME_NANOS(MetricKeys.AVERAGE_REMOVE_TIME_NANOS, ModelType.LONG, true),
         TIME_SINCE_START(MetricKeys.TIME_SINCE_START, ModelType.LONG, true),
         EVICTIONS(MetricKeys.EVICTIONS, ModelType.LONG, true),
         HIT_RATIO(MetricKeys.HIT_RATIO, ModelType.DOUBLE, true),
@@ -89,6 +92,7 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
         MISSES(MetricKeys.MISSES, ModelType.LONG, true),
         NUMBER_OF_ENTRIES(MetricKeys.NUMBER_OF_ENTRIES, ModelType.INT, true),
         NUMBER_OF_ENTRIES_IN_MEMORY(MetricKeys.NUMBER_OF_ENTRIES_IN_MEMORY, ModelType.INT, true),
+        DATA_MEMORY_USED(MetricKeys.DATA_MEMORY_USED, ModelType.LONG, true),
         OFF_HEAP_MEMORY_USED(MetricKeys.OFF_HEAP_MEMORY_USED, ModelType.LONG, true),
         MINIMUM_REQUIRED_NODES(MetricKeys.MINIMUM_REQUIRED_NODES, ModelType.INT, true),
         READ_WRITE_RATIO(MetricKeys.READ_WRITE_RATIO, ModelType.DOUBLE, true),
@@ -232,6 +236,15 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
                 case AVERAGE_REMOVE_TIME:
                    result.set(stats.getAverageRemoveTime());
                    break;
+                case AVERAGE_READ_TIME_NANOS:
+                    result.set(stats.getAverageReadTimeNanos());
+                    break;
+                case AVERAGE_WRITE_TIME_NANOS:
+                    result.set(stats.getAverageWriteTimeNanos());
+                    break;
+                case AVERAGE_REMOVE_TIME_NANOS:
+                    result.set(stats.getAverageRemoveTimeNanos());
+                    break;
                 case TIME_SINCE_START:
                    result.set(stats.getTimeSinceStart());
                    break;
@@ -252,6 +265,9 @@ public class CacheContainerMetricsHandler extends AbstractRuntimeOnlyHandler {
                    break;
                 case NUMBER_OF_ENTRIES_IN_MEMORY:
                     result.set(stats.getCurrentNumberOfEntriesInMemory());
+                    break;
+                case DATA_MEMORY_USED:
+                    result.set(stats.getDataMemoryUsed());
                     break;
                 case OFF_HEAP_MEMORY_USED:
                     result.set(stats.getOffHeapMemoryUsed());

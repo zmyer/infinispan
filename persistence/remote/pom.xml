@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-persistence-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-cachestore-remote</artifactId>
@@ -13,6 +13,7 @@
    <description>Infinispan remote CacheStore based on Hot Rod protocol</description>
 
    <properties>
+      <module.skipCopyDependencies>false</module.skipCopyDependencies>
       <ca.dname>CN=CA,OU=Infinispan,O=JBoss,L=Red Hat</ca.dname>
       <ca.alias>infinispan-ca</ca.alias>
       <ca.keystore>${project.build.testOutputDirectory}/ca.jks</ca.keystore>
@@ -40,10 +41,6 @@
          <groupId>org.infinispan</groupId>
           <artifactId>infinispan-commons</artifactId>
       </dependency>
-       <dependency>
-           <groupId>org.infinispan</groupId>
-           <artifactId>infinispan-core</artifactId>
-       </dependency>
        <dependency>
            <groupId>org.infinispan</groupId>
            <artifactId>infinispan-multimap</artifactId>
@@ -90,6 +87,12 @@
         <artifactId>framework</artifactId>
         <type>kar</type>
         <scope>provided</scope>
+        <exclusions>
+          <exclusion>
+            <groupId>*</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
    </dependencies>
 
@@ -121,6 +124,12 @@
             </excludes>
          </resource>
       </resources>
+      <testResources>
+         <testResource>
+            <directory>${project.basedir}/src/test/resources</directory>
+            <filtering>true</filtering>
+         </testResource>
+      </testResources>
       <plugins>
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>

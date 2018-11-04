@@ -14,6 +14,7 @@ import org.infinispan.notifications.cachelistener.event.Event;
 import org.infinispan.persistence.spi.AdvancedCacheExpirationWriter;
 import org.infinispan.test.TestingUtil;
 import org.testng.annotations.AfterMethod;
+import org.testng.annotations.Factory;
 import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "expiration.impl.ExpirationStoreListenerFunctionalTest")
@@ -21,10 +22,24 @@ public class ExpirationStoreListenerFunctionalTest extends ExpirationStoreFuncti
    protected ExpiredCacheListener listener = new ExpiredCacheListener();
    protected ExpirationManager manager;
 
+   @Factory
+   @Override
+   public Object[] factory() {
+      return new Object[]{
+            // Test is for dummy store with a listener and we don't care about memory storage types
+            new ExpirationStoreListenerFunctionalTest(),
+      };
+   }
+
+   @Override
+   protected String parameters() {
+      return null;
+   }
+
    @Override
    protected void afterCacheCreated(EmbeddedCacheManager cm) {
       cache.addListener(listener);
-      manager = TestingUtil.extractComponent(cache, ExpirationManager.class);
+      manager = cache.getAdvancedCache().getExpirationManager();
    }
 
    @AfterMethod
@@ -41,8 +56,13 @@ public class ExpirationStoreListenerFunctionalTest extends ExpirationStoreFuncti
 
    @Override
    public void testSimpleExpirationMaxIdle() throws Exception {
-      super.testSimpleExpirationMaxIdle();
+      for (int i = 0; i < SIZE; i++) {
+         cache.put("key-" + i, "value-" + i,-1, null, 1, TimeUnit.MILLISECONDS);
+      }
+      timeService.advance(2);
+      // We have to process expiration for store and max idle
       manager.processExpiration();
+      assertEquals(0, cache.size());
       assertExpiredEvents(SIZE);
    }
 

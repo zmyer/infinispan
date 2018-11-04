@@ -2,6 +2,7 @@ package org.infinispan.test;
 
 import static java.io.File.separator;
 import static org.infinispan.commons.api.BasicCacheContainer.DEFAULT_CACHE_NAME;
+import static org.infinispan.commons.util.Util.EMPTY_OBJECT_ARRAY;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.fail;
@@ -13,9 +14,12 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.Serializable;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.security.Principal;
 import java.util.AbstractMap;
 import java.util.ArrayList;
@@ -25,6 +29,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
@@ -45,11 +50,11 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
 import javax.management.MBeanInfo;
 import javax.management.MBeanOperationInfo;
 import javax.management.MBeanParameterInfo;
@@ -59,8 +64,10 @@ import javax.security.auth.Subject;
 import javax.transaction.Status;
 import javax.transaction.TransactionManager;
 
+import io.reactivex.Flowable;
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
+import org.infinispan.Version;
 import org.infinispan.cache.impl.AbstractDelegatingCache;
 import org.infinispan.cache.impl.CacheImpl;
 import org.infinispan.commands.CommandsFactory;
@@ -73,21 +80,28 @@ import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.ch.ConsistentHashFactory;
+import org.infinispan.distribution.ch.KeyPartitioner;
+import org.infinispan.distribution.group.impl.PartitionerConsistentHash;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.filter.KeyFilter;
+import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.impl.BasicComponentRegistry;
+import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.base.CommandInterceptor;
-import org.infinispan.jmx.PerThreadMBeanServerLookup;
+import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.manager.CacheContainer;
@@ -111,12 +125,11 @@ import org.infinispan.remoting.transport.Transport;
 import org.infinispan.remoting.transport.jgroups.JGroupsAddress;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.security.impl.SecureCacheImpl;
-import org.infinispan.statetransfer.StateTransferManager;
+import org.infinispan.statetransfer.StateTransferManagerImpl;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.util.DependencyGraph;
 import org.infinispan.util.concurrent.TimeoutException;
-import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -223,50 +236,33 @@ public class TestingUtil {
       }
    }
 
-   public enum InfinispanStartTag {
-      START_40(4, 0),
-      START_41(4, 1),
-      START_42(4, 2),
-      START_50(5, 0),
-      START_51(5, 1),
-      START_52(5, 2),
-      START_53(5, 3),
-      START_60(6, 0),
-      START_70(7, 0),
-      START_71(7, 1),
-      START_72(7, 2),
-      START_80(8, 0),
-      START_81(8, 1),
-      START_82(8, 2),
-      START_90(9, 0),
-      START_91(9, 1),
-      START_92(9, 2);
-
-      public static final InfinispanStartTag LATEST = START_92;
-      private final String tag;
-      private final String majorMinor;
-
-      InfinispanStartTag(int major, int minor) {
-         tag = String.format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<infinispan\n" +
-         "      xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n" +
-         "      xsi:schemaLocation=\"urn:infinispan:config:%d.%d http://www.infinispan.org/schemas/infinispan-config-%d.%d.xsd\"\n" +
-         "      xmlns=\"urn:infinispan:config:%d.%d\">", major, minor, major, minor, major, minor);
-         majorMinor = String.format("%d.%d", major, minor);
-      }
-
-      @Override
-      public String toString() {
-         return tag;
-      }
-
-      public String majorMinor() {
-         return majorMinor;
-      }
+   public static String wrapXMLWithSchema(String schema, String xml) {
+      StringBuilder sb = new StringBuilder();
+      sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+      sb.append("<infinispan xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" ");
+      sb.append("xsi:schemaLocation=\"urn:infinispan:config:");
+      sb.append(schema);
+      sb.append(" http://www.infinispan.org/schemas/infinispan-config-");
+      sb.append(schema);
+      sb.append(".xsd\" xmlns=\"urn:infinispan:config:");
+      sb.append(schema);
+      sb.append("\">\n");
+      sb.append(xml);
+      sb.append("</infinispan>");
+      return sb.toString();
    }
 
-   public static final String INFINISPAN_END_TAG = "</infinispan>";
-   public static final String INFINISPAN_START_TAG_NO_SCHEMA = "<infinispan>";
+   public static String wrapXMLWithSchema(String xml) {
+      return wrapXMLWithSchema(Version.getSchemaVersion(), xml);
+   }
 
+   public static String wrapXMLWithoutSchema(String xml) {
+      StringBuilder sb = new StringBuilder();
+      sb.append("<infinispan>\n");
+      sb.append(xml);
+      sb.append("</infinispan>");
+      return sb.toString();
+   }
 
    /**
     * Extracts the value of a field in a given target instance using reflection, able to extract private fields as
@@ -349,6 +345,11 @@ public class TestingUtil {
             .findInterceptorExtending(interceptorToFind);
    }
 
+   public static int getSegmentForKey(Object key, Cache cache) {
+      KeyPartitioner keyPartitioner = extractComponent(cache, KeyPartitioner.class);
+      return keyPartitioner.getSegment(key);
+   }
+
    /**
     * Waits until pendingCH() is null on all caches, currentCH.getMembers() contains all caches provided as the param
     * and all segments have numOwners owners.
@@ -370,8 +371,9 @@ public class TestingUtil {
             boolean chContainsAllMembers;
             boolean currentChIsBalanced;
             if (cacheTopology != null) {
-               rebalanceInProgress = cacheTopology.getPendingCH() != null;
+               rebalanceInProgress = cacheTopology.getPhase() != CacheTopology.Phase.NO_REBALANCE;
                ConsistentHash currentCH = cacheTopology.getCurrentCH();
+               ConsistentHashFactory chf = StateTransferManagerImpl.pickConsistentHashFactory(c.getCacheManager().getCacheManagerConfiguration(), c.getCacheConfiguration());
 
                chContainsAllMembers = currentCH.getMembers().size() == caches.length;
                currentChIsBalanced = true;
@@ -382,6 +384,13 @@ public class TestingUtil {
                      currentChIsBalanced = false;
                      break;
                   }
+               }
+
+               // We need to check that the topologyId > 1 to account for nodes restarting
+               if (chContainsAllMembers && !rebalanceInProgress && cacheTopology.getTopologyId() > 1) {
+                  if (currentCH instanceof PartitionerConsistentHash)
+                     currentCH = extractField(currentCH, "ch");
+                  rebalanceInProgress = !chf.rebalance(currentCH).equals(currentCH);
                }
                if (chContainsAllMembers && !rebalanceInProgress && currentChIsBalanced)
                   break;
@@ -422,7 +431,7 @@ public class TestingUtil {
       int numberOfManagers = managers.length;
       assert numberOfManagers > 0;
       Set<String> testCaches = getInternalAndUserCacheNames(managers[0]);
-      System.err.printf("waitForNoRebalance with managers %s, for caches %s\n", Arrays.toString(managers), testCaches);
+      log.debugf("waitForNoRebalance with managers %s, for caches %s", Arrays.toString(managers), testCaches);
 
       for (String cacheName : testCaches) {
          Cache[] caches = new Cache[numberOfManagers];
@@ -454,9 +463,9 @@ public class TestingUtil {
          if (c instanceof SecureCacheImpl) {
             c = (Cache) extractField(SecureCacheImpl.class, c, "delegate");
          }
-         StateTransferManager stateTransferManager = extractComponent(c, StateTransferManager.class);
+         DistributionManager distributionManager = c.getAdvancedCache().getDistributionManager();
          while (true) {
-            CacheTopology cacheTopology = stateTransferManager.getCacheTopology();
+            CacheTopology cacheTopology = distributionManager.getCacheTopology();
             boolean allMembersExist = cacheTopology != null && cacheTopology.getMembers().containsAll(expectedMembers);
             boolean isCorrectPhase = cacheTopology != null && cacheTopology.getPhase() == phase;
             if (allMembersExist && isCorrectPhase) break;
@@ -871,8 +880,9 @@ public class TestingUtil {
    private static Set<String> getOrderedCacheNames(EmbeddedCacheManager cacheContainer) {
       Set<String> caches = new LinkedHashSet<>();
       try {
-         DependencyGraph<String> graph = TestingUtil.extractGlobalComponentRegistry(cacheContainer)
-                                            .getComponent(KnownComponentNames.CACHE_DEPENDENCY_GRAPH);
+         DependencyGraph<String> graph =
+            TestingUtil.extractGlobalComponentRegistry(cacheContainer)
+                       .getComponent(DependencyGraph.class, KnownComponentNames.CACHE_DEPENDENCY_GRAPH);
          caches.addAll(graph.topologicalSort());
       } catch (Exception ignored) {
       }
@@ -923,7 +933,7 @@ public class TestingUtil {
       else
          str = "a cache manager at address " + a;
       log.debugf("Cleaning data for cache '%s' on %s", cache.getName(), str);
-      DataContainer dataContainer = TestingUtil.extractComponent(cache, DataContainer.class);
+      InternalDataContainer dataContainer = TestingUtil.extractComponent(cache, InternalDataContainer.class);
       if (log.isDebugEnabled()) log.debugf("Data container size before clear: %d", dataContainer.sizeIncludingExpired());
       dataContainer.clear();
    }
@@ -1174,6 +1184,9 @@ public class TestingUtil {
     * Extracts a component of a given type from the cache's internal component registry
     */
    public static <T> T extractComponent(Cache cache, Class<T> componentType) {
+      if (componentType.equals(DataContainer.class)) {
+         throw new UnsupportedOperationException("Should extract InternalDataContainer");
+      }
       ComponentRegistry cr = extractComponentRegistry(cache.getAdvancedCache());
       return cr.getComponent(componentType);
    }
@@ -1187,7 +1200,7 @@ public class TestingUtil {
    }
 
    public static TransactionManager getTransactionManager(Cache cache) {
-      return cache == null ? null : extractComponent(cache, TransactionManager.class);
+      return cache == null ? null : cache.getAdvancedCache().getTransactionManager();
    }
 
    /**
@@ -1201,11 +1214,16 @@ public class TestingUtil {
     * @return the original component that was replaced
     */
    public static <T> T replaceComponent(Cache<?, ?> cache, Class<? extends T> componentType, T replacementComponent, boolean rewire) {
+      if (componentType.equals(DataContainer.class)) {
+         throw new UnsupportedOperationException();
+      }
       ComponentRegistry cr = extractComponentRegistry(cache);
-      T old = cr.getComponent(componentType);
-      cr.registerComponent(replacementComponent, componentType);
+      BasicComponentRegistry bcr = cr.getComponent(BasicComponentRegistry.class);
+      ComponentRef<? extends T> old = bcr.getComponent(componentType);
+      bcr.replaceComponent(componentType.getName(), replacementComponent, true);
+      cr.cacheComponents();
       if (rewire) cr.rewire();
-      return old;
+      return old != null ? old.wired() : null;
    }
 
    /**
@@ -1237,15 +1255,9 @@ public class TestingUtil {
     *
     * @return the original component that was replaced
     */
-   public static <T> T replaceComponent(CacheContainer cacheContainer, Class<? extends T> componentType, T replacementComponent, boolean rewire) {
-      GlobalComponentRegistry cr = extractGlobalComponentRegistry(cacheContainer);
-      T old = cr.getComponent(componentType);
-      cr.registerComponent(replacementComponent, componentType);
-      if (rewire) {
-         cr.rewire();
-         cr.rewireNamedRegistries();
-      }
-      return old;
+   public static <T> T replaceComponent(CacheContainer cacheContainer, Class<T> componentType, T replacementComponent,
+                                        boolean rewire) {
+      return replaceComponent(cacheContainer, componentType, componentType.getName(), replacementComponent, rewire);
    }
 
    /**
@@ -1262,13 +1274,14 @@ public class TestingUtil {
     */
    public static <T> T replaceComponent(CacheContainer cacheContainer, Class<T> componentType, String name, T replacementComponent, boolean rewire) {
       GlobalComponentRegistry cr = extractGlobalComponentRegistry(cacheContainer);
-      T old = cr.getComponent(componentType, name);
-      cr.registerComponent(replacementComponent, name);
+      BasicComponentRegistry bcr = cr.getComponent(BasicComponentRegistry.class);
+      ComponentRef<T> old = bcr.getComponent(componentType);
+      bcr.replaceComponent(name, replacementComponent, true);
       if (rewire) {
          cr.rewire();
          cr.rewireNamedRegistries();
       }
-      return old;
+      return old != null ? old.wired() : null;
    }
 
    public static <K, V> CacheLoader<K, V> getCacheLoader(Cache<K, V> cache) {
@@ -1280,7 +1293,7 @@ public class TestingUtil {
    }
 
    public static String printCache(Cache cache) {
-      DataContainer dataContainer = TestingUtil.extractComponent(cache, DataContainer.class);
+      DataContainer dataContainer = TestingUtil.extractComponent(cache, InternalDataContainer.class);
       Iterator it = dataContainer.iterator();
       StringBuilder builder = new StringBuilder(cache.getName() + "[");
       while (it.hasNext()) {
@@ -1310,8 +1323,8 @@ public class TestingUtil {
       return values;
    }
 
-   public static DISCARD getDiscardForCache(Cache<?, ?> c) throws Exception {
-      JGroupsTransport jgt = (JGroupsTransport) TestingUtil.extractComponent(c, Transport.class);
+   public static DISCARD getDiscardForCache(EmbeddedCacheManager cacheManager) throws Exception {
+      JGroupsTransport jgt = (JGroupsTransport) TestingUtil.extractGlobalComponent(cacheManager, Transport.class);
       JChannel ch = jgt.getChannel();
       ProtocolStack ps = ch.getProtocolStack();
       DISCARD discard = new DISCARD();
@@ -1630,13 +1643,13 @@ public class TestingUtil {
       return (T) persistenceManager.getAllTxWriters().get(0);
    }
 
-   public static <K> Set<MarshalledEntry> allEntries(AdvancedLoadWriteStore<K, ?> cl, KeyFilter<K> filter) {
-      final Set<MarshalledEntry> result = new HashSet<>();
-      cl.process(filter, (marshalledEntry, taskContext) -> result.add(marshalledEntry), new WithinThreadExecutor(), true, true);
-      return result;
+   public static <K, V> Set<MarshalledEntry<K, V>> allEntries(AdvancedLoadWriteStore<K, V> cl, Predicate<K> filter) {
+      return Flowable.fromPublisher(cl.publishEntries(filter, true, true))
+            .collectInto(new HashSet<MarshalledEntry<K, V>>(), Set::add)
+            .blockingGet();
    }
 
-   public static <K> Set<MarshalledEntry> allEntries(AdvancedLoadWriteStore<K, ?> cl) {
+   public static <K, V> Set<MarshalledEntry<K, V>> allEntries(AdvancedLoadWriteStore<K, V> cl) {
       return allEntries(cl, null);
    }
 
@@ -1675,13 +1688,15 @@ public class TestingUtil {
       AdvancedCache<K, V> advCache = cache.getAdvancedCache();
       PersistenceManager pm = advCache.getComponentRegistry().getComponent(PersistenceManager.class);
       StreamingMarshaller marshaller = extractGlobalMarshaller(advCache.getCacheManager());
-      pm.writeToAllNonTxStores(new MarshalledEntryImpl<>(key, value, null, marshaller), BOTH);
+      KeyPartitioner keyPartitioner = extractComponent(cache, KeyPartitioner.class);
+      pm.writeToAllNonTxStores(new MarshalledEntryImpl<>(key, value, null, marshaller), keyPartitioner.getSegment(key), BOTH);
    }
 
    public static <K, V> boolean deleteFromAllStores(K key, Cache<K, V> cache) {
       AdvancedCache<K, V> advCache = cache.getAdvancedCache();
       PersistenceManager pm = advCache.getComponentRegistry().getComponent(PersistenceManager.class);
-      return pm.deleteFromAllStores(key, BOTH);
+      KeyPartitioner keyPartitioner = extractComponent(cache, KeyPartitioner.class);
+      return pm.deleteFromAllStores(key, keyPartitioner.getSegment(key), BOTH);
    }
 
    public static Subject makeSubject(String... principals) {
@@ -1766,6 +1781,14 @@ public class TestingUtil {
       return wrap;
    }
 
+   public static <T, W extends T> W wrapGlobalComponent(CacheContainer cacheContainer, Class<T> tClass,
+                                                        Function<T, W> ctor, boolean rewire) {
+      T current = extractGlobalComponent(cacheContainer, tClass);
+      W wrap = ctor.apply(current);
+      replaceComponent(cacheContainer, tClass, wrap, rewire);
+      return wrap;
+   }
+
    public static <T, W extends T> W wrapComponent(Cache<?, ?> cache, Class<T> tClass,
                                                   WrapFactory<T, W, Cache<?, ?>> factory, boolean rewire) {
       T current = extractComponent(cache, tClass);
@@ -1785,7 +1808,6 @@ public class TestingUtil {
       PerCacheInboundInvocationHandler current = extractComponent(cache, PerCacheInboundInvocationHandler.class);
       T wrap = ctor.apply(current);
       replaceComponent(cache, PerCacheInboundInvocationHandler.class, wrap, true);
-      replaceField(wrap, "inboundInvocationHandler", cache.getAdvancedCache().getComponentRegistry(), ComponentRegistry.class);
       return wrap;
    }
 
@@ -1837,36 +1859,96 @@ public class TestingUtil {
       return map;
    }
 
+   @SafeVarargs
+   public static <T> Set<T> setOf(T... elements) {
+      return new HashSet<>(Arrays.asList(elements));
+   }
+
    /**
     * This method sets only fields annotated with <code>@Inject</code>, it does not invoke any injecting methods.
     * Named setters are not handled either.
     */
    public static void inject(Object instance, Object... components) {
       List<Field> fields = ReflectionUtil.getAllFields(instance.getClass(), Inject.class);
+      Map<Object, Object> unmatchedComponents = new IdentityHashMap<>();
+      for (Object component : components) {
+         unmatchedComponents.put(component, component);
+      }
       for (Field f : fields) {
-         Object matching = null;
+         boolean lazy = f.getType() == ComponentRef.class;
+         Class<?> componentType = getFieldComponentType(f, lazy);
+
+         Object previousMatch = null;
          for (Object component : components) {
             Object currentMatch = null;
+            Object componentInstance = null;
+            String componentName = null;
             if (component instanceof NamedComponent) {
                NamedComponent nc = (NamedComponent) component;
-               if (!f.getType().isInstance(nc.component)) {
-                  continue;
+               ComponentName nameAnnotation = f.getAnnotation(ComponentName.class);
+               if (nameAnnotation != null && nameAnnotation.value().equals(nc.name)) {
+                  currentMatch = nc;
+                  componentInstance = nc.component;
+                  componentName = nc.name;
                }
-               ComponentName componentName = f.getAnnotation(ComponentName.class);
-               if (componentName != null && componentName.value().equals(nc.name)) {
-                  currentMatch = nc.component;
+            } else {
+               if (componentType.isInstance(component)) {
+                  currentMatch = component;
+                  componentInstance = component;
+                  componentName = componentType.getName();
                }
-            } else if (f.getType().isInstance(component)) {
-               currentMatch = component;
             }
             if (currentMatch != null) {
-               if (matching != null) {
-                  throw new IllegalArgumentException("Two components match the field " + f + ": " + matching + " and " + component);
+               if (previousMatch != null) {
+                  throw new IllegalArgumentException(
+                     "Two components match the field " + f.getName() + ": " + previousMatch + " and " + component);
                }
-               ReflectionUtil.setAccessibly(instance, f, currentMatch);
-               matching = currentMatch;
+               Object value = lazy ? new RunningComponentRef(componentName, componentType, componentInstance) : componentInstance;
+               ReflectionUtil.setAccessibly(instance, f, value);
+               previousMatch = currentMatch;
+               unmatchedComponents.remove(currentMatch);
             }
          }
+      }
+      if (!unmatchedComponents.isEmpty()) {
+         throw new IllegalArgumentException("No fields match components " + unmatchedComponents.values());
+      }
+   }
+
+   private static Class<?> getFieldComponentType(Field f, boolean lazy) {
+      Class<?> componentType;
+      if (lazy) {
+         Type lazyType = ((ParameterizedType) f.getGenericType()).getActualTypeArguments()[0];
+         String typeName;
+         if (lazyType instanceof ParameterizedType) {
+            // Ignore any generic parameters on the component type
+            typeName = ((ParameterizedType) lazyType).getRawType().getTypeName();
+         } else {
+            typeName = lazyType.getTypeName();
+         }
+         try {
+            componentType = Class.forName(typeName);
+         } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("Field class cannot be loaded: " + f, e);
+         }
+      } else {
+         componentType = f.getType();
+      }
+      return componentType;
+   }
+
+   public static void startComponent(Object component) {
+      invokeLifecycle(component, Start.class);
+   }
+
+   public static void stopComponent(Object component) {
+      invokeLifecycle(component, Stop.class);
+   }
+
+   public static void invokeLifecycle(Object component, Class<? extends Annotation> lifecycle) {
+      List<Method> methods = ReflectionUtil.getAllMethods(component.getClass(), lifecycle);
+      for (Method m : methods) {
+         ReflectionUtil.invokeAccessibly(component, m, EMPTY_OBJECT_ARRAY);
       }
    }
 
@@ -1882,5 +1964,14 @@ public class TestingUtil {
          this.name = name;
          this.component = component;
       }
+
+      @Override
+      public String toString() {
+         return "NamedComponent{" +
+                "name='" + name + '\'' +
+                ", component=" + component +
+                '}';
+      }
    }
+
 }

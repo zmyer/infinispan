@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-javadoc-embedded</artifactId>
@@ -25,7 +25,7 @@
 -ga('send', 'pageview');
 -} catch(err) {}&lt;/script&gt;
       </analytics.code>
-      <maven.deploy.skip>true</maven.deploy.skip>
+      <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
    </properties>
 
    <dependencies>
@@ -136,11 +136,6 @@
 
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-server-websocket</artifactId>
-      </dependency>
-
-      <dependency>
-         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-spring4-common</artifactId>
       </dependency>
 
@@ -162,7 +157,6 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-extended-statistics</artifactId>
-         <version>${project.version}</version>
       </dependency>
    </dependencies>
 
@@ -180,13 +174,13 @@
                      <goal>jar</goal>
                   </goals>
                   <configuration>
-                     <doclet>org.infinispan.tools.doclet.DocletMultiplexer</doclet>
+                     <doclet>org.infinispan.doclets.DocletMultiplexer</doclet>
                      <docletArtifact>
                         <groupId>org.infinispan</groupId>
-                        <artifactId>infinispan-tools</artifactId>
+                        <artifactId>infinispan-doclets</artifactId>
                         <version>${project.version}</version>
                      </docletArtifact>
-                     <doctitle>Infinispan ${infinispan.base.version} Embedded API</doctitle>
+                     <doctitle>${infinispan.brand.name} ${infinispan.base.version} Embedded API</doctitle>
 
                      <docfilessubdirs>true</docfilessubdirs>
                      <detectLinks>false</detectLinks>
@@ -252,7 +246,7 @@
                      <stylesheetfile>${basedir}/src/main/javadoc/stylesheet.css</stylesheetfile>
                      <subpackages>org.infinispan</subpackages>
                      <additionalparam>-Xdoclint:none</additionalparam>
-                     
+
                      <additionalDependencies>
                         <additionalDependency>
                            <groupId>javax.enterprise</groupId>
@@ -277,14 +271,14 @@
                         <additionalDependency>
                            <groupId>org.osgi</groupId>
                            <artifactId>org.osgi.core</artifactId>
-                           <scope>provided</scope>
                            <version>${version.osgi}</version>
+                           <scope>provided</scope>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>org.osgi</groupId>
                            <artifactId>org.osgi.compendium</artifactId>
-                           <scope>provided</scope>
                            <version>${version.osgi}</version>
+                           <scope>provided</scope>
                         </additionalDependency>
                         <additionalDependency>
                            <groupId>org.hibernate</groupId>
@@ -308,8 +302,8 @@
             <dependencies>
                <dependency>
                   <groupId>org.infinispan</groupId>
-                  <artifactId>infinispan-tools</artifactId>
-                  <version>${project.version}</version>
+                  <artifactId>infinispan-doclets</artifactId>
+                  <version>${version.infinispan}</version>
                </dependency>
             </dependencies>
          </plugin>
@@ -321,4 +315,26 @@
          </plugin>
       </plugins>
    </build>
+
+   <profiles>
+
+      <profile>
+         <id>nexus-staging</id>
+         <activation>
+            <property><name>!skipNexusStaging</name></property>
+         </activation>
+         <build>
+            <plugins>
+               <plugin>
+                  <artifactId>maven-deploy-plugin</artifactId>
+                  <configuration>
+                     <skip>true</skip>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+
+   </profiles>
+
 </project>

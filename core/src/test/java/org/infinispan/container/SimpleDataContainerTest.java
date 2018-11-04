@@ -19,13 +19,16 @@ import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.MortalCacheEntry;
 import org.infinispan.container.entries.TransientCacheEntry;
 import org.infinispan.container.entries.TransientMortalCacheEntry;
+import org.infinispan.container.impl.DefaultDataContainer;
+import org.infinispan.container.impl.InternalEntryFactoryImpl;
 import org.infinispan.eviction.ActivationManager;
-import org.infinispan.expiration.ExpirationManager;
+import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.util.ControlledTimeService;
 import org.infinispan.util.CoreImmutables;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.mockito.Mockito;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -54,7 +57,10 @@ public class SimpleDataContainerTest extends AbstractInfinispanTest {
       TestingUtil.inject(internalEntryFactory, timeService);
       ActivationManager activationManager = mock(ActivationManager.class);
       doNothing().when(activationManager).onUpdate(Mockito.any(), Mockito.anyBoolean());
-      TestingUtil.inject(dc, internalEntryFactory, activationManager, timeService, mock(ExpirationManager.class));
+      InternalExpirationManager expirationManager = mock(InternalExpirationManager.class);
+      Mockito.when(expirationManager.entryExpiredInMemory(Mockito.any(), Mockito.anyLong(), Mockito.anyBoolean())).thenReturn(CompletableFutures.completedTrue());
+      Mockito.when(expirationManager.entryExpiredInMemoryFromIteration(Mockito.any(), Mockito.anyLong())).thenReturn(CompletableFutures.completedTrue());
+      TestingUtil.inject(dc, internalEntryFactory, activationManager, timeService, expirationManager);
       return dc;
    }
 

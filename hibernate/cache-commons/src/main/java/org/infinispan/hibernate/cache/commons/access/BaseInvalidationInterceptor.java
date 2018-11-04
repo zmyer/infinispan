@@ -10,6 +10,7 @@ import org.infinispan.Cache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.context.Flag;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.impl.BaseRpcInterceptor;
@@ -23,7 +24,6 @@ import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcOptions;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.util.ByteString;
 
 import java.util.List;
@@ -33,20 +33,18 @@ public abstract class BaseInvalidationInterceptor extends BaseRpcInterceptor imp
 	private final AtomicLong invalidations = new AtomicLong(0);
 
 	@Inject protected CommandsFactory commandsFactory;
-	@Inject protected StateTransferManager stateTransferManager;
+	@Inject protected DistributionManager distributionManager;
 	@Inject protected Cache cache;
 
 	protected ByteString cacheName;
 	protected boolean statisticsEnabled;
 	protected RpcOptions syncRpcOptions;
-	protected RpcOptions asyncRpcOptions;
 
 	@Start
 	private void start() {
 		this.cacheName = ByteString.fromString(cache.getName());
 		this.setStatisticsEnabled(cacheConfiguration.jmxStatistics().enabled());
 		syncRpcOptions = rpcManager.getRpcOptionsBuilder(ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, DeliverOrder.NONE).build();
-		asyncRpcOptions = rpcManager.getDefaultRpcOptions(false);
 	}
 
 	@ManagedOperation(
@@ -87,7 +85,7 @@ public abstract class BaseInvalidationInterceptor extends BaseRpcInterceptor imp
 	}
 
 	protected List<Address> getMembers() {
-		return stateTransferManager.getCacheTopology().getMembers();
+		return distributionManager.getCacheTopology().getMembers();
 	}
 
 	protected boolean isPutForExternalRead(FlagAffectedCommand command) {

@@ -122,8 +122,8 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
                 .addDependency(ThreadPoolResource.LISTENER.getServiceName(this.name), ThreadPoolConfiguration.class, this.listenerThreadPool)
                 .addDependency(ThreadPoolResource.REMOTE_COMMAND.getServiceName(this.name), ThreadPoolConfiguration.class, this.remoteCommandThreadPool)
                 .addDependency(ThreadPoolResource.STATE_TRANSFER.getServiceName(this.name), ThreadPoolConfiguration.class, this.stateTransferThreadPool)
-                .addDependency(ThreadPoolResource.PERSISTENCE.getServiceName(this.name), ThreadPoolConfiguration.class, this.persistenceThreadPool)
                 .addDependency(ThreadPoolResource.TRANSPORT.getServiceName(this.name), ThreadPoolConfiguration.class, this.transportThreadPool)
+                .addDependency(ScheduledThreadPoolResource.PERSISTENCE.getServiceName(this.name), ThreadPoolConfiguration.class, this.persistenceThreadPool)
                 .addDependency(ScheduledThreadPoolResource.EXPIRATION.getServiceName(this.name), ThreadPoolConfiguration.class, this.expirationThreadPool)
                 .addDependency(ScheduledThreadPoolResource.REPLICATION_QUEUE.getServiceName(this.name), ThreadPoolConfiguration.class, this.replicationQueueThreadPool)
         ;
@@ -290,15 +290,19 @@ public class CacheContainerConfigurationBuilder implements Builder<GlobalConfigu
                 classLoaders.add(moduleLoader.loadModule(additionalModule).getClassLoader());
             }
         }
-        switch (classLoaders.size()) {
-            case 0:
-                // default CL
-                return CacheContainerConfiguration.class.getClassLoader();
-            case 1:
-                return classLoaders.iterator().next();
-            default:
-                return new AggregatedClassLoader(classLoaders);
+        ClassLoader infinispanSubsystemClassloader = CacheContainerConfiguration.class.getClassLoader();
+        if (classLoaders.isEmpty()) {
+            // use our default CL if nothing was specified by user
+            return infinispanSubsystemClassloader;
         }
+        if (cacheContainerModule == null) {
+            // do not use the infinispan subsystem classloader if the user specifically requested a different one
+            classLoaders.add(infinispanSubsystemClassloader);
+        }
+        if (classLoaders.size() == 1) {
+            return classLoaders.iterator().next();
+        }
+        return new AggregatedClassLoader(classLoaders);
     }
 
     public CacheContainerConfigurationBuilder setModule(ModuleIdentifier module) {

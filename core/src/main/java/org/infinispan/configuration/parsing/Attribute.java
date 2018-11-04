@@ -25,6 +25,7 @@ public enum Attribute {
     AUDIT_LOGGER("audit-logger"),
     AUTO_COMMIT("auto-commit"),
     AUTO_CONFIG("auto-config"),
+    AVAILABILITY_INTERVAL("availability-interval"),
     AWAIT_INITIAL_TRANSFER("await-initial-transfer"),
     BACKUP_FAILURE_POLICY("failure-policy"),
     BEFORE("before"),
@@ -35,6 +36,8 @@ public enum Attribute {
     COMPLETED_TX_TIMEOUT("complete-timeout"),
     CONCURRENCY_LEVEL("concurrency-level"),
     CONFIGURATION("configuration"),
+    CONNECTION_ATTEMPTS("connection-attempts"),
+    CONNECTION_INTERVAL("connection-interval"),
     CONSISTENT_HASH_FACTORY("consistent-hash-factory"),
     CORE_THREADS("core-threads"),
     DATA_CONTAINER("data-container"),
@@ -46,6 +49,7 @@ public enum Attribute {
     @Deprecated
     EVICTION_EXECUTOR("eviction-executor"),
     EXPIRATION_EXECUTOR("expiration-executor"),
+    FAIL_SILENTLY("fail-silently"),
     FAILURE_POLICY_CLASS("failure-policy-class"),
     FETCH_STATE("fetch-state"),
     @Deprecated
@@ -115,6 +119,7 @@ public enum Attribute {
     @Deprecated
     REPLICATION_QUEUE_EXECUTOR("replication-queue-executor"),
     ROLES("roles"),
+    SEGMENTED("segmented"),
     SEGMENTS("segments"),
     SHARED("shared"),
     SHUTDOWN_HOOK("shutdown-hook"),

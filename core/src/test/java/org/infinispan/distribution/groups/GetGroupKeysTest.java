@@ -9,7 +9,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.infinispan.Cache;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
@@ -17,21 +16,22 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.filter.KeyFilter;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.persistence.manager.PersistenceManager;
-import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CheckPoint;
 import org.infinispan.util.logging.Log;
 import org.testng.AssertJUnit;
 import org.testng.annotations.Test;
+
+import io.reactivex.Flowable;
 
 /**
  * It tests the grouping advanced interface.
@@ -98,7 +98,7 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
       Map<GroupKey, String> expectedGroupSet = new HashMap<>();
       //noinspection unchecked
       for (InternalCacheEntry<GroupKey, String> entry :
-            (DataContainer<GroupKey, String>) TestingUtil.extractComponent(extractTargetCache(testCache), DataContainer.class)) {
+            (DataContainer<GroupKey, String>) TestingUtil.extractComponent(extractTargetCache(testCache), InternalDataContainer.class)) {
          if (entry.getKey().getGroup().equals(GROUP)) {
             expectedGroupSet.put(entry.getKey(), entry.getValue());
          }
@@ -120,16 +120,9 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
       });
       interceptor.awaitCommandBlock();
 
-      final AtomicReference<GroupKey> keyToActivate = new AtomicReference<>(null);
       PersistenceManager persistenceManager = TestingUtil.extractComponent(extractTargetCache(testCache), PersistenceManager.class);
-      persistenceManager.processOnAllStores(KeyFilter.ACCEPT_ALL_FILTER, new AdvancedCacheLoader.CacheLoaderTask() {
-         @Override
-         public void processEntry(MarshalledEntry marshalledEntry, AdvancedCacheLoader.TaskContext taskContext) throws InterruptedException {
-            keyToActivate.compareAndSet(null, (GroupKey) marshalledEntry.getKey());
-            taskContext.stop();
-         }
-      }, false, false);
-      AssertJUnit.assertNotNull(extractTargetCache(testCache).get(keyToActivate.get())); //activates the key
+      GroupKey groupKey = (GroupKey) Flowable.fromPublisher(persistenceManager.publishKeys(null, PersistenceManager.AccessMode.BOTH)).take(1).blockingSingle();
+      AssertJUnit.assertNotNull(extractTargetCache(testCache).get(groupKey)); //activates the key
 
 
       interceptor.unblockCommand();
@@ -182,18 +175,11 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
 
       testCache.testCache.withFlags(Flag.SKIP_CACHE_STORE).removeGroup(GROUP);
       final Map<GroupKey, String> expectedGroupSet2 = new ConcurrentHashMap<>();
-      TestingUtil.extractComponent(extractTargetCache(testCache), PersistenceManager.class).processOnAllStores(
-            new KeyFilter() {
-               @Override
-               public boolean accept(Object key) {
-                  return ((GroupKey) key).getGroup().equals(GROUP);
-               }
-            }, new AdvancedCacheLoader.CacheLoaderTask() {
-               @Override
-               public void processEntry(MarshalledEntry marshalledEntry, AdvancedCacheLoader.TaskContext taskContext) throws InterruptedException {
-                  expectedGroupSet2.put((GroupKey) marshalledEntry.getKey(), (String) marshalledEntry.getValue());
-               }
-            }, true, true);
+      Flowable<MarshalledEntry<GroupKey, String>> flowable = Flowable.fromPublisher(
+            TestingUtil.extractComponent(extractTargetCache(testCache), PersistenceManager.class)
+                  .publishEntries(true, true));
+      flowable.filter(me -> GROUP.equals(me.getKey().getGroup()))
+            .blockingForEach(me -> expectedGroupSet2.put(me.getKey(), me.getValue()));
 
       groupKeySet = testCache.testCache.getGroup(GROUP);
       expectedGroupSet = new HashMap<>(expectedGroupSet2);

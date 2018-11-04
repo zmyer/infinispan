@@ -12,6 +12,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.commons.dataconversion.StandardConversions;
 import org.infinispan.commons.dataconversion.Transcoder;
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.protostream.ProtobufUtil;
@@ -39,10 +40,15 @@ public class ProtostreamJsonTranscoder implements Transcoder {
    public Object transcode(Object content, MediaType contentType, MediaType destinationType) {
       try {
          if (destinationType.match(APPLICATION_JSON)) {
-            return ProtobufUtil.toCanonicalJSON(ctx, (byte[]) content);
+            String converted = ProtobufUtil.toCanonicalJSON(ctx, (byte[]) content);
+            String convertType = destinationType.getClassType();
+            if (convertType == null)
+               return StandardConversions.convertCharset(converted, contentType.getCharset(), destinationType.getCharset());
+            if (destinationType.hasStringType()) return converted;
          }
          if (destinationType.match(APPLICATION_PROTOSTREAM)) {
             Reader reader;
+            content = addTypeIfNeeded(content);
             if (content instanceof byte[]) {
                reader = new InputStreamReader(new ByteArrayInputStream((byte[]) content));
             } else {
@@ -54,6 +60,29 @@ public class ProtostreamJsonTranscoder implements Transcoder {
          throw log.errorTranscoding(e);
       }
       throw log.unsupportedContent(content);
+   }
+
+   private Object addTypeIfNeeded(Object content) {
+      String wrapped = "{ \"_type\":\"%s\", \"_value\":\"%s\"}";
+      if (content instanceof Integer || content instanceof Short) {
+         return String.format(wrapped, "int32", content);
+      }
+      if (content instanceof Long) {
+         return String.format(wrapped, "int64", content);
+      }
+      if (content instanceof Double) {
+         return String.format(wrapped, "double", content);
+      }
+      if (content instanceof Float) {
+         return String.format(wrapped, "float", content);
+      }
+      if (content instanceof Boolean) {
+         return String.format(wrapped, "bool", content);
+      }
+      if (content instanceof String && !(content.toString()).contains("_type")) {
+         return String.format(wrapped, "string", content);
+      }
+      return content;
    }
 
    @Override

@@ -6,10 +6,10 @@ import java.util.Properties;
 import javax.net.ssl.SSLContext;
 
 import org.infinispan.client.hotrod.impl.ConfigurationProperties;
-import org.infinispan.client.hotrod.impl.TypedProperties;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
 import org.infinispan.commons.configuration.Builder;
+import org.infinispan.commons.util.TypedProperties;
 
 /**
  *
@@ -95,8 +95,12 @@ public class SslConfigurationBuilder extends AbstractSecurityConfigurationChildB
     * Specifies the password needed to access private key associated with certificate stored in specified
     * {@link #keyStoreFileName(String)}. If password is not specified, password provided in
     * {@link #keyStorePassword(char[])} will be used.
-    * Setting this property also implicitly enables SSL/TLS (see {@link #enable()}
+    * Setting this property also implicitly enables SSL/TLS (see {@link #enable()}<br>
+    * <b>Note:</b> this only works with some keystore types
+    *
+    * @deprecated since 9.3
     */
+   @Deprecated
    public SslConfigurationBuilder keyStoreCertificatePassword(char[] keyStoreCertificatePassword) {
       this.keyStoreCertificatePassword = keyStoreCertificatePassword;
       return enable();

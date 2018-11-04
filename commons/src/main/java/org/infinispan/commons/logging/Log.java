@@ -5,6 +5,9 @@ import static org.jboss.logging.Logger.Level.WARN;
 
 import java.io.IOException;
 
+import javax.management.InstanceAlreadyExistsException;
+import javax.management.ObjectName;
+
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.dataconversion.EncodingException;
@@ -171,7 +174,7 @@ public interface Log extends BasicLogger {
    @Message(value = "Invalid Weight '%s'. Supported values are between 0 and 1.0", id = 935)
    EncodingException invalidWeight(Object weight);
 
-   @Message(value = "Class '%s' blocked by deserialization white list. Adjust the client configuration serialization white list regular expression to include this class.", id = 936)
+   @Message(value = "Class '%s' blocked by deserialization white list. Adjust the configuration serialization white list regular expression to include this class.", id = 936)
    CacheException classNotInWhitelist(String className);
 
    @Message(value = "Invalid media type. Expected '%s' but got '%s'", id = 937)
@@ -189,18 +192,29 @@ public interface Log extends BasicLogger {
    @Message(value = "Error encoding content '%s' to '%s'", id = 941)
    EncodingException errorEncoding(Object content, MediaType mediaType);
 
+   @LogMessage(level = WARN)
+   @Message(value = "Unable to convert property [%s] to an enum! Using default value of %d", id = 942)
+   void unableToConvertStringPropertyToEnum(String value, String defaultValue);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Could not register object with name: %s", id = 943)
+   void couldNotRegisterObjectName(ObjectName objectName, @Cause InstanceAlreadyExistsException e);
+
+   @Message(value = "Feature %s is disabled!", id = 944)
+   CacheConfigurationException featureDisabled(String feature);
+
    //----- counters exceptions // don't use the same id range ------
 
-   @Message(value = CounterOutOfBoundsException.FORMAT_MESSAGE, id = 28001)
+   @Message(value = CounterOutOfBoundsException.FORMAT_MESSAGE, id = 29501)
    CounterOutOfBoundsException counterOurOfBounds(String bound);
 
-   @Message(value = "Invalid counter type. Expected=%s but got %s", id = 28014)
+   @Message(value = "Invalid counter type. Expected=%s but got %s", id = 29514)
    CounterException invalidCounterType(String expected, String actual);
 
-   @Message(value = "Counter '%s' is not defined.", id = 28016)
+   @Message(value = "Counter '%s' is not defined.", id = 29516)
    CounterException undefinedCounter(String name);
 
-   @Message(value = "WEAK and BOUNDED encoded flag isn't supported!", id = 28022)
+   @Message(value = "WEAK and BOUNDED encoded flag isn't supported!", id = 29522)
    CounterException invalidCounterTypeEncoded();
 
    //----- counters exceptions // don't use the same id range  ------

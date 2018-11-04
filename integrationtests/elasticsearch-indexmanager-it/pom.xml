@@ -3,14 +3,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.infinispan</groupId>
-        <artifactId>infinispan-parent</artifactId>
-        <version>9.2.1-SNAPSHOT</version>
-        <relativePath>../../pom.xml</relativePath>
-    </parent>
+      <groupId>org.infinispan</groupId>
+      <artifactId>infinispan-integrationtests-parent</artifactId>
+      <version>10.0.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
+   </parent>
 
     <artifactId>elasticsearch-indexmanager-it</artifactId>
-    <name>Integration tests: Elasticsearch IndexManager</name>
+    <name>Integration tests - Elasticsearch IndexManager</name>
     <description>Integration tests for storing indexes on Elasticsearch</description>
 
     <dependencies>
@@ -56,6 +56,12 @@
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
@@ -75,14 +81,8 @@
                     <useFile>false</useFile>
                     <skip>${skipTests}</skip>
                     <properties>
-                        <property>
-                            <name>usedefaultlisteners</name>
-                            <value>false</value>
-                        </property>
-                        <property>
-                            <name>listener</name>
-                            <value>${testNGListeners}</value>
-                        </property>
+                        <usedefaultlisteners>false</usedefaultlisteners>
+                        <listener>${testNGListeners}</listener>
                     </properties>
                     <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
                 </configuration>

@@ -50,8 +50,8 @@ import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.CloseableIterator;
-import org.infinispan.commons.util.CloseableIteratorMapper;
 import org.infinispan.commons.util.CloseableSpliterator;
+import org.infinispan.commons.util.IteratorMapper;
 import org.infinispan.commons.util.RemovableCloseableIterator;
 import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.container.entries.CacheEntry;
@@ -61,6 +61,7 @@ import org.infinispan.context.impl.RemoteTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.jmx.JmxStatisticsExposer;
@@ -104,7 +105,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    private final AtomicLong rollbacks = new AtomicLong(0);
 
    @Inject private CommandsFactory commandsFactory;
-   @Inject private Cache<K, V> cache;
+   @Inject private ComponentRef<Cache<K, V>> cache;
    @Inject private RecoveryManager recoveryManager;
    @Inject private TransactionTable txTable;
 
@@ -279,71 +280,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
          command.setFlagsBitSet(FlagBitSets.REMOTE_ITERATION);
          return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
             CacheSet<K> set = (CacheSet<K>) rv;
-            return new AbstractDelegatingKeyCacheSet<K, V>(Caches.getCacheWithFlags(cache, (FlagAffectedCommand) rCommand), set) {
-               @Override
-               public CloseableIterator<K> iterator() {
-                  if (isRemoteIteration) {
-                     return innerIterator();
-                  }
-                  // Need to support remove of iterator
-                  return new RemovableCloseableIterator<>(innerIterator(), cache::remove);
-               }
-
-               CloseableIterator<K> innerIterator() {
-                  return new TransactionAwareKeyCloseableIterator<>(super.iterator(),
-                        (TxInvocationContext<LocalTransaction>) rCtx, cache);
-               }
-
-               @Override
-               public void clear() {
-                  cache.clear();
-               }
-
-               @Override
-               public boolean contains(Object o) {
-                  boolean contained = false;
-                  if (o != null) {
-                     CacheEntry contextEntry = rCtx.lookupEntry(o);
-                     if (contextEntry == null) {
-                        contained = super.contains(o);
-                     } else {
-                        contained = !contextEntry.isRemoved();
-                     }
-                  }
-                  return contained;
-               }
-
-               @Override
-               public boolean remove(Object o) {
-                  boolean removed = false;
-                  if (o != null) {
-                     removed = cache.remove(o) != null;
-                  }
-                  return removed;
-               }
-
-               @Override
-               public CloseableSpliterator<K> spliterator() {
-                  Spliterator<K> parentSpliterator = super.spliterator();
-                  long estimateSize =
-                        parentSpliterator.estimateSize() + rCtx.getLookedUpEntries().size();
-                  // This is an overestimate for size if we have looked up entries that don't map to
-                  // this node
-                  return new IteratorAsSpliterator.Builder<>(innerIterator())
-                        .setEstimateRemaining(estimateSize < 0L ? Long.MAX_VALUE : estimateSize)
-                        .setCharacteristics(Spliterator.CONCURRENT | Spliterator.DISTINCT |
-                              Spliterator.NONNULL).get();
-               }
-
-               @Override
-               public int size() {
-                  long size = stream().count();
-                  if (size > Integer.MAX_VALUE) {
-                     return Integer.MAX_VALUE;
-                  }
-                  return (int) size;
-               }
-            };
+            return new TxKeyCacheSet(rCommand, set, rCtx, isRemoteIteration);
          });
       }
       return super.visitKeySetCommand(ctx, command);
@@ -358,84 +295,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
          command.setFlagsBitSet(FlagBitSets.REMOTE_ITERATION);
          return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
             CacheSet<CacheEntry<K, V>> set = (CacheSet<CacheEntry<K, V>>) rv;
-            return new AbstractDelegatingEntryCacheSet<K, V>(
-                  Caches.getCacheWithFlags(cache, (FlagAffectedCommand) rCommand), set) {
-
-               @Override
-               public void clear() {
-                  cache.clear();
-               }
-
-               @Override
-               public boolean contains(Object o) {
-                  boolean contained = false;
-                  Map.Entry entry = toEntry(o);
-                  if (entry != null) {
-                     CacheEntry contextEntry = rCtx.lookupEntry(entry.getKey());
-                     if (contextEntry == null) {
-                        contained = super.contains(o);
-                     } else {
-                        contained = !contextEntry.isRemoved() && contextEntry.getValue().equals(entry.getValue());
-                     }
-                  }
-                  return contained;
-               }
-
-               @Override
-               public boolean remove(Object o) {
-                  boolean removed = false;
-                  Map.Entry entry = toEntry(o);
-                  if (entry != null) {
-                     V value = cache.remove(o);
-                     removed = value != null && value.equals(entry.getValue());
-                  }
-                  return removed;
-               }
-
-               @Override
-               public CloseableIterator<CacheEntry<K, V>> iterator() {
-                  if (isRemoteIteration) {
-                     return innerIterator();
-                  }
-                  return new CloseableIteratorMapper<>(new RemovableCloseableIterator<>(innerIterator(),
-                        e -> cache.remove(e.getKey(), e.getValue())), e -> new EntryWrapper<>(cache, e));
-               }
-
-               CloseableIterator<CacheEntry<K, V>> innerIterator() {
-                  return new TransactionAwareEntryCloseableIterator<>(super.iterator(),
-                        (TxInvocationContext<LocalTransaction>) rCtx, cache);
-               }
-
-               @Override
-               public CloseableSpliterator<CacheEntry<K, V>> spliterator() {
-                  Spliterator<CacheEntry<K, V>> parentSpliterator = super.spliterator();
-                  long estimateSize =
-                        parentSpliterator.estimateSize() + rCtx.getLookedUpEntries().size();
-                  // This is an overestimate for size if we have looked up entries that don't map to
-                  // this node
-                  return new IteratorAsSpliterator.Builder<>(innerIterator())
-                        .setEstimateRemaining(estimateSize < 0L ? Long.MAX_VALUE : estimateSize)
-                        .setCharacteristics(Spliterator.CONCURRENT | Spliterator.DISTINCT |
-                              Spliterator.NONNULL).get();
-               }
-
-               @Override
-               public int size() {
-                  long size = stream().count();
-                  if (size > Integer.MAX_VALUE) {
-                     return Integer.MAX_VALUE;
-                  }
-                  return (int) size;
-               }
-
-               private Map.Entry<K, V> toEntry(Object obj) {
-                  if (obj instanceof Map.Entry) {
-                     return (Map.Entry) obj;
-                  } else {
-                     return null;
-                  }
-               }
-            };
+            return new TxEntryCacheSet(rCommand, set, rCtx, isRemoteIteration);
          });
       }
       return super.visitEntrySetCommand(ctx, command);
@@ -771,6 +631,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
       private final TxInvocationContext<LocalTransaction> ctx;
       // We store all the not yet seen context entries here.  We rely on the fact that the cache entry reference is updated
       // if a change occurs in between iterations to see updates.
+      // TODO Dan: Only true with REPEATABLE_READ isolation level, not true with READ_COMMITTED
       private final Deque<CacheEntry> contextEntries;
       private final Set<Object> seenContextKeys = new HashSet<>();
       private final CloseableIterator<E> realIterator;
@@ -782,7 +643,8 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
                                                TxInvocationContext<LocalTransaction> ctx) {
          this.realIterator = realIterator;
          this.ctx = ctx;
-         contextEntries = new ArrayDeque<>(ctx.getLookedUpEntries().values());
+         contextEntries = new ArrayDeque<>(ctx.lookedUpEntriesCount());
+         ctx.forEachEntry((key, entry) -> contextEntries.add(entry));
       }
 
       @Override
@@ -814,48 +676,205 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
       protected abstract Object getKey(E value);
 
       protected E getNextFromIterator() {
-         E returnedValue = null;
          // We first have to exhaust all of our context entries
-         CacheEntry<K, V> entry;
-         while (returnedValue == null && !contextEntries.isEmpty() &&
-                 (entry = contextEntries.poll()) != null) {
-            seenContextKeys.add(entry.getKey());
-            if (!ctx.isEntryRemovedInContext(entry.getKey()) && !entry.isNull()) {
-               returnedValue = fromEntry(entry);
-            }
-         }
-         if (returnedValue == null) {
-            while (realIterator.hasNext()) {
-               E iteratedEntry = realIterator.next();
-               Object key = getKey(iteratedEntry);
-               CacheEntry<K, V> contextEntry;
-               // If the value was in the context then we ignore the stored value since we use the context value
-               if ((contextEntry = ctx.lookupEntry(key)) != null) {
-                  if (seenContextKeys.add(contextEntry.getKey()) && !contextEntry.isRemoved() && !contextEntry.isNull()) {
-                     break;
-                  }
-               } else {
-                  seenContextKeys.add(key);
-                  // We have to add any entry we read from the iterator as if it was read from the context
-                  // otherwise if the reader adds this entry to the context we will see it again
-                  return iteratedEntry;
-               }
+         CacheEntry entry;
+         while ((entry = contextEntries.poll()) != null) {
+            if (!entry.isRemoved() && !entry.isNull()) {
+               seenContextKeys.add(entry.getKey());
+               return (E) fromEntry(entry);
             }
          }
 
-         if (returnedValue == null) {
-            // We do a last check to make sure no additional values were added to our context while iterating
-            for (CacheEntry<K, V> lookedUpEntry : ctx.getLookedUpEntries().values()) {
-               if (seenContextKeys.add(lookedUpEntry.getKey()) && !lookedUpEntry.isRemoved() && !lookedUpEntry.isNull()) {
-                  if (returnedValue == null) {
-                     returnedValue = fromEntry(lookedUpEntry);
-                  } else {
-                     contextEntries.add(lookedUpEntry);
-                  }
+         while (realIterator.hasNext()) {
+            E iteratedEntry = realIterator.next();
+            Object key = getKey(iteratedEntry);
+            CacheEntry contextEntry;
+            // If the value was in the context then we ignore the stored value since we use the context value
+            if ((contextEntry = ctx.lookupEntry(key)) != null) {
+               if (seenContextKeys.add(contextEntry.getKey()) && !contextEntry.isRemoved() && !contextEntry.isNull()) {
+                  // The entry was wrapped in the context after we took the initial context snapshot
+                  // Skip the rest of the iterator for now and handle it in the "last check" loop below
+                  break;
                }
+            } else {
+               // We have to add any entry we read from the iterator as if it was read from the context
+               // otherwise if the reader adds this entry to the context we will see it again
+               // TODO Dan: what about memory usage?
+               seenContextKeys.add(key);
+               return iteratedEntry;
             }
          }
-         return returnedValue;
+
+         // We do a last check to make sure no additional values were added to our context while iterating
+         ctx.forEachValue((key, lookedUpEntry) -> {
+            if (seenContextKeys.add(key)) {
+               contextEntries.add(lookedUpEntry);
+            }
+         });
+         return (E) contextEntries.poll();
+      }
+   }
+
+   private class TxKeyCacheSet extends AbstractDelegatingKeyCacheSet<K, V> {
+      private final boolean isRemoteIteration;
+      private final InvocationContext rCtx;
+
+      TxKeyCacheSet(VisitableCommand rCommand, CacheSet<K> set, InvocationContext rCtx, boolean isRemoteIteration) {
+         super(Caches.getCacheWithFlags(TxInterceptor.this.cache.wired(), (FlagAffectedCommand) rCommand), set);
+         this.isRemoteIteration = isRemoteIteration;
+         this.rCtx = rCtx;
+      }
+
+      @Override
+      public CloseableIterator<K> iterator() {
+         if (isRemoteIteration) {
+            return innerIterator();
+         }
+         // Need to support remove of iterator
+         return new RemovableCloseableIterator<>(innerIterator(), k -> cache.wired().remove(k));
+      }
+
+      CloseableIterator<K> innerIterator() {
+         return new TransactionAwareKeyCloseableIterator<>(super.iterator(),
+                                                           (TxInvocationContext<LocalTransaction>) rCtx, cache.wired());
+      }
+
+      @Override
+      public void clear() {
+         cache.wired().clear();
+      }
+
+      @Override
+      public boolean contains(Object o) {
+         boolean contained = false;
+         if (o != null) {
+            CacheEntry contextEntry = rCtx.lookupEntry(o);
+            if (contextEntry == null) {
+               contained = super.contains(o);
+            } else {
+               contained = !contextEntry.isRemoved();
+            }
+         }
+         return contained;
+      }
+
+      @Override
+      public boolean remove(Object o) {
+         boolean removed = false;
+         if (o != null) {
+            removed = cache.wired().remove(o) != null;
+         }
+         return removed;
+      }
+
+      @Override
+      public CloseableSpliterator<K> spliterator() {
+         Spliterator<K> parentSpliterator = super.spliterator();
+         long estimateSize =
+            parentSpliterator.estimateSize() + rCtx.lookedUpEntriesCount();
+         // This is an overestimate for size if we have looked up entries that don't map to
+         // this node
+         return new IteratorAsSpliterator.Builder<>(innerIterator())
+               .setEstimateRemaining(estimateSize < 0L ? Long.MAX_VALUE : estimateSize)
+               .setCharacteristics(Spliterator.CONCURRENT | Spliterator.DISTINCT |
+                     Spliterator.NONNULL).get();
+      }
+
+      @Override
+      public int size() {
+         long size = stream().count();
+         if (size > Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+         }
+         return (int) size;
+      }
+   }
+
+   private class TxEntryCacheSet extends AbstractDelegatingEntryCacheSet<K, V> {
+
+      private final InvocationContext rCtx;
+      private final boolean isRemoteIteration;
+
+      TxEntryCacheSet(VisitableCommand rCommand, CacheSet<CacheEntry<K, V>> set, InvocationContext rCtx,
+                      boolean isRemoteIteration) {
+         super(Caches.getCacheWithFlags(TxInterceptor.this.cache.wired(), (FlagAffectedCommand) rCommand), set);
+         this.rCtx = rCtx;
+         this.isRemoteIteration = isRemoteIteration;
+      }
+
+      @Override
+      public void clear() {
+         cache.wired().clear();
+      }
+
+      @Override
+      public boolean contains(Object o) {
+         boolean contained = false;
+         Map.Entry entry = toEntry(o);
+         if (entry != null) {
+            CacheEntry contextEntry = rCtx.lookupEntry(entry.getKey());
+            if (contextEntry == null) {
+               contained = super.contains(o);
+            } else {
+               contained = !contextEntry.isRemoved() && contextEntry.getValue().equals(entry.getValue());
+            }
+         }
+         return contained;
+      }
+
+      @Override
+      public boolean remove(Object o) {
+         boolean removed = false;
+         Map.Entry entry = toEntry(o);
+         if (entry != null) {
+            V value = cache.wired().remove(o);
+            removed = value != null && value.equals(entry.getValue());
+         }
+         return removed;
+      }
+
+      @Override
+      public CloseableIterator<CacheEntry<K, V>> iterator() {
+         if (isRemoteIteration) {
+            return innerIterator();
+         }
+         return new IteratorMapper<>(new RemovableCloseableIterator<>(innerIterator(),
+               e -> cache.wired().remove(e.getKey(), e.getValue())), e -> new EntryWrapper<>(cache.wired(), e));
+      }
+
+      CloseableIterator<CacheEntry<K, V>> innerIterator() {
+         return new TransactionAwareEntryCloseableIterator<>(super.iterator(),
+                                                             (TxInvocationContext<LocalTransaction>) rCtx, cache.wired());
+      }
+
+      @Override
+      public CloseableSpliterator<CacheEntry<K, V>> spliterator() {
+         Spliterator<CacheEntry<K, V>> parentSpliterator = super.spliterator();
+         long estimateSize =
+            parentSpliterator.estimateSize() + rCtx.lookedUpEntriesCount();
+         // This is an overestimate for size if we have looked up entries that don't map to
+         // this node
+         return new IteratorAsSpliterator.Builder<>(innerIterator())
+               .setEstimateRemaining(estimateSize < 0L ? Long.MAX_VALUE : estimateSize)
+               .setCharacteristics(Spliterator.CONCURRENT | Spliterator.DISTINCT |
+                     Spliterator.NONNULL).get();
+      }
+
+      @Override
+      public int size() {
+         long size = stream().count();
+         if (size > Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+         }
+         return (int) size;
+      }
+
+      private Map.Entry<K, V> toEntry(Object obj) {
+         if (obj instanceof Map.Entry) {
+            return (Map.Entry) obj;
+         } else {
+            return null;
+         }
       }
    }
 }

@@ -8,7 +8,6 @@ import java.util.Set;
 
 import org.infinispan.commons.dataconversion.BinaryEncoder;
 import org.infinispan.commons.dataconversion.ByteArrayWrapper;
-import org.infinispan.commons.dataconversion.CompatModeEncoder;
 import org.infinispan.commons.dataconversion.Encoder;
 import org.infinispan.commons.dataconversion.EncodingException;
 import org.infinispan.commons.dataconversion.GlobalMarshallerEncoder;
@@ -19,9 +18,7 @@ import org.infinispan.commons.dataconversion.Transcoder;
 import org.infinispan.commons.dataconversion.Wrapper;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.marshall.Ids;
-import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.util.Util;
-import org.infinispan.configuration.cache.CompatibilityModeConfiguration;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.configuration.cache.ContentTypeConfiguration;
@@ -48,6 +45,10 @@ public final class DataConversion {
    private Class<? extends Wrapper> wrapperClass;
    private MediaType requestMediaType;
    private MediaType storageMediaType;
+
+   public MediaType getRequestMediaType() {
+      return requestMediaType;
+   }
 
    private Short encoderId;
    private Byte wrapperId;
@@ -85,11 +86,12 @@ public final class DataConversion {
       this.encoderClass = encoder.getClass();
       this.wrapperClass = wrapper.getClass();
       this.isKey = isKey;
+      this.storageMediaType = MediaType.APPLICATION_UNKNOWN;
    }
 
    public DataConversion withRequestMediaType(MediaType requestMediaType) {
       if (Objects.equals(this.requestMediaType, requestMediaType)) return this;
-      return new DataConversion(this.encoderClass, this.wrapperClass, requestMediaType, this.storageMediaType,
+      return new DataConversion(null, this.wrapperClass, requestMediaType, this.storageMediaType,
             this.isKey);
    }
 
@@ -121,28 +123,36 @@ public final class DataConversion {
       if (contentTypeConfiguration.isMediaTypeChanged()) {
          return contentTypeConfiguration.mediaType();
       }
-      // Compatibility mode assumes application/x-java-object
-      if (configuration.compatibility().enabled()) {
-         return MediaType.APPLICATION_OBJECT;
-      }
       // Indexed caches started by the server will assume application/protostream as storage media type
       if (!embeddedMode && configuration.indexing().index().isEnabled() && contentTypeConfiguration.mediaType() == null) {
          return MediaType.APPLICATION_PROTOSTREAM;
       }
-      // Otherwise assume java object for embedded and octet-stream for server
-      return embeddedMode ? MediaType.APPLICATION_OBJECT : MediaType.APPLICATION_OCTET_STREAM;
+      return MediaType.APPLICATION_UNKNOWN;
    }
 
    public boolean isConversionSupported(MediaType mediaType) {
-      return encoderRegistry.isConversionSupported(storageMediaType, mediaType);
+      return storageMediaType == null || encoderRegistry.isConversionSupported(storageMediaType, mediaType);
+   }
+
+   public Object convert(Object o, MediaType from, MediaType to) {
+      if (o == null) return null;
+      if (encoderRegistry == null) return o;
+      Transcoder transcoder = encoderRegistry.getTranscoder(from, to);
+      return transcoder.transcode(o, from, to);
+   }
+
+   public Object convertToRequestFormat(Object o, MediaType contentType) {
+      if (o == null) return null;
+      if (requestMediaType == null) return fromStorage(o);
+      Transcoder transcoder = encoderRegistry.getTranscoder(contentType, requestMediaType);
+      return transcoder.transcode(o, contentType, requestMediaType);
    }
 
    @Inject
    public void injectDependencies(GlobalConfiguration gcr, EncoderRegistry encoderRegistry, Configuration configuration) {
       this.encoderRegistry = encoderRegistry;
       boolean embeddedMode = Configurations.isEmbeddedMode(gcr);
-      CompatibilityModeConfiguration compatibility = configuration.compatibility();
-      boolean compat = compatibility.enabled();
+      this.storageMediaType = getStorageMediaType(configuration, embeddedMode);
 
       StorageType storageType = configuration.memory().storageType();
       boolean offheap = storageType == StorageType.OFF_HEAP;
@@ -158,13 +168,9 @@ public final class DataConversion {
          if (binary) {
             encoderClass = BinaryEncoder.class;
          }
-         if (compat) {
-            this.encoderClass = embeddedMode ? IdentityEncoder.class : CompatModeEncoder.class;
-         }
       }
       this.lookupWrapper();
-      this.lookupEncoder(compatibility, gcr.classLoader());
-      this.storageMediaType = getStorageMediaType(configuration, embeddedMode);
+      this.encoder = encoderRegistry.getEncoder(encoderClass, encoderId);
       this.lookupTranscoder();
    }
 
@@ -173,7 +179,7 @@ public final class DataConversion {
    }
 
    private void lookupTranscoder() {
-      boolean needsTranscoding = requestMediaType != null && !requestMediaType.matchesAll() && !requestMediaType.equals(storageMediaType);
+      boolean needsTranscoding = storageMediaType != null && requestMediaType != null && !requestMediaType.matchesAll() && !requestMediaType.equals(storageMediaType);
       if (needsTranscoding) {
          Transcoder directTranscoder = null;
          if (encoder.getStorageFormat() != null) {
@@ -190,15 +196,6 @@ public final class DataConversion {
          } else {
             transcoder = encoderRegistry.getTranscoder(requestMediaType, storageMediaType);
          }
-      }
-   }
-
-   private void lookupEncoder(CompatibilityModeConfiguration compatConfig, ClassLoader classLoader) {
-      this.encoder = encoderRegistry.getEncoder(encoderClass, encoderId);
-      if (compatConfig.enabled() && CompatModeEncoder.class == encoder.getClass()) {
-         this.encoderClass = CompatModeEncoder.class;
-         Marshaller compatMarshaller = compatConfig.marshaller();
-         this.encoder = new CompatModeEncoder(compatMarshaller, classLoader);
       }
    }
 
@@ -243,7 +240,7 @@ public final class DataConversion {
    }
 
    public boolean isStorageFormatFilterable() {
-      return encoder.isStorageFormatFilterable();
+      return storageMediaType != null && storageMediaType.equals(MediaType.APPLICATION_OBJECT);
    }
 
    @Override
@@ -254,7 +251,8 @@ public final class DataConversion {
       return isKey == that.isKey &&
             Objects.equals(encoder, that.encoder) &&
             Objects.equals(wrapper, that.wrapper) &&
-            Objects.equals(transcoder, that.transcoder);
+            Objects.equals(transcoder, that.transcoder) &&
+            Objects.equals(requestMediaType, that.requestMediaType);
    }
 
    @Override
@@ -278,12 +276,12 @@ public final class DataConversion {
       return Objects.hash(encoderClass, wrapperClass, isKey);
    }
 
-   public static DataConversion newKeyDataConversion(Class<? extends Encoder> encoderClass, Class<? extends Wrapper> wrapperClass, MediaType requestType) {
-      return new DataConversion(encoderClass, wrapperClass, requestType, null, true);
+   public static DataConversion newKeyDataConversion(Class<? extends Encoder> encoderClass, Class<? extends Wrapper> wrapperClass, MediaType storageType) {
+      return new DataConversion(encoderClass, wrapperClass, null, storageType, true);
    }
 
-   public static DataConversion newValueDataConversion(Class<? extends Encoder> encoderClass, Class<? extends Wrapper> wrapperClass, MediaType requestType) {
-      return new DataConversion(encoderClass, wrapperClass, requestType, null, false);
+   public static DataConversion newValueDataConversion(Class<? extends Encoder> encoderClass, Class<? extends Wrapper> wrapperClass, MediaType storageType) {
+      return new DataConversion(encoderClass, wrapperClass, null, storageType, false);
    }
 
    private static boolean isDefault(DataConversion dataConversion) {

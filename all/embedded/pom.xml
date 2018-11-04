@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-all-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -15,6 +15,7 @@
    <description>Infinispan Embedded All-in-One module</description>
 
    <properties>
+      <module.skipDownloadLicenses>false</module.skipDownloadLicenses>
       <intermediary_jar_name>intermediary-${project.build.finalName}</intermediary_jar_name>
       <intermediary_jar_path>${project.build.directory}/${intermediary_jar_name}.jar</intermediary_jar_path>
    </properties>
@@ -101,7 +102,7 @@
       <!-- These dependencies will be left in the rewritten pom -->
       <dependency>
          <groupId>org.jboss.spec.javax.transaction</groupId>
-         <artifactId>jboss-transaction-api_1.1_spec</artifactId>
+         <artifactId>jboss-transaction-api_1.2_spec</artifactId>
       </dependency>
 
       <dependency>
@@ -117,8 +118,8 @@
       </dependency>
 
       <dependency>
-         <groupId>org.hibernate.javax.persistence</groupId>
-         <artifactId>hibernate-jpa-2.1-api</artifactId>
+         <groupId>javax.persistence</groupId>
+         <artifactId>javax.persistence-api</artifactId>
          <scope>provided</scope>
       </dependency>
 
@@ -185,7 +186,7 @@
                            <exclude>org.apache.logging.log4j:log4j-api:jar:</exclude>
                            <exclude>net.jcip:jcip-annotations:jar:</exclude>
                            <exclude>org.jboss.spec.javax.interceptor:jboss-interceptors-api_1.1_spec:jar:</exclude>
-                           <exclude>org.jboss.spec.javax.transaction:jboss-transaction-api_1.1_spec:jar:</exclude>
+                           <exclude>org.jboss.spec.javax.transaction:jboss-transaction-api_1.2_spec:jar:</exclude>
                            <exclude>javax.annotation:jsr250-api:jar:</exclude>
                            <exclude>javax.cache:cache-api:jar:</exclude>
                            <exclude>javax.enterprise:cdi-api:jar:</exclude>
@@ -340,6 +341,7 @@
                            !infinispan.*,
                            !io.netty.internal.tcnative.*,
                            !org.conscrypt.*,
+                           !javax.annotation.*,
                            !javax.cache.*,
                            !javax.enterprise.*,
                            !javax.inject.*,
@@ -411,8 +413,7 @@
                      <skipAttach>${skipCreateSourcesJar}</skipAttach>
                      <artifacts>
                         <artifact>
-                           <!-- maven-shade-plugin 2.4.3 doesn't use finalName for the sources jar, 3.0.0 does -->
-                           <file>target/${project.build.finalName}-shaded-sources.jar</file>
+                           <file>${project.build.directory}/${intermediary_jar_name}-sources.jar</file>
                            <type>jar</type>
                            <classifier>sources</classifier>
                         </artifact>
@@ -452,5 +453,37 @@
          </plugin>
       </plugins>
    </build>
+
+   <profiles>
+      <profile>
+         <id>distribution</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.wildfly.maven.plugins</groupId>
+                  <artifactId>licenses-plugin</artifactId>
+                  <version>1.0.0</version>
+                  <executions>
+                     <execution>
+                        <id>update-licenses-xml</id>
+                        <goals>
+                           <goal>insert-versions</goal>
+                        </goals>
+                        <phase>prepare-package</phase>
+                        <configuration>
+                           <sortByGroupIdAndArtifactId>true</sortByGroupIdAndArtifactId>
+                           <licensesOutputFile>${project.build.directory}/licenses.xml</licensesOutputFile>
+                           <excludedGroups>org.kohsuke|org.apache.karaf.features|org.osgi</excludedGroups>
+                           <excludedArtifacts>jboss-logging-processor|jdeparser|jcip-annotations|jboss-logging-annotations|c3p0</excludedArtifacts>
+                           <excludedScopes>system,test,runtime</excludedScopes>
+                        </configuration>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+
+   </profiles>
 
 </project>

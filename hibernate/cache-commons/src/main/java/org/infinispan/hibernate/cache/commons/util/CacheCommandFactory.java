@@ -12,11 +12,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-import org.infinispan.hibernate.cache.commons.impl.BaseRegion;
-
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.module.ModuleCommandFactory;
 import org.infinispan.commands.remote.CacheRpcCommand;
+import org.infinispan.hibernate.cache.commons.InfinispanBaseRegion;
 import org.infinispan.util.ByteString;
 
 /**
@@ -28,19 +27,18 @@ import org.infinispan.util.ByteString;
 public class CacheCommandFactory implements ModuleCommandFactory {
 
    /**
-    * Keeps track of regions to which second-level cache specific
-    * commands have been plugged.
+    * Keeps track of regions to which second-level cache specific commands have been plugged.
+    * The regions are keyed by cache name (which is qualified), not by region name that is unqualified in Hibernate 5.3+
     */
-	private ConcurrentMap<String, BaseRegion> allRegions =
-			new ConcurrentHashMap<String, BaseRegion>();
+   private ConcurrentMap<ByteString, InfinispanBaseRegion> allRegions = new ConcurrentHashMap<>();
 
    /**
     * Add region so that commands can be cleared on shutdown.
     *
     * @param region instance to keep track of
     */
-	public void addRegion(BaseRegion region) {
-		allRegions.put( region.getName(), region );
+	public void addRegion(InfinispanBaseRegion region) {
+		allRegions.put(ByteString.fromString(region.getCache().getName()), region);
 	}
 
    /**
@@ -48,8 +46,8 @@ public class CacheCommandFactory implements ModuleCommandFactory {
     *
     * @param regions collection of regions to clear
     */
-	public void clearRegions(Collection<BaseRegion> regions) {
-		regions.forEach( region -> allRegions.remove( region.getName() ) );
+	public void clearRegions(Collection<? extends InfinispanBaseRegion> regions) {
+		regions.forEach(region -> allRegions.remove(ByteString.fromString(region.getCache().getName())));
 	}
 
 	@Override
@@ -66,7 +64,7 @@ public class CacheCommandFactory implements ModuleCommandFactory {
 		CacheRpcCommand c;
 		switch ( commandId ) {
 			case CacheCommandIds.EVICT_ALL:
-				c = new EvictAllCommand( cacheName, allRegions.get( cacheName.toString() ) );
+				c = new EvictAllCommand(cacheName, allRegions.get(cacheName));
 				break;
 			case CacheCommandIds.END_INVALIDATION:
 				c = new EndInvalidationCommand(cacheName);

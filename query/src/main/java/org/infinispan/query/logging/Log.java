@@ -16,6 +16,7 @@ import org.hibernate.search.exception.SearchException;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.objectfilter.ParsingException;
+import org.infinispan.partitionhandling.AvailabilityException;
 import org.infinispan.remoting.transport.Address;
 import org.jboss.logging.BasicLogger;
 import org.jboss.logging.annotations.Cause;
@@ -165,4 +166,13 @@ public interface Log extends BasicLogger {
 
    @Message(value = "Unable to define sort, please use sorting in the query string instead.", id = 14041)
    SearchException sortNotSupportedWithQueryString();
+
+   @Message(value = "Cannot execute query: cluster is operating in degraded mode and partition handling configuration doesn't allow reads and writes.", id = 14042)
+   AvailabilityException partitionDegraded();
+
+   @Message(value = "Cannot find an appropriate Transformer for key type %s. Indexing only works with entries keyed " +
+         "on Strings, primitives, byte[], UUID, classes that have the @Transformable annotation or classes for which " +
+         "you have defined a suitable Transformer in the indexing configuration. Alternatively, see " +
+         "org.infinispan.query.spi.SearchManagerImplementor.registerKeyTransformer.", id = 14043)
+   CacheException noTransformerForKey(String keyClassName);
 }

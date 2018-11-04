@@ -2,17 +2,25 @@ package org.infinispan.client.hotrod.impl.protocol;
 
 import java.lang.annotation.Annotation;
 import java.net.SocketAddress;
-import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
+import org.infinispan.client.hotrod.DataFormat;
+import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.annotation.ClientListener;
 import org.infinispan.client.hotrod.counter.impl.HotRodCounterEvent;
-import org.infinispan.client.hotrod.event.ClientEvent;
+import org.infinispan.client.hotrod.event.impl.AbstractClientEvent;
+import org.infinispan.client.hotrod.impl.operations.OperationsFactory;
+import org.infinispan.client.hotrod.impl.operations.PingOperation.PingResponse;
 import org.infinispan.client.hotrod.impl.transport.netty.ChannelFactory;
 import org.infinispan.client.hotrod.logging.Log;
+import org.infinispan.commons.configuration.ClassWhiteList;
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.marshall.Marshaller;
-import org.infinispan.commons.util.Either;
+import org.infinispan.commons.util.CloseableIterator;
+import org.infinispan.commons.util.IntSet;
 
 import io.netty.buffer.ByteBuf;
 
@@ -47,32 +55,105 @@ public interface Codec {
 
    long readMessageId(ByteBuf buf);
 
+   short readOpCode(ByteBuf buf);
+
    /**
     * Reads a response header from the transport and returns the status
     * of the response.
     */
-   short readHeader(ByteBuf buf, HeaderParams params, ChannelFactory channelFactory, SocketAddress serverAddress);
+   short readHeader(ByteBuf buf, double receivedOpCode, HeaderParams params, ChannelFactory channelFactory, SocketAddress serverAddress);
 
-   ClientEvent readEvent(ByteBuf buf, byte[] expectedListenerId, Marshaller marshaller, List<String> whitelist, SocketAddress serverAddress);
+   AbstractClientEvent readCacheEvent(ByteBuf buf, Function<byte[], DataFormat> listenerDataFormat, short eventTypeId, ClassWhiteList whitelist, SocketAddress serverAddress);
 
-   Either<Short, ClientEvent> readHeaderOrEvent(ByteBuf buf, HeaderParams params, byte[] expectedListenerId, Marshaller marshaller, List<String> whitelist, ChannelFactory channelFactory, SocketAddress serverAddress);
-
-   Object returnPossiblePrevValue(ByteBuf buf, short status, int flags, List<String> whitelist, Marshaller marshaller);
+   Object returnPossiblePrevValue(ByteBuf buf, short status, DataFormat dataFormat, int flags, ClassWhiteList whitelist, Marshaller marshaller);
 
    /**
     * Logger for Hot Rod client codec
     */
    Log getLog();
 
-   /**
-    * Read and unmarshall byte array.
-    */
-   <T> T readUnmarshallByteArray(ByteBuf buf, short status, List<String> whitelist, Marshaller marshaller);
-
    void writeClientListenerInterests(ByteBuf buf, Set<Class<? extends Annotation>> classes);
 
    /**
     * Reads a {@link HotRodCounterEvent} with the {@code listener-id}.
     */
-   HotRodCounterEvent readCounterEvent(ByteBuf buf, byte[] listenerId);
+   HotRodCounterEvent readCounterEvent(ByteBuf buf);
+
+   /**
+    * @return True if we can send operations after registering a listener on given channel
+    */
+   default boolean allowOperationsAndEvents() {
+      return false;
+   }
+
+   /**
+    * Iteration read for projection size
+    * @param buf
+    * @return
+    */
+   default int readProjectionSize(ByteBuf buf) {
+      return 0;
+   }
+
+   /**
+    * Iteration read to tell if metadata is present for entry
+    * @param buf
+    * @return
+    */
+   default short readMeta(ByteBuf buf) {
+      return 0;
+   }
+
+   default void writeIteratorStartOperation(ByteBuf buf, Set<Integer> segments, String filterConverterFactory, int batchSize,
+                                            boolean metadata, byte[][] filterParameters) {
+      throw new UnsupportedOperationException("This version doesn't support iterating upon entries!");
+   }
+
+   /**
+    * Creates a key iterator with the given batch size if applicable. This iterator does not support removal.
+    * @param remoteCache
+    * @param operationsFactory
+    * @param segments
+    * @param batchSize
+    * @param <K>
+    * @return
+    */
+   default <K> CloseableIterator<K> keyIterator(RemoteCache<K, ?> remoteCache, OperationsFactory operationsFactory,
+         IntSet segments, int batchSize) {
+      throw new UnsupportedOperationException("This version doesn't support iterating upon keys!");
+   }
+
+   /**
+    * Creates an entry iterator with the given batch size if applicable. This iterator does not support removal.
+    * @param remoteCache
+    * @param segments
+    * @param batchSize
+    * @param <K>
+    * @param <V>
+    * @return
+    */
+   default <K, V> CloseableIterator<Map.Entry<K, V>> entryIterator(RemoteCache<K, V> remoteCache,
+         IntSet segments, int batchSize) {
+      throw new UnsupportedOperationException("This version doesn't support iterating upon entries!");
+   }
+
+   /**
+    * Reads the {@link MediaType} of the key during initial ping of the cache.
+    */
+   default MediaType readKeyType(ByteBuf buf) {
+      return MediaType.APPLICATION_UNKNOWN;
+   }
+
+   /**
+    * Reads the {@link MediaType} of the key during initial ping of the cache.
+    */
+   default MediaType readValueType(ByteBuf buf) {
+      return MediaType.APPLICATION_UNKNOWN;
+   }
+
+   /**
+    * Read the response code for hints of object storage in the server.
+    */
+   boolean isObjectStorageHinted(PingResponse pingResponse);
+
 }

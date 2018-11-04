@@ -33,7 +33,6 @@ import org.infinispan.remoting.transport.jgroups.SuspectException;
 import org.infinispan.statetransfer.AllOwnersLostException;
 import org.infinispan.statetransfer.OutdatedTopologyException;
 import org.infinispan.statetransfer.StateTransferLock;
-import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.concurrent.TimeoutException;
@@ -54,7 +53,6 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
    private final InvocationFinallyFunction handleReadCommandReturn = this::handleReadCommandReturn;
 
    @Inject private Configuration configuration;
-   @Inject private StateTransferManager stateTransferManager;
    @Inject protected StateTransferLock stateTransferLock;
    @Inject @ComponentName(KnownComponentNames.REMOTE_COMMAND_EXECUTOR)
    private Executor remoteExecutor;
@@ -129,7 +127,7 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
    }
 
    protected final int currentTopologyId() {
-      final CacheTopology cacheTopology = stateTransferManager.getCacheTopology();
+      final CacheTopology cacheTopology = distributionManager.getCacheTopology();
       return cacheTopology == null ? -1 : cacheTopology.getTopologyId();
    }
 
@@ -137,7 +135,7 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
       // set the topology id if it was not set before (ie. this is local command)
       // TODO Make tx commands extend FlagAffectedCommand so we can use CACHE_MODE_LOCAL in TransactionTable.cleanupStaleTransactions
       if (command.getTopologyId() == -1) {
-         CacheTopology cacheTopology = stateTransferManager.getCacheTopology();
+         CacheTopology cacheTopology = distributionManager.getCacheTopology();
          // Before the topology is set in STM/StateConsumer the topology in DistributionManager is 0
          int topologyId = cacheTopology == null ? 0 : cacheTopology.getTopologyId();
          if (trace) getLog().tracef("Setting command topology to %d", topologyId);
@@ -187,17 +185,13 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
       return invokeNextAndHandle(ctx, command, handleReadCommandReturn);
    }
 
-   private Object handleReadCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable t)
-         throws Throwable {
-      if (t == null)
-         return rv;
-
+   private Object handleExceptionOnCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Throwable t) throws Throwable {
       Throwable ce = t;
       while (ce instanceof RemoteException) {
          ce = ce.getCause();
       }
       TopologyAffectedCommand cmd = (TopologyAffectedCommand) rCommand;
-      final CacheTopology cacheTopology = stateTransferManager.getCacheTopology();
+      final CacheTopology cacheTopology = distributionManager.getCacheTopology();
       int currentTopologyId = cacheTopology == null ? -1 : cacheTopology.getTopologyId();
       int requestedTopologyId = currentTopologyId;
       if (ce instanceof SuspectException) {
@@ -256,6 +250,15 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
          return makeStage(asyncInvokeNext(rCtx, rCommand, stateTransferLock.transactionDataFuture(requestedTopologyId)))
                .andHandle(rCtx, rCommand, handleReadCommandReturn);
       }
+   }
+
+   private Object handleReadCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable t)
+         throws Throwable {
+      if (t == null)
+         return rv;
+
+      // Separate method to allow for inlining of this method since exception should rarely occur
+      return handleExceptionOnCommandReturn(rCtx, rCommand, t);
    }
 
    protected int getNewTopologyId(Throwable ce, int currentTopologyId, TopologyAffectedCommand command) {

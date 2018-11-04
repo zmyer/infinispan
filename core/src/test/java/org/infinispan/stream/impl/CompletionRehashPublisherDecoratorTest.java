@@ -37,7 +37,7 @@ import io.reactivex.subscribers.TestSubscriber;
  * @author wburns
  * @since 9.0
  */
-@Test(testName = "stream.impl.AbstractWriteSkewStressTest", groups = "functional")
+@Test(testName = "stream.impl.CompletionRehashPublisherDecoratorTest", groups = "functional")
 public class CompletionRehashPublisherDecoratorTest {
 
    <S> CompletionRehashPublisherDecorator<S> createDecorator(Consumer<Supplier<PrimitiveIterator.OfInt>> userListener,
@@ -59,7 +59,8 @@ public class CompletionRehashPublisherDecoratorTest {
          when(ch.getPrimarySegmentsForOwner(eq(address))).thenReturn(primarySegmentsForOwner);
       }
 
-      DistributionManager dm = when(mock(DistributionManager.class).getReadConsistentHash()).thenReturn(ch).getMock();
+      DistributionManager dm = mock(DistributionManager.class);
+      when(dm.getReadConsistentHash()).thenReturn(ch);
 
       return new CompletionRehashPublisherDecorator<>(AbstractCacheStream.IteratorOperation.NO_MAP, dm, address,
             // Just ignore early completed segments and lost ones

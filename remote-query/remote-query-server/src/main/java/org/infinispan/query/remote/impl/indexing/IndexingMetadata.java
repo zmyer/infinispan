@@ -8,6 +8,8 @@ import java.util.stream.Collectors;
 import org.hibernate.search.annotations.Field;
 import org.infinispan.protostream.config.Configuration;
 import org.infinispan.protostream.descriptors.AnnotationElement;
+import org.infinispan.protostream.descriptors.Descriptor;
+import org.infinispan.protostream.descriptors.Option;
 
 /**
  * All fields of Protobuf types are indexed and stored by default if no indexing annotations are present. This behaviour
@@ -87,6 +89,21 @@ import org.infinispan.protostream.descriptors.AnnotationElement;
 public final class IndexingMetadata {
 
    /**
+    * A protobuf boolean option that controls 'indexing by default' for message types in current schema file that do not
+    * have indexing annotations. This behaviour is active by default and exists only for compatibility with the first
+    * release of remote query. It is deprecated and should not be relied upon; a warning message will be logged on every
+    * indexing operation that relies on 'indexing by default' behaviour. You are encouraged to turn this behaviour
+    * off completely by specifying {@code option indexed_by_default = false;} at the beginning of your schema file.
+    * and to annotate your message types in order to properly control indexing.
+    * <p>
+    * This 'indexing by default' behaviour is transient; it will be removed in a future version and the option that
+    * controls it will become deprecated too and will be ignored (and will trigger a deprecation warning message if
+    * encountered).
+    */
+   //TODO [anistor] to be removed in Infinispan 10
+   private static final String INDEXED_BY_DEFAULT_OPTION = "indexed_by_default";
+
+   /**
     * Similar to org.hibernate.search.annotations.Indexed. Indicates if a type will be indexed or not.
     * Has just two attributes:
     * <ul>
@@ -164,12 +181,34 @@ public final class IndexingMetadata {
    public static final String SORTABLE_FIELD_ANNOTATION = "SortableField";
    public static final String SORTABLE_FIELDS_ANNOTATION = "SortableFields";
 
+   /**
+    * A metadata instance to be used if indexing is disabled for a type.
+    */
    public static final IndexingMetadata NO_INDEXING = new IndexingMetadata(false, null, null, null);
 
+   /**
+    * Indicates if the type is indexed.
+    */
    private final boolean isIndexed;
+
+   /**
+    * The name of the index. Can be {@code null}.
+    */
    private final String indexName;
+
+   /**
+    * The name of the analyzer. Can be {@code null}.
+    */
    private final String analyzer;
+
+   /**
+    * Field mappings. This is null if indexing is disabled.
+    */
    private final Map<String, FieldMapping> fields;
+
+   /**
+    * The collection of sortable field names. Cab be empty but never {@code null}.
+    */
    private final Set<String> sortableFields;
 
    IndexingMetadata(boolean isIndexed, String indexName, String analyzer, Map<String, FieldMapping> fields) {
@@ -229,6 +268,9 @@ public final class IndexingMetadata {
    }
 
    public FieldMapping getFieldMapping(String name) {
+      if (fields == null) {
+         return null;
+      }
       return fields.get(name);
    }
 
@@ -302,5 +344,21 @@ public final class IndexingMetadata {
                .parentBuilder()
             .annotation(SORTABLE_FIELD_ANNOTATION, AnnotationElement.AnnotationTarget.FIELD)
                .repeatable(SORTABLE_FIELDS_ANNOTATION);
+   }
+
+   //TODO [anistor] to be removed in Infinispan 10
+   /**
+    * Retrieves the value of the 'indexed_by_default' protobuf option from the schema file defining the given
+    * message descriptor.
+    */
+   public static boolean isLegacyIndexingEnabled(Descriptor messageDescriptor) {
+      boolean isLegacyIndexingEnabled = true;
+      for (Option o : messageDescriptor.getFileDescriptor().getOptions()) {
+         if (o.getName().equals(INDEXED_BY_DEFAULT_OPTION)) {
+            isLegacyIndexingEnabled = Boolean.valueOf((String) o.getValue());
+            break;
+         }
+      }
+      return isLegacyIndexingEnabled;
    }
 }

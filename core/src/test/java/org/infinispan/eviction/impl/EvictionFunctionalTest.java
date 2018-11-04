@@ -21,7 +21,7 @@ import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.testng.annotations.Factory;
 import org.testng.annotations.Test;
 
@@ -71,7 +71,7 @@ public class EvictionFunctionalTest extends SingleCacheManagerTest {
       cache = cm.getCache();
       evictionListener = new EvictionListener();
       cache.addListener(evictionListener);
-      TestingUtil.replaceComponent(cache, TimeService.class, timeService = new ControlledTimeService(), true);
+      TestingUtil.replaceComponent(cm, TimeService.class, timeService = new ControlledTimeService(), true);
       return cm;
    }
 

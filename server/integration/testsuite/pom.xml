@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.infinispan.server</groupId>
         <artifactId>infinispan-server-versions</artifactId>
-        <version>9.2.1-SNAPSHOT</version>
+        <version>10.0.0-SNAPSHOT</version>
         <relativePath>../versions/pom.xml</relativePath>
     </parent>
 
@@ -21,6 +21,12 @@
         <dependency>
             <groupId>org.jboss.arquillian.junit</groupId>
             <artifactId>arquillian-junit-container</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${version.jackson}</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.infinispan.arquillian.container</groupId>
@@ -95,25 +101,12 @@
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-core</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-api</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.infinispan.protostream</groupId>
             <artifactId>sample-domain-implementation</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-query-dsl</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-remote-query-client</artifactId>
         </dependency>
         <dependency>
             <groupId>org.infinispan</groupId>
@@ -135,6 +128,7 @@
         <dependency>
             <groupId>org.infinispan.server</groupId>
             <artifactId>infinispan-server-build</artifactId>
+            <version>${version.org.infinispan.server-build.old}</version>
             <type>zip</type>
             <scope>test</scope>
         </dependency>
@@ -173,19 +167,6 @@
                 </exclusion>
             </exclusions>
             <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-handler</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport-native-epoll</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport-native-epoll</artifactId>
-            <classifier>linux-x86_64</classifier>
         </dependency>
         <!-- TODO: Make it possible to use a different version of Karaf -->
         <dependency>
@@ -249,13 +230,13 @@
             <artifactId>creaper-commands</artifactId>
             <exclusions>
                 <exclusion>
-                    <groupId>org.wildfly</groupId>
+                    <groupId>${appserver.groupId}</groupId>
                     <artifactId>wildfly-patching</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
         <dependency>
-            <groupId>org.jboss.aesh</groupId>
+            <groupId>org.aesh</groupId>
             <artifactId>aesh</artifactId>
             <scope>test</scope>
         </dependency>
@@ -273,13 +254,21 @@
           <version>0.12.1</version>
           <scope>test</scope>
        </dependency>
+       <dependency>
+          <groupId>org.infinispan</groupId>
+          <artifactId>infinispan-server-rest</artifactId>
+          <type>test-jar</type>
+          <scope>test</scope>
+       </dependency>
     </dependencies>
 
     <properties>
+        <test.libs.dir>${project.build.directory}/test-libs</test.libs.dir>
+
         <h2.server.ip>127.0.0.1</h2.server.ip>
         <h2.server.address>tcp://${h2.server.ip}:9092</h2.server.address>
         <database>h2</database>
-        <driver.dir>${project.build.directory}/test-libs</driver.dir>
+        <driver.dir>${test.libs.dir}</driver.dir>
         <driver.jar>h2.jar</driver.jar>
         <driver.class>org.h2.jdbcx.JdbcDataSource</driver.class>
 
@@ -293,7 +282,7 @@
         <username.other>sa</username.other>
 
         <ispnserver.project.dir>${basedir}/..</ispnserver.project.dir>
-        <server.build.dist>${ispnserver.project.dir}/build/target/infinispan-server-${project.version}</server.build.dist>
+        <server.build.dist>${ispnserver.project.dir}/build/target/server-distribution-thin/${infinispan.brand.prefix}-server-${infinispan.brand.version}</server.build.dist>
 
         <server1.dist>${basedir}/target/server/node1</server1.dist>
         <server2.dist>${basedir}/target/server/node2</server2.dist>
@@ -303,7 +292,7 @@
         <server3.old.dist>${basedir}/target/server/node3_old</server3.old.dist>
 
         <old.server.schema.version>8.0</old.server.schema.version>
-        <new.server.schema.version>9.2</new.server.schema.version>
+        <new.server.schema.version>${infinispan.core.schema.version}</new.server.schema.version>
 
         <start.jboss.as.manually>false</start.jboss.as.manually>
 
@@ -314,7 +303,6 @@
         <jvm.x64.args />
         <default.transport.stack>udp</default.transport.stack>
         <transport.stack>-Djboss.default.jgroups.stack=${default.transport.stack}</transport.stack>
-
 
         <jvm.ip.stack>-Djava.net.preferIPv4Stack=true</jvm.ip.stack>
         <node0.ip>127.0.0.1</node0.ip>
@@ -329,7 +317,7 @@
         <jvm.ip.stack>-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false
             -Djboss.default.multicast.address=${mcast.ip}
         </jvm.ip.stack>
-        <server.jvm.args>${jvm.ip.stack} ${serverMemoryJvmArgs} ${transport.stack} ${jvm.x64.args} ${testjvm.jigsawArgs}</server.jvm.args>
+        <server.jvm.args>${jvm.ip.stack} ${serverMemoryJvmArgs} ${transport.stack} ${jvm.x64.args} ${testjvm.jigsawArgs} -Dansi.strip=${ansi.strip}</server.jvm.args>
         <log4j.configurationFile>log4j2.xml</log4j.configurationFile>
         <suite.manual.phase>integration-test</suite.manual.phase>
         <suite.queries.phase>integration-test</suite.queries.phase>
@@ -448,7 +436,7 @@
                         <phase>process-test-resources</phase>
                         <configuration>
                             <skip>${skipTests}</skip>
-                            <outputDirectory>${project.build.directory}/test-libs</outputDirectory>
+                            <outputDirectory>${test.libs.dir}</outputDirectory>
                             <stripVersion>true</stripVersion>
                             <artifactItems>
                                 <artifactItem>
@@ -463,6 +451,12 @@
                                     <type>jar</type>
                                     <overWrite>true</overWrite>
                                 </artifactItem>
+                               <artifactItem>
+                                  <groupId>io.fabric8</groupId>
+                                  <artifactId>agent-bond-agent</artifactId>
+                                  <type>jar</type>
+                                  <overWrite>true</overWrite>
+                               </artifactItem>
                             </artifactItems>
                         </configuration>
                         <goals>
@@ -506,6 +500,8 @@
                                             <arg value="secret"/>
                                             <arg value="-keypass"/>
                                             <arg value="secret"/>
+                                            <arg value="-storetype"/>
+                                            <arg value="JKS"/>
                                             <!-- additional arguments -->
                                             <args/>
                                         </java>
@@ -577,6 +573,8 @@
                                         <arg value="${project.build.testOutputDirectory}/server.csr"/>
                                         <arg value="-outfile"/>
                                         <arg value="${project.build.testOutputDirectory}/server.cer"/>
+                                        <arg value="-ext"/>
+                                        <arg value="san=dns:localhost"/>
                                     </args>
                                 </keytool>
                                 <keytool command="-importkeystore">
@@ -870,10 +868,8 @@
                         <element>${driver.dir}/${driver.jar}</element>
                     </additionalClasspathElements>
                     <properties>
-                        <property>
-                            <name>listener</name>
-                            <value>org.infinispan.commons.test.JUnitTestListener</value>
-                        </property>
+                        <usedefaultlisteners>false</usedefaultlisteners>
+                        <listener>${junitListener}</listener>
                     </properties>
                 </configuration>
                 <executions>
@@ -891,6 +887,7 @@
                             <groups>${suite.manual.include.groups}</groups>
                             <systemPropertyVariables>
                                 <arquillian.launch>suite-manual</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-manual</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -905,6 +902,7 @@
                             <groups>${groups.queries}</groups>
                             <systemPropertyVariables>
                                 <arquillian.launch>queries</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-queries</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -921,6 +919,7 @@
                             <systemPropertyVariables>
                                 <clustering.mode>local</clustering.mode>
                                 <arquillian.launch>suite-client-local</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-client-local</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -937,6 +936,7 @@
                             <systemPropertyVariables>
                                 <clustering.mode>local</clustering.mode>
                                 <arquillian.launch>suite-memcached-local</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-memcached-local</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -953,6 +953,7 @@
                             <systemPropertyVariables>
                                 <clustering.mode>local</clustering.mode>
                                 <arquillian.launch>${suite.client.arq.domain}</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-client-domain-local</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -969,6 +970,7 @@
                             <systemPropertyVariables>
                                 <clustering.mode>dist</clustering.mode>
                                 <arquillian.launch>suite-client-dist</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-client-dist</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -985,6 +987,7 @@
                             <systemPropertyVariables>
                                 <clustering.mode>dist</clustering.mode>
                                 <arquillian.launch>suite-memcached-dist</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-memcached-dist</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -1001,6 +1004,7 @@
                             <systemPropertyVariables>
                                 <clustering.mode>dist</clustering.mode>
                                 <arquillian.launch>${suite.client.arq.domain}</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-client-domain-dist</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -1017,6 +1021,7 @@
                             <systemPropertyVariables>
                                 <clustering.mode>repl</clustering.mode>
                                 <arquillian.launch>suite-client-repl</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-client-repl</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -1033,6 +1038,7 @@
                             <systemPropertyVariables>
                                 <clustering.mode>repl</clustering.mode>
                                 <arquillian.launch>${suite.client.arq.domain}</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-client-domain-repl</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -1046,6 +1052,7 @@
                             <groups>${groups.security}</groups>
                             <systemPropertyVariables>
                                 <arquillian.launch>${suite.security.arquillian}</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-security</infinispan.module-suffix>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>
@@ -1060,8 +1067,16 @@
                             <excludedGroups>${groups.unstable}, org.infinispan.server.test.category.MemcachedClustered</excludedGroups>
                             <systemPropertyVariables>
                                 <arquillian.launch>suite-client-dist</arquillian.launch>
+                                <infinispan.module-suffix>${infinispan.module-suffix}-smoke</infinispan.module-suffix>
                             </systemPropertyVariables>
                            </configuration>
+                    </execution>
+                    <execution>
+                        <id>verify</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>verify</goal>
+                        </goals>
                     </execution>
                 </executions>
             </plugin>
@@ -1222,10 +1237,10 @@
                                 <configuration>
                                     <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/infinispan-server.xml" target="kill-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="kill-server">
                                             <property name="hotrod.port" value="11322" />
                                         </ant>
-                                        <ant antfile="${basedir}/src/test/resources/ant/infinispan-server.xml" target="start-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="start-server">
                                             <property name="server.dist" value="${server.old.dist}" />
                                             <property name="port.offset" value="100" />
                                             <property name="management.port" value="10090" />
@@ -1245,7 +1260,7 @@
                                 <configuration>
                                     <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/infinispan-server.xml" target="kill-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="kill-server">
                                             <property name="hotrod.port" value="11322" />
                                         </ant>
                                     </target>
@@ -1281,10 +1296,10 @@
                                 <configuration>
                                     <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="kill-server">
                                             <property name="hotrod.port" value="11422" />
                                         </ant>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="start-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="start-server">
                                             <property name="server.dist" value="${server2.old.dist}" />
                                             <property name="port.offset" value="200" />
                                             <property name="management.port" value="10190" />
@@ -1304,10 +1319,10 @@
                                 <configuration>
                                     <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="kill-server">
                                             <property name="hotrod.port" value="11522" />
                                         </ant>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="start-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="start-server">
                                             <property name="server.dist" value="${server3.old.dist}" />
                                             <property name="port.offset" value="300" />
                                             <property name="management.port" value="10290" />
@@ -1327,7 +1342,7 @@
                                 <configuration>
                                     <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="kill-server">
                                             <property name="hotrod.port" value="11422" />
                                         </ant>
                                     </target>
@@ -1342,7 +1357,7 @@
                                 <configuration>
                                     <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="kill-server">
                                             <property name="hotrod.port" value="11522" />
                                         </ant>
                                     </target>
@@ -1391,10 +1406,10 @@
                                 <configuration>
                                     <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="kill-server">
                                             <property name="hotrod.port" value="11222" />
                                         </ant>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="start-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="start-server">
                                             <property name="server.dist" value="${server1.dist}" />
                                             <property name="port.offset" value="0" />
                                             <property name="management.port" value="9990" />
@@ -1414,7 +1429,7 @@
                                 <configuration>
                                     <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                        <ant antfile="${basedir}/../src/main/ant/infinispan-server.xml" target="kill-server">
                                             <property name="hotrod.port" value="11222" />
                                         </ant>
                                     </target>

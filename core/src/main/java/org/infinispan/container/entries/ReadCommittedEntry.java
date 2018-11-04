@@ -11,6 +11,7 @@ import static org.infinispan.container.entries.ReadCommittedEntry.Flags.REMOVED;
 
 import org.infinispan.commons.util.Util;
 import org.infinispan.container.DataContainer;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -116,14 +117,7 @@ public class ReadCommittedEntry implements MVCCEntry {
 
    @Override
    public final void commit(DataContainer container) {
-      // TODO: No tombstones for now!!  I'll only need them for an eventually consistent cache
-
-      // only do stuff if there are changes.
-      if (isChanged()) {
-         if (trace)
-            log.tracef("Updating entry (key=%s removed=%s changed=%s created=%s value=%s metadata=%s)",
-                  toStr(getKey()), isRemoved(), isChanged(), isCreated(), toStr(value), getMetadata());
-
+      if (shouldCommit()) {
          if (isEvicted()) {
             container.evict(key);
          } else if (isRemoved()) {
@@ -135,6 +129,32 @@ public class ReadCommittedEntry implements MVCCEntry {
             container.put(key, value, metadata);
          }
       }
+   }
+
+   public final void commit(int segment, InternalDataContainer container) {
+      if (segment < 0) {
+         throw new IllegalArgumentException("Segment must be 0 or greater");
+      }
+      // only do stuff if there are changes.
+      if (shouldCommit()) {
+         if (isEvicted()) {
+            container.evict(segment, key);
+         } else if (isRemoved()) {
+            container.remove(segment, key);
+         } else if (value != null) {
+            container.put(segment, key, value, metadata);
+         }
+      }
+   }
+
+   private boolean shouldCommit() {
+      if (isChanged()) {
+         if (trace)
+            log.tracef("Updating entry (key=%s removed=%s changed=%s created=%s value=%s metadata=%s)",
+                  toStr(getKey()), isRemoved(), isChanged(), isCreated(), toStr(value), getMetadata());
+         return true;
+      }
+      return false;
    }
 
    @Override

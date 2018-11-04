@@ -14,6 +14,7 @@ import org.infinispan.Cache;
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
+import org.infinispan.remoting.inboundhandler.AbstractDelegatingHandler;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
 import org.infinispan.remoting.inboundhandler.Reply;
@@ -57,8 +58,8 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
    }
 
    private static void wrapAndApplyFilter(Cache<?, ?> cache, Filter filter) {
-      ControlledInboundHandler controlledInboundHandler = wrapInboundInvocationHandler(cache, ControlledInboundHandler::new);
-      controlledInboundHandler.filter = filter;
+      ControlledInboundHandler controlledInboundHandler =
+         wrapInboundInvocationHandler(cache, delegate -> new ControlledInboundHandler(delegate, filter));
    }
 
    FilterCollection createFilters(String cacheName, boolean discard, Class<? extends CacheRpcCommand> commandClass,
@@ -195,13 +196,12 @@ public abstract class BaseTxPartitionAndMergeTest extends BasePartitionHandlingT
       boolean before(CacheRpcCommand command, Reply reply, DeliverOrder order);
    }
 
-   private static class ControlledInboundHandler implements PerCacheInboundInvocationHandler {
+   private static class ControlledInboundHandler extends AbstractDelegatingHandler {
+      private final Filter filter;
 
-      private final PerCacheInboundInvocationHandler delegate;
-      private volatile Filter filter;
-
-      private ControlledInboundHandler(PerCacheInboundInvocationHandler delegate) {
-         this.delegate = delegate;
+      private ControlledInboundHandler(PerCacheInboundInvocationHandler delegate, Filter filter) {
+         super(delegate);
+         this.filter = filter;
       }
 
       @Override

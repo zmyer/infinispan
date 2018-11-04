@@ -19,7 +19,6 @@ import org.infinispan.AdvancedCache;
 import org.infinispan.query.CacheQuery;
 import org.infinispan.query.FetchOptions;
 import org.infinispan.query.FetchOptions.FetchMode;
-import org.infinispan.query.QueryDefinition;
 import org.infinispan.query.ResultIterator;
 import org.infinispan.query.backend.KeyTransformationHandler;
 
@@ -28,7 +27,7 @@ import org.infinispan.query.backend.KeyTransformationHandler;
  * <p/>
  *
  * @author Navin Surtani
- * @author Sanne Grinovero <sanne@hibernate.org> (C) 2011 Red Hat Inc.
+ * @author Sanne Grinovero &lt;sanne@hibernate.org&gt; (C) 2011 Red Hat Inc.
  * @author Marko Luksa
  */
 public class CacheQueryImpl<E> implements CacheQuery<E> {
@@ -44,6 +43,7 @@ public class CacheQueryImpl<E> implements CacheQuery<E> {
 
    protected final AdvancedCache<?, ?> cache;
    protected final KeyTransformationHandler keyTransformationHandler;
+   protected final PartitionHandlingSupport partitionHandlingSupport;
    protected QueryDefinition queryDefinition;
    private ProjectionConverter projectionConverter;
 
@@ -63,15 +63,14 @@ public class CacheQueryImpl<E> implements CacheQuery<E> {
       this.queryDefinition = queryDefinition;
       this.cache = cache;
       this.keyTransformationHandler = keyTransformationHandler;
+      this.partitionHandlingSupport = new PartitionHandlingSupport(cache);
    }
 
    /**
     * Create a CacheQueryImpl based on a HSQuery.
     */
    public CacheQueryImpl(HSQuery hSearchQuery, AdvancedCache<?, ?> cache, KeyTransformationHandler keyTransformationHandler) {
-      this.queryDefinition = new QueryDefinition(hSearchQuery);
-      this.cache = cache;
-      this.keyTransformationHandler = keyTransformationHandler;
+      this(new QueryDefinition(hSearchQuery), cache, keyTransformationHandler);
    }
 
    /**
@@ -90,6 +89,7 @@ public class CacheQueryImpl<E> implements CacheQuery<E> {
     */
    @Override
    public int getResultSize() {
+      partitionHandlingSupport.checkCacheAvailable();
       return queryDefinition.getHsQuery().queryResultSize();
    }
 
@@ -146,6 +146,7 @@ public class CacheQueryImpl<E> implements CacheQuery<E> {
 
    @Override
    public ResultIterator<E> iterator(FetchOptions fetchOptions) throws SearchException {
+      partitionHandlingSupport.checkCacheAvailable();
       HSQuery hSearchQuery = queryDefinition.getHsQuery();
       if (fetchOptions.getFetchMode() == FetchOptions.FetchMode.EAGER) {
          hSearchQuery.getTimeoutManager().start();
@@ -165,26 +166,16 @@ public class CacheQueryImpl<E> implements CacheQuery<E> {
 
    @Override
    public List<E> list() throws SearchException {
+      partitionHandlingSupport.checkCacheAvailable();
       HSQuery hSearchQuery = queryDefinition.getHsQuery();
       hSearchQuery.getTimeoutManager().start();
-      final List<EntityInfo> entityInfos = hSearchQuery.queryEntityInfos();
+      List<EntityInfo> entityInfos = hSearchQuery.queryEntityInfos();
       return (List<E>) getResultLoader(hSearchQuery).load(entityInfos);
    }
 
    private QueryResultLoader getResultLoader(HSQuery hSearchQuery) {
-      return isProjected(hSearchQuery) ? getProjectionLoader() : getEntityLoader();
-   }
-
-   private boolean isProjected(HSQuery hSearchQuery) {
-      return hSearchQuery.getProjectedFields() != null;
-   }
-
-   private ProjectionLoader getProjectionLoader() {
-      return new ProjectionLoader(projectionConverter, getEntityLoader());
-   }
-
-   private EntityLoader getEntityLoader() {
-      return new EntityLoader(cache, keyTransformationHandler);
+      EntityLoader entityLoader = new EntityLoader(cache, keyTransformationHandler);
+      return hSearchQuery.getProjectedFields() == null ? entityLoader : new ProjectionLoader(projectionConverter, entityLoader);
    }
 
    @Override
@@ -199,7 +190,7 @@ public class CacheQueryImpl<E> implements CacheQuery<E> {
 
    @Override
    public CacheQuery<Object[]> projection(String... fields) {
-      this.projectionConverter = new ProjectionConverter(fields, cache, keyTransformationHandler);
+      projectionConverter = new ProjectionConverter(fields, keyTransformationHandler);
       queryDefinition.getHsQuery().projection(projectionConverter.getHSearchProjection());
       return (CacheQuery<Object[]>) this;
    }
@@ -209,5 +200,4 @@ public class CacheQueryImpl<E> implements CacheQuery<E> {
       queryDefinition.getHsQuery().getTimeoutManager().setTimeout(timeout, timeUnit);
       return this;
    }
-
 }

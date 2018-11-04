@@ -40,6 +40,7 @@ public class CacheTopology {
    private final ConsistentHash unionCH;
    private final Phase phase;
    private List<Address> actualMembers;
+   // The persistent UUID of each actual member
    private List<PersistentUUID> persistentUUIDs;
 
    public CacheTopology(int topologyId, int rebalanceId, ConsistentHash currentCH, ConsistentHash pendingCH,
@@ -49,9 +50,12 @@ public class CacheTopology {
 
    public CacheTopology(int topologyId, int rebalanceId, ConsistentHash currentCH, ConsistentHash pendingCH,
                         ConsistentHash unionCH, Phase phase, List<Address> actualMembers, List<PersistentUUID> persistentUUIDs) {
-      if (pendingCH != null && !pendingCH.getMembers().containsAll(currentCH.getMembers()) && phase != Phase.CONFLICT_RESOLUTION) {
+      if (pendingCH != null && !pendingCH.getMembers().containsAll(currentCH.getMembers())) {
          throw new IllegalArgumentException("A cache topology's pending consistent hash must " +
                "contain all the current consistent hash's members: currentCH=" + currentCH + ", pendingCH=" + pendingCH);
+      }
+      if (persistentUUIDs != null && persistentUUIDs.size() != actualMembers.size()) {
+         throw new IllegalArgumentException("There must be one persistent UUID for each actual member");
       }
       this.topologyId = topologyId;
       this.rebalanceId = rebalanceId;
@@ -127,13 +131,13 @@ public class CacheTopology {
     */
    public ConsistentHash getReadConsistentHash() {
       switch (phase) {
+         case CONFLICT_RESOLUTION:
          case NO_REBALANCE:
             assert pendingCH == null;
             assert unionCH == null;
             return currentCH;
          case TRANSITORY:
             return pendingCH;
-         case CONFLICT_RESOLUTION:
          case READ_OLD_WRITE_ALL:
             assert pendingCH != null;
             assert unionCH != null;
@@ -154,13 +158,13 @@ public class CacheTopology {
     */
    public ConsistentHash getWriteConsistentHash() {
       switch (phase) {
+         case CONFLICT_RESOLUTION:
          case NO_REBALANCE:
             assert pendingCH == null;
             assert unionCH == null;
             return currentCH;
          case TRANSITORY:
             return pendingCH;
-         case CONFLICT_RESOLUTION:
          case READ_OLD_WRITE_ALL:
          case READ_ALL_WRITE_ALL:
          case READ_NEW_WRITE_ALL:
@@ -271,7 +275,7 @@ public class CacheTopology {
     *
     * 1. T(x+1).writeCH contains all nodes from Tx.readCH (this is the requirement for ISPN-5021)
     * 2. Tx.readCH and T(x+1).readCH has non-empty subset of nodes (that will allow no blocking for read commands
-    *    && reading only entries node owns according to readCH)
+    *    and reading only entries node owns according to readCH)
     *
     * Old entries should be wiped out only after coming to the {@link #NO_REBALANCE} phase.
     */

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
@@ -34,13 +35,12 @@ public final class IckleBinaryProtobufFilterAndConverter<K, V> extends AbstractK
    private final IckleProtobufFilterAndConverter delegate;
 
    @Inject
-   @SuppressWarnings("unused")
-   protected void injectDependencies(ComponentRegistry componentRegistry, EmbeddedCacheManager cacheManager) {
+   void injectDependencies(ComponentRegistry componentRegistry, EmbeddedCacheManager cacheManager) {
       componentRegistry.wireDependencies(delegate);
-      serCtx = ProtobufMetadataManagerImpl.getSerializationContextInternal(cacheManager);
+      serCtx = ProtobufMetadataManagerImpl.getSerializationContext(cacheManager);
    }
 
-   public IckleBinaryProtobufFilterAndConverter(String queryString, Map<String, Object> namedParameters) {
+   IckleBinaryProtobufFilterAndConverter(String queryString, Map<String, Object> namedParameters) {
       this.delegate = new IckleProtobufFilterAndConverter(queryString, namedParameters);
    }
 
@@ -65,6 +65,11 @@ public final class IckleBinaryProtobufFilterAndConverter<K, V> extends AbstractK
       } catch (IOException e) {
          throw new RuntimeException(e);
       }
+   }
+
+   @Override
+   public MediaType format() {
+      return MediaType.APPLICATION_PROTOSTREAM;
    }
 
    public static final class Externalizer extends AbstractExternalizer<IckleBinaryProtobufFilterAndConverter> {

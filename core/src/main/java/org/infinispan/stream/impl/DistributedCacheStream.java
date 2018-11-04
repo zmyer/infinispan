@@ -18,8 +18,10 @@ import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -45,16 +47,18 @@ import org.infinispan.CacheStream;
 import org.infinispan.DoubleCacheStream;
 import org.infinispan.IntCacheStream;
 import org.infinispan.LongCacheStream;
+import org.infinispan.commons.CacheException;
 import org.infinispan.commons.marshall.Externalizer;
 import org.infinispan.commons.marshall.SerializeWith;
 import org.infinispan.commons.util.AbstractIterator;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.Closeables;
 import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.commons.util.IteratorMapper;
-import org.infinispan.commons.util.RangeSet;
-import org.infinispan.commons.util.SmallIntSet;
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.remoting.transport.Address;
@@ -90,6 +94,8 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
    private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
+   private final boolean writeBehind;
+
    // This is a hack to allow for cast to work properly, since Java doesn't work as well with nested generics
    protected static <R> Supplier<CacheStream<R>> supplierStreamCast(Supplier supplier) {
       return supplier;
@@ -115,6 +121,9 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
            int distributedBatchSize, Executor executor, ComponentRegistry registry, Function<? super Original, ?> toKeyFunction) {
       super(localAddress, parallel, dm, supplierStreamCast(supplier), csm, includeLoader, distributedBatchSize,
               executor, registry, toKeyFunction);
+
+      Configuration configuration = registry.getComponent(Configuration.class);
+      writeBehind = configuration.persistence().usingAsyncStore();
    }
 
    /**
@@ -124,6 +133,9 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
     */
    protected DistributedCacheStream(AbstractCacheStream other) {
       super(other);
+
+      Configuration configuration = registry.getComponent(Configuration.class);
+      writeBehind = configuration.persistence().usingAsyncStore();
    }
 
    @Override
@@ -430,8 +442,8 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
       log.tracef("Distributed iterator invoked with rehash: %s", rehashAware);
       if (!rehashAware) {
          // Non rehash doesn't care about lost segments or completed ones
-         CloseableIterator<R> closeableIterator = nonRehashRemoteIterator(segmentsToFilter, null,
-               IdentityPublisherDecorator.getInstance(), intermediateOperations);
+         CloseableIterator<R> closeableIterator = nonRehashRemoteIterator(dm.getReadConsistentHash(), segmentsToFilter,
+               null, IdentityPublisherDecorator.getInstance(), intermediateOperations);
          onClose(closeableIterator::close);
          return closeableIterator;
       } else {
@@ -461,19 +473,20 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
       private final Consumer<? super Supplier<PrimitiveIterator.OfInt>> completedHandler;
 
       private CloseableIterator<S> currentIterator;
+      private LocalizedCacheTopology cacheTopology;
 
       private RehashIterator(Iterable<IntermediateOperation> intermediateOperations) {
          this.intermediateOperations = intermediateOperations;
          int maxSegment = dm.getCacheTopology().getCurrentCH().getNumSegments();
          if (segmentsToFilter == null) {
             // We can't use RangeSet as we have to modify this IntSet
-            segmentsToUse = new SmallIntSet(maxSegment);
+            segmentsToUse = IntSets.mutableEmptySet(maxSegment);
             for (int i = 0; i < maxSegment; ++i) {
                segmentsToUse.set(i);
             }
          } else {
             // Need to make copy as we will modify this below
-            segmentsToUse = new SmallIntSet(segmentsToFilter);
+            segmentsToUse = IntSets.mutableCopyFrom(segmentsToFilter);
          }
 
          // TODO: we could optimize this array (make smaller) if we don't require all segments
@@ -486,7 +499,7 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
          completedHandler = completed -> {
             IntSet intSet;
             if (log.isTraceEnabled()) {
-               intSet = new SmallIntSet();
+               intSet = IntSets.mutableEmptySet(maxSegment);
             } else {
                intSet = null;
             }
@@ -511,30 +524,45 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
       @Override
       protected S getNext() {
-         do {
-            if (currentIterator == null) {
-               log.tracef("Creating rehash iterator for segments %s", segmentsToUse);
-               currentIterator = nonRehashRemoteIterator(segmentsToUse, receivedKeys::get,
-                     publisherDecorator(completedHandler, lostSegments -> {
-                     }, k -> {
-                        // Every time a key is retrieved from iterator we add it to the keys received
-                        // Then when we retry we exclude those keys to keep out duplicates
-                        Set<Object> set = receivedKeys.get(keyPartitioner.getSegment(k));
-                        if (set != null) {
-                           set.add(k);
-                        }
-                     }), intermediateOperations);
-
+         while (true){
+            CloseableIterator<S> iterator = currentIterator;
+            if (iterator != null && iterator.hasNext()) {
+               return iterator.next();
             }
-            if (currentIterator.hasNext()) {
-               return currentIterator.next();
-            } else {
-               // Force new iterator once we have exhausted this one (if we have segments left)
-               currentIterator = null;
-            }
-         } while (!segmentsToUse.isEmpty());
 
-         return null;
+            // Either we don't have an iterator or the current iterator is exhausted
+            if (segmentsToUse.isEmpty()) {
+               // No more segments to spawn new iterators
+               return null;
+            }
+
+            // An iterator completes all segments, unless we either had a node leave (SuspectException)
+            // or a new node came up and data rehashed away from the node we requested from.
+            // In either case we need to wait for a new topology before spawning a new iterator.
+            if (iterator != null) {
+               try {
+                  int nextTopology = cacheTopology.getTopologyId() + 1;
+                  log.tracef("Waiting for topology %d to continue iterator operation with segments %s", nextTopology,
+                        segmentsToUse);
+                  stateTransferLock.topologyFuture(nextTopology).get(timeout, timeoutUnit);
+               } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                  throw new CacheException(e);
+               }
+            }
+
+            cacheTopology = dm.getCacheTopology();
+            log.tracef("Creating non-rehash iterator for segments %s using topology id: %d", segmentsToUse, cacheTopology.getTopologyId());
+            currentIterator = nonRehashRemoteIterator(cacheTopology.getReadConsistentHash(), segmentsToUse,
+                  receivedKeys::get, publisherDecorator(completedHandler, lostSegments -> {
+                  }, k -> {
+                     // Every time a key is retrieved from iterator we add it to the keys received
+                     // Then when we retry we exclude those keys to keep out duplicates
+                     Set<Object> set = receivedKeys.get(keyPartitioner.getSegment(k));
+                     if (set != null) {
+                        set.add(k);
+                     }
+                  }), intermediateOperations);
+         }
       }
 
       PublisherDecorator<S> publisherDecorator(Consumer<? super Supplier<PrimitiveIterator.OfInt>> completedSegments,
@@ -601,26 +629,32 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
       return Flowable.fromIterable(() -> innerStream.iterator());
    }
 
-   <S> CloseableIterator<S> nonRehashRemoteIterator(IntSet segmentsToFilter, IntFunction<Set<Object>> keysToExclude,
-         PublisherDecorator<S> publisherFunction, Iterable<IntermediateOperation> intermediateOperations) {
-      ConsistentHash ch = dm.getReadConsistentHash();
-
+   <S> CloseableIterator<S> nonRehashRemoteIterator(ConsistentHash ch, IntSet segmentsToFilter,
+         IntFunction<Set<Object>> keysToExclude, PublisherDecorator<S> publisherFunction,
+         Iterable<IntermediateOperation> intermediateOperations) {
       boolean stayLocal;
 
       Publisher<S> localPublisher;
 
       if (ch.getMembers().contains(localAddress)) {
-         Set<Integer> ownedSegments = ch.getSegmentsForOwner(localAddress);
-         if (segmentsToFilter == null) {
-            stayLocal = ownedSegments.size() == ch.getNumSegments();
+         IntSet ownedSegments = IntSets.from(ch.getSegmentsForOwner(localAddress));
+         if (writeBehind) {
+            // When write behind is enabled - we can't do stay local optimization
+            stayLocal = false;
          } else {
-            stayLocal = ownedSegments.containsAll(segmentsToFilter);
+            if (segmentsToFilter == null) {
+               stayLocal = ownedSegments.size() == ch.getNumSegments();
+            } else {
+               stayLocal = ownedSegments.containsAll(segmentsToFilter);
+            }
          }
 
          Publisher<S> innerPublisher = localPublisher(segmentsToFilter, ch,
                keysToExclude == null ? Collections.emptySet() :
                      (segmentsToFilter == null ? IntStream.range(0, ch.getNumSegments()) : segmentsToFilter.intStream())
-                           .mapToObj(i -> keysToExclude.apply(i).stream()).flatMap(Function.identity()).collect(Collectors.toSet()),
+                           .mapToObj(i -> keysToExclude.apply(i).stream())
+                           .flatMap(Function.identity())
+                           .collect(Collectors.toSet()),
                intermediateOperations, !stayLocal);
 
          localPublisher = publisherFunction.decorateLocal(ch, stayLocal, segmentsToFilter, innerPublisher);
@@ -678,19 +712,18 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
    private Map<Address, IntSet> determineTargets(ConsistentHash ch, IntSet segments) {
       if (segments == null) {
-         segments = new RangeSet(ch.getNumSegments());
+         segments = IntSets.immutableRangeSet(ch.getNumSegments());
       }
       Map<Address, IntSet> targets = new HashMap<>();
-      PrimitiveIterator.OfInt segmentIterator = segments.iterator();
-      while (segmentIterator.hasNext()) {
-         int segment = segmentIterator.nextInt();
+      for (PrimitiveIterator.OfInt iter = segments.iterator(); iter.hasNext(); ) {
+         int segment = iter.nextInt();
          Address owner = ch.locatePrimaryOwnerForSegment(segment);
          if (owner == null || owner.equals(localAddress)) {
             continue;
          }
          IntSet targetSegments = targets.get(owner);
          if (targetSegments == null) {
-            targetSegments = new SmallIntSet();
+            targetSegments = IntSets.mutableEmptySet(ch.getNumSegments());
             targets.put(owner, targetSegments);
          }
          targetSegments.set(segment);
@@ -766,7 +799,13 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
    @Override
    public CacheStream<R> filterKeySegments(Set<Integer> segments) {
-      segmentsToFilter = SmallIntSet.from(segments);
+      segmentsToFilter = IntSets.from(segments);
+      return this;
+   }
+
+   @Override
+   public CacheStream<R> filterKeySegments(IntSet segments) {
+      segmentsToFilter = segments;
       return this;
    }
 

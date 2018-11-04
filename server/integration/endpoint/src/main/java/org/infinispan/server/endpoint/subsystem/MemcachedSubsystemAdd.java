@@ -18,6 +18,7 @@
  */
 package org.infinispan.server.endpoint.subsystem;
 
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.server.memcached.MemcachedServer;
 import org.infinispan.server.memcached.configuration.MemcachedServerConfigurationBuilder;
 import org.jboss.as.controller.AttributeDefinition;
@@ -53,11 +54,12 @@ class MemcachedSubsystemAdd extends ProtocolServiceSubsystemAdd {
    protected void performRuntime(OperationContext context, ModelNode operation, ModelNode model) throws OperationFailedException {
       // Read the full model
       ModelNode config = Resource.Tools.readModel(context.readResource(PathAddress.EMPTY_ADDRESS));
+      final String cacheName = MemcachedConnectorResource.CACHE.resolveModelAttribute(context, config).asString();
+      final String clientEncoding = MemcachedConnectorResource.CLIENT_ENCODING.resolveModelAttribute(context, config).asString();
       // Create the builder
       MemcachedServerConfigurationBuilder configurationBuilder = new MemcachedServerConfigurationBuilder();
-      this.configureProtocolServer(configurationBuilder, config);
-
-      final String cacheName = MemcachedConnectorResource.CACHE.resolveModelAttribute(context, config).asString();
+      configurationBuilder.clientEncoding(MediaType.parse(clientEncoding));
+      this.configureProtocolServer(context, configurationBuilder, config);
 
       // Create the service
       final ProtocolServerService service = new ProtocolServerService(getServiceName(operation), MemcachedServer.class, configurationBuilder, cacheName);
@@ -77,10 +79,5 @@ class MemcachedSubsystemAdd extends ProtocolServiceSubsystemAdd {
    @Override
    protected void populateModel(ModelNode source, ModelNode target) throws OperationFailedException {
       populate(source, target);
-   }
-
-   @Override
-   protected boolean requiresRuntimeVerification() {
-      return false;
    }
 }

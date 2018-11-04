@@ -24,7 +24,7 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commons.marshall.StreamingMarshaller;
-import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheValue;
 import org.infinispan.context.InvocationContext;
@@ -144,8 +144,8 @@ public class TxBatchUpdater extends AbstractVisitor {
    private Object visitSingleStore(InvocationContext ctx, FlagAffectedCommand command, Object key) throws Throwable {
       if (isProperWriter(ctx, command, key)) {
          if (generateStatistics) putCount++;
-         InternalCacheValue sv = entryFactory.getValueFromCtxOrCreateNew(key, ctx);
-         if (sv.getValue() != null) {
+         InternalCacheValue sv = entryFactory.getValueFromCtx(key, ctx);
+         if (sv != null && sv.getValue() != null) {
             MarshalledEntryImpl me = new MarshalledEntryImpl(key, sv.getValue(), internalMetadata(sv), marshaller);
             getModifications(ctx, key, command).addMarshalledEntry(key, me);
          }
@@ -162,9 +162,11 @@ public class TxBatchUpdater extends AbstractVisitor {
             getModifications(ctx, key, command).removeEntry(key);
          } else {
             if (generateStatistics) putCount++;
-            InternalCacheValue sv = entryFactory.getValueFromCtxOrCreateNew(key, ctx);
-            MarshalledEntryImpl me = new MarshalledEntryImpl(key, sv.getValue(), internalMetadata(sv), marshaller);
-            getModifications(ctx, key, command).addMarshalledEntry(key, me);
+            InternalCacheValue sv = entryFactory.getValueFromCtx(key, ctx);
+            if (sv != null) {
+               MarshalledEntryImpl me = new MarshalledEntryImpl(key, sv.getValue(), internalMetadata(sv), marshaller);
+               getModifications(ctx, key, command).addMarshalledEntry(key, me);
+            }
          }
       }
       return null;

@@ -1,19 +1,24 @@
 package org.infinispan.server.hotrod;
 
-import static org.infinispan.server.core.ExternalizerIds.BINARY_CONVERTER;
-import static org.infinispan.server.core.ExternalizerIds.BINARY_FILTER;
-import static org.infinispan.server.core.ExternalizerIds.BINARY_FILTER_CONVERTER;
 import static org.infinispan.server.core.ExternalizerIds.CACHE_XID;
 import static org.infinispan.server.core.ExternalizerIds.CLIENT_ADDRESS;
+import static org.infinispan.server.core.ExternalizerIds.COMPLETE_FUNCTION;
+import static org.infinispan.server.core.ExternalizerIds.CONDITIONAL_MARK_ROLLBACK_FUNCTION;
+import static org.infinispan.server.core.ExternalizerIds.CREATE_STATE_FUNCTION;
+import static org.infinispan.server.core.ExternalizerIds.DECISION_FUNCTION;
 import static org.infinispan.server.core.ExternalizerIds.ITERATION_FILTER;
 import static org.infinispan.server.core.ExternalizerIds.KEY_VALUE_VERSION_CONVERTER;
 import static org.infinispan.server.core.ExternalizerIds.KEY_VALUE_WITH_PREVIOUS_CONVERTER;
+import static org.infinispan.server.core.ExternalizerIds.PREPARED_FUNCTION;
+import static org.infinispan.server.core.ExternalizerIds.PREPARING_FUNCTION;
 import static org.infinispan.server.core.ExternalizerIds.SERVER_ADDRESS;
 import static org.infinispan.server.core.ExternalizerIds.TX_STATE;
+import static org.infinispan.server.core.ExternalizerIds.XID_PREDICATE;
 
 import java.util.EnumSet;
 import java.util.Map;
 
+import net.jcip.annotations.GuardedBy;
 import org.infinispan.Cache;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
 import org.infinispan.configuration.cache.CacheMode;
@@ -22,22 +27,27 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
+import org.infinispan.factories.impl.BasicComponentRegistry;
 import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.registry.InternalCacheRegistry;
-import org.infinispan.server.hotrod.ClientListenerRegistry.UnmarshallConverterExternalizer;
-import org.infinispan.server.hotrod.ClientListenerRegistry.UnmarshallFilterConverterExternalizer;
-import org.infinispan.server.hotrod.ClientListenerRegistry.UnmarshallFilterExternalizer;
 import org.infinispan.server.hotrod.event.KeyValueWithPreviousEventConverterExternalizer;
 import org.infinispan.server.hotrod.iteration.IterationFilter;
-import org.infinispan.server.hotrod.tx.CacheXid;
-import org.infinispan.server.hotrod.tx.ClientAddress;
 import org.infinispan.server.hotrod.tx.ServerTransactionOriginatorChecker;
-import org.infinispan.server.hotrod.tx.ServerTransactionTable;
-import org.infinispan.server.hotrod.tx.TxState;
+import org.infinispan.server.hotrod.tx.table.CacheXid;
+import org.infinispan.server.hotrod.tx.table.ClientAddress;
+import org.infinispan.server.hotrod.tx.table.GlobalTxTable;
+import org.infinispan.server.hotrod.tx.table.PerCacheTxTable;
+import org.infinispan.server.hotrod.tx.table.TxState;
+import org.infinispan.server.hotrod.tx.table.functions.ConditionalMarkAsRollbackFunction;
+import org.infinispan.server.hotrod.tx.table.functions.CreateStateFunction;
+import org.infinispan.server.hotrod.tx.table.functions.PreparingDecisionFunction;
+import org.infinispan.server.hotrod.tx.table.functions.SetCompletedTransactionFunction;
+import org.infinispan.server.hotrod.tx.table.functions.SetDecisionFunction;
+import org.infinispan.server.hotrod.tx.table.functions.SetPreparedFunction;
+import org.infinispan.server.hotrod.tx.table.functions.XidPredicate;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.impl.TransactionOriginatorChecker;
-import org.infinispan.util.ByteString;
 
 /**
  * Module lifecycle callbacks implementation that enables module specific {@link AdvancedExternalizer} implementations
@@ -51,35 +61,44 @@ public class LifecycleCallbacks implements ModuleLifecycle {
    /**
     * Cache name to store the global transaction table. It contains the state of the client transactions.
     */
-   private static final String GLOBAL_TX_TABLE_CACHE_NAME = "__global_tx_table__";
+   private static final String GLOBAL_TX_TABLE_CACHE_NAME = "org.infinispan.CLIENT_SERVER_TX_TABLE";
+
+   @GuardedBy("this")
+   private boolean registered = false;
 
    @Override
    public void cacheManagerStarting(GlobalComponentRegistry gcr, GlobalConfiguration globalCfg) {
       Map<Integer, AdvancedExternalizer<?>> externalizers = globalCfg.serialization().advancedExternalizers();
       externalizers.put(SERVER_ADDRESS, new ServerAddress.Externalizer());
-      externalizers.put(BINARY_FILTER, new UnmarshallFilterExternalizer());
-      externalizers.put(BINARY_CONVERTER, new UnmarshallConverterExternalizer());
       externalizers.put(KEY_VALUE_VERSION_CONVERTER, new KeyValueVersionConverter.Externalizer());
-      externalizers.put(BINARY_FILTER_CONVERTER, new UnmarshallFilterConverterExternalizer());
       externalizers.put(KEY_VALUE_WITH_PREVIOUS_CONVERTER, new KeyValueWithPreviousEventConverterExternalizer());
       externalizers.put(ITERATION_FILTER, new IterationFilter.IterationFilterExternalizer());
       externalizers.put(TX_STATE, TxState.EXTERNALIZER);
       externalizers.put(CACHE_XID, CacheXid.EXTERNALIZER);
       externalizers.put(CLIENT_ADDRESS, ClientAddress.EXTERNALIZER);
-   }
+      externalizers.put(CREATE_STATE_FUNCTION, CreateStateFunction.EXTERNALIZER);
+      externalizers.put(PREPARING_FUNCTION, PreparingDecisionFunction.EXTERNALIZER);
+      externalizers.put(COMPLETE_FUNCTION, SetCompletedTransactionFunction.EXTERNALIZER);
+      externalizers.put(DECISION_FUNCTION, SetDecisionFunction.EXTERNALIZER);
+      externalizers.put(PREPARED_FUNCTION, SetPreparedFunction.EXTERNALIZER);
+      externalizers.put(XID_PREDICATE, XidPredicate.EXTERNALIZER);
+      externalizers.put(CONDITIONAL_MARK_ROLLBACK_FUNCTION, ConditionalMarkAsRollbackFunction.EXTERNALIZER);
 
-   @Override
-   public void cacheManagerStarted(GlobalComponentRegistry gcr) {
       registerGlobalTxTable(gcr);
    }
 
    @Override
-   public void cacheStarted(ComponentRegistry cr, String cacheName) {
+   public void cacheManagerStarted(GlobalComponentRegistry gcr) {
+      // It's too late to register components here, internal caches have already started
+   }
+
+   @Override
+   public void cacheStarting(ComponentRegistry cr, Configuration configuration, String cacheName) {
       registerServerTransactionTable(cr, cacheName);
    }
 
    /**
-    * Registers the {@link ServerTransactionTable} to a transactional cache.
+    * Registers the {@link PerCacheTxTable} to a transactional cache.
     */
    private void registerServerTransactionTable(ComponentRegistry componentRegistry, String cacheName) {
       //skip for global tx table and non-transactional cache
@@ -89,13 +108,12 @@ public class LifecycleCallbacks implements ModuleLifecycle {
       }
       EmbeddedCacheManager cacheManager = componentRegistry.getGlobalComponentRegistry()
             .getComponent(EmbeddedCacheManager.class);
-      Cache<CacheXid, TxState> globalTxTable = cacheManager.getCache(GLOBAL_TX_TABLE_CACHE_NAME);
-      ServerTransactionTable transactionTable = new ServerTransactionTable(globalTxTable,
-            ByteString.fromString(cacheName), cacheManager.getAddress());
-      componentRegistry.registerComponent(transactionTable, ServerTransactionTable.class);
-      ServerTransactionOriginatorChecker checker = new ServerTransactionOriginatorChecker();
-      componentRegistry.registerComponent(checker, TransactionOriginatorChecker.class);
-      componentRegistry.rewire();
+      createGlobalTxTable(cacheManager);
+      // TODO We need a way for a module to install a factory before the default implementation is instantiated
+      BasicComponentRegistry basicComponentRegistry = componentRegistry.getComponent(BasicComponentRegistry.class);
+      basicComponentRegistry.replaceComponent(PerCacheTxTable.class.getName(), new PerCacheTxTable(cacheManager.getAddress()), true);
+      basicComponentRegistry.replaceComponent(TransactionOriginatorChecker.class.getName(), new ServerTransactionOriginatorChecker(), true);
+      basicComponentRegistry.rewire();
    }
 
    /**
@@ -112,6 +130,16 @@ public class LifecycleCallbacks implements ModuleLifecycle {
       //persistent? should we keep the transaction after restart?
       registry.registerInternalCache(GLOBAL_TX_TABLE_CACHE_NAME, builder.build(),
             EnumSet.noneOf(InternalCacheRegistry.Flag.class));
+   }
+
+   private synchronized void createGlobalTxTable(EmbeddedCacheManager cacheManager) {
+      if (!registered) {
+         Cache<CacheXid, TxState> cache = cacheManager.getCache(GLOBAL_TX_TABLE_CACHE_NAME);
+         GlobalTxTable txTable = new GlobalTxTable(cache, cacheManager.getGlobalComponentRegistry());
+         cacheManager.getGlobalComponentRegistry().registerComponent(txTable, GlobalTxTable.class);
+         registered = true;
+
+      }
    }
 
 

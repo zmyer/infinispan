@@ -1,7 +1,5 @@
 package org.infinispan.rest;
 
-import java.util.Collections;
-
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.rest.authentication.Authenticator;
 import org.infinispan.rest.authentication.impl.VoidAuthenticator;
@@ -44,7 +42,7 @@ public class RestServer extends AbstractProtocolServer<RestServerConfiguration> 
 
    @Override
    public ChannelInitializer<Channel> getInitializer() {
-      return new NettyInitializers(Collections.singletonList(getRestChannelInitializer()));
+      return new NettyInitializers(getRestChannelInitializer());
    }
 
    /**
@@ -88,5 +86,10 @@ public class RestServer extends AbstractProtocolServer<RestServerConfiguration> 
       RestCacheManager<Object> restCacheManager = new RestCacheManager<>(cacheManager, this::isCacheIgnored);
       this.cacheOperations = new CacheOperations(configuration, restCacheManager);
       this.searchOperations = new SearchOperations(configuration, restCacheManager);
+   }
+
+   @Override
+   public int getWorkerThreads() {
+      return Integer.getInteger("infinispan.server.rest.workerThreads", configuration.workerThreads());
    }
 }

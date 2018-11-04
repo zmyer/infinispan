@@ -1,7 +1,8 @@
+[[sifs_cache_store]]
 ==== Soft-Index File Store
 
-In Infinispan 7.0 we have added a new experimental local file-based cache store
-- Soft-Index File Store. It is a pure Java implementation that tries to get
+The Soft-Index File Store is an experimental local file-based.
+It is a pure Java implementation that tries to get
 around Single File Store's drawbacks by implementing a variant of B+ tree that
 is cached in-memory using Java's soft references - here's where the name
 Soft-Index File Store comes from. This B+ tree (called Index) is offloaded on
@@ -19,6 +20,11 @@ and in the end removing that file from disk.
 Most of the structures in Soft Index File Store are bounded, therefore you don't
 have to be afraid of OOMEs. For example, you can configure the limits for
 concurrently open files as well.
+
+===== Segmentation support
+This store supports being segmented, as it will create a separate instance per
+segment. This will create multiple directories under the configured directory
+where each one is a number representing the given segment the data maps to.
 
 ===== Configuration
 

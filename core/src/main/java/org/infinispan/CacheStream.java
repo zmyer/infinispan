@@ -24,6 +24,7 @@ import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.stream.CacheCollectors;
 import org.infinispan.util.function.SerializableBiConsumer;
 import org.infinispan.util.function.SerializableBiFunction;
@@ -55,7 +56,7 @@ import static org.infinispan.util.Casting.toSupplierCollect;
  * to a local stream there and finally the terminal operation is completed.  If this stream is parallel the processing
  * on remote nodes is also done using a parallel stream.</p>
  *
- * <p>Parallel distribution is enabled by default for all operations except for {@link CacheStream#iterator()} &
+ * <p>Parallel distribution is enabled by default for all operations except for {@link CacheStream#iterator()} and
  * {@link CacheStream#spliterator()}.  Please see {@link CacheStream#sequentialDistribution()} and
  * {@link CacheStream#parallelDistribution()}.  With this disabled only a single node will process the operation
  * at a time (includes locally).</p>
@@ -100,8 +101,15 @@ public interface CacheStream<R> extends Stream<R>, BaseCacheStream<R, Stream<R>>
    /**
     * {@inheritDoc}
     * @return a stream with the segments filtered.
+    * @deprecated This is to be replaced by {@link #filterKeySegments(IntSet)}
     */
    CacheStream<R> filterKeySegments(Set<Integer> segments);
+
+   /**
+    * {@inheritDoc}
+    * @return a stream with the segments filtered.
+    */
+   CacheStream<R> filterKeySegments(IntSet segments);
 
    /**
     * {@inheritDoc}

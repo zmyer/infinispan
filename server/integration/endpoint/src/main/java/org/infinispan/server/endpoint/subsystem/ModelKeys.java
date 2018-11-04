@@ -26,20 +26,26 @@ public class ModelKeys {
    public static final String HOTROD_CONNECTOR = "hotrod-connector";
    public static final String MEMCACHED_CONNECTOR = "memcached-connector";
    public static final String REST_CONNECTOR = "rest-connector";
-   public static final String WEBSOCKET_CONNECTOR = "websocket-connector";
    public static final String ROUTER_CONNECTOR = "router-connector";
+   @Deprecated
+   public static final String WEBSOCKET_CONNECTOR = "websocket-connector";
 
    public static final String NAME = "name"; // string
    public static final String CACHE_NAME = "cache-name"; // string
    public static final String SOCKET_BINDING = "socket-binding"; // string
    public static final String HOTROD_SOCKET_BINDING = "hotrod-socket-binding"; // string
    public static final String REST_SOCKET_BINDING = "rest-socket-binding"; // string
+   public static final String SINGLE_PORT_SOCKET_BINDING = "single-port-socket-binding";
+   @Deprecated
    public static final String KEEP_ALIVE = "keep-alive"; // boolean
    public static final String CACHE = "cache"; // string
    public static final String CACHE_CONTAINER = "cache-container"; // string
+   public static final String CLIENT_ENCODING = "client-encoding"; // string
+   public static final String IO_THREADS = "io-threads"; // integer
    public static final String WORKER_THREADS = "worker-threads"; // integer
    public static final String IDLE_TIMEOUT = "idle-timeout"; // integer
    public static final String TCP_NODELAY = "tcp-nodelay"; // boolean
+   public static final String TCP_KEEPALIVE = "tcp-keepalive"; // boolean
    public static final String SEND_BUFFER_SIZE = "send-buffer-size"; // integer
    public static final String RECEIVE_BUFFER_SIZE = "receive-buffer-size"; // integer
    public static final String VIRTUAL_HOST = "virtual-host"; // string
@@ -115,4 +121,8 @@ public class ModelKeys {
 
    public static final String MANAGEMENT_HTTP = "management-http";
    public static final String MANAGEMENT_HTTPS = "management-https";
+
+
+   public static final String SINGLE_PORT = "single-port";
+   public static final String SINGLE_PORT_NAME = "SINGLE_PORT";
 }

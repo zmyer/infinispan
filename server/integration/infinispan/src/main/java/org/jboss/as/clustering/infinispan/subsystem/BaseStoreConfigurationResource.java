@@ -25,6 +25,7 @@ import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.AbstractStoreConfiguration;
 import org.infinispan.configuration.cache.PersistenceConfiguration;
 import org.jboss.as.controller.AttributeDefinition;
+import org.jboss.as.controller.ModelVersion;
 import org.jboss.as.controller.PathElement;
 import org.jboss.as.controller.SimpleAttributeDefinition;
 import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
@@ -83,12 +84,12 @@ public class BaseStoreConfigurationResource extends BaseLoaderConfigurationResou
                     .setAllowExpression(true)
                     .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(false))
-                    .setDeprecated(Namespace.INFINISPAN_SERVER_9_0.getVersion())
+                    .setDeprecated(ModelVersion.create(9, 0))
                     .build();
 
     static final AttributeDefinition[] BASE_STORE_ATTRIBUTES = {PASSIVATION, FETCH_STATE, PURGE, READ_ONLY, SINGLETON, MAX_BATCH_SIZE};
     /* Note this has loader attributes as well */
-    static final AttributeDefinition[] BASE_STORE_PARAMETERS = {SHARED, PRELOAD, PASSIVATION, FETCH_STATE, PURGE, READ_ONLY, SINGLETON, MAX_BATCH_SIZE, PROPERTIES};
+    static final AttributeDefinition[] BASE_STORE_PARAMETERS = {SHARED, SEGMENTED, PRELOAD, PASSIVATION, FETCH_STATE, PURGE, READ_ONLY, SINGLETON, MAX_BATCH_SIZE, PROPERTIES};
 
     public BaseStoreConfigurationResource(PathElement path, String resourceKey, CacheConfigurationResource parent, AttributeDefinition[] attributes) {
         super(path, resourceKey, parent, Util.arrayConcat(BASE_STORE_ATTRIBUTES, attributes));

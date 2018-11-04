@@ -7,7 +7,8 @@ import java.io.ObjectInput;
 import java.io.ObjectOutput;
 
 import org.infinispan.commands.Visitor;
-import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.commons.io.UnsignedNumeric;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
@@ -16,7 +17,7 @@ import org.infinispan.context.impl.FlagBitSets;
  * Used to fetch a full CacheEntry rather than just the value.
  * This functionality was originally incorporated into GetKeyValueCommand.
  *
- * @author Sanne Grinovero <sanne@hibernate.org> (C) 2014 Red Hat Inc.
+ * @author Sanne Grinovero &lt;sanne@hibernate.org&gt; (C) 2014 Red Hat Inc.
  * @since 7.1
  */
 public final class GetCacheEntryCommand extends AbstractDataCommand {
@@ -25,8 +26,8 @@ public final class GetCacheEntryCommand extends AbstractDataCommand {
 
    private InternalEntryFactory entryFactory;
 
-   public GetCacheEntryCommand(Object key, long flagsBitSet, InternalEntryFactory entryFactory) {
-      super(key, flagsBitSet);
+   public GetCacheEntryCommand(Object key, int segment, long flagsBitSet, InternalEntryFactory entryFactory) {
+      super(key, segment, flagsBitSet);
       this.entryFactory = entryFactory;
    }
 
@@ -61,12 +62,14 @@ public final class GetCacheEntryCommand extends AbstractDataCommand {
    @Override
    public void writeTo(ObjectOutput output) throws IOException {
       output.writeObject(key);
+      UnsignedNumeric.writeUnsignedInt(output, segment);
       output.writeLong(FlagBitSets.copyWithoutRemotableFlags(getFlagsBitSet()));
    }
 
    @Override
    public void readFrom(ObjectInput input) throws IOException, ClassNotFoundException {
       key = input.readObject();
+      segment = UnsignedNumeric.readUnsignedInt(input);
       setFlagsBitSet(input.readLong());
    }
 

@@ -6,12 +6,14 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.AdvancedCache;
+import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commons.configuration.ConfiguredBy;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.configuration.cache.ClusterLoaderConfiguration;
 import org.infinispan.container.entries.InternalCacheValue;
 import org.infinispan.context.Flag;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.spi.CacheLoader;
@@ -42,6 +44,8 @@ public class ClusterLoader implements CacheLoader, LocalOnlyCacheLoader {
 
    private RpcManager rpcManager;
    private AdvancedCache<?, ?> cache;
+   private CommandsFactory commandsFactory;
+   private KeyPartitioner keyPartitioner;
 
    private ClusterLoaderConfiguration configuration;
    private InitializationContext ctx;
@@ -51,18 +55,19 @@ public class ClusterLoader implements CacheLoader, LocalOnlyCacheLoader {
    public void init(InitializationContext ctx) {
       this.ctx = ctx;
       cache = ctx.getCache().getAdvancedCache();
+      commandsFactory = cache.getComponentRegistry().getCommandsFactory();
       cacheName = ByteString.fromString(cache.getName());
       rpcManager = cache.getRpcManager();
       this.configuration = ctx.getConfiguration();
+      keyPartitioner = cache.getComponentRegistry().getComponent(KeyPartitioner.class);
    }
 
    @Override
    public MarshalledEntry load(Object key) throws PersistenceException {
       if (!isCacheReady()) return null;
 
-      ClusteredGetCommand clusteredGetCommand = new ClusteredGetCommand(
-            key, cacheName, EnumUtil.bitSetOf(Flag.SKIP_OWNERSHIP_CHECK)
-      );
+      ClusteredGetCommand clusteredGetCommand = commandsFactory.buildClusteredGetCommand(key,
+            keyPartitioner.getSegment(key), EnumUtil.bitSetOf(Flag.SKIP_OWNERSHIP_CHECK));
 
       Collection<Response> responses = doRemoteCall(clusteredGetCommand);
       if (responses.isEmpty()) return null;

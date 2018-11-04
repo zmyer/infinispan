@@ -5,7 +5,7 @@ import static org.testng.Assert.assertEquals;
 import org.testng.annotations.Test;
 
 /**
- * @author Radim Vansa &ltrvansa@redhat.com&gt;
+ * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 @Test(groups = "functional", testName = "server.hotrod.configuration.BuilderMutationTest")
 public class BuilderMutationTest {
@@ -22,8 +22,11 @@ public class BuilderMutationTest {
 
    private void assertHostPort(HotRodServerConfiguration configuration, String host, int port) {
       assertEquals(configuration.host(), host);
-      assertEquals(configuration.proxyHost(), host);
+      assertEquals(configuration.proxyHost(), null);
+      assertEquals(configuration.publicHost(), host);
       assertEquals(configuration.port(), port);
-      assertEquals(configuration.proxyPort(), port);
+      assertEquals(configuration.proxyPort(), -1);
+      assertEquals(configuration.publicPort(), port);
+
    }
 }

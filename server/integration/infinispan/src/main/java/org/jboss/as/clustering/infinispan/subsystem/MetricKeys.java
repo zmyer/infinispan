@@ -54,6 +54,9 @@ public class MetricKeys {
     public static final String AVERAGE_READ_TIME = "average-read-time";
     public static final String AVERAGE_WRITE_TIME = "average-write-time";
     public static final String AVERAGE_REMOVE_TIME = "average-remove-time";
+    public static final String AVERAGE_READ_TIME_NANOS = "average-read-time-nanos";
+    public static final String AVERAGE_WRITE_TIME_NANOS = "average-write-time-nanos";
+    public static final String AVERAGE_REMOVE_TIME_NANOS = "average-remove-time-nanos";
     public static final String TIME_SINCE_START = "time-since-start";
     public static final String EVICTIONS = "evictions";
     public static final String HIT_RATIO = "hit-ratio";
@@ -61,6 +64,7 @@ public class MetricKeys {
     public static final String MISSES = "misses";
     public static final String NUMBER_OF_ENTRIES = "number-of-entries";
     public static final String NUMBER_OF_ENTRIES_IN_MEMORY = "number-of-entries-in-memory";
+    public static final String DATA_MEMORY_USED = "data-memory-used";
     public static final String OFF_HEAP_MEMORY_USED = "off-heap-memory-used";
     public static final String MINIMUM_REQUIRED_NODES = "minimum-required-nodes";
     public static final String READ_WRITE_RATIO = "read-write-ratio";

@@ -1,111 +1,58 @@
 package org.infinispan.query.remote.impl;
 
-import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JSON;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_PROTOSTREAM;
 
-import java.io.IOException;
-import java.util.List;
-import java.util.stream.Collectors;
-
 import org.infinispan.AdvancedCache;
-import org.infinispan.Cache;
-import org.infinispan.commons.dataconversion.Encoder;
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.dataconversion.Transcoder;
-import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.marshall.core.EncoderRegistry;
 import org.infinispan.objectfilter.Matcher;
 import org.infinispan.objectfilter.impl.ProtobufMatcher;
-import org.infinispan.protostream.ProtobufUtil;
 import org.infinispan.protostream.SerializationContext;
-import org.infinispan.query.remote.client.QueryRequest;
-import org.infinispan.query.remote.client.QueryResponse;
-import org.infinispan.query.remote.impl.logging.Log;
 
 /**
  * {@link RemoteQueryManager} suitable for caches storing protobuf.
  *
  * @since 9.2
  */
-class ProtobufRemoteQueryManager implements RemoteQueryManager {
+class ProtobufRemoteQueryManager extends BaseRemoteQueryManager {
 
-   private static final Log log = LogFactory.getLog(ProtobufRemoteQueryManager.class, Log.class);
+   private final RemoteQueryEngine queryEngine;
+   private final Transcoder protobufTranscoder;
 
-   private final Matcher matcher;
-   private final BaseRemoteQueryEngine queryEngine;
-   private final SerializationContext serCtx;
-   private final Encoder keyEncoder;
-   private final Encoder valueEncoder;
-   private final Transcoder transcoder;
-
-   ProtobufRemoteQueryManager(SerializationContext serCtx, ComponentRegistry cr) {
-      this.serCtx = serCtx;
-      this.matcher = new ProtobufMatcher(serCtx, ProtobufFieldIndexingMetadata::new);
+   ProtobufRemoteQueryManager(SerializationContext serCtx, ComponentRegistry cr, QuerySerializers querySerializers) {
+      super(cr, querySerializers);
+      Matcher matcher = new ProtobufMatcher(serCtx, ProtobufFieldIndexingMetadata::new);
       cr.registerComponent(matcher, ProtobufMatcher.class);
-      AdvancedCache<?, ?> cache = cr.getComponent(Cache.class).getAdvancedCache();
-      boolean isIndexed = cr.getComponent(Configuration.class).indexing().index().isEnabled();
-      if (isIndexed) {
-         DataConversion valueDataConversion = cache.getAdvancedCache().getValueDataConversion();
-         valueDataConversion.overrideWrapper(ProtostreamWrapper.class, cr);
+
+      Configuration configuration = cache.getCacheConfiguration();
+      boolean isIndexed = configuration.indexing().index().isEnabled();
+      boolean customStorage = configuration.encoding().valueDataType().isMediaTypeChanged();
+      MediaType valueMediaType = valueDataConversion.getStorageMediaType();
+      boolean isProtoBuf = valueMediaType.match(APPLICATION_PROTOSTREAM);
+      if (isProtoBuf || !customStorage && isIndexed) {
+         valueDataConversion.overrideWrapper(ProtobufWrapper.class, cr);
       }
       this.queryEngine = new RemoteQueryEngine(cache, isIndexed);
-      this.keyEncoder = cache.getKeyDataConversion().getEncoder();
-      this.valueEncoder = cache.getValueDataConversion().getEncoder();
-      this.transcoder = cr.getGlobalComponentRegistry().getComponent(EncoderRegistry.class)
-            .getTranscoder(APPLICATION_PROTOSTREAM, APPLICATION_JSON);
+      EncoderRegistry encoderRegistry = cr.getGlobalComponentRegistry().getComponent(EncoderRegistry.class);
+      this.protobufTranscoder = encoderRegistry.getTranscoder(APPLICATION_PROTOSTREAM, APPLICATION_OBJECT);
    }
 
    @Override
-   public Matcher getMatcher() {
-      return matcher;
+   public Class<? extends Matcher> getMatcherClass(MediaType mediaType) {
+      return ProtobufMatcher.class;
    }
 
    @Override
-   public BaseRemoteQueryEngine getQueryEngine() {
+   public BaseRemoteQueryEngine getQueryEngine(AdvancedCache<?, ?> cache) {
       return queryEngine;
    }
 
    @Override
-   public QueryRequest decodeQueryRequest(byte[] queryRequest) {
-      try {
-         return ProtobufUtil.fromByteArray(queryEngine.getSerializationContext(), queryRequest, 0, queryRequest.length, QueryRequest.class);
-      } catch (IOException e) {
-         throw log.errorExecutingQuery(e);
-      }
-   }
-
-   @Override
-   public byte[] encodeQueryResponse(QueryResponse queryResponse) {
-      try {
-         return ProtobufUtil.toByteArray(queryEngine.getSerializationContext(), queryResponse);
-      } catch (IOException e) {
-         throw log.errorExecutingQuery(e);
-      }
-   }
-
-   @Override
    public Object encodeFilterResult(Object filterResult) {
-      try {
-         return ProtobufUtil.toWrappedByteArray(serCtx, filterResult);
-      } catch (IOException e) {
-         throw log.errorFiltering(e);
-      }
-   }
-
-   @Override
-   public Encoder getKeyEncoder() {
-      return keyEncoder;
-   }
-
-   @Override
-   public Encoder getValueEncoder() {
-      return valueEncoder;
-   }
-
-   @Override
-   public List<Object> encodeQueryResults(List<Object> results) {
-      return results.stream().map(o -> transcoder.transcode(o, APPLICATION_PROTOSTREAM, APPLICATION_JSON)).collect(Collectors.toList());
+      return protobufTranscoder.transcode(filterResult, APPLICATION_OBJECT, APPLICATION_PROTOSTREAM);
    }
 }

@@ -4,11 +4,19 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.IOException;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.http.HttpEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 import org.infinispan.arquillian.core.InfinispanResource;
 import org.infinispan.arquillian.core.RemoteInfinispanServer;
 import org.infinispan.client.hotrod.Search;
@@ -22,6 +30,9 @@ import org.jboss.arquillian.junit.Arquillian;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * Tests for remote queries over HotRod on a local cache using RAM directory.
@@ -50,7 +61,7 @@ public class RemoteQueryIT extends RemoteQueryBaseIT {
     }
 
     @Test
-    public void testAttributeQuery() throws Exception {
+    public void testAttributeQuery() {
         remoteCache.put(1, createUser1());
         remoteCache.put(2, createUser2());
 
@@ -71,7 +82,7 @@ public class RemoteQueryIT extends RemoteQueryBaseIT {
     }
 
     @Test
-    public void testEmbeddedAttributeQuery() throws Exception {
+    public void testEmbeddedAttributeQuery() {
         remoteCache.put(1, createUser1());
         remoteCache.put(2, createUser2());
 
@@ -88,7 +99,7 @@ public class RemoteQueryIT extends RemoteQueryBaseIT {
     }
 
     @Test
-    public void testProjections() throws Exception {
+    public void testProjections() {
         remoteCache.put(1, createUser1());
         remoteCache.put(2, createUser2());
 
@@ -115,7 +126,7 @@ public class RemoteQueryIT extends RemoteQueryBaseIT {
      * @see <a href="https://issues.jboss.org/browse/ISPN-5729">https://issues.jboss.org/browse/ISPN-5729</a>
      */
     @Test
-    public void testUninverting() throws Exception {
+    public void testUninverting() {
         remoteCache.put(1, createUser1());
         remoteCache.put(2, createUser2());
 
@@ -128,7 +139,7 @@ public class RemoteQueryIT extends RemoteQueryBaseIT {
     }
 
     @Test
-    public void testIteratorWithQuery() throws Exception {
+    public void testIteratorWithQuery() {
         remoteCache.put(1, createUser1());
         remoteCache.put(2, createUser2());
 
@@ -146,7 +157,7 @@ public class RemoteQueryIT extends RemoteQueryBaseIT {
     }
 
     @Test
-    public void testIteratorWithQueryAndProjections() throws Exception {
+    public void testIteratorWithQueryAndProjections() {
         remoteCache.put(1, createUser1());
         remoteCache.put(2, createUser2());
 
@@ -163,6 +174,26 @@ public class RemoteQueryIT extends RemoteQueryBaseIT {
         Object[] projections = (Object[]) entries.get(0).getValue();
         assertEquals("Cat", projections[0]);
         assertEquals("Tom", projections[1]);
+    }
+
+    @Test
+    public void testQueryViaRest() throws IOException {
+        remoteCache.put(1, createUser1());
+        remoteCache.put(2, createUser2());
+
+        String query = "from sample_bank_account.User where name='Adrian'";
+
+        String searchURI = "http://localhost:8080/rest/" + cacheName + "?action=search&query=" + URLEncoder.encode(query, "UTF-8");
+        HttpGet httpget = new HttpGet(searchURI);
+
+        try (CloseableHttpClient httpClient = HttpClients.createDefault();
+             CloseableHttpResponse response = httpClient.execute(httpget)) {
+
+            HttpEntity entity = response.getEntity();
+            JsonNode results = new ObjectMapper().readTree(entity.getContent());
+            assertEquals(1, results.get("total_results").asInt());
+            EntityUtils.consume(entity);
+        }
     }
 
     private User createUser1() {

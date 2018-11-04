@@ -1,14 +1,8 @@
 package org.infinispan.partitionhandling;
 
-import org.infinispan.Cache;
-import org.infinispan.configuration.cache.BiasAcquisition;
-import org.infinispan.configuration.cache.CacheMode;
-import org.infinispan.distribution.MagicKey;
-import org.infinispan.statetransfer.StateTransferLock;
-import org.infinispan.statetransfer.StateTransferManager;
-import org.infinispan.test.TestingUtil;
-import org.infinispan.test.concurrent.StateSequencer;
-import org.testng.annotations.Test;
+import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertFalse;
+import static org.testng.AssertJUnit.fail;
 
 import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
@@ -16,12 +10,17 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import static org.infinispan.test.TestingUtil.extractComponentRegistry;
-import static org.testng.AssertJUnit.assertEquals;
-import static org.testng.AssertJUnit.fail;
-import static org.testng.AssertJUnit.assertFalse;
+import org.infinispan.Cache;
+import org.infinispan.configuration.cache.BiasAcquisition;
+import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.MagicKey;
+import org.infinispan.statetransfer.StateTransferLock;
+import org.infinispan.test.TestingUtil;
+import org.infinispan.test.concurrent.StateSequencer;
+import org.testng.annotations.Test;
 
-@Test(groups = "functional", testName = "partitionhandling.DelayedAvailabilityUpdateTest")
+@Test(groups = "functional", testName = "partitionhandling.ScatteredDelayedAvailabilityUpdateTest")
 public class ScatteredDelayedAvailabilityUpdateTest extends DelayedAvailabilityUpdateTest {
    {
       cacheMode = CacheMode.SCATTERED_SYNC;
@@ -65,28 +64,36 @@ public class ScatteredDelayedAvailabilityUpdateTest extends DelayedAvailabilityU
       cache(p0.node(1)).addListener(new BlockAvailabilityChangeListener(false, ss,
             "main:after_availability_update_p0n1", "main:resume_topology_update_p0n1"));
 
-      int topologyBeforeSplit = TestingUtil.extractComponent(cache(p0.node(1)), StateTransferManager.class).getCacheTopology().getTopologyId();
+      DistributionManager dmP0N0 = advancedCache(p0.node(0)).getDistributionManager();
+      DistributionManager dmP0N1 = advancedCache(p0.node(1)).getDistributionManager();
+      int topologyBeforeSplit = dmP0N1.getCacheTopology().getTopologyId();
       splitCluster(p0.getNodes(), p1.getNodes());
 
       ss.enter("main:check_before_topology_update_p0n1");
       // Now we should get topology 8 which just drops the primary owners but keeps the cache available, and soon
       // afterwards topology 9 which actually carries the degraded mode info. If topology 9 arrives before 8
-      // the availability update will be blocked, but in topology 9 is blocked on p0n0 and therefore the reads
-      // below would block.
-      int currentTopology = TestingUtil.extractComponent(cache(p0.node(1)), StateTransferManager.class).getCacheTopology().getTopologyId();
-      if (currentTopology == topologyBeforeSplit + 1) {
+      // we won't get any StateTransferLock notifications for topology 8 - the topology updates executor is single-threaded
+      // and update 8 will be queued and later discarded.
+      // If p0n1 is at topology 9 any reads will be blocked
+      // If p0n1 is at topology 8 and p0n0 is blocking update to 9 (without seeing 8), the reads will trigger OTE
+      // and will get blocked as well.
+      // Therefore we can do the check if and only if both nodes are at topology 8.
+      int currentTopologyP0N0 = dmP0N0.getCacheTopology().getTopologyId();
+      int currentTopologyP0N1 = dmP0N1.getCacheTopology().getTopologyId();
+      log.debugf("Topology before split: %d, now on P0N0: %d, P0N1: %d", topologyBeforeSplit, currentTopologyP0N0, currentTopologyP0N1);
+      if (currentTopologyP0N0 == topologyBeforeSplit + 1 && currentTopologyP0N1 == topologyBeforeSplit + 1) {
+         // See ScatteredPartitionHandlingManagerImpl why this is not available
          assertKeyNotAvailableForRead(cache(p0.node(1)), k0Existing);
          assertKeyNotAvailableForRead(cache(p0.node(1)), k0Missing);
       }
-      CompletableFuture<Void> topologyUpdateFuture = TestingUtil.extractComponent(cache(p0.node(1)), StateTransferLock.class).topologyFuture(currentTopology + 1);
+      CompletableFuture<Void> topologyUpdateFuture = TestingUtil.extractComponent(cache(p0.node(1)), StateTransferLock.class).topologyFuture(currentTopologyP0N1 + 1);
       ss.exit("main:check_before_topology_update_p0n1");
 
       topologyUpdateFuture.get(10, TimeUnit.SECONDS);
 
       ss.enter("main:check_availability");
       // Keys stay available in between the availability mode update and the topology update
-      StateTransferManager stmP0N1 = extractComponentRegistry(cache(p0.node(1))).getStateTransferManager();
-      eventuallyEquals(2, () -> stmP0N1.getCacheTopology().getActualMembers().size());
+      eventuallyEquals(2, () -> dmP0N1.getCacheTopology().getActualMembers().size());
       assertEquals(AvailabilityMode.AVAILABLE, partitionHandlingManager(p0.node(0)).getAvailabilityMode());
       // p0n1 should be degraded at this momment
 

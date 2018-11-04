@@ -23,6 +23,8 @@ public enum HotRodVersion {
    HOTROD_25(2, 5),
    HOTROD_26(2, 6),
    HOTROD_27(2, 7),
+   HOTROD_28(2, 8),
+   HOTROD_29(2, 9), //added in version 9.4 Beta1
    ;
 
    private final int major;
@@ -76,14 +78,6 @@ public enum HotRodVersion {
 
    public static HotRodVersion forVersion(byte version) {
       return versions[version];
-   }
-
-   public static VersionedDecoder getDecoder(byte version) {
-      if (version < 20) {
-         return new Decoder10();
-      } else {
-         return new Decoder2x();
-      }
    }
 
    public static VersionedEncoder getEncoder(byte version) {

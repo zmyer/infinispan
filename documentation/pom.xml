@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.infinispan</groupId>
         <artifactId>infinispan-parent</artifactId>
-        <version>9.2.1-SNAPSHOT</version>
+        <version>10.0.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -16,7 +16,6 @@
     <description>The Infinispan Documentation</description>
 
     <properties>
-        <infinispan.version>9.2</infinispan.version>
         <javadoc.root>https://docs.jboss.org/infinispan/${infinispan.base.version}/apidocs</javadoc.root>
         <configdoc.root>https://docs.jboss.org/infinispan/${infinispan.base.version}/configdocs/</configdoc.root>
         <wildfly.docroot>https://docs.jboss.org/author/display/WFLY11</wildfly.docroot>
@@ -24,9 +23,11 @@
         <jdk.docroot>${jdk.root}/api</jdk.docroot>
         <javaee.docroot>https://docs.oracle.com/javaee/7/api</javaee.docroot>
         <skipTests>true</skipTests>
+        <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
         <defaults.file>${project.build.directory}/default-attributes.adoc</defaults.file>
-        <asciidoctor.version>1.5.6</asciidoctor.version>
+        <asciidoctor.version>1.5.7</asciidoctor.version>
         <asciidoctorj.pdf.version>1.5.0-alpha.16</asciidoctorj.pdf.version>
+        <jruby.version>9.1.17.0</jruby.version>
     </properties>
 
     <dependencies>
@@ -137,6 +138,11 @@
                         <artifactId>asciidoctorj-pdf</artifactId>
                         <version>${asciidoctorj.pdf.version}</version>
                     </dependency>
+                    <dependency>
+                        <groupId>org.jruby</groupId>
+                        <artifactId>jruby-complete</artifactId>
+                        <version>${jruby.version}</version>
+                    </dependency>
                 </dependencies>
                 <executions>
                     <execution>
@@ -148,7 +154,7 @@
                         <configuration>
                             <backend>html5</backend>
                             <doctype>book</doctype>
-                            <outputDirectory>${project.build.directory}/generated-html</outputDirectory>
+                            <outputDirectory>${project.build.directory}/generated/${infinispan.base.version}/html</outputDirectory>
                             <imagesDir>.</imagesDir>
                             <preserveDirectories>true</preserveDirectories>
                             <relativeBaseDir>true</relativeBaseDir>
@@ -165,7 +171,9 @@
                                 <docinfo>true</docinfo>
                                 <experimental>true</experimental>
                                 <infinispanversion>${infinispan.base.version}</infinispanversion>
-                                <infinispanslot>ispn-${parsedVersion.majorVersion}.${parsedVersion.minorVersion}</infinispanslot>
+                                <brandname>${infinispan.brand.name}</brandname>
+                                <moduleprefix>${infinispan.module.slot.prefix}</moduleprefix>
+                                <infinispanslot>${infinispan.module.slot.prefix}-${parsedVersion.majorVersion}.${parsedVersion.minorVersion}</infinispanslot>
                                 <defaults>${defaults.file}</defaults>
                                 <javadocroot>${javadoc.root}</javadocroot>
                                 <configdocroot>${configdoc.root}</configdocroot>
@@ -212,7 +220,7 @@
                                 <configuration>
                                     <backend>pdf</backend>
                                     <doctype>book</doctype>
-                                    <outputDirectory>${project.build.directory}/generated-pdf</outputDirectory>
+                                    <outputDirectory>${project.build.directory}/generated/${infinispan.base.version}/pdf</outputDirectory>
                                     <imagesDir>.</imagesDir>
                                     <preserveDirectories>false</preserveDirectories>
                                     <relativeBaseDir>true</relativeBaseDir>
@@ -230,7 +238,7 @@
                                         <experimental>true</experimental>
                                         <infinispanversion>${infinispan.base.version}</infinispanversion>
                                         <defaults>${defaults.file}</defaults>
-                                        <infinispanslot>ispn-${parsedVersion.majorVersion}.${parsedVersion.minorVersion}</infinispanslot>
+                                        <infinispanslot>${infinispan.module.slot.prefix}-${parsedVersion.majorVersion}.${parsedVersion.minorVersion}</infinispanslot>
                                         <javadocroot>${javadoc.root}</javadocroot>
                                         <configdocroot>${configdoc.root}</configdocroot>
                                         <wildflydocroot>${wildfly.docroot}</wildflydocroot>
@@ -259,14 +267,30 @@
                                     </target>
                                 </configuration>
                             </execution>
+                            <execution>
+                                <id>upload-pdf</id>
+                                <phase>deploy</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <skip>${skipArtifactUpload}</skip>
+                                    <target>
+                                        <echo message="Uploading PDF docs"/>
+                                        <exec dir="${project.build.directory}/generated/${infinispan.base.version}" executable="rsync">
+                                            <arg value="-rvm"/>
+                                            <arg line="--protocol=29"/>
+                                            <arg line="-e &quot;ssh -i ${upload.keyFile}&quot;"/>
+                                            <arg line="--exclude='*.png'"/>
+                                            <arg line="--exclude='*.svg'"/>
+                                            <arg line="--include='*.pdf'"/>
+                                            <arg value="pdf"/>
+                                            <arg value="${upload.docsDir}"/>
+                                        </exec>
+                                    </target>
+                                </configuration>
+                            </execution>
                         </executions>
-                        <dependencies>
-                            <dependency>
-                                <groupId>org.codehaus.groovy</groupId>
-                                <artifactId>groovy-all</artifactId>
-                                <version>${version.groovy}</version>
-                            </dependency>
-                        </dependencies>
                     </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>

@@ -5,14 +5,18 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-bom</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
-      <relativePath>../bom/pom.xml</relativePath>
+      <version>10.0.0-SNAPSHOT</version>
+      <relativePath>../build-configuration/bom/pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-checkstyle</artifactId>
-   <version>9.2.1-SNAPSHOT</version>
+   <version>10.0.0-SNAPSHOT</version>
    <name>Infinispan Checkstyle Rules</name>
    <description>Contains the definitions for the Infinispan commons code style and conventions</description>
+
+   <properties>
+      <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+   </properties>
 
    <dependencies>
       <dependency>
@@ -29,30 +33,22 @@
       </dependency>
    </dependencies>
 
-   <profiles>
-      <profile>
-         <id>extras</id>
-         <activation>
-            <activeByDefault>true</activeByDefault>
-         </activation>
-         <build>
-            <plugins>
-               <plugin>
-                  <groupId>org.apache.maven.plugins</groupId>
-                  <artifactId>maven-source-plugin</artifactId>
-                  <executions>
-                     <execution>
-                        <id>attach-sources</id>
-                        <goals>
-                           <goal>jar</goal>
-                        </goals>
-                     </execution>
-                  </executions>
-                  <inherited>true</inherited>
-               </plugin>
-            </plugins>
-         </build>
-      </profile>
-   </profiles>
+   <build>
+      <plugins>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>attach-sources</id>
+                  <goals>
+                     <goal>jar</goal>
+                  </goals>
+               </execution>
+            </executions>
+            <inherited>true</inherited>
+         </plugin>
+      </plugins>
+   </build>
 
 </project>

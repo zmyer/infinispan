@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import org.infinispan.commands.ReplicableCommand;
+import org.infinispan.util.logging.TraceException;
 import org.infinispan.commons.api.Lifecycle;
 import org.infinispan.commons.util.Experimental;
 import org.infinispan.commons.util.Util;
@@ -71,7 +72,7 @@ public interface Transport extends Lifecycle {
          return CompletableFutures.await(future);
       } catch (ExecutionException e) {
          Throwable cause = e.getCause();
-         cause.addSuppressed(e);
+         cause.addSuppressed(new TraceException());
          throw Util.rewrapAsCacheException(cause);
       }
    }
@@ -170,7 +171,7 @@ public interface Transport extends Lifecycle {
          return result;
       } catch (ExecutionException e) {
          Throwable cause = e.getCause();
-         cause.addSuppressed(e);
+         cause.addSuppressed(new TraceException());
          throw Util.rewrapAsCacheException(cause);
       }
    }
@@ -321,6 +322,21 @@ public interface Transport extends Lifecycle {
    default <T> CompletionStage<T> invokeCommandOnAll(ReplicableCommand command, ResponseCollector<T> collector,
                                                      DeliverOrder deliverOrder, long timeout, TimeUnit unit) {
       return invokeCommand(getMembers(), command, collector, deliverOrder, timeout, unit);
+   }
+
+   /**
+    * Invoke a command on all the nodes in the cluster and pass the responses to a {@link ResponseCollector}.
+    * <p>
+    * The command is only executed on the local node if the delivery order is {@link DeliverOrder#TOTAL}.
+    * The command is not sent across RELAY2 bridges to remote sites.
+    *
+    * @since 9.3
+    */
+   @Experimental
+   default <T> CompletionStage<T> invokeCommandOnAll(Collection<Address> requiredTargets, ReplicableCommand command,
+                                                       ResponseCollector<T> collector, DeliverOrder deliverOrder,
+                                                       long timeout, TimeUnit unit) {
+      return invokeCommand(requiredTargets, command, collector, deliverOrder, timeout, unit);
    }
 
    /**

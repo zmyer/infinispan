@@ -12,7 +12,9 @@ import org.infinispan.commons.util.Util;
  *
  * @author Galder Zamarreño
  * @since 4.2
+ * @deprecated since 9.4, use {@link org.infinispan.commons.jmx.JBossMBeanServerLookup} instead
  */
+@Deprecated
 public class JBossMBeanServerLookup implements MBeanServerLookup {
 
    @Override

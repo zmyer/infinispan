@@ -15,6 +15,7 @@ import javax.management.ObjectName;
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.dataconversion.IdentityEncoder;
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
@@ -30,7 +31,6 @@ import org.infinispan.protostream.DescriptorParserException;
 import org.infinispan.protostream.ProtobufUtil;
 import org.infinispan.protostream.SerializationContext;
 import org.infinispan.protostream.config.Configuration;
-import org.infinispan.query.remote.CompatibilityProtoStreamMarshaller;
 import org.infinispan.query.remote.ProtobufMetadataManager;
 import org.infinispan.query.remote.client.MarshallerRegistration;
 import org.infinispan.query.remote.client.ProtobufMetadataManagerConstants;
@@ -113,7 +113,8 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
             .locking().isolationLevel(IsolationLevel.READ_COMMITTED).useLockStriping(false)
             .clustering().cacheMode(cacheMode).sync()
             .stateTransfer().fetchInMemoryState(true).awaitInitialTransfer(false)
-            .compatibility().enable().marshaller(new CompatibilityProtoStreamMarshaller())
+            .encoding().key().mediaType(MediaType.APPLICATION_OBJECT_TYPE)
+            .encoding().value().mediaType(MediaType.APPLICATION_OBJECT_TYPE)
             .customInterceptors().addInterceptor()
             .interceptor(new ProtobufMetadataManagerInterceptor()).after(PessimisticLockingInterceptor.class);
       if (globalConfiguration.security().authorization().enabled()) {
@@ -128,14 +129,18 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
       return objectName;
    }
 
-   @Override
-   public void setObjectName(ObjectName objectName) {
+   void setObjectName(ObjectName objectName) {
       this.objectName = objectName;
    }
 
    @Override
    public void registerMarshaller(BaseMarshaller<?> marshaller) {
       serCtx.registerMarshaller(marshaller);
+   }
+
+   @Override
+   public void unregisterMarshaller(BaseMarshaller<?> marshaller) {
+      serCtx.unregisterMarshaller(marshaller);
    }
 
    @ManagedOperation(description = "Registers a Protobuf definition file", displayName = "Register a Protofile")
@@ -233,6 +238,9 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
 
    /**
     * Obtains the ProtobufMetadataManagerImpl instance associated to a cache manager.
+    *
+    * @param cacheManager a cache manager instance
+    * @return the ProtobufMetadataManagerImpl instance associated to a cache manager.
     */
    private static ProtobufMetadataManagerImpl getProtobufMetadataManager(EmbeddedCacheManager cacheManager) {
       if (cacheManager == null) {
@@ -245,7 +253,13 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
       return metadataManager;
    }
 
-   public static SerializationContext getSerializationContextInternal(EmbeddedCacheManager cacheManager) {
+   /**
+    * Obtains the protobuf serialization context of the ProtobufMetadataManager instance associated to a cache manager.
+    *
+    * @param cacheManager a cache manager instance
+    * @return the protobuf {@link SerializationContext}
+    */
+   public static SerializationContext getSerializationContext(EmbeddedCacheManager cacheManager) {
       return getProtobufMetadataManager(cacheManager).getSerializationContext();
    }
 }

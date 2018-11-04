@@ -7,15 +7,16 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-import org.infinispan.container.MergeOnStore;
-import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.entries.ReadCommittedEntry;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.container.impl.MergeOnStore;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.persistence.PersistenceUtil;
+import org.infinispan.persistence.internal.PersistenceUtil;
 import org.infinispan.persistence.manager.PersistenceManager;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -34,7 +35,7 @@ public class CommitManager {
    private static final boolean trace = log.isTraceEnabled();
    private final ConcurrentMap<Object, DiscardPolicy> tracker = new ConcurrentHashMap<>();
 
-   @Inject private DataContainer dataContainer;
+   @Inject private InternalDataContainer dataContainer;
    @Inject private PersistenceManager persistenceManager;
    @Inject private TimeService timeService;
 
@@ -80,7 +81,7 @@ public class CommitManager {
     * @param operation if {@code null}, it identifies this commit as originated from a normal operation. Otherwise, it
     * @param ctx
     */
-   public final void commit(final CacheEntry entry, final Flag operation,
+   public final void commit(final CacheEntry entry, final Flag operation, int segment,
                             boolean l1Only, InvocationContext ctx) {
       if (trace) {
          log.tracef("Trying to commit. Key=%s. Operation Flag=%s, L1 write/invalidation=%s", toStr(entry.getKey()),
@@ -93,7 +94,7 @@ public class CommitManager {
             log.tracef("Committing key=%s. It is a L1 invalidation or a normal put and no tracking is enabled!",
                   toStr(entry.getKey()));
          }
-         commitEntry(entry, ctx);
+         commitEntry(entry, segment, ctx);
          return;
       }
       if (isTrackDisabled(operation)) {
@@ -113,7 +114,7 @@ public class CommitManager {
             }
             return discardPolicy;
          }
-         commitEntry(entry, ctx);
+         commitEntry(entry, segment, ctx);
          DiscardPolicy newDiscardPolicy = calculateDiscardPolicy(operation);
          if (trace) {
             log.tracef("Committed key=%s. Old discard policy=%s. New discard policy=%s", toStr(entry.getKey()),
@@ -123,9 +124,10 @@ public class CommitManager {
       });
    }
 
-   private void commitEntry(CacheEntry entry, InvocationContext ctx) {
+   private void commitEntry(CacheEntry entry, int segment, InvocationContext ctx) {
       if (!entry.isEvicted() && !entry.isRemoved() && entry.getValue() instanceof MergeOnStore) {
-         PersistenceUtil.loadAndComputeInDataContainer(dataContainer, persistenceManager, entry.getKey(), ctx, timeService, (k, oldEntry, factory) -> {
+         PersistenceUtil.loadAndComputeInDataContainer(dataContainer, segment, persistenceManager, entry.getKey(), ctx,
+               timeService, (k, oldEntry, factory) -> {
             Object newValue = ((MergeOnStore) entry.getValue()).merge(oldEntry == null ? null : oldEntry.getValue());
             if (newValue == null) {
                return null;
@@ -133,7 +135,11 @@ public class CommitManager {
             return factory.create(k, newValue, entry.getMetadata());
          });
       } else {
-         entry.commit(dataContainer);
+         if (entry instanceof ReadCommittedEntry) {
+            ((ReadCommittedEntry) entry).commit(segment, dataContainer);
+         } else {
+            entry.commit(dataContainer);
+         }
       }
    }
 

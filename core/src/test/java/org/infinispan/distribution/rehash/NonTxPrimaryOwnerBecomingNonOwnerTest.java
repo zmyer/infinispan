@@ -146,7 +146,7 @@ public class NonTxPrimaryOwnerBecomingNonOwnerTest extends MultipleCacheManagers
       final int postJoinTopologyId = duringJoinTopologyId + 1;
       checkPoint.trigger("allow_topology_" + postJoinTopologyId + "_on_" + address(0));
       eventuallyEquals(postJoinTopologyId,
-            () -> cache0.getComponentRegistry().getStateTransferManager().getCacheTopology().getTopologyId());
+            () -> cache0.getDistributionManager().getCacheTopology().getTopologyId());
 
       // Allow the command to proceed
       log.tracef("Unblocking the write command on node " + address(1));
@@ -217,6 +217,6 @@ public class NonTxPrimaryOwnerBecomingNonOwnerTest extends MultipleCacheManagers
          return invocation.callRealMethod();
       }).when(spyLtm).handleTopologyUpdate(eq(CacheContainer.DEFAULT_CACHE_NAME), any(CacheTopology.class),
                                               any(AvailabilityMode.class), anyInt(), any(Address.class));
-      TestingUtil.extractGlobalComponentRegistry(manager).registerComponent(spyLtm, LocalTopologyManager.class);
+      TestingUtil.replaceComponent(manager, LocalTopologyManager.class, spyLtm, true);
    }
 }

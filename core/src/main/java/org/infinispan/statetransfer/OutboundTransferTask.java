@@ -4,8 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.PrimitiveIterator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -15,10 +14,11 @@ import java.util.function.Consumer;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.CollectionFactory;
-import org.infinispan.commons.util.SmallIntSet;
-import org.infinispan.container.DataContainer;
-import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.manager.PersistenceManager;
@@ -28,9 +28,10 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.rpc.RpcOptions;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
-import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+
+import io.reactivex.Flowable;
 
 /**
  * Outbound state transfer task. Pushes data segments to another cluster member on request. Instances of
@@ -58,13 +59,13 @@ public class OutboundTransferTask implements Runnable {
 
    private final Address destination;
 
-   private final Set<Integer> segments = new CopyOnWriteArraySet<>();
+   private final IntSet segments;
 
    private final int chunkSize;
 
    private final KeyPartitioner keyPartitioner;
 
-   private final DataContainer<Object, Object> dataContainer;
+   private final InternalDataContainer<Object, Object> dataContainer;
 
    private final PersistenceManager persistenceManager;
 
@@ -96,11 +97,11 @@ public class OutboundTransferTask implements Runnable {
 
    private InternalEntryFactory entryFactory;
 
-   public OutboundTransferTask(Address destination, Set<Integer> segments, int chunkSize,
+   public OutboundTransferTask(Address destination, IntSet segments, int segmentCount, int chunkSize,
                                int topologyId, KeyPartitioner keyPartitioner,
                                Consumer<OutboundTransferTask> onCompletion, Consumer<List<StateChunk>> onChunkReplicated,
                                BiFunction<InternalCacheEntry, InternalEntryFactory, InternalCacheEntry> mapEntryFromDataContainer,
-                               BiFunction<MarshalledEntry, InternalEntryFactory, InternalCacheEntry> mapEntryFromStore, DataContainer dataContainer,
+                               BiFunction<MarshalledEntry, InternalEntryFactory, InternalCacheEntry> mapEntryFromStore, InternalDataContainer dataContainer,
                                PersistenceManager persistenceManager, RpcManager rpcManager,
                                CommandsFactory commandsFactory, InternalEntryFactory ef, long timeout, String cacheName,
                                boolean applyState, boolean pushTransfer) {
@@ -118,7 +119,7 @@ public class OutboundTransferTask implements Runnable {
       this.mapEntryFromDataContainer = mapEntryFromDataContainer;
       this.mapEntryFromStore = mapEntryFromStore;
       this.destination = destination;
-      this.segments.addAll(segments);
+      this.segments = IntSets.concurrentCopyFrom(segments, segmentCount);
       this.chunkSize = chunkSize;
       this.topologyId = topologyId;
       this.keyPartitioner = keyPartitioner;
@@ -153,7 +154,7 @@ public class OutboundTransferTask implements Runnable {
       return destination;
    }
 
-   public Set<Integer> getSegments() {
+   public IntSet getSegments() {
       return segments;
    }
 
@@ -164,6 +165,7 @@ public class OutboundTransferTask implements Runnable {
    //todo [anistor] check thread interrupt status in loops to implement faster cancellation
    public void run() {
       try {
+         // TODO: need to change to SDC.forEachSegment
          // send data container entries
          for (InternalCacheEntry ice : dataContainer) {
             Object key = ice.getKey();  //todo [anistor] should we check for expired entries?
@@ -176,7 +178,7 @@ public class OutboundTransferTask implements Runnable {
             }
          }
 
-         AdvancedCacheLoader stProvider = persistenceManager.getStateTransferProvider();
+         AdvancedCacheLoader<Object, Object> stProvider = persistenceManager.getStateTransferProvider();
          if (stProvider != null) {
             try {
                AdvancedCacheLoader.CacheLoaderTask task = (me, taskContext) -> {
@@ -192,7 +194,8 @@ public class OutboundTransferTask implements Runnable {
                      }
                   }
                };
-               stProvider.process(k -> !dataContainer.containsKey(k), task, new WithinThreadExecutor(), true, true);
+               Flowable.fromPublisher(stProvider.publishEntries(k -> !dataContainer.containsKey(k), true, true))
+                     .blockingForEach(me -> task.processEntry(me, null));
             } catch (CacheException e) {
                log.failedLoadingKeysFromCacheStore(e);
             }
@@ -239,7 +242,8 @@ public class OutboundTransferTask implements Runnable {
       }
 
       if (isLast) {
-         for (int segmentId : segments) {
+         for (PrimitiveIterator.OfInt iter = segments.iterator(); iter.hasNext(); ) {
+            int segmentId = iter.nextInt();
             List<InternalCacheEntry> entries = entriesBySegment.get(segmentId);
             if (entries == null) {
                chunks.add(new StateChunk(segmentId, Collections.emptyList(), true));
@@ -279,7 +283,7 @@ public class OutboundTransferTask implements Runnable {
     *
     * @param cancelledSegments segments to cancel.
     */
-   public void cancelSegments(Set<Integer> cancelledSegments) {
+   public void cancelSegments(IntSet cancelledSegments) {
       if (segments.removeAll(cancelledSegments)) {
          if (trace) {
             log.tracef("Cancelling outbound transfer to node %s, segments %s (remaining segments %s)",
@@ -311,7 +315,7 @@ public class OutboundTransferTask implements Runnable {
       return "OutboundTransferTask{" +
             "topologyId=" + topologyId +
             ", destination=" + destination +
-            ", segments=" + new SmallIntSet(segments) +
+            ", segments=" + segments +
             ", chunkSize=" + chunkSize +
             ", timeout=" + timeout +
             ", cacheName='" + cacheName + '\'' +

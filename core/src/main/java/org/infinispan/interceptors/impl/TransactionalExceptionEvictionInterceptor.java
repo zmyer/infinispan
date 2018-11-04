@@ -2,36 +2,35 @@ package org.infinispan.interceptors.impl;
 
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
-import org.infinispan.Cache;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.commons.dataconversion.IdentityEncoder;
-import org.infinispan.commons.dataconversion.IdentityWrapper;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.MemoryConfiguration;
 import org.infinispan.configuration.cache.StorageType;
-import org.infinispan.container.DataContainer;
-import org.infinispan.container.KeyValueMetadataSizeCalculator;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.container.impl.KeyValueMetadataSizeCalculator;
 import org.infinispan.container.offheap.UnpooledOffHeapMemoryAllocator;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.annotations.Stop;
 import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.notifications.Listener;
+import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.CacheEntryExpired;
 import org.infinispan.notifications.cachelistener.event.CacheEntryExpiredEvent;
 import org.infinispan.transaction.xa.GlobalTransaction;
@@ -52,12 +51,14 @@ public class TransactionalExceptionEvictionInterceptor extends DDAsyncIntercepto
    private final AtomicLong currentSize = new AtomicLong();
    private final ConcurrentMap<GlobalTransaction, Long> pendingSize = new ConcurrentHashMap<>();
    private MemoryConfiguration memoryConfiguration;
-   private Cache cache;
-   private DataContainer container;
-   DistributionManager dm;
+   private CacheNotifier cacheNotifier;
+   private InternalDataContainer container;
+   private DistributionManager dm;
    private long maxSize;
    private long minSize;
    private KeyValueMetadataSizeCalculator calculator;
+
+   private Consumer<Iterable<InternalCacheEntry>> listener;
 
    public long getCurrentSize() {
       return currentSize.get();
@@ -76,10 +77,10 @@ public class TransactionalExceptionEvictionInterceptor extends DDAsyncIntercepto
    }
 
    @Inject
-   public void inject(Configuration config, Cache cache,
-         DataContainer dataContainer, KeyValueMetadataSizeCalculator calculator, DistributionManager dm) {
+   public void inject(Configuration config, CacheNotifier cacheNotifier,
+                      InternalDataContainer dataContainer, KeyValueMetadataSizeCalculator calculator, DistributionManager dm) {
       this.memoryConfiguration = config.memory();
-      this.cache = cache;
+      this.cacheNotifier = cacheNotifier;
       this.container = dataContainer;
       this.maxSize = config.memory().size();
       this.calculator = calculator;
@@ -93,11 +94,28 @@ public class TransactionalExceptionEvictionInterceptor extends DDAsyncIntercepto
          currentSize.set(minSize);
       }
 
+      listener = this::entriesRemoved;
+      container.addRemovalListener(listener);
+
       // Local caches just remove the entry, so we have to listen for those events
-      if (!cache.getCacheConfiguration().clustering().cacheMode().isClustered()) {
+      if (!cacheConfiguration.clustering().cacheMode().isClustered()) {
          // We want the raw values and no transformations for our listener
-         // We can't use AbstractDelegatingCache.unwrapCache(cache) as this would give us byte[] instead of WrappedByteArray
-         cache.getAdvancedCache().withEncoding(IdentityEncoder.class).withWrapping(IdentityWrapper.class).addListener(this);
+         cacheNotifier.addListener(this);
+      }
+   }
+
+   @Stop
+   public void stop() {
+      container.removeRemovalListener(listener);
+   }
+
+   private void entriesRemoved(Iterable<InternalCacheEntry> entries) {
+      long changeAmount = 0;
+      for (InternalCacheEntry entry : entries) {
+         changeAmount -= calculator.calculateSize(entry.getKey(), entry.getValue(), entry.getMetadata());
+      }
+      if (changeAmount != 0) {
+         increaseSize(changeAmount);
       }
    }
 
@@ -105,7 +123,11 @@ public class TransactionalExceptionEvictionInterceptor extends DDAsyncIntercepto
    public void entryExpired(CacheEntryExpiredEvent event) {
       // If this is null it means it was from the store, so we don't care about that
       if (event.getValue() != null) {
-         increaseSize(- calculator.calculateSize(event.getKey(), event.getValue(), event.getMetadata()));
+         Object key = event.getKey();
+         if (isTrace) {
+            log.tracef("Key %s found to have expired", key);
+         }
+         increaseSize(- calculator.calculateSize(key, event.getValue(), event.getMetadata()));
       }
    }
 
@@ -164,33 +186,38 @@ public class TransactionalExceptionEvictionInterceptor extends DDAsyncIntercepto
          modifiedKeys.addAll(modification.getAffectedKeys());
       }
 
-      Map<Object, CacheEntry> entries = ctx.getLookedUpEntries();
       long changeAmount = 0;
       for (Object key : modifiedKeys) {
          if (dm == null || dm.getCacheTopology().isWriteOwner(key)) {
-            CacheEntry entry = entries.get(key);
+            CacheEntry entry = ctx.lookupEntry(key);
             if (entry.isRemoved()) {
                // Need to subtract old value here
                InternalCacheEntry containerEntry = container.peek(key);
                Object value = containerEntry != null ? containerEntry.getValue() : null;
                if (value != null) {
+                  if (isTrace) {
+                     log.tracef("Key %s was removed", key);
+                  }
                   changeAmount -= calculator.calculateSize(key, value, entry.getMetadata());
                }
             } else {
+               // We check the container directly - this is to handle entries that are expired as the command
+               // won't think it replaced a value
+               InternalCacheEntry containerEntry = container.peek(key);
+               if (isTrace) {
+                  log.tracef("Key %s was put into cache, replacing existing %s", key, containerEntry != null);
+               }
                // Create and replace both add for the new value
                changeAmount += calculator.calculateSize(key, entry.getValue(), entry.getMetadata());
-               if (!entry.isCreated()) {
-                  // Need to subtract old value here
-                  InternalCacheEntry containerEntry = container.peek(key);
-                  if (containerEntry != null) {
-                     changeAmount -= calculator.calculateSize(key, containerEntry.getValue(), containerEntry.getMetadata());
-                  }
+               // Need to subtract old value here
+               if (containerEntry != null) {
+                  changeAmount -= calculator.calculateSize(key, containerEntry.getValue(), containerEntry.getMetadata());
                }
             }
          }
       }
 
-      if (!increaseSize(changeAmount)) {
+      if (changeAmount != 0 && !increaseSize(changeAmount)) {
          throw log.containerFull(maxSize);
       }
 

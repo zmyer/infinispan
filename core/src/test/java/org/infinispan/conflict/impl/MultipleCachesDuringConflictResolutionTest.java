@@ -7,15 +7,17 @@ import org.infinispan.partitionhandling.BasePartitionHandlingTest;
 import org.infinispan.partitionhandling.PartitionHandling;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TransportFlags;
+import org.testng.annotations.Test;
 
 /**
  * ISPN-8925 This test creates several caches and then initiates a split-brain followed by a merge. The purpose of this
  * test is to ensure that when many caches exist, it's still possible for conflict resolution and the rebalance to proceed.
  * Previously the executor in the ClusterTopologyManagerImpl would be blocked indefinitely if the number of caches was
- * >= Runtime.getRuntime().availableProcessors() / 2 + 1
+ * >= ProcessorInfo.availableProcessors() / 2 + 1
  *
  * @author Ryan Emerson
  */
+@Test(groups = "functional", testName = "conflict.impl.MultipleCachesDuringConflictResolutionTest")
 public class MultipleCachesDuringConflictResolutionTest extends BasePartitionHandlingTest {
 
    // Does not include the org.infinispan.CONFIG and ___defaultCache, so total caches = numberOfCaches + 2

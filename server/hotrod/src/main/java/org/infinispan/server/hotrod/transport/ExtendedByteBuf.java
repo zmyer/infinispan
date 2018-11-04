@@ -2,7 +2,10 @@ package org.infinispan.server.hotrod.transport;
 
 import java.util.Optional;
 
+import javax.transaction.xa.Xid;
+
 import org.infinispan.commons.io.SignedNumeric;
+import org.infinispan.commons.util.Util;
 import org.infinispan.server.core.transport.VInt;
 import org.infinispan.server.core.transport.VLong;
 
@@ -46,7 +49,7 @@ public class ExtendedByteBuf {
          bf.readBytes(array);
          return array;
       } else {
-         return new byte[0];
+         return Util.EMPTY_BYTE_ARRAY;
       }
    }
 
@@ -182,7 +185,7 @@ public class ExtendedByteBuf {
                bf.readBytes(array);
                return Optional.of(array);
             } else {
-               return Optional.of(new byte[0]);
+               return Optional.of(Util.EMPTY_BYTE_ARRAY);
             }
          } else {
             bf.resetReaderIndex();
@@ -284,6 +287,12 @@ public class ExtendedByteBuf {
    }
 
    public static void writeString(Optional<String> msg, ByteBuf bf) {
-      writeRangedBytes(msg.map(m -> m.getBytes(CharsetUtil.UTF_8)).orElse(new byte[0]), bf);
+      writeRangedBytes(msg.map(m -> m.getBytes(CharsetUtil.UTF_8)).orElse(Util.EMPTY_BYTE_ARRAY), bf);
+   }
+
+   public static void writeXid(Xid xid, ByteBuf buffer) {
+      VInt.write(buffer, SignedNumeric.encode(xid.getFormatId()));
+      writeRangedBytes(xid.getGlobalTransactionId(), buffer);
+      writeRangedBytes(xid.getBranchQualifier(), buffer);
    }
 }

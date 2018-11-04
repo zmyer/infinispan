@@ -33,16 +33,21 @@
     <PING/>
     <MERGE3/>
     <FD_SOCK/>
-    <FD_ALL/>
-    <VERIFY_SUSPECT timeout="1500"  />
+    <!-- Suspect node `timeout` to `timeout + timeout_check_interval` millis after the last heartbeat -->
+    <FD_ALL timeout="10000"
+            interval="2000"
+            timeout_check_interval="1000"
+    />
+    <VERIFY_SUSPECT timeout="1000"/>
     <pbcast.NAKACK2 use_mcast_xmit="true"
                    discard_delivered_msgs="true"/>
-    <UNICAST3 conn_expiry_timeout="0"/>
-    <pbcast.STABLE stability_delay="1000" desired_avg_gossip="50000"
-                   max_bytes="1000000"/>
+    <UNICAST3/>
+    <pbcast.STABLE stability_delay="500"
+                   desired_avg_gossip="5000"
+                   max_bytes="1M"
+    />
     <pbcast.GMS print_local_addr="true" join_timeout="${jgroups.join_timeout:5000}"
-                max_bundling_time="200"
-                view_bundling="true"/>
+                max_bundling_time="200"/>
     <UFC max_credits="2M"
           min_threshold="0.40"/>
     <MFC max_credits="2M"

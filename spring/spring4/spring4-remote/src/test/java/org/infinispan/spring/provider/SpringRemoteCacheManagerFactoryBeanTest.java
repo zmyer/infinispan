@@ -21,7 +21,7 @@ import java.util.Collection;
 import java.util.Properties;
 
 import org.infinispan.client.hotrod.RemoteCacheManager;
-import org.infinispan.client.hotrod.impl.transport.tcp.FailoverRequestBalancingStrategy;
+import org.infinispan.client.hotrod.SomeRequestBalancingStrategy;
 import org.infinispan.commons.executors.ExecutorFactory;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.spring.AssertionUtils;
@@ -369,7 +369,7 @@ public class SpringRemoteCacheManagerFactoryBeanTest {
    @Test
    public final void setRequestBalancingStrategyShouldOverrideDefaultRequestBalancingStrategy()
          throws Exception {
-      final String expectedRequestBalancingStrategy = FailoverRequestBalancingStrategy.class.getName();
+      final String expectedRequestBalancingStrategy = SomeRequestBalancingStrategy.class.getName();
       final SpringRemoteCacheManagerFactoryBean objectUnderTest = new SpringRemoteCacheManagerFactoryBean();
       objectUnderTest.setRequestBalancingStrategy(expectedRequestBalancingStrategy);
       objectUnderTest.setStartAutomatically(false);
@@ -452,6 +452,29 @@ public class SpringRemoteCacheManagerFactoryBeanTest {
                          + ") should have overridden property 'forceReturnValue'. However, it didn't.",
                    String.valueOf(expectedForceReturnValues), remoteCacheManager
                   .getNativeCacheManager().getConfiguration().properties().get(FORCE_RETURN_VALUES));
+      objectUnderTest.destroy();
+   }
+
+   /**
+    * Test method for
+    * {@link org.infinispan.spring.provider.SpringRemoteCacheManagerFactoryBean#setForceReturnValues(boolean)}
+    * .
+    *
+    * @throws Exception
+    */
+   @Test
+   public final void setReadTimeoutShouldOverrideDefaultReadTimeout() throws Exception {
+      final long expectedReadTimeout = 500;
+      final SpringRemoteCacheManagerFactoryBean objectUnderTest = new SpringRemoteCacheManagerFactoryBean();
+      objectUnderTest.setReadTimeout(expectedReadTimeout);
+      objectUnderTest.afterPropertiesSet();
+
+      final SpringRemoteCacheManager remoteCacheManager = objectUnderTest.getObject();
+
+      assertEquals("setReadTimeout(" + expectedReadTimeout
+                  + ") should have overridden property 'readTimeout'. However, it didn't.",
+            expectedReadTimeout, remoteCacheManager.getReadTimeout());
+
       objectUnderTest.destroy();
    }
 }

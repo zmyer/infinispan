@@ -12,11 +12,15 @@ class StatKeys {
    static final String AVERAGE_WRITE_TIME = "averageWriteTime";
    static final String AVERAGE_READ_TIME = "averageReadTime";
    static final String AVERAGE_REMOVE_TIME = "averageRemoveTime";
+   static final String AVERAGE_WRITE_TIME_NANOS = "averageWriteTimeNanos";
+   static final String AVERAGE_READ_TIME_NANOS = "averageReadTimeNanos";
+   static final String AVERAGE_REMOVE_TIME_NANOS = "averageRemoveTimeNanos";
    static final String EVICTIONS = "evictions";
    static final String HITS = "hits";
    static final String MISSES = "misses";
    static final String NUMBER_OF_ENTRIES = "numberOfEntries";
    static final String NUMBER_OF_ENTRIES_IN_MEMORY = "numberOfEntriesInMemory";
+   static final String DATA_MEMORY_USED = "dataMemoryUsed";
    static final String OFF_HEAP_MEMORY_USED = "offHeapMemoryUsed";
    static final String RETRIEVALS = "retrievals";
    static final String STORES = "stores";

@@ -1,4 +1,4 @@
-        <subsystem xmlns="urn:infinispan:server:core:9.2">
+        <subsystem xmlns="urn:infinispan:server:core:${infinispan.core.schema.version}">
              <cache-container name="local" default-cache="none">
                  <local-cache name="none" >
                      <memory>
@@ -11,6 +11,10 @@
                      </memory>
                  </local-cache>
                  <local-cache name="object" >
+                     <encoding>
+                         <key media-type="application/x-jboss-marshalling"/>
+                         <value media-type="application/x-jboss-marshalling"/>
+                     </encoding>
                      <memory>
                          <object size="3"/>
                      </memory>

@@ -1,7 +1,6 @@
 package org.infinispan.statetransfer;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
@@ -18,6 +17,8 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.container.DataContainer;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -72,12 +73,12 @@ public class ManyTxsDuringStateTransferTest extends MultipleCacheManagersTest {
          checkpoint.trigger("post_get_transactions_" + topologyId + "_from_" + source);
          checkpoint.awaitStrict("resume_get_transactions_" + topologyId + "_from_" + source, 10, SECONDS);
          return result;
-      }).when(spyProvider).getTransactionsForSegments(any(Address.class), anyInt(), anySet());
+      }).when(spyProvider).getTransactionsForSegments(any(Address.class), anyInt(), any());
       TestingUtil.replaceComponent(cache0, StateProvider.class, spyProvider, true);
 
       // Start cache 1, but the tx data request will be blocked on cache 0
-      StateTransferManager stm0 = TestingUtil.extractComponent(cache0, StateTransferManager.class);
-      int initialTopologyId = stm0.getCacheTopology().getTopologyId();
+      DistributionManager dm0 = cache0.getDistributionManager();
+      int initialTopologyId = dm0.getCacheTopology().getTopologyId();
       int rebalanceTopologyId = initialTopologyId + 1;
       AdvancedCache<Object, Object> cache1 = advancedCache(1, CACHE_NAME);
       checkpoint.awaitStrict("post_get_transactions_" + rebalanceTopologyId + "_from_" + address(1), 10, SECONDS);
@@ -103,8 +104,8 @@ public class ManyTxsDuringStateTransferTest extends MultipleCacheManagersTest {
       TestingUtil.waitForNoRebalance(caches(CACHE_NAME));
 
       // Wait for the txs to finish and check the results
-      DataContainer dataContainer0 = TestingUtil.extractComponent(cache0, DataContainer.class);
-      DataContainer dataContainer1 = TestingUtil.extractComponent(cache1, DataContainer.class);
+      DataContainer dataContainer0 = TestingUtil.extractComponent(cache0, InternalDataContainer.class);
+      DataContainer dataContainer1 = TestingUtil.extractComponent(cache1, InternalDataContainer.class);
       for (int i = 0; i < NUM_TXS; i++) {
          futures[i].get(10, SECONDS);
          assertEquals("v" + i, dataContainer0.get("testkey" + i).getValue());

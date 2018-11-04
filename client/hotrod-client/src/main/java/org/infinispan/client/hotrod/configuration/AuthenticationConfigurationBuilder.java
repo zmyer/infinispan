@@ -11,13 +11,13 @@ import javax.security.auth.callback.CallbackHandler;
 import javax.security.sasl.Sasl;
 
 import org.infinispan.client.hotrod.impl.ConfigurationProperties;
-import org.infinispan.client.hotrod.impl.TypedProperties;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
 import org.infinispan.client.hotrod.security.BasicCallbackHandler;
 import org.infinispan.client.hotrod.security.VoidCallbackHandler;
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.util.StringPropertyReplacer;
+import org.infinispan.commons.util.TypedProperties;
 import org.infinispan.commons.util.Util;
 
 /**
@@ -28,6 +28,7 @@ import org.infinispan.commons.util.Util;
  */
 public class AuthenticationConfigurationBuilder extends AbstractSecurityConfigurationChildBuilder implements Builder<AuthenticationConfiguration> {
    private static final Log log = LogFactory.getLog(AuthenticationConfigurationBuilder.class);
+
    public static final String DEFAULT_REALM = "ApplicationRealm";
    private CallbackHandler callbackHandler;
    private boolean enabled = false;

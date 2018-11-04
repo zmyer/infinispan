@@ -1,5 +1,6 @@
 package org.infinispan.server.hotrod.test;
 
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT_TYPE;
 import static org.infinispan.server.hotrod.OperationStatus.KeyDoesNotExist;
 import static org.infinispan.server.hotrod.OperationStatus.Success;
 import static org.testng.AssertJUnit.assertEquals;
@@ -12,29 +13,31 @@ import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelInitializer;
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.util.Util;
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.manager.DefaultCacheManager;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -43,24 +46,17 @@ import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.annotation.CacheEntryRemoved;
 import org.infinispan.notifications.cachelistener.event.CacheEntryRemovedEvent;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.server.core.transport.NettyInitializer;
+import org.infinispan.server.core.transport.NettyChannelInitializer;
 import org.infinispan.server.core.transport.NettyInitializers;
 import org.infinispan.server.hotrod.HotRodServer;
 import org.infinispan.server.hotrod.OperationStatus;
 import org.infinispan.server.hotrod.ServerAddress;
 import org.infinispan.server.hotrod.configuration.HotRodServerConfigurationBuilder;
 import org.infinispan.server.hotrod.logging.Log;
-import org.infinispan.server.hotrod.transport.HotRodChannelInitializer;
 import org.infinispan.server.hotrod.transport.SingleByteFrameDecoderChannelInitializer;
 import org.infinispan.server.hotrod.transport.TimeoutEnabledChannelInitializer;
-import org.infinispan.statetransfer.StateTransferManager;
-import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestResourceTracker;
 import org.infinispan.util.KeyValuePair;
-
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelInitializer;
-import io.netty.util.concurrent.Future;
 
 /**
  * Test utils for Hot Rod tests.
@@ -117,19 +113,26 @@ public class HotRodTestingUtil {
       return startHotRodServer(manager, port, 0, host(), port, delay);
    }
 
-   public static HotRodServer startHotRodServerWithoutTransport() {
-      return startHotRodServerWithoutTransport(new HotRodServerConfigurationBuilder());
+   public static HotRodServer startHotRodServerWithoutTransport(String... definedCaches) {
+      return startHotRodServerWithoutTransport(new HotRodServerConfigurationBuilder(), definedCaches);
    }
 
-   public static HotRodServer startHotRodServerWithoutTransport(HotRodServerConfigurationBuilder builder) {
+   public static HotRodServer startHotRodServerWithoutTransport(HotRodServerConfigurationBuilder builder, String... definedCaches) {
       GlobalConfigurationBuilder globalConfiguration = new GlobalConfigurationBuilder();
 
-      ConfigurationBuilder cacheConfiguration = new ConfigurationBuilder();
-      cacheConfiguration.compatibility().enable();
+      Configuration cacheConfiguration = new ConfigurationBuilder()
+            .encoding().key().mediaType(APPLICATION_OBJECT_TYPE)
+            .encoding().value().mediaType(APPLICATION_OBJECT_TYPE)
+            .build();
 
       builder.startTransport(false);
 
-      return startHotRodServer(new DefaultCacheManager(globalConfiguration.build(), cacheConfiguration.build()), builder);
+      DefaultCacheManager cacheManager = new DefaultCacheManager(globalConfiguration.build(), cacheConfiguration);
+      for (String cache : definedCaches) {
+         cacheManager.defineConfiguration(cache, cacheConfiguration);
+      }
+
+      return startHotRodServer(cacheManager, builder);
    }
 
    public static HotRodServer startHotRodServer(EmbeddedCacheManager manager, int port, int idleTimeout,
@@ -178,28 +181,23 @@ public class HotRodTestingUtil {
          @Override
          public ChannelInitializer<Channel> getInitializer() {
             // Pass by name since we have circular dependency
-            List<NettyInitializer> inits;
-
-            ExecutorService executor = getExecutor(getQualifiedName());
             if (perf) {
                if (configuration.idleTimeout() > 0)
-                  inits = Arrays.asList(
-                        new HotRodChannelInitializer(this, transport, getEncoder(), getDecoder(), cacheManager, executor),
+                  return new NettyInitializers(
+                        new NettyChannelInitializer<>(this, transport, getEncoder(), getDecoder()),
                         new TimeoutEnabledChannelInitializer<>(this));
                else // Idle timeout logic is disabled with -1 or 0 values
-                  inits = Collections.singletonList(new HotRodChannelInitializer(this, transport, getEncoder(),
-                        getDecoder(), cacheManager, executor));
+                  return new NettyInitializers(new NettyChannelInitializer<>(this, transport, getEncoder(), getDecoder()));
             } else {
                if (configuration.idleTimeout() > 0)
-                  inits = Arrays.asList(
-                        new HotRodChannelInitializer(this, transport, getEncoder(), getDecoder(), cacheManager, executor),
+                  return new NettyInitializers(
+                        new NettyChannelInitializer<>(this, transport, getEncoder(), getDecoder()),
                         new TimeoutEnabledChannelInitializer<>(this), new SingleByteFrameDecoderChannelInitializer());
                else // Idle timeout logic is disabled with -1 or 0 values
-                  inits = Arrays.asList(
-                        new HotRodChannelInitializer(this, transport, getEncoder(), getDecoder(), cacheManager, executor),
+                  return new NettyInitializers(
+                        new NettyChannelInitializer<>(this, transport, getEncoder(), getDecoder()),
                         new SingleByteFrameDecoderChannelInitializer());
             }
-            return new NettyInitializers(inits);
          }
       };
       String shortTestName = TestResourceTracker.getCurrentTestShortName();
@@ -208,6 +206,7 @@ public class HotRodTestingUtil {
          builder.name(shortTestName + builder.name());
       }
       builder.host(host).port(port);
+      builder.ioThreads(3);
       server.start(builder.build(), manager);
 
       return server;
@@ -220,7 +219,7 @@ public class HotRodTestingUtil {
       return builder;
    }
 
-   public static Iterator<NetworkInterface> findNetworkInterfaces(boolean loopback) {
+   public static List<NetworkInterface> findNetworkInterfaces(boolean loopback) {
       try {
          List<NetworkInterface> matchingInterfaces = new ArrayList<>();
          Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
@@ -230,7 +229,7 @@ public class HotRodTestingUtil {
                matchingInterfaces.add(ni);
             }
          }
-         return matchingInterfaces.iterator();
+         return matchingInterfaces;
       } catch (SocketException e) {
          throw new CacheException(e);
       }
@@ -318,27 +317,30 @@ public class HotRodTestingUtil {
    public static void assertHashTopology20Received(AbstractTestTopologyAwareResponse topoResp,
                                                    List<HotRodServer> servers, String cacheName, int expectedTopologyId) {
       TestHashDistAware20Response hashTopologyResp = (TestHashDistAware20Response) topoResp;
-      assertEquals(hashTopologyResp.topologyId, expectedTopologyId);
+      assertEquals(expectedTopologyId, hashTopologyResp.topologyId);
+      assertEquals(hashTopologyResp.members.size(), servers.size());
       Set<ServerAddress> serverAddresses = servers.stream().map(HotRodServer::getAddress).collect(Collectors.toSet());
-      assertEquals(new HashSet<>(hashTopologyResp.members), serverAddresses);
+      hashTopologyResp.members.forEach(member -> assertTrue(serverAddresses.contains(member)));
       assertEquals(hashTopologyResp.hashFunction, 3);
       // Assert segments
       Cache cache = servers.get(0).getCacheManager().getCache(cacheName);
-      StateTransferManager stateTransferManager = TestingUtil.extractComponent(cache, StateTransferManager.class);
-      ConsistentHash ch = stateTransferManager.getCacheTopology().getCurrentCH();
+      LocalizedCacheTopology cacheTopology = cache.getAdvancedCache().getDistributionManager().getCacheTopology();
+      assertEquals(cacheTopology.getActualMembers().size(), servers.size());
+      ConsistentHash ch = cacheTopology.getCurrentCH();
       int numSegments = ch.getNumSegments();
       int numOwners = ch.getNumOwners();
       assertEquals(hashTopologyResp.segments.size(), numSegments);
       for (int i = 0; i < numSegments; ++i) {
          List<Address> segment = ch.locateOwnersForSegment(i);
          Iterable<ServerAddress> members = hashTopologyResp.segments.get(i);
-         assertEquals(numOwners, segment.size());
+         assertEquals(Math.min(numOwners, ch.getMembers().size()), segment.size());
          int count = 0;
          for (ServerAddress member : members) {
             count++;
             assertTrue(serverAddresses.contains(member));
          }
-         assertEquals(numOwners, count);
+         // The number of servers could be smaller than the number of CH members (same as the number of actual members)
+         assertEquals(Math.min(numOwners, servers.size()), count);
       }
    }
 
@@ -397,8 +399,8 @@ public class HotRodTestingUtil {
 
    public static void assertHashIds(Map<ServerAddress, List<Integer>> hashIds, List<HotRodServer> servers, String cacheName) {
       Cache cache = servers.get(0).getCacheManager().getCache(cacheName);
-      StateTransferManager stateTransferManager = TestingUtil.extractComponent(cache, StateTransferManager.class);
-      ConsistentHash consistentHash = stateTransferManager.getCacheTopology().getCurrentCH();
+      DistributionManager distributionManager = cache.getAdvancedCache().getDistributionManager();
+      ConsistentHash consistentHash = distributionManager.getCacheTopology().getCurrentCH();
       int numSegments = consistentHash.getNumSegments();
       int numOwners = consistentHash.getNumOwners();
       assertEquals(hashIds.size(), servers.size());
@@ -432,8 +434,8 @@ public class HotRodTestingUtil {
    public static void assertReplicatedHashIds(Map<ServerAddress, List<Integer>> hashIds, List<HotRodServer> servers,
                                               String cacheName) {
       Cache cache = servers.get(0).getCacheManager().getCache(cacheName);
-      StateTransferManager stateTransferManager = TestingUtil.extractComponent(cache, StateTransferManager.class);
-      ConsistentHash consistentHash = stateTransferManager.getCacheTopology().getCurrentCH();
+      DistributionManager distributionManager = cache.getAdvancedCache().getDistributionManager();
+      ConsistentHash consistentHash = distributionManager.getCacheTopology().getCurrentCH();
       int numSegments = consistentHash.getNumSegments();
       int numOwners = consistentHash.getNumOwners();
 
@@ -457,14 +459,15 @@ public class HotRodTestingUtil {
       return cm.getCache(cacheName).getAdvancedCache().getRpcManager().getTopologyId();
    }
 
-   public static Future<?> killClient(HotRodClient client) {
+   public static void killClient(HotRodClient client) {
       try {
-         if (client != null) return client.stop();
+         if (client != null) {
+            client.stop().await();
+         }
       }
       catch (Throwable t) {
          log.error("Error stopping client", t);
       }
-      return null;
    }
 
    public static ConfigurationBuilder hotRodCacheConfiguration() {
@@ -564,9 +567,8 @@ public class HotRodTestingUtil {
    static class UniquePortThreadLocal extends ThreadLocal<Integer> {
       @Override
       protected Integer initialValue() {
-         log.debugf("Before incrementing, server port is: %d", uniqueAddr.get());
          int port = uniqueAddr.getAndAdd(110);
-         log.debugf("For next thread, server port will be: %d", uniqueAddr.get());
+         log.debugf("Server port range for test thread %s is: %d-%d", Thread.currentThread().getId(), port, port + 109);
          return port;
       }
    }

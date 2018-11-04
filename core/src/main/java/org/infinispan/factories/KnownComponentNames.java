@@ -13,6 +13,8 @@ import java.util.Map;
  * @since 4.0
  */
 public class KnownComponentNames {
+   public static final String CACHE_NAME = "cacheName";
+
    public static final String ASYNC_TRANSPORT_EXECUTOR = "org.infinispan.executors.transport";
    public static final String REMOTE_COMMAND_EXECUTOR = "org.infinispan.executors.remote";
    public static final String ASYNC_NOTIFICATION_EXECUTOR = "org.infinispan.executors.notification";
@@ -34,11 +36,8 @@ public class KnownComponentNames {
 
    // Please make sure this is kept up to date
    public static final Collection<String> ALL_KNOWN_COMPONENT_NAMES = Arrays.asList(
-      ASYNC_TRANSPORT_EXECUTOR, ASYNC_NOTIFICATION_EXECUTOR, PERSISTENCE_EXECUTOR, ASYNC_OPERATIONS_EXECUTOR,
-      EXPIRATION_SCHEDULED_EXECUTOR,
       MODULE_COMMAND_INITIALIZERS, MODULE_COMMAND_FACTORIES, CLASS_LOADER,
-      REMOTE_COMMAND_EXECUTOR, STATE_TRANSFER_EXECUTOR, TRANSACTION_VERSION_GENERATOR,
-      TIMEOUT_SCHEDULE_EXECUTOR
+      TRANSACTION_VERSION_GENERATOR
    );
 
    private static final Map<String, Integer> DEFAULT_THREAD_COUNT = new HashMap<>(8);
@@ -49,7 +48,8 @@ public class KnownComponentNames {
       DEFAULT_THREAD_COUNT.put(ASYNC_NOTIFICATION_EXECUTOR, 1);
       DEFAULT_THREAD_COUNT.put(ASYNC_TRANSPORT_EXECUTOR, 25);
       DEFAULT_THREAD_COUNT.put(EXPIRATION_SCHEDULED_EXECUTOR, 1);
-      DEFAULT_THREAD_COUNT.put(PERSISTENCE_EXECUTOR, 4);
+      // Persistence Executor default to # of CPUs
+      DEFAULT_THREAD_COUNT.put(PERSISTENCE_EXECUTOR, Runtime.getRuntime().availableProcessors());
       DEFAULT_THREAD_COUNT.put(REMOTE_COMMAND_EXECUTOR, 200);
       DEFAULT_THREAD_COUNT.put(STATE_TRANSFER_EXECUTOR, 60);
       DEFAULT_THREAD_COUNT.put(ASYNC_OPERATIONS_EXECUTOR, 25);

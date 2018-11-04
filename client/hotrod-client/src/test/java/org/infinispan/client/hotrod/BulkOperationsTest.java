@@ -8,7 +8,9 @@ import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertTrue;
 
+import java.io.IOException;
 import java.util.AbstractMap;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -28,10 +30,11 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.server.hotrod.HotRodServer;
+import org.infinispan.test.Exceptions;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.DataProvider;
@@ -47,11 +50,28 @@ import org.testng.annotations.Test;
 public class BulkOperationsTest extends MultipleCacheManagersTest {
 
    enum CollectionOp {
-      ENTRYSET(RemoteCache::entrySet),
-      KEYSET(RemoteCache::keySet),
-      VALUES(RemoteCache::values);
+      ENTRYSET(RemoteCache::entrySet) {
+         @Override
+         ProtocolVersion minimumVersionForIteration() {
+            return ProtocolVersion.PROTOCOL_VERSION_23;
+         }
+      },
+      KEYSET(RemoteCache::keySet) {
+         @Override
+         ProtocolVersion minimumVersionForIteration() {
+            return ProtocolVersion.PROTOCOL_VERSION_12;
+         }
+      },
+      VALUES(RemoteCache::values) {
+         @Override
+         ProtocolVersion minimumVersionForIteration() {
+            return ProtocolVersion.PROTOCOL_VERSION_23;
+         }
+      };
 
       private Function<RemoteCache<?, ?>, CloseableIteratorCollection<?>> function;
+
+      abstract ProtocolVersion minimumVersionForIteration();
 
       CollectionOp(Function<RemoteCache<?, ?>, CloseableIteratorCollection<?>> function) {
          this.function = function;
@@ -104,7 +124,7 @@ public class BulkOperationsTest extends MultipleCacheManagersTest {
       for (int i = 0; i < numServers; i++) {
          EmbeddedCacheManager cm = cacheManagers.get(i);
          hotrodServers[i] = HotRodClientTestingUtil.startHotRodServer(cm);
-         TestingUtil.replaceComponent(cm.getCache(), TimeService.class, timeService, true);
+         TestingUtil.replaceComponent(cm, TimeService.class, timeService, true);
       }
 
       String servers = HotRodClientTestingUtil.getServersString(hotrodServers);
@@ -115,6 +135,8 @@ public class BulkOperationsTest extends MultipleCacheManagersTest {
       remoteCacheManager = new RemoteCacheManager(clientBuilder.build());
       remoteCache = remoteCacheManager.getCache();
    }
+
+
 
    @AfterMethod
    public void checkNoActiveIterations() {
@@ -172,6 +194,7 @@ public class BulkOperationsTest extends MultipleCacheManagersTest {
       collection.remove(transform.function.apply(23));
       collection.remove(transform.function.apply(1001));
       assertEquals(98, collection.size());
+      assertEquals(98, remoteCache.size());
    }
 
    @Test(dataProvider = "collections-item")
@@ -185,6 +208,7 @@ public class BulkOperationsTest extends MultipleCacheManagersTest {
       assertEquals(96, collection.size());
       collection.removeAll(Arrays.asList(transform.function.apply(5), transform.function.apply(890)));
       assertEquals(96, collection.size());
+      assertEquals(96, remoteCache.size());
    }
 
    @Test(dataProvider = "collections-item")
@@ -193,6 +217,7 @@ public class BulkOperationsTest extends MultipleCacheManagersTest {
       Collection<?> collection = op.function.apply(remoteCache);
       collection.retainAll(Arrays.asList(transform.function.apply(1), transform.function.apply(23), transform.function.apply(102)));
       assertEquals(2, collection.size());
+      assertEquals(2, remoteCache.size());
    }
 
    @Test(dataProvider = "collections-item", expectedExceptions = UnsupportedOperationException.class)
@@ -237,6 +262,19 @@ public class BulkOperationsTest extends MultipleCacheManagersTest {
                       stream.filter(o -> Objects.equals(o, transform.function.apply(4)))
                             .findAny()
                             .get());
+      }
+   }
+
+   @Test(dataProvider = "collections-item")
+   public void testForEach(CollectionOp op, ItemTransform transform) {
+      populateCacheManager();
+      Collection<?> collection = op.function.apply(remoteCache);
+      List<Object> objects = new ArrayList<>();
+      collection.forEach(objects::add);
+      assertEquals(100, objects.size());
+
+      for (int i = 0; i < 100; i++) {
+         assertTrue(collection.contains(transform.function.apply(i)));
       }
    }
 
@@ -287,5 +325,62 @@ public class BulkOperationsTest extends MultipleCacheManagersTest {
       assertEquals(100, collection.size());
       collection.clear();
       assertEquals(0, remoteCache.size());
+   }
+
+   @DataProvider(name = "collectionsAndVersion")
+   public Object[][] collectionAndVersionsProvider() {
+      return Arrays.stream(CollectionOp.values())
+            .flatMap(op -> Arrays.stream(ProtocolVersion.values())
+                  .map(v -> new Object[] {op, v}))
+            .toArray(Object[][]::new);
+   }
+
+   @Test(dataProvider = "collectionsAndVersion")
+   public void testIteration(CollectionOp op, ProtocolVersion version) throws IOException {
+      Map<String, String> dataIn = new HashMap<>();
+      dataIn.put("aKey", "aValue");
+      dataIn.put("bKey", "bValue");
+
+      RemoteCache<Object, Object> cacheToUse;
+      RemoteCacheManager temporaryManager;
+
+      if (version != ProtocolVersion.DEFAULT_PROTOCOL_VERSION) {
+         String servers = HotRodClientTestingUtil.getServersString(hotrodServers);
+
+         org.infinispan.client.hotrod.configuration.ConfigurationBuilder clientBuilder =
+               new org.infinispan.client.hotrod.configuration.ConfigurationBuilder();
+         // Set the version on the manager to connect with
+         clientBuilder.version(version);
+         clientBuilder.addServers(servers);
+         temporaryManager = new RemoteCacheManager(clientBuilder.build());
+         cacheToUse = temporaryManager.getCache();
+      } else {
+         temporaryManager = null;
+         cacheToUse = remoteCache;
+      }
+
+      try {
+         // putAll doesn't work in older versions (so we use new client) - that is a different issue completely
+         remoteCache.putAll(dataIn);
+
+         CloseableIteratorCollection<?> collection = op.function.apply(cacheToUse);
+         // If we don't support it we should get an exception
+         if (version.compareTo(op.minimumVersionForIteration()) < 0) {
+            Exceptions.expectException(UnsupportedOperationException.class, () -> {
+               try (CloseableIterator<?> iter = collection.iterator()) {
+               }
+            });
+         } else {
+            try (CloseableIterator<?> iter = collection.iterator()) {
+               assertTrue(iter.hasNext());
+               assertNotNull(iter.next());
+               assertTrue(iter.hasNext());
+            }
+         }
+      } finally {
+         if (temporaryManager != null) {
+            temporaryManager.close();
+         }
+      }
    }
 }

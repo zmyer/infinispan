@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.InetAddress;
 
-import org.infinispan.server.router.configuration.builder.MultiTenantRouterConfigurationBuilder;
+import org.infinispan.server.router.configuration.builder.RouterConfigurationBuilder;
 import org.infinispan.server.router.routes.Route;
 import org.infinispan.server.router.routes.RouteDestination;
 import org.infinispan.server.router.routes.RouteSource;
@@ -15,7 +15,7 @@ public class ConfigurationTest {
     @Test
     public void shouldBuildProperRouterConfiguration() {
         //given
-        MultiTenantRouterConfigurationBuilder multiTenantConfigurationBuilder = new MultiTenantRouterConfigurationBuilder();
+        RouterConfigurationBuilder multiTenantConfigurationBuilder = new RouterConfigurationBuilder();
 
         RouteSource s1 = new RouteSource() {
         };
@@ -25,7 +25,7 @@ public class ConfigurationTest {
         //when
         multiTenantConfigurationBuilder
                 .hotrod()
-                .keepAlive(true)
+                .tcpKeepAlive(true)
                 .receiveBufferSize(1)
                 .sendBufferSize(1)
                 .tcpNoDelay(false)
@@ -37,14 +37,14 @@ public class ConfigurationTest {
                 .routing()
                 .add(new Route(s1, d1));
 
-        MultiTenantRouterConfiguration routerConfiguration = multiTenantConfigurationBuilder.build();
+        RouterConfiguration routerConfiguration = multiTenantConfigurationBuilder.build();
         HotRodRouterConfiguration hotRodRouterConfiguration = routerConfiguration.getHotRodRouterConfiguration();
         RestRouterConfiguration restRouterConfiguration = routerConfiguration.getRestRouterConfiguration();
 
         //then
         assertThat(hotRodRouterConfiguration.getPort()).isEqualTo(1010);
         assertThat(hotRodRouterConfiguration.getIp()).isEqualTo(InetAddress.getLoopbackAddress());
-        assertThat(hotRodRouterConfiguration.keepAlive()).isTrue();
+        assertThat(hotRodRouterConfiguration.tcpKeepAlive()).isTrue();
         assertThat(hotRodRouterConfiguration.tcpNoDelay()).isFalse();
         assertThat(hotRodRouterConfiguration.sendBufferSize()).isEqualTo(1);
         assertThat(hotRodRouterConfiguration.receiveBufferSize()).isEqualTo(1);

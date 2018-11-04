@@ -30,7 +30,7 @@ public interface Transport {
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY
    )
-   String getTotalBytesWritten();
+   long getTotalBytesWritten();
 
    @ManagedAttribute(description = "Returns the total number of bytes read " +
          "by the server from clients which includes both protocol and user information.",
@@ -38,7 +38,7 @@ public interface Transport {
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY
    )
-   String getTotalBytesRead();
+   long getTotalBytesRead();
 
    @ManagedAttribute(
          description = "Returns the host to which the transport binds.",
@@ -53,15 +53,23 @@ public interface Transport {
          dataType = DataType.TRAIT,
          displayType = DisplayType.SUMMARY
    )
-   Integer getPort();
+   int getPort();
 
    @ManagedAttribute(
-         description = "Returns the number of worker threads.",
-         displayName = "Number of worker threads",
+         description = "Returns the number of I/O threads.",
+         displayName = "Number of I/O threads",
          dataType = DataType.TRAIT,
          displayType = DisplayType.SUMMARY
    )
-   String getNumberWorkerThreads();
+   int getNumberIOThreads();
+
+   @ManagedAttribute(
+         description = "Returns the number of slave threads.",
+         displayName = "Number of slave threads",
+         dataType = DataType.TRAIT,
+         displayType = DisplayType.SUMMARY
+   )
+   int getNumberWorkerThreads();
 
    @ManagedAttribute(
          description = "Returns the idle timeout.",
@@ -69,7 +77,7 @@ public interface Transport {
          dataType = DataType.TRAIT,
          displayType = DisplayType.SUMMARY
    )
-   String getIdleTimeout();
+   int getIdleTimeout();
 
    @ManagedAttribute(
          description = "Returns whether TCP no delay was configured or not.",
@@ -77,7 +85,7 @@ public interface Transport {
          dataType = DataType.TRAIT,
          displayType = DisplayType.SUMMARY
    )
-   String getTcpNoDelay();
+   boolean getTcpNoDelay();
 
    @ManagedAttribute(
          description = "Returns the send buffer size.",
@@ -85,7 +93,7 @@ public interface Transport {
          dataType = DataType.TRAIT,
          displayType = DisplayType.SUMMARY
    )
-   String getSendBufferSize();
+   int getSendBufferSize();
 
    @ManagedAttribute(
          description = "Returns the receive buffer size.",
@@ -93,14 +101,14 @@ public interface Transport {
          dataType = DataType.TRAIT,
          displayType = DisplayType.SUMMARY
    )
-   String getReceiveBufferSize();
+   int getReceiveBufferSize();
 
    @ManagedAttribute(
          description = "Returns a count of active connections this server.",
          displayName = "Local active connections",
          dataType = DataType.MEASUREMENT, displayType = DisplayType.SUMMARY
    )
-   Integer getNumberOfLocalConnections();
+   int getNumberOfLocalConnections();
 
    @ManagedAttribute(
          description = "Returns a count of active connections in the cluster. " +
@@ -110,6 +118,6 @@ public interface Transport {
          dataType = DataType.MEASUREMENT,
          displayType = DisplayType.SUMMARY
    )
-   Integer getNumberOfGlobalConnections();
+   int getNumberOfGlobalConnections();
 
 }

@@ -8,8 +8,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -19,7 +21,12 @@ import java.util.stream.Collectors;
  * @since 8.0
  */
 public class CompletableFutures {
+   public static final CompletableFuture[] EMPTY_ARRAY = new CompletableFuture[0];
 
+   private static final CompletableFuture<Boolean> completedTrueFuture = CompletableFuture.completedFuture(Boolean.TRUE);
+   private static final CompletableFuture<Boolean> completedFalseFuture = CompletableFuture.completedFuture(Boolean.FALSE);
+   private static final Function<?, CompletionStage<Boolean>> composeTrue = obj -> completedTrue();
+   private static final Function<?, CompletionStage<Boolean>> composeFalse = obj -> completedFalse();
    private static final CompletableFuture completedEmptyMapFuture = CompletableFuture.completedFuture(Collections.emptyMap());
    private static final CompletableFuture completedNullFuture = CompletableFuture.completedFuture(null);
    private static final long BIG_DELAY_NANOS = TimeUnit.DAYS.toNanos(1);
@@ -32,6 +39,22 @@ public class CompletableFutures {
    @SuppressWarnings("unchecked")
    public static <T> CompletableFuture<T> completedNull() {
       return completedNullFuture;
+   }
+
+   public static CompletableFuture<Boolean> completedTrue() {
+      return completedTrueFuture;
+   }
+
+   public static CompletableFuture<Boolean> completedFalse() {
+      return completedFalseFuture;
+   }
+
+   public static <T> Function<T, CompletionStage<Boolean>> composeTrue() {
+      return (Function<T, CompletionStage<Boolean>>) composeTrue;
+   }
+
+   public static <T> Function<T, CompletionStage<Boolean>> composeFalse() {
+      return (Function<T, CompletionStage<Boolean>>) completedFalse();
    }
 
    public static <T> CompletableFuture<List<T>> sequence(List<CompletableFuture<T>> futures) {

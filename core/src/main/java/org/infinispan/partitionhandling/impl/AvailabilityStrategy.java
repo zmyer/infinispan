@@ -3,9 +3,12 @@ package org.infinispan.partitionhandling.impl;
 import java.util.List;
 import java.util.Map;
 
+import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.ch.ConsistentHashFactory;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.topology.CacheStatusResponse;
+import org.infinispan.topology.CacheTopology;
 
 /**
  * Implementations decide what to do when the cache membership changes, either because new nodes joined, nodes left,
@@ -21,6 +24,31 @@ import org.infinispan.topology.CacheStatusResponse;
  * @since 7.0
  */
 public interface AvailabilityStrategy {
+   /**
+    * Compute the read consistent hash for a topology with a {@code null} union consistent hash.
+    * Originally a copy of {@link CacheTopology#getReadConsistentHash()} but differs in case of scattered cache.
+    */
+   static ConsistentHash ownersConsistentHash(CacheTopology topology, ConsistentHashFactory chFactory) {
+      switch (topology.getPhase()) {
+         case NO_REBALANCE:
+            return topology.getCurrentCH();
+         case TRANSITORY:
+            // This is used to determine nodes that own the entries. In scattered cache (which uses transitory topology)
+            // the pendingCH is used for reading but the nodes in there are not guaranteed to have the data yet.
+            // CurrentCH should be safe - the nodes either have the data or the owner is unknown.
+            return topology.getCurrentCH();
+         case CONFLICT_RESOLUTION:
+         case READ_OLD_WRITE_ALL:
+            return topology.getCurrentCH();
+         case READ_ALL_WRITE_ALL:
+            return chFactory.union(topology.getCurrentCH(), topology.getPendingCH());
+         case READ_NEW_WRITE_ALL:
+            return topology.getPendingCH();
+         default:
+            throw new IllegalStateException();
+      }
+   }
+
    /**
     * Called when a node joins.
     */

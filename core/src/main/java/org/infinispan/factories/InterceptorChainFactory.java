@@ -6,7 +6,6 @@ import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
-import org.infinispan.configuration.cache.CompatibilityModeConfiguration;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.configuration.cache.CustomInterceptorsConfiguration;
@@ -34,7 +33,6 @@ import org.infinispan.interceptors.impl.CacheMgmtInterceptor;
 import org.infinispan.interceptors.impl.CacheWriterInterceptor;
 import org.infinispan.interceptors.impl.CallInterceptor;
 import org.infinispan.interceptors.impl.ClusteredCacheLoaderInterceptor;
-import org.infinispan.interceptors.impl.CompatibilityInterceptor;
 import org.infinispan.interceptors.impl.DistCacheWriterInterceptor;
 import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
 import org.infinispan.interceptors.impl.GroupingInterceptor;
@@ -46,13 +44,14 @@ import org.infinispan.interceptors.impl.PassivationWriterInterceptor;
 import org.infinispan.interceptors.impl.PrefetchInterceptor;
 import org.infinispan.interceptors.impl.RetryingEntryWrappingInterceptor;
 import org.infinispan.interceptors.impl.ScatteredCacheWriterInterceptor;
+import org.infinispan.interceptors.impl.TransactionalExceptionEvictionInterceptor;
 import org.infinispan.interceptors.impl.TransactionalStoreInterceptor;
 import org.infinispan.interceptors.impl.TxInterceptor;
+import org.infinispan.interceptors.impl.VersionInterceptor;
 import org.infinispan.interceptors.impl.VersionedEntryWrappingInterceptor;
 import org.infinispan.interceptors.locking.NonTransactionalLockingInterceptor;
 import org.infinispan.interceptors.locking.OptimisticLockingInterceptor;
 import org.infinispan.interceptors.locking.PessimisticLockingInterceptor;
-import org.infinispan.interceptors.impl.TransactionalExceptionEvictionInterceptor;
 import org.infinispan.interceptors.totalorder.TotalOrderDistributionInterceptor;
 import org.infinispan.interceptors.totalorder.TotalOrderInterceptor;
 import org.infinispan.interceptors.totalorder.TotalOrderStateTransferInterceptor;
@@ -91,6 +90,7 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
          Class<? extends AsyncInterceptor> interceptorType) {
       AsyncInterceptor chainedInterceptor = componentRegistry.getComponent(interceptorType);
       if (chainedInterceptor == null) {
+         // TODO Dan: could use wireDependencies, as dependencies on interceptors won't trigger a call to the chain factory anyway
          register(interceptorType, interceptor);
          chainedInterceptor = interceptor;
       }
@@ -100,7 +100,8 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
 
    private void register(Class<? extends AsyncInterceptor> clazz, AsyncInterceptor chainedInterceptor) {
       try {
-         componentRegistry.registerComponent(chainedInterceptor, clazz);
+         basicComponentRegistry.registerComponent(clazz.getName(), chainedInterceptor, true);
+         basicComponentRegistry.addDynamicDependency(AsyncInterceptorChain.class.getName(), clazz.getName());
       } catch (RuntimeException e) {
          log.unableToCreateInterceptor(clazz, e);
          throw e;
@@ -114,10 +115,6 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
 
       AsyncInterceptorChain interceptorChain =
             new AsyncInterceptorChainImpl(componentRegistry.getComponentMetadataRepo());
-      // add the interceptor chain to the registry first, since some interceptors may ask for it.
-      // Add both the old class and the new interface
-      componentRegistry.registerComponent(interceptorChain, AsyncInterceptorChain.class);
-      componentRegistry.registerComponent(new InterceptorChain(interceptorChain), InterceptorChain.class);
 
       boolean invocationBatching = configuration.invocationBatching().enabled();
       boolean isTotalOrder = configuration.transaction().transactionProtocol().isTotalOrder();
@@ -134,10 +131,8 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
       }
       interceptorChain.appendInterceptor(createInterceptor(new InvocationContextInterceptor(), InvocationContextInterceptor.class), false);
 
-      CompatibilityModeConfiguration compatibility = configuration.compatibility();
-      if (compatibility.enabled()) {
-         interceptorChain.appendInterceptor(createInterceptor(
-               new CompatibilityInterceptor(), CompatibilityInterceptor.class), false);
+      if (!configuration.transaction().transactionMode().isTransactional()) {
+         interceptorChain.appendInterceptor(createInterceptor(new VersionInterceptor(), VersionInterceptor.class), false);
       }
 
       // add marshallable check interceptor for situations where we want to figure out before marshalling
@@ -377,13 +372,16 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
    }
 
    @Override
-   public <T> T construct(Class<T> componentType) {
+   public Object construct(String componentName) {
       try {
-         AsyncInterceptorChain asyncInterceptorChain = buildInterceptorChain();
-         if (componentType == InterceptorChain.class) {
-            return componentType.cast(componentRegistry.getComponent(InterceptorChain.class));
+         if (configuration.simpleCache())
+            return null;
+
+         if (componentName.equals(AsyncInterceptorChain.class.getName())) {
+            AsyncInterceptorChain asyncInterceptorChain = buildInterceptorChain();
+            return asyncInterceptorChain;
          } else {
-            return componentType.cast(asyncInterceptorChain);
+            return new InterceptorChain();
          }
       } catch (CacheException ce) {
          throw ce;
@@ -392,6 +390,10 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
       }
    }
 
+   /**
+    * @deprecated Since 9.4, not used.
+    */
+   @Deprecated
    public static InterceptorChainFactory getInstance(ComponentRegistry componentRegistry, Configuration configuration) {
       InterceptorChainFactory icf = new InterceptorChainFactory();
       icf.componentRegistry = componentRegistry;

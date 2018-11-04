@@ -43,6 +43,7 @@ import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.interceptors.impl.ContainerFullException;
 import org.infinispan.jmx.JmxDomainConflictException;
 import org.infinispan.partitionhandling.AvailabilityException;
+import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.support.SingletonCacheWriter;
 import org.infinispan.remoting.RemoteException;
@@ -507,7 +508,7 @@ public interface Log extends BasicLogger {
 //   void unableToInvokeGetterOnConfiguration(Method getter, @Cause Exception e);
 
    @LogMessage(level = WARN)
-   @Message(value = "Attempted to stop() from FAILED state, but caught exception; try calling destroy()", id = 126)
+   @Message(value = "Attempted to stop() from FAILED state, but caught exception", id = 126)
    void failedToCallStopAfterFailure(@Cause Throwable t);
 
 //   @LogMessage(level = WARN)
@@ -1122,9 +1123,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Rebalancing suspended", id = 309)
    void rebalancingSuspended();
 
-   @LogMessage(level = INFO)
-   @Message(value = "Starting cluster-wide rebalance for cache %s, topology %s", id = 310)
-   void startRebalance(String cacheName, CacheTopology cacheTopology);
+   @LogMessage(level = DEBUG)
+   @Message(value = "Starting new rebalance phase for cache %s, topology %s", id = 310)
+   void startingRebalancePhase(String cacheName, CacheTopology cacheTopology);
 
    // Messages between 312 and 320 have been moved to the org.infinispan.util.logging.events.Messages class
 
@@ -1155,8 +1156,8 @@ public interface Log extends BasicLogger {
    CacheConfigurationException unsupportedConfiguration(String element, String namespaceUri);
 
    @LogMessage(level = DEBUG)
-   @Message(value = "Finished local rebalance for cache %s on node %s, topology id = %d", id = 328)
-   void rebalanceCompleted(String cacheName, Address node, int topologyId);
+   @Message(value = "Rebalance phase %s confirmed for cache %s on node %s, topology id = %d", id = 328)
+   void rebalancePhaseConfirmedOnNode(CacheTopology.Phase phase, String cacheName, Address node, int topologyId);
 
    @LogMessage(level = WARN)
    @Message(value = "Unable to read rebalancing status from coordinator %s", id = 329)
@@ -1182,9 +1183,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Two-phase commit can only be used with synchronous backup strategy.", id = 335)
    CacheConfigurationException twoPhaseCommitAsyncBackup();
 
-   @LogMessage(level = INFO)
-   @Message(value = "Finished cluster-wide rebalance for cache %s, topology id = %d", id = 336)
-   void clusterWideRebalanceCompleted(String cacheName, int topologyId);
+   @LogMessage(level = DEBUG)
+   @Message(value = "Finished rebalance for cache %s, topology %s", id = 336)
+   void finishedRebalance(String cacheName, CacheTopology topology);
 
    @Message(value = "The 'site' must be specified!", id = 337)
    CacheConfigurationException backupMissingSite();
@@ -1262,7 +1263,7 @@ public interface Log extends BasicLogger {
    TimeoutException remoteTransactionStatusMissing(GlobalTransaction gtx);
 
    @LogMessage(level = WARN)
-   @Message(value = "No filter indexing service provider found for filter of type %s", id = 363)
+   @Message(value = "No filter indexing service provider found for indexed filter of type %s", id = 363)
    void noFilterIndexingServiceProviderFound(String filterClassName);
 
    @Message(value = "Attempted to register cluster listener of class %s, but listener is annotated as only observing pre events!", id = 364)
@@ -1591,7 +1592,7 @@ public interface Log extends BasicLogger {
    IllegalStateException getConflictsStateTransferInProgress(String cacheName);
 
    @LogMessage(level = WARN)
-   @Message(value = "The partition handling 'enable' attribute has been deprecated. Please update your configuration file to use the 'type' attribute instead", id = 464)
+   @Message(value = "The partition handling 'enabled' attribute has been deprecated. Please update your configuration to use 'when-split' instead", id = 464)
    void partitionHandlingConfigurationEnabledDeprecated();
 
 //   @Message(value = "Keys '%s' are not available. No owners exist in this partition", id = 465)
@@ -1689,8 +1690,8 @@ public interface Log extends BasicLogger {
 //   @Message(value = "Invalid text format: '%s'", id = 493)
 //   EncodingException invalidTextFormat(Object content);
 
-//   @Message(value = "Invalid binary format: '%s'", id = 494)
-//   EncodingException invalidBinaryFormat(Object content);
+   @Message(value = "Invalid binary format: '%s'", id = 494)
+   EncodingException invalidBinaryFormat(Object content);
 
    @Message(value = "Error transcoding content", id = 495)
    EncodingException errorTranscoding(@Cause Throwable cause);
@@ -1736,7 +1737,7 @@ public interface Log extends BasicLogger {
    CacheConfigurationException cacheExists(String cacheName);
 
    @Message(value = "Cannot rename file %s to %s", id = 508)
-   CacheConfigurationException cannotRenamePersistentFile(String absolutePath, File persistentFile);
+   CacheConfigurationException cannotRenamePersistentFile(String absolutePath, File persistentFile, @Cause Throwable cause);
 
    @Message(value = "Unable to add a 'null' EntryMergePolicyFactory", id = 509)
    IllegalArgumentException unableToAddNullEntryMergePolicyFactory();
@@ -1761,4 +1762,76 @@ public interface Log extends BasicLogger {
 
    @Message(value = "The state file for '%s' is invalid. Startup halted to prevent further corruption of persistent state", id = 516)
    CacheConfigurationException invalidPersistentState(String globalScope);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Ignoring cache topology from %s during merge: %s", id = 517)
+   void ignoringCacheTopology(Collection<Address> sender, CacheTopology topology);
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "Updating topology for cache %s, topology %s, availability mode %s", id = 518)
+   void updatingTopology(String cacheName, CacheTopology currentTopology, AvailabilityMode availabilityMode);
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "Updating stable topology for cache %s, topology %s", id = 519)
+   void updatingStableTopology(String cacheName, CacheTopology currentTopology);
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "Updating availability mode for cache %s from %s to %s, topology %s", id = 520)
+   void updatingAvailabilityMode(String cacheName, AvailabilityMode oldMode, AvailabilityMode newMode, CacheTopology topology);
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "Cache %s recovered after merge with topology = %s, availability mode %s", id = 521)
+   void cacheRecoveredAfterMerge(String cacheName, CacheTopology currentTopology, AvailabilityMode availabilityMode);
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "Conflict resolution starting for cache %s with topology %s", id = 522)
+   void startingConflictResolution(String cacheName, CacheTopology currentTopology);
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "Conflict resolution finished for cache %s with topology %s", id = 523)
+   void finishedConflictResolution(String cacheName, CacheTopology currentTopology);
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "Conflict resolution failed for cache %s with topology %s", id = 524)
+   void failedConflictResolution(String cacheName, CacheTopology currentTopology, @Cause Throwable t);
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "Conflict resolution cancelled for cache %s with topology %s", id = 525)
+   void cancelledConflictResolution(String cacheName, CacheTopology currentTopology);
+
+   @Message(value = "Maximum startup attempts exceeded for store %s", id = 527)
+   PersistenceException storeStartupAttemptsExceeded(String storeName, @Cause Throwable t);
+
+   @Message(value = "Cannot acquire lock as this partition is DEGRADED", id = 528)
+   AvailabilityException degradedModeLockUnavailable();
+
+   @Message(value = "Class '%s' blocked by deserialization white list. Include the class name in the server white list to authorize.", id = 529)
+   CacheException errorDeserializing(String className);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Unsupported async cache mode '%s' for transactional caches, forcing %s", id = 530)
+   void unsupportedAsyncCacheMode(CacheMode unsupportedCacheMode, CacheMode forcedCacheMode);
+
+   @Message(value = "Store or loader %s must implement SegmentedLoadWriteStore or its config must extend AbstractSegmentedStoreConfiguration if configured as segmented", id = 531)
+   CacheConfigurationException storeNotSegmented(Class<?> implementedClass);
+
+   @Message(value = "Invalid cache loader configuration for '%s'.  If a cache loader is configured with passivation, the cache loader cannot be shared in a cluster!", id = 532)
+   CacheConfigurationException passivationStoreCannotBeShared(String name);
+
+   @Message(value = "Content '%s (MediaType: '%s') cannot be converted to '%s'", id = 533)
+   EncodingException cannotConvertContent(Object content, MediaType contentType, MediaType destination);
+
+   @Message(value = "Grouping requires OBJECT storage type but was: %s", id = 534)
+   CacheConfigurationException groupingOnlyCompatibleWithObjectStorage(StorageType storageType);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Cache '%s' uses the deprecated compatibility mode configuration. See 'Embedded/Remote Interoperability' in the user guide for a replacement", id = 536)
+   void warnCompatibilityDeprecated(String cacheName);
+
+   @Message(value = "Factory doesn't know how to construct component %s", id = 537)
+   CacheConfigurationException factoryCannotConstructComponent(String componentName);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Error stopping module %s", id = 538)
+   void moduleStopError(String module, @Cause Throwable t);
 }

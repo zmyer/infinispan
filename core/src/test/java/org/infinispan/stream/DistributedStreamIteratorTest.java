@@ -33,8 +33,8 @@ import java.util.stream.IntStream;
 import org.infinispan.Cache;
 import org.infinispan.CacheStream;
 import org.infinispan.configuration.cache.CacheMode;
-import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.ImmortalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.distribution.ch.ConsistentHash;
@@ -227,25 +227,25 @@ public class DistributedStreamIteratorTest extends BaseClusteredStreamIteratorTe
       Cache<Object, String> cache1 = cache(1, CACHE_NAME);
       Cache<Object, String> cache2 = cache(2, CACHE_NAME);
 
-      // Add an extra node so that when we remove 1 it means not all the values will be on 1 node
-      addClusterEnabledCacheManager(builderUsed).defineConfiguration(CACHE_NAME, builderUsed.build());
-      cache(3, CACHE_NAME);
-
-      // put a lot of entries in cache0, so that when a node goes down it will lose some
+      // We put some entries into cache1, which will be shut down below. The batch size is only 2 so we won't be able
+      // to get them all in 1 remote call - this way we can block until we know we touch the data container, so at least
+      // the second request will give us an issue
       Map<Object, String> values = new HashMap<>();
-      for (int i = 0; i < 501; ++i) {
-         MagicKey key = new MagicKey(cache0);
-         cache1.put(key, key.toString());
-         values.put(key, key.toString());
-      }
+      values.put(new MagicKey(cache0), "ignore");
+      values.put(new MagicKey(cache1), "ignore");
+      values.put(new MagicKey(cache1), "ignore");
+      values.put(new MagicKey(cache1), "ignore");
+      cache1.putAll(values);
+
 
       CheckPoint checkPoint = new CheckPoint();
       checkPoint.triggerForever("post_iterator_released");
-      waitUntilDataContainerWillBeIteratedOn(cache0, checkPoint);
+      waitUntilDataContainerWillBeIteratedOn(cache1, checkPoint);
 
       final BlockingQueue<Map.Entry<Object, String>> returnQueue = new LinkedBlockingQueue<>();
       Future<Void> future = fork(() -> {
-         Iterator<Map.Entry<Object, String>> iter = cache2.entrySet().stream().iterator();
+         // Put batch size to a lower number just to make sure it doesn't retrieve them all in 1 go
+         Iterator<Map.Entry<Object, String>> iter = cache2.entrySet().stream().distributedBatchSize(2).iterator();
          while (iter.hasNext()) {
             Map.Entry<Object, String> entry = iter.next();
             returnQueue.add(entry);
@@ -270,7 +270,12 @@ public class DistributedStreamIteratorTest extends BaseClusteredStreamIteratorTe
       Map<Integer, Set<Map.Entry<Object, String>>> answer = generateEntriesPerSegment(keyPartitioner, returnQueue);
 
       for (Map.Entry<Integer, Set<Map.Entry<Object, String>>> entry : expected.entrySet()) {
-         assertEquals("Segment " + entry.getKey() + " had a mismatch", entry.getValue(), answer.get(entry.getKey()));
+         try {
+            assertEquals("Segment " + entry.getKey() + " had a mismatch", entry.getValue(), answer.get(entry.getKey()));
+         } catch (AssertionError e) {
+            log.fatal("TEST ENDED");
+            throw e;
+         }
       }
    }
 
@@ -394,7 +399,7 @@ public class DistributedStreamIteratorTest extends BaseClusteredStreamIteratorTe
 
       KeyPartitioner keyPartitioner = TestingUtil.extractComponent(cache0, KeyPartitioner.class);
       ConsistentHash ch = cache0.getAdvancedCache().getDistributionManager().getWriteConsistentHash();
-      Set<Integer> segmentsCache0 = ch.getSegmentsForOwner(cache0.getCacheManager().getAddress());
+      Set<Integer> segmentsCache0 = ch.getSegmentsForOwner(address(0));
 
       CacheStream<Map.Entry<Object, String>> stream = cache0.entrySet().stream();
       if (!rehashAware) stream = stream.disableRehashAware();
@@ -433,11 +438,11 @@ public class DistributedStreamIteratorTest extends BaseClusteredStreamIteratorTe
    }
 
    protected void waitUntilDataContainerWillBeIteratedOn(final Cache<?, ?> cache, final CheckPoint checkPoint) {
-      DataContainer dataContainer = TestingUtil.extractComponent(cache, DataContainer.class);
+      InternalDataContainer dataContainer = TestingUtil.extractComponent(cache, InternalDataContainer.class);
       final Answer<Object> forwardedAnswer = AdditionalAnswers.delegatesTo(dataContainer);
-      DataContainer mocaContainer = mock(DataContainer.class, withSettings().defaultAnswer(forwardedAnswer));
+      InternalDataContainer mockContainer = mock(InternalDataContainer.class, withSettings().defaultAnswer(forwardedAnswer));
       final AtomicInteger invocationCount = new AtomicInteger();
-      doAnswer(invocation -> {
+      Answer blockingAnswer = invocation -> {
          boolean waiting = false;
          if (invocationCount.getAndIncrement() == 0) {
             waiting = true;
@@ -458,7 +463,10 @@ public class DistributedStreamIteratorTest extends BaseClusteredStreamIteratorTe
                checkPoint.awaitStrict("post_iterator_released", 10, TimeUnit.SECONDS);
             }
          }
-      }).when(mocaContainer).spliterator();
-      TestingUtil.replaceComponent(cache, DataContainer.class, mocaContainer, true);
+      };
+      doAnswer(blockingAnswer).when(mockContainer).spliterator(any());
+      // Scattered cache with prefetch doesn't use segmented container
+      doAnswer(blockingAnswer).when(mockContainer).spliterator();
+      TestingUtil.replaceComponent(cache, InternalDataContainer.class, mockContainer, true);
    }
 }

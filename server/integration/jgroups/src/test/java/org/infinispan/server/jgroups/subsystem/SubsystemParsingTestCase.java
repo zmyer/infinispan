@@ -21,16 +21,26 @@
 */
 package org.infinispan.server.jgroups.subsystem;
 
-import java.io.IOException;
-import java.util.Arrays;
+import static org.junit.Assert.assertTrue;
+
+import java.io.FileReader;
+import java.io.Reader;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import javax.xml.stream.XMLStreamException;
 
+import org.infinispan.Version;
 import org.infinispan.server.commons.controller.Operations;
 import org.infinispan.server.commons.subsystem.ClusteringSubsystemTest;
 import org.jboss.as.controller.PathAddress;
@@ -62,36 +72,51 @@ public class SubsystemParsingTestCase extends ClusteringSubsystemTest {
     private final String xsdPath;
     private final String[] templates;
 
-    public SubsystemParsingTestCase(JGroupsSchema schema, int expectedOperationCount, String xsdPath, String[] templates) {
-        super(JGroupsExtension.SUBSYSTEM_NAME, new JGroupsExtension(), schema.format("subsystem-%s-%d_%d.xml").replaceAll(":", "_"));
-        this.expectedOperationCount = expectedOperationCount;
-        this.xsdPath = xsdPath;
-        this.templates = templates;
+    public SubsystemParsingTestCase(Path xmlPath, Properties properties) {
+        super(JGroupsExtension.SUBSYSTEM_NAME, new JGroupsExtension(), xmlPath.getFileName().toString());
+        this.expectedOperationCount = Integer.parseInt(properties.getProperty("expected.operations.count"));
+        this.xsdPath = properties.getProperty("xsd.path");
+        this.templates = null;
     }
 
     @Parameters
-    public static Collection<Object[]> data() {
-        Object[][] data = new Object[][] {
-                { JGroupsSchema.INFINISPAN_SERVER_JGROUPS_7_0, 25, "schema/jboss-infinispan-jgroups_7_0.xsd", null },
-                { JGroupsSchema.INFINISPAN_SERVER_JGROUPS_8_0, 27, "schema/jboss-infinispan-jgroups_8_0.xsd", null },
-                { JGroupsSchema.INFINISPAN_SERVER_JGROUPS_9_0, 27, "schema/jboss-infinispan-jgroups_9_0.xsd", new String[] { "/subsystem-templates/infinispan-jgroups.xml", "/subsystem-templates/cloud-jgroups.xml" } },
-                { JGroupsSchema.INFINISPAN_SERVER_JGROUPS_9_2, 27, "schema/jboss-infinispan-jgroups_9_2.xsd", new String[] { "/subsystem-templates/infinispan-jgroups.xml", "/subsystem-templates/cloud-jgroups.xml" } },
-        };
-        return Arrays.asList(data);
+    public static Collection<Object[]> data() throws Exception {
+        URL configDir = Thread.currentThread().getContextClassLoader().getResource("org/infinispan/server/jgroups/subsystem");
+        List<Path> paths = Files.list(Paths.get(configDir.toURI()))
+              .filter(path -> path.toString().endsWith(".xml"))
+              .collect(Collectors.toList());
+        boolean hasCurrentSchema = false;
+        String currentSchema = "subsystem-infinispan_server_jgroups-" + Version.getSchemaVersion().replaceAll("\\.", "_") + ".xml";
+        List<Object[]> data = new ArrayList<>();
+        for (int i = 0; i < paths.size(); i++) {
+            Path xmlPath = paths.get(i);
+            if (xmlPath.getFileName().toString().equals(currentSchema)) {
+                hasCurrentSchema = true;
+            }
+            String propsPath = xmlPath.toString().replaceAll("\\.xml$", ".properties");
+            Properties properties = new Properties();
+            try (Reader r = new FileReader(propsPath)) {
+                properties.load(r);
+            }
+            data.add(new Object[]{xmlPath, properties});
+        }
+        // Ensure that we contain the current schema version at the very least
+        assertTrue("Could not find a '" + currentSchema + "' configuration file", hasCurrentSchema);
+        return data;
     }
 
     @Override
-    protected String getSubsystemXsdPath() throws Exception {
+    protected String getSubsystemXsdPath() {
         return xsdPath;
     }
 
     @Override
-    protected String[] getSubsystemTemplatePaths() throws IOException {
+    protected String[] getSubsystemTemplatePaths() {
         return templates;
     }
 
     @Override
-    public void testSchemaOfSubsystemTemplates() throws Exception {
+    public void testSchemaOfSubsystemTemplates() {
         // TODO: implement once the schema validator supports supplements
     }
 

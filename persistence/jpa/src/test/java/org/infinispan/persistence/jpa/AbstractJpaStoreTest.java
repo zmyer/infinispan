@@ -10,13 +10,12 @@ import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.MarshalledEntryFactoryImpl;
 import org.infinispan.marshall.core.MarshalledEntryImpl;
 import org.infinispan.metadata.impl.InternalMetadataImpl;
-import org.infinispan.persistence.InitializationContextImpl;
+import org.infinispan.persistence.DummyInitializationContext;
 import org.infinispan.persistence.jpa.configuration.JpaStoreConfigurationBuilder;
-import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.test.fwk.TestInternalCacheEntryFactory;
-import org.infinispan.util.DefaultTimeService;
+import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 
@@ -34,7 +33,7 @@ public abstract class AbstractJpaStoreTest extends AbstractInfinispanTest {
 
    protected EmbeddedCacheManager cm;
 
-   protected AdvancedLoadWriteStore cs;
+   protected JpaStore<Object, Object> cs;
 
    //protected TransactionFactory gtf = new TransactionFactory();
 
@@ -48,15 +47,16 @@ public abstract class AbstractJpaStoreTest extends AbstractInfinispanTest {
       return TestCacheManagerFactory.createCacheManager(true);
    }
 
-   protected AdvancedLoadWriteStore createCacheStore() {
+   protected JpaStore createCacheStore() {
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.persistence().addStore(JpaStoreConfigurationBuilder.class)
             .persistenceUnitName(PERSISTENCE_UNIT_NAME)
             .entityClass(getEntityClass());
 
       JpaStore store = new JpaStore();
-      store.init(new InitializationContextImpl(builder.persistence().stores().get(0).create(), cm.getCache(),
-            getMarshaller(), new DefaultTimeService(), null, new MarshalledEntryFactoryImpl(getMarshaller())));
+      store.init(new DummyInitializationContext(builder.persistence().stores().get(0).create(), cm.getCache(),
+            getMarshaller(), null, new MarshalledEntryFactoryImpl(getMarshaller()),
+            new WithinThreadExecutor()));
       store.start();
 
       assertNotNull(store.getEntityManagerFactory());

@@ -37,12 +37,13 @@ import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.EnumUtil;
-import org.infinispan.container.DataContainer;
-import org.infinispan.container.EntryFactory;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.EntryFactory;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.L1Manager;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.impl.BaseRpcInterceptor;
@@ -67,8 +68,9 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
    @Inject protected ClusteringDependentLogic cdl;
    @Inject protected EntryFactory entryFactory;
    @Inject protected CommandsFactory commandsFactory;
-   @Inject protected DataContainer dataContainer;
+   @Inject protected InternalDataContainer dataContainer;
    @Inject protected StateTransferLock stateTransferLock;
+   @Inject protected KeyPartitioner keyPartitioner;
 
    private long l1Lifespan;
    private long replicationTimeout;
@@ -278,8 +280,9 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
             !toInvalidate.isEmpty() ? l1Manager.flushCache(toInvalidate, ctx.getOrigin(), true) : null;
 
       //we also need to remove from L1 the keys that are not ours
-      Iterator<VisitableCommand> subCommands = keys.stream().filter(
-            k -> !cdl.getCacheTopology().isWriteOwner(k)).map(k -> removeFromL1Command(ctx, k)).iterator();
+      Iterator<VisitableCommand> subCommands = keys.stream()
+            .filter(k -> !cdl.getCacheTopology().isWriteOwner(k))
+            .map(k -> removeFromL1Command(ctx, k, keyPartitioner.getSegment(k))).iterator();
       return invokeNextAndHandle(ctx, command, (InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable ex) -> {
          WriteCommand writeCommand = (WriteCommand) rCommand;
          if (ex != null) {
@@ -308,7 +311,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
          // may not have the value - if so we need to add it then now that we know we waited for the get response
          // to complete
          if (ctx.lookupEntry(key) == null) {
-            entryFactory.wrapEntryForWriting(ctx, key, true, false);
+            entryFactory.wrapEntryForWriting(ctx, key, keyPartitioner.getSegment(key), true, false);
          }
       }
       return invokeNext(ctx, invalidateL1Command);
@@ -368,14 +371,16 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
          } else {
             if (mustSyncInvalidation(l1InvalidationFuture, dataWriteCommand)) {
                if (shouldRemoveFromLocalL1(rCtx, dataWriteCommand)) {
-                  VisitableCommand removeFromL1Command = removeFromL1Command(rCtx, dataWriteCommand.getKey());
+                  VisitableCommand removeFromL1Command = removeFromL1Command(rCtx, dataWriteCommand.getKey(),
+                        dataWriteCommand.getSegment());
                   return makeStage(asyncInvokeNext(rCtx, removeFromL1Command, l1InvalidationFuture))
                         .thenApply(null, null, (rCtx2, rCommand2, rv2) -> rv);
                } else {
                   return asyncValue(l1InvalidationFuture).thenApply(rCtx, rCommand, (rCtx1, rCommand1, rv1) -> rv);
                }
             } else if (shouldRemoveFromLocalL1(rCtx, dataWriteCommand)) {
-               VisitableCommand removeFromL1Command = removeFromL1Command(rCtx, dataWriteCommand.getKey());
+               VisitableCommand removeFromL1Command = removeFromL1Command(rCtx, dataWriteCommand.getKey(),
+                     dataWriteCommand.getSegment());
                return invokeNextThenApply(rCtx, removeFromL1Command, (rCtx2, rCommand2, rv2) -> rv);
             } else if (trace) {
                log.trace("Allowing entry to commit as local node is owner");
@@ -393,13 +398,13 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
       return ctx.isOriginLocal() && !cdl.getCacheTopology().isWriteOwner(command.getKey());
    }
 
-   private VisitableCommand removeFromL1Command(InvocationContext ctx, Object key) {
+   private VisitableCommand removeFromL1Command(InvocationContext ctx, Object key, int segment) {
       if (trace) {
          log.tracef("Removing entry from L1 for key %s", key);
       }
       abortL1UpdateOrWait(key);
       ctx.removeLookedUpEntry(key);
-      entryFactory.wrapEntryForWriting(ctx, key, true, false);
+      entryFactory.wrapEntryForWriting(ctx, key, segment, true, false);
 
       return commandsFactory.buildInvalidateFromL1Command(EnumUtil.EMPTY_BIT_SET,
             Collections.singleton(key));

@@ -1,7 +1,12 @@
-<project name="infinispan-packaging" basedir="." default="package" xmlns:if="ant:if" xmlns:unless="ant:unless">
+<project name="infinispan-packaging" basedir="." default="package" xmlns:if="ant:if">
    <property name="root.dir" value=".." />
    <property name="dist.dir" value="${project.build.directory}/distribution" />
-   <property name="base.output.dir" value="${dist.dir}/infinispan-${project.version}" />
+   <property name="base.output.dir" value="${dist.dir}/${infinispan.brand.prefix}-${infinispan.brand.version}" />
+   <property name="dollar" value="$"/>
+   <filterset id="brandfilter" begintoken="${dollar}{" endtoken="}">
+      <filter token="infinispan.brand.name" value="${infinispan.brand.name}" />
+      <filter token="current.year" value="${current.year}" />
+   </filterset>
 
    <target name="package" depends="clean, minimal, all, remote" />
 
@@ -60,9 +65,6 @@
          <base-distribution-lib-remote dir="${output.dir}" />
          <base-distribution-common-files dir="${output.dir}" type="remote" />
          <base-distribution-javadocs dir="${output.dir}" type="remote" />
-         <delete dir="${output.dir}/docs-embedded" />
-         <delete dir="${output.dir}/docs-remote" />
-         <delete dir="${output.dir}/docs-all" />
          <delete dir="${output.dir}/bin" />
          <delete dir="${output.dir}/configs" />
          <delete file="${output.dir}/README-GUI-Demo.txt" />
@@ -88,9 +90,6 @@
          <base-distribution-schema dir="@{dir}" />
          <base-distribution-javadocs dir="@{dir}" type="@{javadocs}"/>
          <base-distribution-configdocs dir="@{dir}" />
-         <delete dir="@{dir}/docs-embedded" />
-         <delete dir="@{dir}/docs-remote" />
-         <delete dir="@{dir}/docs-all" />
       </sequential>
    </macrodef>
 
@@ -101,6 +100,10 @@
          <copy todir="@{dir}/docs/licenses">
            <fileset dir="target/docs/licenses" />
          </copy>
+         <xslt in="target/docs/licenses/licenses.xml" style="src/main/resources/template/licenses.xsl" out="@{dir}/docs/licenses/licenses.html">
+            <param name="product" expression="${infinispan.brand.name}" type="STRING"/>
+            <param name="version" expression="${infinispan.brand.version}" type="STRING"/>
+         </xslt>
       </sequential>
    </macrodef>
 
@@ -110,7 +113,7 @@
          <mkdir dir="@{dir}/lib" />
          <copy todir="@{dir}/lib">
             <file file="${javax.cache:cache-api:jar}" />
-            <file file="${org.jboss.spec.javax.transaction:jboss-transaction-api_1.1_spec:jar}" />
+            <file file="${org.jboss.spec.javax.transaction:jboss-transaction-api_1.2_spec:jar}" />
             <mapper type="flatten" />
          </copy>
       </sequential>
@@ -134,8 +137,9 @@
       <attribute name="type" />
       <sequential>
          <copy todir="@{dir}">
-            <fileset dir="src/main/release/common" />
+            <fileset dir="src/main/release/common"/>
             <fileset dir="src/main/release/@{type}" />
+            <filterset refid="brandfilter"/>
          </copy>
       </sequential>
    </macrodef>
@@ -144,12 +148,6 @@
       <attribute name="dir" />
       <attribute name="type" default="embedded" />
       <sequential>
-         <mkdir dir="@{dir}/docs" />
-         <copy todir="@{dir}/docs">
-            <fileset dir="src/main/release/common/docs-@{type}">
-               <include name="**" />
-            </fileset>
-         </copy>
          <unjar src="${org.infinispan:infinispan-javadoc-@{type}:jar:javadoc}" dest="@{dir}/docs/api" />
       </sequential>
    </macrodef>
@@ -269,6 +267,7 @@
                <include name="**" />
                <exclude name="bin/**"/>
             </fileset>
+            <filterset refid="brandfilter"/>
          </copy>
          <fix-permissions dir="@{dir}/@{target}" />
       </sequential>

@@ -11,7 +11,7 @@ import org.infinispan.Cache;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -34,9 +34,9 @@ public class MergeDuringReplaceTest extends MultipleCacheManagersTest {
       ConfigurationBuilder defaultConfig = getDefaultClusteredCacheConfig(cacheMode, false);
       createClusteredCaches(3, defaultConfig, new TransportFlags().withFD(true).withMerge(true));
 
-      DISCARD d1 = TestingUtil.getDiscardForCache(cache(0));
-      DISCARD d2 = TestingUtil.getDiscardForCache(cache(1));
-      DISCARD d3 = TestingUtil.getDiscardForCache(cache(2));
+      DISCARD d1 = TestingUtil.getDiscardForCache(manager(0));
+      DISCARD d2 = TestingUtil.getDiscardForCache(manager(1));
+      DISCARD d3 = TestingUtil.getDiscardForCache(manager(2));
       discard = new DISCARD[]{d1, d2, d3};
    }
 
@@ -52,12 +52,11 @@ public class MergeDuringReplaceTest extends MultipleCacheManagersTest {
          nonOwner = findNonOwner(key);
          c = cache(nonOwner);
       } else {
-         ConsistentHash ch = cache(0).getAdvancedCache().getComponentRegistry()
-            .getStateTransferManager().getCacheTopology().getCurrentCH();
-         List<Address> members = new ArrayList<>(ch.getMembers());
-         List<Address> owners = ch.locateOwners(key);
+         LocalizedCacheTopology cacheTopology = advancedCache(0).getDistributionManager().getCacheTopology();
+         List<Address> members = new ArrayList<>(cacheTopology.getMembers());
+         List<Address> owners = cacheTopology.getDistribution(key).readOwners();
          members.removeAll(owners);
-         nonOwner = ch.getMembers().indexOf(members.get(0));
+         nonOwner = cacheTopology.getMembers().indexOf(members.get(0));
          c = cache(nonOwner);
       }
 
@@ -79,11 +78,7 @@ public class MergeDuringReplaceTest extends MultipleCacheManagersTest {
       TestingUtil.waitForNoRebalance(partition1.get(0), partition1.get(1));
       TestingUtil.waitForNoRebalance(c);
 
-      if (cacheMode.isScattered()) {
-         blockedReplace.sendWithoutResponses();
-      } else {
-         blockedReplace.send().receiveAll();
-      }
+      blockedReplace.send().receiveAll();
 
       // Since the non owner didn't have the value before the split it can't do the replace correctly
       assertEquals(future.get(10, TimeUnit.SECONDS), Boolean.FALSE);

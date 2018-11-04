@@ -5,7 +5,7 @@ import java.util.Collections;
 import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.LocalCommand;
 import org.infinispan.commands.Visitor;
-import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
@@ -23,9 +23,9 @@ public class EvictCommand extends RemoveCommand implements LocalCommand {
 
    private final InternalEntryFactory factory;
 
-   public EvictCommand(Object key, CacheNotifier notifier, long flagsBitSet, CommandInvocationId commandInvocationId,
+   public EvictCommand(Object key, CacheNotifier notifier, int segment, long flagsBitSet, CommandInvocationId commandInvocationId,
                        InternalEntryFactory factory) {
-      super(key, null, notifier, flagsBitSet, commandInvocationId);
+      super(key, null, notifier, segment, flagsBitSet, commandInvocationId);
       this.factory = factory;
    }
 

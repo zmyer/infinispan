@@ -1,12 +1,25 @@
 package org.infinispan.factories;
 
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
+
+import org.infinispan.configuration.cache.ClusteringConfiguration;
 import org.infinispan.configuration.cache.EvictionConfiguration;
 import org.infinispan.configuration.cache.MemoryConfiguration;
 import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.container.DataContainer;
-import org.infinispan.container.DefaultDataContainer;
+import org.infinispan.container.impl.BoundedSegmentedDataContainer;
+import org.infinispan.container.impl.DefaultDataContainer;
+import org.infinispan.container.impl.DefaultSegmentedDataContainer;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.container.impl.InternalDataContainerAdapter;
+import org.infinispan.container.impl.L1SegmentedDataContainer;
 import org.infinispan.container.offheap.BoundedOffHeapDataContainer;
+import org.infinispan.container.offheap.OffHeapConcurrentMap;
 import org.infinispan.container.offheap.OffHeapDataContainer;
+import org.infinispan.container.offheap.OffHeapEntryFactory;
+import org.infinispan.container.offheap.OffHeapMemoryAllocator;
+import org.infinispan.container.offheap.SegmentedBoundedOffHeapDataContainer;
 import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.factories.annotations.DefaultFactoryFor;
 
@@ -17,43 +30,97 @@ import org.infinispan.factories.annotations.DefaultFactoryFor;
  * @author Vladimir Blagojevic
  * @since 4.0
  */
-@DefaultFactoryFor(classes = DataContainer.class)
+@DefaultFactoryFor(classes = InternalDataContainer.class)
 public class DataContainerFactory extends AbstractNamedCacheComponentFactory implements
-         AutoInstantiableFactory {
+      AutoInstantiableFactory {
+
+   public static final String SEGMENTATION_FEATURE = "data-segmentation";
+
+   private final static String SUB_COMPONENT_NAME = "DataContainerDelegate";
 
    @Override
    @SuppressWarnings("unchecked")
-   public <T> T construct(Class<T> componentType) {
-      if (configuration.dataContainer().dataContainer() != null) {
-         return (T) configuration.dataContainer().dataContainer();
+   public Object construct(String componentName) {
+      DataContainer customDataContainer = configuration.dataContainer().dataContainer();
+      if (customDataContainer != null) {
+         if (customDataContainer instanceof InternalDataContainer) {
+            return customDataContainer;
+         }
+         basicComponentRegistry.registerComponent(SUB_COMPONENT_NAME, customDataContainer, true);
+         basicComponentRegistry.addDynamicDependency(InternalDataContainer.class.getName(), SUB_COMPONENT_NAME);
+         return new InternalDataContainerAdapter<>(customDataContainer);
       } else {
+         ClusteringConfiguration clusteringConfiguration = configuration.clustering();
+
+         boolean shouldSegment = globalConfiguration.features().isAvailable(SEGMENTATION_FEATURE) &&
+               clusteringConfiguration.cacheMode().needsStateTransfer();
          int level = configuration.locking().concurrencyLevel();
 
-         long thresholdSize = configuration.memory().size();
+         MemoryConfiguration memoryConfiguration = configuration.memory();
 
-         EvictionStrategy strategy = configuration.memory().evictionStrategy();
+         EvictionStrategy strategy = memoryConfiguration.evictionStrategy();
          //handle case when < 0 value signifies unbounded container or when we are not removal based
          if (strategy.isExceptionBased() || !strategy.isEnabled()) {
             if (configuration.memory().storageType() == StorageType.OFF_HEAP) {
-               return (T) new OffHeapDataContainer(configuration.memory().addressCount());
+               int addressCount = memoryConfiguration.addressCount();
+               if (shouldSegment) {
+                  int segments = clusteringConfiguration.hash().numSegments();
+                  Supplier mapSupplier = () -> createAndStartOffHeapConcurrentMap(addressCount, segments);
+                  if (clusteringConfiguration.l1().enabled()) {
+                     return new L1SegmentedDataContainer<>(mapSupplier, segments);
+                  }
+                  return new DefaultSegmentedDataContainer<>(mapSupplier, segments);
+               } else {
+                  return new OffHeapDataContainer(addressCount);
+               }
+            } else if (shouldSegment) {
+               Supplier mapSupplier = ConcurrentHashMap::new;
+               int segments = clusteringConfiguration.hash().numSegments();
+               if (clusteringConfiguration.l1().enabled()) {
+                  return new L1SegmentedDataContainer<>(mapSupplier, segments);
+               }
+               return new DefaultSegmentedDataContainer<>(mapSupplier, segments);
             } else {
-               return (T) DefaultDataContainer.unBoundedDataContainer(level);
+               return DefaultDataContainer.unBoundedDataContainer(level);
             }
          }
 
+         long thresholdSize = memoryConfiguration.size();
+
          DataContainer dataContainer;
-         if (configuration.memory().storageType() == StorageType.OFF_HEAP) {
-            dataContainer = new BoundedOffHeapDataContainer(configuration.memory().addressCount(), thresholdSize,
-                  configuration.memory().evictionType());
+         if (memoryConfiguration.storageType() == StorageType.OFF_HEAP) {
+            int addressCount = memoryConfiguration.addressCount();
+            if (shouldSegment) {
+               int segments = clusteringConfiguration.hash().numSegments();
+               dataContainer = new SegmentedBoundedOffHeapDataContainer(addressCount, segments, thresholdSize,
+                     memoryConfiguration.evictionType());
+            } else {
+               dataContainer = new BoundedOffHeapDataContainer(addressCount, thresholdSize,
+                     memoryConfiguration.evictionType());
+            }
+         } else if (shouldSegment) {
+            int segments = clusteringConfiguration.hash().numSegments();
+            dataContainer = new BoundedSegmentedDataContainer<>(segments, thresholdSize,
+                  memoryConfiguration.evictionType());
          } else {
             dataContainer = DefaultDataContainer.boundedDataContainer(level, thresholdSize,
-                  configuration.memory().evictionType());
+                  memoryConfiguration.evictionType());
          }
          configuration.eviction().attributes().attribute(EvictionConfiguration.SIZE).addListener((newSize, old) ->
-               configuration.memory().size(newSize.get()));
-         configuration.memory().attributes().attribute(MemoryConfiguration.SIZE).addListener((newSize, old) ->
+               memoryConfiguration.size(newSize.get()));
+         memoryConfiguration.attributes().attribute(MemoryConfiguration.SIZE).addListener((newSize, old) ->
                dataContainer.resize(newSize.get()));
-         return (T) dataContainer;
+         return dataContainer;
       }
+   }
+
+   /* visible for testing */
+   OffHeapConcurrentMap createAndStartOffHeapConcurrentMap(int addressCount, int segments) {
+      OffHeapEntryFactory entryFactory = componentRegistry.getOrCreateComponent(OffHeapEntryFactory.class);
+      OffHeapMemoryAllocator memoryAllocator = componentRegistry.getOrCreateComponent(OffHeapMemoryAllocator.class);
+      // TODO: find better way to handle size here or is it okay? internally it will round to next power of 2
+      OffHeapConcurrentMap offHeapMap = new OffHeapConcurrentMap(addressCount / segments, memoryAllocator, entryFactory, null);
+      offHeapMap.start();
+      return offHeapMap;
    }
 }

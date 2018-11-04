@@ -49,15 +49,17 @@ import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.remoting.transport.AggregateBackupResponse;
 import org.infinispan.remoting.transport.BackupResponse;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.transaction.impl.AbstractCacheTransaction;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.transaction.impl.TransactionTable;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.infinispan.util.logging.events.EventLogCategory;
@@ -74,7 +76,7 @@ public class BackupSenderImpl implements BackupSender {
    private static Log log = LogFactory.getLog(BackupSenderImpl.class);
    private static final BackupResponse EMPTY_RESPONSE = new EmptyBackupResponse();
 
-   @Inject private Cache cache;
+   @Inject private ComponentRef<Cache> cache;
    @Inject private Transport transport;
    @Inject private Configuration config;
    @Inject private TransactionTable txTable;
@@ -82,6 +84,7 @@ public class BackupSenderImpl implements BackupSender {
    @Inject private CommandsFactory commandsFactory;
    @Inject private EventLogManager eventLogManager;
    @Inject private GlobalConfiguration globalConfig;
+   @Inject private KeyPartitioner keyPartitioner;
 
    private final Map<String, CustomFailurePolicy> siteFailurePolicy = new HashMap<>();
    private final ConcurrentMap<String, OfflineStatus> offlineStatus = CollectionFactory.makeConcurrentMap();
@@ -96,7 +99,7 @@ public class BackupSenderImpl implements BackupSender {
 
    @Start
    public void start() {
-      this.cacheName = cache.getName();
+      this.cacheName = cache.wired().getName();
       for (BackupConfiguration bc : config.sites().enabledBackups()) {
          final String siteName = bc.site();
          if (bc.backupFailurePolicy() == BackupFailurePolicy.CUSTOM) {
@@ -105,7 +108,7 @@ public class BackupSenderImpl implements BackupSender {
                throw new IllegalStateException("Backup policy class missing for custom failure policy!");
             }
             CustomFailurePolicy instance = Util.getInstance(backupPolicy, globalConfig.classLoader());
-            instance.init(cache);
+            instance.init(cache.wired());
             siteFailurePolicy.put(bc.site(), instance);
          }
          OfflineStatus offline = new OfflineStatus(bc.takeOffline(), timeService,
@@ -319,10 +322,13 @@ public class BackupSenderImpl implements BackupSender {
             }
             WriteCommand replicatedCommand;
             if (entry.isRemoved()) {
-               replicatedCommand = commandsFactory.buildRemoveCommand(key, null, writeCommand.getFlagsBitSet());
-            } else {
+               replicatedCommand = commandsFactory.buildRemoveCommand(key, null, keyPartitioner.getSegment(key),
+                     writeCommand.getFlagsBitSet());
+            } else if (entry.isChanged()) {
                replicatedCommand = commandsFactory.buildPutKeyValueCommand(key, entry.getValue(),
-                     entry.getMetadata(), writeCommand.getFlagsBitSet());
+                     keyPartitioner.getSegment(key), entry.getMetadata(), writeCommand.getFlagsBitSet());
+            } else {
+               continue;
             }
             filtered.add(replicatedCommand);
             filteredKeys.add(key);

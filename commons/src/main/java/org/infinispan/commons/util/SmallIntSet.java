@@ -8,7 +8,10 @@ import java.util.Collection;
 import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.Set;
+import java.util.Spliterator;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.IntPredicate;
 import java.util.stream.IntStream;
 
 import org.infinispan.commons.io.UnsignedNumeric;
@@ -21,18 +24,21 @@ import org.infinispan.commons.io.UnsignedNumeric;
  *
  * @author Dan Berindei
  * @since 9.0
+ * @deprecated since 9.3 This class will no longer be public. Please use {@link IntSets} methods such as
+ * {@link IntSets#mutableEmptySet()}, {@link IntSets#mutableCopyFrom(Set)}
  */
+@Deprecated
 public class SmallIntSet implements IntSet {
    private final BitSet bitSet;
 
    public static SmallIntSet of(int i1) {
-      SmallIntSet set = new SmallIntSet();
+      SmallIntSet set = new SmallIntSet(i1 + 1);
       set.set(i1);
       return set;
    }
 
    public static SmallIntSet of(int i1, int i2) {
-      SmallIntSet set = new SmallIntSet();
+      SmallIntSet set = new SmallIntSet(Math.max(i1, i2) + 1);
       set.set(i1);
       set.set(i2);
       return set;
@@ -47,7 +53,7 @@ public class SmallIntSet implements IntSet {
    }
 
    public static SmallIntSet of(int... elements) {
-      SmallIntSet set = new SmallIntSet();
+      SmallIntSet set = new SmallIntSet(elements.length);
       for (int i : elements) {
          set.set(i);
       }
@@ -84,24 +90,17 @@ public class SmallIntSet implements IntSet {
       bitSet = new BitSet(initialRange);
    }
 
-   public SmallIntSet(SmallIntSet other) {
-      bitSet = new BitSet(other.bitSet.size());
-      bitSet.or(other.bitSet);
-   }
-
    public SmallIntSet(Set<Integer> set) {
-      bitSet = new BitSet();
-      set.forEach(bitSet::set);
-   }
-
-   public SmallIntSet(IntSet set) {
       if (set instanceof SmallIntSet) {
          BitSet bitSet = ((SmallIntSet) set).bitSet;
          this.bitSet = new BitSet(bitSet.size());
          this.bitSet.or(bitSet);
-      } else {
+      } else if (set instanceof IntSet) {
          this.bitSet = new BitSet();
-         set.iterator().forEachRemaining((IntConsumer) bitSet::set);
+         ((IntSet) set).forEach((IntConsumer) bitSet::set);
+      } else {
+         bitSet = new BitSet();
+         set.forEach(bitSet::set);
       }
    }
 
@@ -173,6 +172,22 @@ public class SmallIntSet implements IntSet {
          }
          bitSet.clear(prev);
          prev = -1;
+      }
+   }
+
+   @Override
+   public int[] toIntArray() {
+      int size = size();
+      int[] dest = new int[size];
+      copyToArray(size, dest);
+      return dest;
+   }
+
+   private void copyToArray(int size, int[] dest) {
+      int lastSetBit = -1;
+      for (int i = 0; i < size; i++) {
+         lastSetBit = bitSet.nextSetBit(lastSetBit + 1);
+         dest[i] = lastSetBit;
       }
    }
 
@@ -302,13 +317,12 @@ public class SmallIntSet implements IntSet {
 
    @Override
    public boolean addAll(Collection<? extends Integer> c) {
-      boolean modified = false;
       if (c instanceof IntSet) {
          return addAll((IntSet) c);
-      } else {
-         for (Integer integer : c) {
-            modified |= add(integer);
-         }
+      }
+      boolean modified = false;
+      for (Integer integer : c) {
+         modified |= add(integer);
       }
       return modified;
    }
@@ -381,6 +395,39 @@ public class SmallIntSet implements IntSet {
    }
 
    @Override
+   public void forEach(IntConsumer action) {
+      for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+         action.accept(i);
+      }
+   }
+
+   @Override
+   public void forEach(Consumer<? super Integer> action) {
+      for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+         // Has cost of auto boxing, oh well
+         action.accept(i);
+      }
+   }
+
+   @Override
+   public Spliterator.OfInt intSpliterator() {
+      // We just invoke default method as ints can be sparse in BitSet
+      return IntSet.super.intSpliterator();
+   }
+
+   @Override
+   public boolean removeIf(IntPredicate filter) {
+      boolean removed = false;
+      for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+         if (filter.test(i)) {
+            bitSet.clear(i);
+            removed = true;
+         }
+      }
+      return removed;
+   }
+
+   @Override
    public boolean equals(Object o) {
       if (this == o)
          return true;
@@ -425,8 +472,9 @@ public class SmallIntSet implements IntSet {
    public static void writeTo(ObjectOutput output, SmallIntSet set) throws IOException {
       UnsignedNumeric.writeUnsignedInt(output, set.capacity());
       UnsignedNumeric.writeUnsignedInt(output, set.size());
-      for (int element : set) {
-         UnsignedNumeric.writeUnsignedInt(output, element);
+      BitSet bitSet = set.bitSet;
+      for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+         UnsignedNumeric.writeUnsignedInt(output, i);
       }
    }
 

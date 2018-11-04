@@ -18,7 +18,7 @@ import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.ControlledConsistentHashFactory;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.annotations.Test;
 
@@ -27,7 +27,7 @@ import org.testng.annotations.Test;
  *
  * See https://issues.jboss.org/browse/ISPN-7105
  */
-@Test(groups = "functional", testName = "expiration.impl.ExpirationWriteSkewFunctionalTest")
+@Test(groups = "functional", testName = "expiration.impl.ExpirationWithClusteredWriteSkewTest")
 public class ExpirationWithClusteredWriteSkewTest extends MultipleCacheManagersTest {
    public static final String KEY = "key";
    public static final String VALUE = "value";
@@ -60,9 +60,9 @@ public class ExpirationWithClusteredWriteSkewTest extends MultipleCacheManagersT
 
       createCluster(builder, 2);
       TestingUtil.replaceComponent(manager(0), TimeService.class, timeService, true);
-      expirationManager1 = TestingUtil.extractComponent(cache(0), ExpirationManager.class);
+      expirationManager1 = cache(0).getAdvancedCache().getExpirationManager();
       TestingUtil.replaceComponent(manager(1), TimeService.class, timeService, true);
-      expirationManager2 = TestingUtil.extractComponent(cache(1), ExpirationManager.class);
+      expirationManager2 = cache(1).getAdvancedCache().getExpirationManager();
    }
 
    public void testDefaultExpirationInTransaction() throws Exception {

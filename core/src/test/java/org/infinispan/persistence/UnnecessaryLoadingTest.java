@@ -18,7 +18,6 @@ import org.infinispan.configuration.cache.SingletonStoreConfiguration;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.InvocationContextFactory;
-import org.infinispan.filter.KeyFilter;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
 import org.infinispan.marshall.core.MarshalledEntry;
@@ -123,7 +122,7 @@ public class UnnecessaryLoadingTest extends SingleCacheManagerTest {
       //and verify that the put operation updated the store too:
       InvocationContextFactory icf = TestingUtil.extractComponent(cache, InvocationContextFactory.class);
       InvocationContext context = icf.createSingleKeyNonTxInvocationContext();
-      assert "v2-second".equals(persistenceManager.loadFromAllStores("k2", context.isOriginLocal()).getValue());
+      assert "v2-second".equals(persistenceManager.loadFromAllStores("k2", context.isOriginLocal(), true).getValue());
       assertEquals(countingCS.numLoads,2, "Expected 2, was " + countingCS.numLoads);
 
       assert countingCS.numContains == 0 : "Expected 0, was " + countingCS.numContains;
@@ -181,10 +180,6 @@ public class UnnecessaryLoadingTest extends SingleCacheManagerTest {
 
    public static class CountingStore implements AdvancedLoadWriteStore {
       public int numLoads, numContains;
-
-      @Override
-      public void process(KeyFilter filter, CacheLoaderTask task, Executor executor, boolean fetchValue, boolean fetchMetadata) {
-      }
 
       @Override
       public int size() {

@@ -46,6 +46,11 @@ public interface ProtocolServerConfigurationChildBuilder<T extends ProtocolServe
    S tcpNoDelay(boolean tcpNoDelay);
 
    /**
+    * Affects TCP KEEPALIVE on the TCP stack. Defaults to disabled
+    */
+   S tcpKeepAlive(boolean tcpKeepAlive);
+
+   /**
     * Sets the size of the receive buffer
     */
    S recvBufSize(int recvBufSize);
@@ -59,6 +64,11 @@ public interface ProtocolServerConfigurationChildBuilder<T extends ProtocolServe
     * Configures SSL
     */
    SslConfigurationBuilder<T, S> ssl();
+
+   /**
+    * Sets the number of I/O threads
+    */
+   S ioThreads(int ioThreads);
 
    /**
     * Sets the number of worker threads

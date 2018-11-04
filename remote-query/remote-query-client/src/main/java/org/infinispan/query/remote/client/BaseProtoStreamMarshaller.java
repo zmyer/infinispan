@@ -2,6 +2,7 @@ package org.infinispan.query.remote.client;
 
 import java.io.IOException;
 
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.io.ByteBuffer;
 import org.infinispan.commons.io.ByteBufferImpl;
 import org.infinispan.commons.marshall.AbstractMarshaller;
@@ -34,7 +35,7 @@ public abstract class BaseProtoStreamMarshaller extends AbstractMarshaller {
 
    @Override
    public boolean isMarshallable(Object o) {
-      // Protostream can handle all of these type as well even if we do not
+      // our marshaller can handle all of these primitive/scalar types as well even if we do not
       // have a per-type marshaller defined in our SerializationContext
       return o instanceof String ||
             o instanceof Long ||
@@ -55,5 +56,10 @@ public abstract class BaseProtoStreamMarshaller extends AbstractMarshaller {
    protected ByteBuffer objectToBuffer(Object o, int estimatedSize) throws IOException, InterruptedException {
       byte[] bytes = ProtobufUtil.toWrappedByteArray(getSerializationContext(), o);
       return new ByteBufferImpl(bytes, 0, bytes.length);
+   }
+
+   @Override
+   public MediaType mediaType() {
+      return MediaType.APPLICATION_PROTOSTREAM;
    }
 }

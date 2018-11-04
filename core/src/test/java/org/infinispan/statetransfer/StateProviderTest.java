@@ -16,7 +16,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -24,14 +23,18 @@ import java.util.concurrent.TimeUnit;
 import org.infinispan.Cache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.hash.MurmurHash3;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.commons.util.SmallIntSet;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.container.DataContainer;
-import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.ImmortalCacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.container.impl.InternalEntryFactory;
+import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.TestAddress;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
@@ -91,11 +94,11 @@ public class StateProviderTest {
    private CommandsFactory commandsFactory;
    private ClusterCacheNotifier cacheNotifier;
    private PersistenceManager persistenceManager;
-   private DataContainer dataContainer;
+   private InternalDataContainer dataContainer;
    private TransactionTable transactionTable;
    private StateTransferLock stateTransferLock;
-   private StateConsumer stateConsumer;
-   private CacheTopology cacheTopology;
+   private DistributionManager distributionManager;
+   private LocalizedCacheTopology cacheTopology;
    private InternalEntryFactory ef;
 
    @BeforeClass
@@ -117,12 +120,12 @@ public class StateProviderTest {
       commandsFactory = mock(CommandsFactory.class);
       cacheNotifier = mock(ClusterCacheNotifier.class);
       persistenceManager = mock(PersistenceManager.class);
-      dataContainer = mock(DataContainer.class);
+      dataContainer = mock(InternalDataContainer.class);
       transactionTable = mock(TransactionTable.class);
       stateTransferLock = mock(StateTransferLock.class);
-      stateConsumer = mock(StateConsumer.class);
+      distributionManager = mock(DistributionManager.class);
       ef = mock(InternalEntryFactory.class);
-      when(stateConsumer.getCacheTopology()).thenAnswer(invocation -> cacheTopology);
+      when(distributionManager.getCacheTopology()).thenAnswer(invocation -> cacheTopology);
    }
 
    public void test1() throws InterruptedException {
@@ -153,9 +156,9 @@ public class StateProviderTest {
 
       // create state provider
       StateProviderImpl stateProvider = new StateProviderImpl();
-      TestingUtil.inject(stateProvider, cache, mockExecutorService,
-            configuration, rpcManager, commandsFactory, cacheNotifier, persistenceManager,
-            dataContainer, transactionTable, stateTransferLock, stateConsumer, ef, keyPartitioner, TransactionOriginatorChecker.LOCAL);
+      TestingUtil.inject(stateProvider, mockExecutorService,
+                         configuration, rpcManager, commandsFactory, cacheNotifier, persistenceManager,
+                         dataContainer, transactionTable, stateTransferLock, distributionManager, ef, keyPartitioner, TransactionOriginatorChecker.LOCAL);
       stateProvider.start();
 
       final List<InternalCacheEntry> cacheEntries = new ArrayList<>();
@@ -167,11 +170,14 @@ public class StateProviderTest {
       when(transactionTable.getLocalTransactions()).thenReturn(Collections.emptyList());
       when(transactionTable.getRemoteTransactions()).thenReturn(Collections.emptyList());
 
-      cacheTopology = new CacheTopology(1, 1, ch1, ch1, ch1, CacheTopology.Phase.READ_OLD_WRITE_ALL, ch1.getMembers(), persistentUUIDManager.mapAddresses(ch1.getMembers()));
-      stateProvider.onTopologyUpdate(cacheTopology, false);
+      CacheTopology simpleTopology = new CacheTopology(1, 1, ch1, ch1, ch1,
+                                                       CacheTopology.Phase.READ_OLD_WRITE_ALL, ch1.getMembers(),
+                                                       persistentUUIDManager.mapAddresses(ch1.getMembers()));
+      this.cacheTopology = new LocalizedCacheTopology(CacheMode.DIST_SYNC, simpleTopology, keyPartitioner, A, true);
+      stateProvider.onTopologyUpdate(this.cacheTopology, false);
 
       log.debug("ch1: " + ch1);
-      Set<Integer> segmentsToRequest = ch1.getSegmentsForOwner(members1.get(0));
+      IntSet segmentsToRequest = IntSets.from(ch1.getSegmentsForOwner(members1.get(0)));
       List<TransactionInfo> transactions = stateProvider.getTransactionsForSegments(members1.get(0), 1, segmentsToRequest);
       assertEquals(0, transactions.size());
 
@@ -184,17 +190,20 @@ public class StateProviderTest {
 
       verifyNoMoreInteractions(stateTransferLock);
 
-      stateProvider.startOutboundTransfer(F, 1, Collections.singleton(0), true);
+      stateProvider.startOutboundTransfer(F, 1, IntSets.immutableSet(0), true);
 
       assertTrue(stateProvider.isStateTransferInProgress());
 
       log.debug("ch2: " + ch2);
-      cacheTopology = new CacheTopology(2, 1, ch2, ch2, ch2, CacheTopology.Phase.READ_OLD_WRITE_ALL, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch2.getMembers()));
-      stateProvider.onTopologyUpdate(cacheTopology, true);
+      simpleTopology = new CacheTopology(2, 1, ch2, ch2, ch2, CacheTopology.Phase.READ_OLD_WRITE_ALL,
+                                                      ch2.getMembers(),
+                                                      persistentUUIDManager.mapAddresses(ch2.getMembers()));
+      this.cacheTopology = new LocalizedCacheTopology(CacheMode.DIST_SYNC, simpleTopology, keyPartitioner, A, true);
+      stateProvider.onTopologyUpdate(this.cacheTopology, true);
 
       assertFalse(stateProvider.isStateTransferInProgress());
 
-      stateProvider.startOutboundTransfer(D, 1, Collections.singleton(0), true);
+      stateProvider.startOutboundTransfer(D, 1, IntSets.immutableSet(0), true);
 
       assertTrue(stateProvider.isStateTransferInProgress());
 
@@ -254,9 +263,9 @@ public class StateProviderTest {
 
       // create state provider
       StateProviderImpl stateProvider = new StateProviderImpl();
-      TestingUtil.inject(stateProvider, cache, mockExecutorService,
-            configuration, rpcManager, commandsFactory, cacheNotifier, persistenceManager,
-            dataContainer, transactionTable, stateTransferLock, stateConsumer, ef, keyPartitioner, TransactionOriginatorChecker.LOCAL);
+      TestingUtil.inject(stateProvider, mockExecutorService,
+                         configuration, rpcManager, commandsFactory, cacheNotifier, persistenceManager,
+                         dataContainer, transactionTable, stateTransferLock, distributionManager, ef, keyPartitioner, TransactionOriginatorChecker.LOCAL);
       stateProvider.start();
 
       final List<InternalCacheEntry> cacheEntries = new ArrayList<>();
@@ -272,11 +281,14 @@ public class StateProviderTest {
       when(transactionTable.getLocalTransactions()).thenReturn(Collections.emptyList());
       when(transactionTable.getRemoteTransactions()).thenReturn(Collections.emptyList());
 
-      cacheTopology = new CacheTopology(1, 1, ch1, ch1, ch1, CacheTopology.Phase.READ_OLD_WRITE_ALL, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch1.getMembers()));
-      stateProvider.onTopologyUpdate(cacheTopology, false);
+      CacheTopology simpleTopology = new CacheTopology(1, 1, ch1, ch1, ch1, CacheTopology.Phase.READ_OLD_WRITE_ALL,
+                                                      ch1.getMembers(),
+                                                      persistentUUIDManager.mapAddresses(ch1.getMembers()));
+      this.cacheTopology = new LocalizedCacheTopology(CacheMode.DIST_SYNC, simpleTopology, keyPartitioner, A, true);
+      stateProvider.onTopologyUpdate(this.cacheTopology, false);
 
       log.debug("ch1: " + ch1);
-      Set<Integer> segmentsToRequest = ch1.getSegmentsForOwner(members1.get(0));
+      IntSet segmentsToRequest = IntSets.from(ch1.getSegmentsForOwner(members1.get(0)));
       List<TransactionInfo> transactions = stateProvider.getTransactionsForSegments(members1.get(0), 1, segmentsToRequest);
       assertEquals(0, transactions.size());
 
@@ -289,18 +301,21 @@ public class StateProviderTest {
 
       verifyNoMoreInteractions(stateTransferLock);
 
-      stateProvider.startOutboundTransfer(F, 1, Collections.singleton(0), true);
+      stateProvider.startOutboundTransfer(F, 1, IntSets.immutableSet(0), true);
 
       assertTrue(stateProvider.isStateTransferInProgress());
 
       // TestingUtil.sleepThread(15000);
       log.debug("ch2: " + ch2);
-      cacheTopology = new CacheTopology(2, 1, ch2, ch2, ch2, CacheTopology.Phase.READ_OLD_WRITE_ALL, ch2.getMembers(), persistentUUIDManager.mapAddresses(ch2.getMembers()));
-      stateProvider.onTopologyUpdate(cacheTopology, false);
+      simpleTopology = new CacheTopology(2, 1, ch2, ch2, ch2, CacheTopology.Phase.READ_OLD_WRITE_ALL,
+                                                      ch2.getMembers(),
+                                                      persistentUUIDManager.mapAddresses(ch2.getMembers()));
+      this.cacheTopology = new LocalizedCacheTopology(CacheMode.DIST_SYNC, simpleTopology, keyPartitioner, A, true);
+      stateProvider.onTopologyUpdate(this.cacheTopology, false);
 
       assertFalse(stateProvider.isStateTransferInProgress());
 
-      stateProvider.startOutboundTransfer(E, 1, Collections.singleton(0), true);
+      stateProvider.startOutboundTransfer(E, 1, IntSets.immutableSet(0), true);
 
       assertTrue(stateProvider.isStateTransferInProgress());
 

@@ -1,5 +1,7 @@
 package org.infinispan.distribution.ch.impl;
 
+import org.infinispan.configuration.cache.HashConfiguration;
+import org.infinispan.configuration.cache.StoreConfiguration;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.group.impl.GroupManager;
 import org.infinispan.distribution.group.impl.GroupingPartitioner;
@@ -22,17 +24,31 @@ public class KeyPartitionerFactory extends AbstractNamedCacheComponentFactory
       implements AutoInstantiableFactory {
    @Inject private GroupManager groupManager;
 
-   @Override
-   public <T> T construct(Class<T> componentType) {
-      KeyPartitioner partitioner = configuration.clustering().hash().keyPartitioner();
-      partitioner.init(configuration.clustering().hash());
-      if (groupManager == null)
-         return componentType.cast(partitioner);
+   private KeyPartitioner getConfiguredPartitioner() {
+      HashConfiguration hashConfiguration = configuration.clustering().hash();
+      KeyPartitioner partitioner = hashConfiguration.keyPartitioner();
+      partitioner.init(hashConfiguration);
+      return partitioner;
+   }
 
-      // Grouping is enabled. Since the configured partitioner will not be registered in the component
-      // registry, we need to inject dependencies explicitly.
-      componentRegistry.wireDependencies(partitioner);
-      GroupingPartitioner groupingPartitioner = new GroupingPartitioner(partitioner, groupManager);
-      return componentType.cast(groupingPartitioner);
+   @Override
+   public Object construct(String componentName) {
+
+      if (configuration.clustering().cacheMode().needsStateTransfer()) {
+         KeyPartitioner partitioner = getConfiguredPartitioner();
+         if (groupManager == null)
+            return partitioner;
+
+         // Grouping is enabled. Since the configured partitioner will not be registered in the component
+         // registry, we need to inject dependencies explicitly.
+         componentRegistry.wireDependencies(partitioner);
+         GroupingPartitioner groupingPartitioner = new GroupingPartitioner(partitioner, groupManager);
+         return groupingPartitioner;
+      } else if (configuration.persistence().stores().stream().filter(StoreConfiguration::segmented).findFirst().isPresent()) {
+         // If store is segmented we still have to find consistent hashes
+         return getConfiguredPartitioner();
+      } else {
+         return SingleSegmentKeyPartitioner.getInstance();
+      }
    }
 }

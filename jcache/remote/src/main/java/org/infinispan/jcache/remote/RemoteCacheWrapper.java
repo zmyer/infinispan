@@ -5,8 +5,10 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import org.infinispan.client.hotrod.CacheTopologyInfo;
+import org.infinispan.client.hotrod.DataFormat;
 import org.infinispan.client.hotrod.Flag;
 import org.infinispan.client.hotrod.MetadataValue;
 import org.infinispan.client.hotrod.RemoteCache;
@@ -14,9 +16,11 @@ import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.ServerStatistics;
 import org.infinispan.client.hotrod.StreamingRemoteCache;
 import org.infinispan.client.hotrod.VersionedValue;
+import org.infinispan.client.hotrod.jmx.RemoteCacheClientStatisticsMXBean;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CloseableIteratorCollection;
 import org.infinispan.commons.util.CloseableIteratorSet;
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.query.dsl.Query;
 
 /**
@@ -65,6 +69,11 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
    }
 
    @Override
+   public CloseableIteratorSet<Entry<K, V>> entrySet(IntSet segments) {
+      return delegate.entrySet(segments);
+   }
+
+   @Override
    public V get(Object key) {
       return delegate.get(key);
    }
@@ -77,6 +86,11 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
    @Override
    public CompletableFuture<V> getAsync(K key) {
       return delegate.getAsync(key);
+   }
+
+   @Override
+   public CompletableFuture<MetadataValue<V>> getWithMetadataAsync(K key) {
+      return delegate.getWithMetadataAsync(key);
    }
 
    @Override
@@ -135,6 +149,11 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
    }
 
    @Override
+   public CloseableIteratorSet<K> keySet(IntSet segments) {
+      return delegate.keySet(segments);
+   }
+
+   @Override
    public V put(K key, V value) {
       return delegate.put(key, value);
    }
@@ -161,7 +180,7 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
 
    @Override
    public void putAll(Map<? extends K, ? extends V> map, long lifespan, TimeUnit lifespanUnit, long maxIdleTime,
-         TimeUnit maxIdleTimeUnit) {
+                      TimeUnit maxIdleTimeUnit) {
       delegate.putAll(map, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
    }
 
@@ -177,7 +196,7 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
 
    @Override
    public CompletableFuture<Void> putAllAsync(Map<? extends K, ? extends V> data, long lifespan, TimeUnit lifespanUnit,
-         long maxIdle, TimeUnit maxIdleUnit) {
+                                              long maxIdle, TimeUnit maxIdleUnit) {
       return delegate.putAllAsync(data, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
    }
 
@@ -193,7 +212,7 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
 
    @Override
    public CompletableFuture<V> putAsync(K key, V value, long lifespan, TimeUnit lifespanUnit, long maxIdle,
-         TimeUnit maxIdleUnit) {
+                                        TimeUnit maxIdleUnit) {
       return delegate.putAsync(key, value, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
    }
 
@@ -224,7 +243,7 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
 
    @Override
    public CompletableFuture<V> putIfAbsentAsync(K key, V value, long lifespan, TimeUnit lifespanUnit, long maxIdle,
-         TimeUnit maxIdleUnit) {
+                                                TimeUnit maxIdleUnit) {
       return delegate.putIfAbsentAsync(key, value, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
    }
 
@@ -290,25 +309,70 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
 
    @Override
    public boolean replace(K key, V oldValue, V value, long lifespan, TimeUnit lifespanUnit, long maxIdleTime,
-         TimeUnit maxIdleTimeUnit) {
+                          TimeUnit maxIdleTimeUnit) {
       return delegate.replace(key, oldValue, value, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
    }
 
    @Override
+   public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+      return delegate.compute(key, remappingFunction);
+   }
+
+   @Override
+   public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return delegate.compute(key, remappingFunction, lifespan, lifespanUnit);
+   }
+
+   @Override
+   public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      return delegate.compute(key, remappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
+   }
+
+   @Override
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+      return delegate.computeIfPresent(key, remappingFunction);
+   }
+
+   @Override
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return delegate.computeIfPresent(key, remappingFunction, lifespan, lifespanUnit);
+   }
+
+   @Override
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      return delegate.computeIfPresent(key, remappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
+   }
+
+   @Override
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
+      return delegate.computeIfAbsent(key, mappingFunction);
+   }
+
+   @Override
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return delegate.computeIfAbsent(key, mappingFunction, lifespan, lifespanUnit);
+   }
+
+   @Override
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      return delegate.computeIfAbsent(key, mappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
+   }
+
+   @Override
    public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
-      return delegate.merge(key,  value,  remappingFunction);
+      return delegate.merge(key, value, remappingFunction);
    }
 
    @Override
    public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan,
                   TimeUnit lifespanUnit) {
-      return delegate.merge(key,  value,  remappingFunction, lifespan, lifespanUnit);
+      return delegate.merge(key, value, remappingFunction, lifespan, lifespanUnit);
    }
 
    @Override
    public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan,
                   TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
-      return delegate.merge(key,  value,  remappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
+      return delegate.merge(key, value, remappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
    }
 
    @Override
@@ -323,7 +387,7 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
 
    @Override
    public CompletableFuture<V> replaceAsync(K key, V value, long lifespan, TimeUnit lifespanUnit, long maxIdle,
-         TimeUnit maxIdleUnit) {
+                                            TimeUnit maxIdleUnit) {
       return delegate.replaceAsync(key, value, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
    }
 
@@ -339,7 +403,7 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
 
    @Override
    public CompletableFuture<Boolean> replaceAsync(K key, V oldValue, V newValue, long lifespan, TimeUnit lifespanUnit,
-         long maxIdle, TimeUnit maxIdleUnit) {
+                                                  long maxIdle, TimeUnit maxIdleUnit) {
       return delegate.replaceAsync(key, oldValue, newValue, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
    }
 
@@ -375,8 +439,68 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
 
    @Override
    public CompletableFuture<Boolean> replaceWithVersionAsync(K key, V newValue, long version, int lifespanSeconds,
-         int maxIdleSeconds) {
+                                                             int maxIdleSeconds) {
       return delegate.replaceWithVersionAsync(key, newValue, version, lifespanSeconds, maxIdleSeconds);
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+      return delegate.computeAsync(key, remappingFunction);
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return delegate.computeAsync(key, remappingFunction, lifespan, lifespanUnit);
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      return delegate.computeAsync(key, remappingFunction, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction) {
+      return delegate.computeIfAbsentAsync(key, mappingFunction);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return delegate.computeIfAbsentAsync(key, mappingFunction, lifespan, lifespanUnit);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      return delegate.computeIfAbsentAsync(key, mappingFunction, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+      return delegate.computeIfPresentAsync(key, remappingFunction);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return delegate.computeIfPresentAsync(key, remappingFunction, lifespan, lifespanUnit);
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      return delegate.computeIfPresentAsync(key, remappingFunction, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
+      return delegate.mergeAsync(key, value, remappingFunction);
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return delegate.mergeAsync(key, value, remappingFunction, lifespan, lifespanUnit);
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      return delegate.mergeAsync(key, value, remappingFunction, lifespan, lifespanUnit, maxIdle, maxIdleUnit);
    }
 
    @Override
@@ -405,6 +529,11 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
    }
 
    @Override
+   public CloseableIteratorCollection<V> values(IntSet segments) {
+      return delegate.values(segments);
+   }
+
+   @Override
    public RemoteCache<K, V> withFlags(Flag... flags) {
       delegate.withFlags(flags);
       return this;
@@ -413,6 +542,11 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
    @Override
    public <T> T execute(String scriptName, Map<String, ?> params) {
       return delegate.execute(scriptName, params);
+   }
+
+   @Override
+   public <T> T execute(String scriptName, Map<String, ?> params, Object key) {
+      return delegate.execute(scriptName, params, key);
    }
 
    @Override
@@ -446,7 +580,27 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
    }
 
    @Override
+   public RemoteCache<K, V> withDataFormat(DataFormat dataFormat) {
+      return delegate.withDataFormat(dataFormat);
+   }
+
+   @Override
    public StreamingRemoteCache<K> streaming() {
       return delegate.streaming();
+   }
+
+   @Override
+   public DataFormat getDataFormat() {
+      return delegate.getDataFormat();
+   }
+
+   @Override
+   public RemoteCacheClientStatisticsMXBean clientStatistics() {
+      return delegate.clientStatistics();
+   }
+
+   @Override
+   public ServerStatistics serverStatistics() {
+      return delegate.serverStatistics();
    }
 }

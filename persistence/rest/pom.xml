@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-persistence-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-cachestore-rest</artifactId>
@@ -12,14 +12,18 @@
    <name>Infinispan REST CacheStore</name>
    <description>Infinispan REST CacheStore</description>
 
+   <properties>
+      <module.skipCopyDependencies>false</module.skipCopyDependencies>
+   </properties>
+
    <dependencies>
-      <dependency>
-         <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-core</artifactId>
-      </dependency>
       <dependency>
          <groupId>io.netty</groupId>
          <artifactId>netty-handler</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-codec-http</artifactId>
       </dependency>
       <dependency>
          <groupId>io.netty</groupId>
@@ -33,7 +37,7 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-rest</artifactId>
-         <optional>true</optional>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
@@ -83,6 +87,12 @@
             </excludes>
          </resource>
       </resources>
+      <testResources>
+         <testResource>
+            <directory>${project.basedir}/src/test/resources</directory>
+            <filtering>true</filtering>
+         </testResource>
+      </testResources>
       <plugins>
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>

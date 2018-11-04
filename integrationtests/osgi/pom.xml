@@ -4,24 +4,26 @@
 
    <parent>
       <groupId>org.infinispan</groupId>
-      <artifactId>infinispan-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
-      <relativePath>../../pom.xml</relativePath>
+      <artifactId>infinispan-integrationtests-parent</artifactId>
+      <version>10.0.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>integrationtests-osgi</artifactId>
-   <name>Integration tests: Karaf</name>
+   <name>Integration tests - OSGi/Karaf</name>
    <packaging>bundle</packaging>
    <description>Integration tests for Infinispan running in OSGi/Karaf</description>
 
-   <profiles>
-      <profile>
-         <id>smoke</id>
-         <properties>
-            <skipOSGiTests>true</skipOSGiTests>
-         </properties>
-      </profile>
-   </profiles>
+   <properties>
+      <defaultTestGroup />
+      <defaultExcludedTestGroup />
+      <infinispan.test.parallel.threads>1</infinispan.test.parallel.threads>
+      <infinispan.test.jgroups.protocol>tcp</infinispan.test.jgroups.protocol>
+      <forkJvmArgs>-Xmx500m -XX:HeapDumpPath=${user.dir}</forkJvmArgs>
+      <target.tmp.dir>${project.build.directory}/tmp/</target.tmp.dir>
+      <skipOSGiTests>${skipTests}</skipOSGiTests>
+      <verbose.karaf>false</verbose.karaf>
+   </properties>
 
    <dependencies>
       <dependency>
@@ -61,12 +63,10 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-embedded</artifactId>
-         <version>${project.version}</version>
       </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote</artifactId>
-         <version>${project.version}</version>
       </dependency>
       <dependency>
          <groupId>org.hibernate</groupId>
@@ -76,12 +76,11 @@
       <dependency>
          <groupId>org.hibernate</groupId>
          <artifactId>hibernate-osgi</artifactId>
-         <version>${version.hibernate.core}</version>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>org.hibernate.javax.persistence</groupId>
-         <artifactId>hibernate-jpa-2.1-api</artifactId>
+         <groupId>javax.persistence</groupId>
+         <artifactId>javax.persistence-api</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -98,6 +97,11 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cachestore-rocksdb</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-hibernate-cache-v53</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -146,12 +150,19 @@
          <scope>test</scope>
       </dependency>
       <dependency>
+         <groupId>javax.inject</groupId>
+         <artifactId>javax.inject</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
          <groupId>org.ops4j.pax.exam</groupId>
          <artifactId>pax-exam-container-karaf</artifactId>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.ops4j.pax.exam</groupId>
          <artifactId>pax-exam-junit4</artifactId>
+         <scope>test</scope>
          <exclusions>
             <exclusion>
                <artifactId>bndlib</artifactId>
@@ -162,22 +173,27 @@
       <dependency>
          <groupId>org.ops4j.pax.exam</groupId>
          <artifactId>pax-exam</artifactId>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.ops4j.pax.exam</groupId>
          <artifactId>pax-exam-inject</artifactId>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.ops4j.pax.url</groupId>
          <artifactId>pax-url-aether</artifactId>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.ops4j.pax.url</groupId>
          <artifactId>pax-url-assembly</artifactId>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.ops4j.pax.url</groupId>
          <artifactId>pax-url-wrap</artifactId>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.apache.karaf.features</groupId>
@@ -214,17 +230,6 @@
          <!--<version>${version.pax.exam}</version>-->
       <!--</dependency>-->
    </dependencies>
-
-   <properties>
-      <defaultTestGroup />
-      <defaultExcludedTestGroup />
-      <infinispan.test.parallel.threads>1</infinispan.test.parallel.threads>
-      <infinispan.test.jgroups.protocol>tcp</infinispan.test.jgroups.protocol>
-      <forkJvmArgs>-Xmx500m -XX:HeapDumpPath=${user.dir}</forkJvmArgs>
-      <target.tmp.dir>${project.build.directory}/tmp/</target.tmp.dir>
-      <skipOSGiTests>${skipTests}</skipOSGiTests>
-      <verbose.karaf>false</verbose.karaf>
-   </properties>
 
    <build>
       <testResources>
@@ -320,10 +325,8 @@
                <disableXmlReport>false</disableXmlReport>
                <runOrder>alphabetical</runOrder>
                <properties>
-                  <property>
-                     <name>listener</name>
-                     <value>${junitListener}</value>
-                  </property>
+                  <usedefaultlisteners>false</usedefaultlisteners>
+                  <listener>${junitListener}</listener>
                </properties>
                <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
             </configuration>
@@ -369,4 +372,24 @@
          </plugin>
       </plugins>
    </build>
+
+   <profiles>
+      <profile>
+         <id>smoke</id>
+         <properties>
+            <skipOSGiTests>true</skipOSGiTests>
+         </properties>
+      </profile>
+      <profile>
+         <id>jigsaw</id>
+         <activation>
+            <jdk>[9,)</jdk>
+         </activation>
+         <properties>
+            <!-- Until Karaf/Pax Exam work in JDK 10+ -->
+            <skipOSGiTests>true</skipOSGiTests>
+         </properties>
+      </profile>
+   </profiles>
 </project>
+

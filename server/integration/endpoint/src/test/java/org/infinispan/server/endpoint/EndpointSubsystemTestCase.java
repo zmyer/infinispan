@@ -26,12 +26,22 @@ import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.DES
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.OP;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.OP_ADDR;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.SUBSYSTEM;
+import static org.junit.Assert.assertTrue;
 
+import java.io.FileReader;
 import java.io.IOException;
-import java.util.Arrays;
+import java.io.Reader;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Properties;
+import java.util.stream.Collectors;
 
+import org.infinispan.Version;
 import org.infinispan.server.commons.subsystem.ClusteringSubsystemTest;
 import org.infinispan.server.endpoint.subsystem.EndpointExtension;
 import org.jboss.as.controller.PathAddress;
@@ -53,25 +63,41 @@ import org.junit.runners.Parameterized.Parameters;
 public class EndpointSubsystemTestCase extends ClusteringSubsystemTest {
 
    private final String xsdPath;
-   private final int operations;
+   private final int expectedOperationCount;
    private final String[] templates;
 
-   public EndpointSubsystemTestCase(String xmlFile, int operations, String xsdPath, String[] templates) {
-      super(Constants.SUBSYSTEM_NAME, new EndpointExtension(), xmlFile);
-      this.operations = operations;
-      this.xsdPath = xsdPath;
-      this.templates = templates;
+   public EndpointSubsystemTestCase(Path xmlPath, Properties properties) {
+      super(Constants.SUBSYSTEM_NAME, new EndpointExtension(), xmlPath.getFileName().toString());
+      this.expectedOperationCount = Integer.parseInt(properties.getProperty("expected.operations.count"));
+      this.xsdPath = properties.getProperty("xsd.path");
+      this.templates = null;
    }
 
    @Parameters
-   public static Collection<Object[]> data() {
-      Object[][] data = new Object[][] {
-            { "endpoint-7.2.xml", 15, "schema/jboss-infinispan-endpoint_7_2.xsd", null },
-            { "endpoint-8.0.xml", 15, "schema/jboss-infinispan-endpoint_8_0.xsd", null },
-            { "endpoint-9.0.xml", 37, "schema/jboss-infinispan-endpoint_9_0.xsd", null },
-            { "endpoint-9.2.xml", 40, "schema/jboss-infinispan-endpoint_9_2.xsd", new String[] { "/subsystem-templates/infinispan-endpoint.xml"} },
-      };
-      return Arrays.asList(data);
+   public static Collection<Object[]> data() throws Exception {
+      URL configDir = Thread.currentThread().getContextClassLoader().getResource("org/infinispan/server/endpoint");
+      List<Path> paths = Files.list(Paths.get(configDir.toURI()))
+            .filter(path -> path.getFileName().toString().matches("^endpoint-[0-9]+\\.[0-9]+.xml$"))
+            .collect(Collectors.toList());
+
+      boolean hasCurrentSchema = false;
+      String currentSchema = "endpoint-" + Version.getSchemaVersion() + ".xml";
+      List<Object[]> data = new ArrayList<>();
+      for (int i = 0; i < paths.size(); i++) {
+         Path xmlPath = paths.get(i);
+         if (xmlPath.getFileName().toString().equals(currentSchema)) {
+            hasCurrentSchema = true;
+         }
+         String propsPath = xmlPath.toString().replaceAll("\\.xml$", ".properties");
+         Properties properties = new Properties();
+         try (Reader r = new FileReader(propsPath)) {
+            properties.load(r);
+         }
+         data.add(new Object[]{xmlPath, properties});
+      }
+      // Ensure that we contain the current schema version at the very least
+      assertTrue("Could not find a '" + currentSchema + "' configuration file", hasCurrentSchema);
+      return data;
    }
 
    @Override
@@ -103,14 +129,9 @@ public class EndpointSubsystemTestCase extends ClusteringSubsystemTest {
       // Parse the subsystem xml into operations
       List<ModelNode> operations = super.parse(getSubsystemXml());
 
-      /*
-       * // print the operations System.out.println("List of operations"); for (ModelNode op :
-       * operations) { System.out.println("operation = " + op.toString()); }
-       */
-
       // Check that we have the expected number of operations
       // one for each resource instance
-      Assert.assertEquals(this.operations, operations.size());
+      Assert.assertEquals(this.expectedOperationCount, operations.size());
 
       // Check that each operation has the correct content
       ModelNode addSubsystem = operations.get(0);
@@ -132,8 +153,6 @@ public class EndpointSubsystemTestCase extends ClusteringSubsystemTest {
 
       // Read the whole model and make sure it looks as expected
       ModelNode model = services.readWholeModel();
-
-      //System.out.println("model = " + model.asString());
 
       Assert.assertTrue(model.get(SUBSYSTEM).hasDefined(getMainSubsystemName()));
    }

@@ -25,9 +25,11 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.interceptors.base.BaseCustomInterceptor;
+import org.infinispan.remoting.inboundhandler.AbstractDelegatingHandler;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
 import org.infinispan.remoting.inboundhandler.Reply;
@@ -55,8 +57,8 @@ public class WriteSkewConsistencyTest extends MultipleCacheManagersTest {
 
    public void testValidationOnlyInPrimaryOwner() throws Exception {
       final Object key = new MagicKey(cache(1), cache(0));
-      final DataContainer primaryOwnerDataContainer = TestingUtil.extractComponent(cache(1), DataContainer.class);
-      final DataContainer backupOwnerDataContainer = TestingUtil.extractComponent(cache(0), DataContainer.class);
+      final DataContainer primaryOwnerDataContainer = TestingUtil.extractComponent(cache(1), InternalDataContainer.class);
+      final DataContainer backupOwnerDataContainer = TestingUtil.extractComponent(cache(0), InternalDataContainer.class);
       final VersionGenerator versionGenerator = TestingUtil.extractComponent(cache(1), VersionGenerator.class);
 
       injectReorderResponseRpcManager(cache(3), cache(0));
@@ -267,13 +269,11 @@ public class WriteSkewConsistencyTest extends MultipleCacheManagersTest {
       }
    }
 
-   private class ControllerInboundInvocationHandler implements PerCacheInboundInvocationHandler {
-
-      private final PerCacheInboundInvocationHandler realOne;
+   private class ControllerInboundInvocationHandler extends AbstractDelegatingHandler {
       private volatile boolean discardRemoteGet;
 
-      private ControllerInboundInvocationHandler(PerCacheInboundInvocationHandler realOne) {
-         this.realOne = realOne;
+      private ControllerInboundInvocationHandler(PerCacheInboundInvocationHandler delegate) {
+         super(delegate);
       }
 
       @Override
@@ -281,7 +281,7 @@ public class WriteSkewConsistencyTest extends MultipleCacheManagersTest {
          if (discardRemoteGet && command.getCommandId() == ClusteredGetCommand.COMMAND_ID) {
             return;
          }
-         realOne.handle(command, reply, order);
+         delegate.handle(command, reply, order);
       }
    }
 

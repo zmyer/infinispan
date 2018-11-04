@@ -20,6 +20,9 @@ import java.lang.reflect.Modifier;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileLock;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
@@ -33,7 +36,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 import javax.naming.Context;
@@ -62,6 +64,7 @@ public final class Util {
    public static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
    public static final String[] EMPTY_STRING_ARRAY = new String[0];
    public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
+   public static final byte[][] EMPTY_BYTE_ARRAY_ARRAY = new byte[0][];
 
    private static final Log log = LogFactory.getLog(Util.class);
 
@@ -423,7 +426,7 @@ public final class Util {
      */
     public static String read(InputStream is) throws IOException {
        try {
-          final Reader reader = new InputStreamReader(is, "UTF-8");
+          final Reader reader = new InputStreamReader(is, StandardCharsets.UTF_8);
           StringWriter writer = new StringWriter();
           char[] buf = new char[1024];
           int len;
@@ -1103,14 +1106,12 @@ public final class Util {
       return length == 0 ? EMPTY_STRING_ARRAY : new String[length];
    }
 
-   public static void renameTempFile(File tempFile, File lockFile, File dstFile, BiConsumer<File, File> renameFailed)
+   public static void renameTempFile(File tempFile, File lockFile, File dstFile)
          throws IOException {
       FileLock lock = null;
       try (FileOutputStream lockFileOS = new FileOutputStream(lockFile)) {
          lock = lockFileOS.getChannel().lock();
-         if (!tempFile.renameTo(dstFile)) {
-            renameFailed.accept(tempFile, dstFile);
-         }
+         Files.move(tempFile.toPath(), dstFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
       } finally {
          if (lock != null && lock.isValid()) {
             lock.release();

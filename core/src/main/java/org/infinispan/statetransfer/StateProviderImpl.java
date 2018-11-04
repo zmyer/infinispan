@@ -16,15 +16,18 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import org.infinispan.Cache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.container.DataContainer;
-import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.distexec.DistributedCallable;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.KeyPartitioner;
+import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
@@ -56,23 +59,23 @@ public class StateProviderImpl implements StateProvider {
    private static final Log log = LogFactory.getLog(StateProviderImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private Cache cache;
+   @ComponentName(KnownComponentNames.CACHE_NAME)
+   @Inject protected String cacheName;
    @Inject private Configuration configuration;
    @Inject protected RpcManager rpcManager;
    @Inject protected CommandsFactory commandsFactory;
    @Inject private ClusterCacheNotifier clusterCacheNotifier;
    @Inject private TransactionTable transactionTable;     // optional
-   @Inject protected DataContainer dataContainer;
+   @Inject protected InternalDataContainer dataContainer;
    @Inject protected PersistenceManager persistenceManager; // optional
    @Inject @ComponentName(ASYNC_TRANSPORT_EXECUTOR)
    protected ExecutorService executorService;
    @Inject protected StateTransferLock stateTransferLock;
    @Inject protected InternalEntryFactory entryFactory;
    @Inject protected KeyPartitioner keyPartitioner;
-   @Inject protected StateConsumer stateConsumer;
+   @Inject protected DistributionManager distributionManager;
    @Inject private TransactionOriginatorChecker transactionOriginatorChecker;
 
-   protected String cacheName;
    protected long timeout;
    protected int chunkSize;
 
@@ -112,10 +115,10 @@ public class StateProviderImpl implements StateProvider {
       //todo [anistor] must cancel transfers for all segments that we no longer own
    }
 
-   @Start(priority = 60)
+   // Must start before StateTransferManager sends the join request
+   @Start(priority = 50)
    @Override
    public void start() {
-      this.cacheName = cache.getName();
       timeout = configuration.clustering().stateTransfer().timeout();
       chunkSize = configuration.clustering().stateTransfer().chunkSize();
    }
@@ -142,7 +145,7 @@ public class StateProviderImpl implements StateProvider {
       }
    }
 
-   public List<TransactionInfo> getTransactionsForSegments(Address destination, int requestTopologyId, Set<Integer> segments) throws InterruptedException {
+   public List<TransactionInfo> getTransactionsForSegments(Address destination, int requestTopologyId, IntSet segments) throws InterruptedException {
       if (trace) {
          log.tracef("Received request for transactions from node %s for cache %s, topology id %d, segments %s",
                     destination, cacheName, requestTopologyId, segments);
@@ -151,7 +154,7 @@ public class StateProviderImpl implements StateProvider {
       final CacheTopology cacheTopology = getCacheTopology(requestTopologyId, destination, true);
       final ConsistentHash readCh = cacheTopology.getReadConsistentHash();
 
-      Set<Integer> ownedSegments = readCh.getSegmentsForOwner(rpcManager.getAddress());
+      IntSet ownedSegments = IntSets.from(readCh.getSegmentsForOwner(rpcManager.getAddress()));
       if (!ownedSegments.containsAll(segments)) {
          segments.removeAll(ownedSegments);
          throw new IllegalArgumentException("Segments " + segments + " are not owned by " + rpcManager.getAddress());
@@ -175,7 +178,7 @@ public class StateProviderImpl implements StateProvider {
    }
 
    private CacheTopology getCacheTopology(int requestTopologyId, Address destination, boolean isReqForTransactions) throws InterruptedException {
-      CacheTopology cacheTopology = stateConsumer.getCacheTopology();
+      CacheTopology cacheTopology = distributionManager.getCacheTopology();
       int currentTopologyId = cacheTopology != null ? cacheTopology.getTopologyId() : -1;
       if (requestTopologyId < currentTopologyId) {
          if (isReqForTransactions)
@@ -195,7 +198,7 @@ public class StateProviderImpl implements StateProvider {
          } catch (TimeoutException e) {
             throw log.failedWaitingForTopology(requestTopologyId);
          }
-         cacheTopology = stateConsumer.getCacheTopology();
+         cacheTopology = distributionManager.getCacheTopology();
       }
       return cacheTopology;
    }
@@ -203,7 +206,7 @@ public class StateProviderImpl implements StateProvider {
    private void collectTransactionsToTransfer(Address destination,
                                               List<TransactionInfo> transactionsToTransfer,
                                               Collection<? extends CacheTransaction> transactions,
-                                              Set<Integer> segments, CacheTopology cacheTopology) {
+                                              IntSet segments, CacheTopology cacheTopology) {
       int topologyId = cacheTopology.getTopologyId();
       Set<Address> members = new HashSet<>(cacheTopology.getMembers());
 
@@ -228,14 +231,13 @@ public class StateProviderImpl implements StateProvider {
                }
             }
          }
-         Set<Object> backupLockedKeys = tx.getBackupLockedKeys();
-         synchronized (backupLockedKeys) {
-            for (Object key : backupLockedKeys) {
-               if (segments.contains(keyPartitioner.getSegment(key))) {
-                  filteredLockedKeys.add(key);
-               }
+         //avoids the warning about synchronizing in a local variable.
+         //and allows us to change the CacheTransaction internals without having to worry about it
+         tx.forEachBackupLock(key -> {
+            if (segments.contains(keyPartitioner.getSegment(key))) {
+               filteredLockedKeys.add(key);
             }
-         }
+         });
          if (filteredLockedKeys.isEmpty()) {
             if (trace) log.tracef("Skipping transaction %s because the state requestor %s doesn't own any key",
                     tx, destination);
@@ -262,7 +264,7 @@ public class StateProviderImpl implements StateProvider {
    }
 
    @Override
-   public void startOutboundTransfer(Address destination, int requestTopologyId, Set<Integer> segments, boolean applyState)
+   public void startOutboundTransfer(Address destination, int requestTopologyId, IntSet segments, boolean applyState)
          throws InterruptedException {
       if (trace) {
          log.tracef("Starting outbound transfer to node %s for cache %s, topology id %d, segments %s", destination,
@@ -270,7 +272,8 @@ public class StateProviderImpl implements StateProvider {
       }
 
       // the destination node must already have an InboundTransferTask waiting for these segments
-      OutboundTransferTask outboundTransfer = new OutboundTransferTask(destination, segments, chunkSize, requestTopologyId,
+      OutboundTransferTask outboundTransfer = new OutboundTransferTask(destination, segments,
+            this.configuration.clustering().hash().numSegments(), chunkSize, requestTopologyId,
             keyPartitioner, this::onTaskCompletion, chunks -> {},
             OutboundTransferTask::defaultMapEntryFromDataContainer, OutboundTransferTask::defaultMapEntryFromStore,
             dataContainer, persistenceManager, rpcManager, commandsFactory, entryFactory, timeout, cacheName, applyState, false);
@@ -291,7 +294,7 @@ public class StateProviderImpl implements StateProvider {
    }
 
    @Override
-   public void cancelOutboundTransfer(Address destination, int topologyId, Set<Integer> segments) {
+   public void cancelOutboundTransfer(Address destination, int topologyId, IntSet segments) {
       if (trace) {
          log.tracef("Cancelling outbound transfer to node %s for cache %s, topology id %d, segments %s", destination,
                     cacheName, topologyId, segments);

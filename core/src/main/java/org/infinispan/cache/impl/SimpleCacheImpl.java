@@ -41,17 +41,18 @@ import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CloseableIteratorCollectionAdapter;
 import org.infinispan.commons.util.CloseableIteratorSetAdapter;
 import org.infinispan.commons.util.CloseableSpliterator;
-import org.infinispan.commons.util.CloseableSpliteratorMapper;
 import org.infinispan.commons.util.Closeables;
 import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.IteratorMapper;
+import org.infinispan.commons.util.SpliteratorMapper;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.format.PropertyFormatter;
 import org.infinispan.container.DataContainer;
-import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.context.impl.ImmutableContext;
@@ -59,6 +60,7 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.eviction.EvictionManager;
 import org.infinispan.expiration.ExpirationManager;
+import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.filter.KeyFilter;
@@ -92,7 +94,7 @@ import org.infinispan.stream.impl.local.EntryStreamSupplier;
 import org.infinispan.stream.impl.local.KeyStreamSupplier;
 import org.infinispan.stream.impl.local.LocalCacheStream;
 import org.infinispan.util.DataContainerRemoveIterator;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
@@ -110,6 +112,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    private final static String NULL_KEYS_NOT_SUPPORTED = "Null keys are not supported!";
    private final static String NULL_VALUES_NOT_SUPPORTED = "Null values are not supported!";
+   private final static String NULL_FUNCTION_NOT_SUPPORTED = "Null functions are not supported!";
    private final static Class<? extends Annotation>[] FIRED_EVENTS = new Class[]{
          CacheEntryCreated.class, CacheEntryRemoved.class, CacheEntryVisited.class,
          CacheEntryModified.class, CacheEntriesEvicted.class, CacheEntryInvalidated.class,
@@ -122,7 +125,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    @Inject private ComponentRegistry componentRegistry;
    @Inject private Configuration configuration;
    @Inject private EmbeddedCacheManager cacheManager;
-   @Inject private DataContainer<K, V> dataContainer;
+   @Inject private InternalDataContainer<K, V> dataContainer;
    @Inject private CacheNotifier<K, V> cacheNotifier;
    @Inject private TimeService timeService;
 
@@ -284,6 +287,86 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          }
       }
       return map;
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return CompletableFuture.completedFuture(compute(key, remappingFunction, metadata));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return CompletableFuture.completedFuture(computeIfPresent(key, remappingFunction, metadata));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata) {
+      return CompletableFuture.completedFuture(computeIfAbsent(key, mappingFunction, metadata));
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return CompletableFuture.completedFuture(merge(key, value, remappingFunction, lifespan, lifespanUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      return CompletableFuture.completedFuture(merge(key, value, remappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, Metadata metadata) {
+      return CompletableFuture.completedFuture(merge(key, value, remappingFunction, metadata));
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+      return CompletableFuture.completedFuture(compute(key, remappingFunction));
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return CompletableFuture.completedFuture(compute(key, remappingFunction, lifespan, lifespanUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> computeAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      return CompletableFuture.completedFuture(compute(key, remappingFunction, lifespan, lifespanUnit, maxIdle, maxIdleUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction) {
+      return CompletableFuture.completedFuture(computeIfAbsent(key, mappingFunction));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return CompletableFuture.completedFuture(computeIfAbsent(key, mappingFunction, lifespan, lifespanUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfAbsentAsync(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      return CompletableFuture.completedFuture(computeIfAbsent(key, mappingFunction, lifespan, lifespanUnit, maxIdle, maxIdleUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+      return CompletableFuture.completedFuture(computeIfPresent(key, remappingFunction));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return CompletableFuture.completedFuture(computeIfPresent(key, remappingFunction, lifespan, lifespanUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> computeIfPresentAsync(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdle, TimeUnit maxIdleUnit) {
+      return CompletableFuture.completedFuture(computeIfPresent(key, remappingFunction, lifespan, lifespanUnit, maxIdle, maxIdleUnit));
+   }
+
+   @Override
+   public CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
+      return CompletableFuture.completedFuture(merge(key, value, remappingFunction));
    }
 
    @Override
@@ -461,8 +544,17 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
-   public void removeExpired(K key, V value, Long lifespan) {
+   public CompletableFuture<Void> removeLifespanExpired(K key, V value, Long lifespan) {
       checkExpiration(getDataContainer().get(key), timeService.wallClockTime());
+      return CompletableFutures.completedNull();
+   }
+
+   @Override
+   public CompletableFuture<Boolean> removeMaxIdleExpired(K key, V value) {
+      if (checkExpiration(getDataContainer().get(key), timeService.wallClockTime())) {
+         return CompletableFutures.completedTrue();
+      }
+      return CompletableFutures.completedFalse();
    }
 
    @Override
@@ -537,7 +629,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       ArrayList<InternalCacheEntry<K, V>> copyEntries;
       if (hasListeners) {
          copyEntries = new ArrayList<>(dataContainer.sizeIncludingExpired());
-         dataContainer.iterator().forEachRemaining(entry -> {
+         dataContainer.forEach(entry -> {
             copyEntries.add(entry);
             cacheNotifier.notifyCacheEntryRemoved(entry.getKey(), entry.getValue(), entry.getMetadata(), true, ImmutableContext.INSTANCE, null);
          });
@@ -1020,6 +1112,11 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       }
    }
 
+   @Override
+   public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+      throw new UnsupportedOperationException();
+   }
+
    private boolean canFire(Object listener) {
       for (Method m : listener.getClass().getMethods()) {
          for (Class<? extends Annotation> annotation : FIRED_EVENTS) {
@@ -1115,7 +1212,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public ExpirationManager<K, V> getExpirationManager() {
-      return getComponentRegistry().getComponent(ExpirationManager.class);
+      return getComponentRegistry().getComponent(InternalExpirationManager.class);
    }
 
    @Override
@@ -1243,16 +1340,26 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
-      Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
       ByRef<V> newValueRef = new ByRef<>(null);
       return computeIfAbsentInternal(key, mappingFunction, newValueRef, defaultMetadata);
    }
 
    @Override
    public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, Metadata metadata) {
-      Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
       ByRef<V> newValueRef = new ByRef<>(null);
       return computeIfAbsentInternal(key, mappingFunction, newValueRef, metadata);
+   }
+
+   @Override
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      ByRef<V> newValueRef = new ByRef<>(null);
+      return computeIfAbsentInternal(key, mappingFunction, newValueRef, createMetadata(lifespan, lifespanUnit));
+   }
+
+   @Override
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      ByRef<V> newValueRef = new ByRef<>(null);
+      return computeIfAbsentInternal(key, mappingFunction, newValueRef, createMetadata(lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit));
    }
 
    protected V computeIfAbsentInternal(K key, Function<? super K, ? extends V> mappingFunction, ByRef<V> newValueRef) {
@@ -1260,6 +1367,8 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    private V computeIfAbsentInternal(K key, Function<? super K, ? extends V> mappingFunction, ByRef<V> newValueRef, Metadata metadata) {
+      Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
+      Objects.requireNonNull(mappingFunction, NULL_FUNCTION_NOT_SUPPORTED);
       boolean hasListeners = this.hasListeners;
       componentRegistry.wireDependencies(mappingFunction);
       InternalCacheEntry<K, V> returnEntry = getDataContainer().compute(key, (k, oldEntry, factory) -> {
@@ -1288,14 +1397,24 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
-      Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
       CacheEntryChange<K, V> ref = new CacheEntryChange<>();
       return computeIfPresentInternal(key, remappingFunction, ref, defaultMetadata);
    }
 
    @Override
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      CacheEntryChange<K, V> ref = new CacheEntryChange<>();
+      return computeIfPresentInternal(key, remappingFunction, ref, createMetadata(lifespan, lifespanUnit));
+   }
+
+   @Override
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      CacheEntryChange<K, V> ref = new CacheEntryChange<>();
+      return computeIfPresentInternal(key, remappingFunction, ref, createMetadata(lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit));
+   }
+
+   @Override
    public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
-      Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
       CacheEntryChange<K, V> ref = new CacheEntryChange<>();
       return computeIfPresentInternal(key, remappingFunction, ref, metadata);
    }
@@ -1305,6 +1424,8 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    private V computeIfPresentInternal(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, CacheEntryChange<K, V> ref, Metadata metadata) {
+      Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
+      Objects.requireNonNull(remappingFunction, NULL_FUNCTION_NOT_SUPPORTED);
       boolean hasListeners = this.hasListeners;
       componentRegistry.wireDependencies(remappingFunction);
       getDataContainer().compute(key, (k, oldEntry, factory) -> {
@@ -1346,6 +1467,16 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
+   public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit) {
+      return computeInternal(key, remappingFunction, new CacheEntryChange<>(), createMetadata(lifespan, lifespanUnit));
+   }
+
+   @Override
+   public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      return computeInternal(key, remappingFunction, new CacheEntryChange<>(), createMetadata(lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit));
+   }
+
+   @Override
    public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, Metadata metadata) {
       CacheEntryChange<K, V> ref = new CacheEntryChange<>();
       return computeInternal(key, remappingFunction, ref, metadata);
@@ -1356,6 +1487,8 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    private V computeInternal(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction, CacheEntryChange<K, V> ref, Metadata metadata) {
+      Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
+      Objects.requireNonNull(remappingFunction, NULL_FUNCTION_NOT_SUPPORTED);
       boolean hasListeners = this.hasListeners;
       componentRegistry.wireDependencies(remappingFunction);
       getDataContainer().compute(key, (k, oldEntry, factory) -> {
@@ -1387,6 +1520,9 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    protected V mergeInternal(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, CacheEntryChange<K, V> ref, Metadata metadata) {
+      Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
+      Objects.requireNonNull(value, NULL_VALUES_NOT_SUPPORTED);
+      Objects.requireNonNull(remappingFunction, NULL_FUNCTION_NOT_SUPPORTED);
       boolean hasListeners = this.hasListeners;
       getDataContainer().compute(key, (k, oldEntry, factory) -> {
          V oldValue = getValue(oldEntry);
@@ -1823,7 +1959,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
       @Override
       public CloseableSpliterator<K> spliterator() {
-         return new CloseableSpliteratorMapper<>(dataContainer.spliterator(), Map.Entry::getKey);
+         return new SpliteratorMapper<>(dataContainer.spliterator(), Map.Entry::getKey);
       }
 
       @Override

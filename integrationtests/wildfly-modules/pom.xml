@@ -4,18 +4,18 @@
 
    <parent>
       <groupId>org.infinispan</groupId>
-      <artifactId>infinispan-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
-      <relativePath>../../pom.xml</relativePath>
+      <artifactId>infinispan-integrationtests-parent</artifactId>
+      <version>10.0.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-wildfly-module-integrationtests</artifactId>
-   <name>Integration tests: Wildfly Module Integration Tests</name>
-   <description>Integration tests: Wildfly Module Integration Tests</description>
+   <name>Integration tests - Wildfly Module Integration Tests</name>
+   <description>Integration tests - Wildfly Module Integration Tests</description>
 
    <properties>
       <ispnserver.project.dir>${basedir}/../../server/integration</ispnserver.project.dir>
-      <server.build.dist>${ispnserver.project.dir}/build/target/infinispan-server-${project.version}</server.build.dist>
+      <server.build.dist>${ispnserver.project.dir}/build/target/server-distribution-thin/${infinispan.brand.prefix}-server-${infinispan.brand.version}</server.build.dist>
       <ispnserver.dist>${basedir}/target/infinispan-server</ispnserver.dist>
       <server.jvm>${env.JAVA_HOME}</server.jvm>
       <resources.dir>${basedir}/src/test/resources</resources.dir>
@@ -123,8 +123,8 @@
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>org.hibernate.javax.persistence</groupId>
-         <artifactId>hibernate-jpa-2.1-api</artifactId>
+         <groupId>javax.persistence</groupId>
+         <artifactId>javax.persistence-api</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -143,6 +143,13 @@
       <dependency>
          <groupId>org.infinispan.server</groupId>
          <artifactId>infinispan-server-infinispan</artifactId>
+         <scope>test</scope>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-feature-pack-wf-modules</artifactId>
+         <type>zip</type>
          <scope>test</scope>
       </dependency>
 
@@ -181,14 +188,6 @@
          </plugin>
 
          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-deploy-plugin</artifactId>
-            <configuration>
-               <skip>true</skip>
-            </configuration>
-         </plugin>
-
-         <plugin>
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration>
                <skipTests>true</skipTests>
@@ -203,10 +202,8 @@
                <testNGArtifactName>none:none</testNGArtifactName>
                <disableXmlReport>false</disableXmlReport>
                <properties>
-                  <property>
-                     <name>listener</name>
-                     <value>${junitListener}</value>
-                  </property>
+                  <usedefaultlisteners>false</usedefaultlisteners>
+                  <listener>${junitListener}</listener>
                </properties>
                <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
             </configuration>
@@ -222,52 +219,30 @@
                </execution>
             </executions>
          </plugin>
-
          <plugin>
-            <artifactId>maven-dependency-plugin</artifactId>
+            <groupId>org.wildfly.build</groupId>
+            <artifactId>wildfly-server-provisioning-maven-plugin</artifactId>
             <executions>
                <execution>
-                  <id>unpack</id>
-                  <phase>pre-integration-test</phase>
+                  <id>server-provisioning-node1</id>
                   <goals>
-                     <goal>unpack</goal>
+                     <goal>build</goal>
                   </goals>
+                  <phase>pre-integration-test</phase>
                   <configuration>
-                     <skip>${skipTests}</skip>
-                     <artifactItems>
-                        <artifactItem>
-                           <groupId>org.wildfly</groupId>
-                           <artifactId>wildfly-dist</artifactId>
-                           <version>${version.org.wildfly}</version>
-                           <type>zip</type>
-                           <overWrite>false</overWrite>
-                           <outputDirectory>${project.build.directory}/node1</outputDirectory>
-                        </artifactItem>
-                        <artifactItem>
-                           <groupId>org.wildfly</groupId>
-                           <artifactId>wildfly-dist</artifactId>
-                           <version>${version.org.wildfly}</version>
-                           <type>zip</type>
-                           <overWrite>false</overWrite>
-                           <outputDirectory>${project.build.directory}/node2</outputDirectory>
-                        </artifactItem>
-                        <artifactItem>
-                           <groupId>org.infinispan</groupId>
-                           <artifactId>infinispan-wildfly-modules</artifactId>
-                           <version>${project.version}</version>
-                           <type>zip</type>
-                           <overWrite>false</overWrite>
-                           <outputDirectory>${project.build.directory}/node1/wildfly-${version.org.wildfly}/modules</outputDirectory>
-                        </artifactItem>
-                        <artifactItem>
-                           <groupId>org.infinispan</groupId>
-                           <artifactId>infinispan-wildfly-modules</artifactId>
-                           <version>${project.version}</version>
-                           <type>zip</type>
-                           <overWrite>false</overWrite>
-                           <outputDirectory>${project.build.directory}/node2/wildfly-${version.org.wildfly}/modules</outputDirectory>
-                        </artifactItem>
-                     </artifactItems>
+                     <config-file>server-provisioning.xml</config-file>
+                     <server-name>node1/wildfly-${version.org.wildfly}</server-name>
+                  </configuration>
+               </execution>
+               <execution>
+                  <id>server-provisioning-node2</id>
+                  <goals>
+                     <goal>build</goal>
+                  </goals>
+                  <phase>pre-integration-test</phase>
+                  <configuration>
+                     <config-file>server-provisioning.xml</config-file>
+                     <server-name>node2/wildfly-${version.org.wildfly}</server-name>
                   </configuration>
                </execution>
             </executions>
@@ -281,7 +256,7 @@
                <clusterName>elasticTestCluster</clusterName>
                <tcpPort>9300</tcpPort>
                <httpPort>9200</httpPort>
-               <pathConf>${project.basedir}/src/elasticsearch-config</pathConf>
+               <pathConf>${project.build.testOutputDirectory}/elasticsearch-config</pathConf>
             </configuration>
             <executions>
                <execution>
@@ -318,7 +293,7 @@
                      <overwrite>true</overwrite>
                      <resources>
                         <resource>
-                           <directory>${basedir}/src/as-config</directory>
+                           <directory>${project.build.testOutputDirectory}/as-config</directory>
                         </resource>
                      </resources>
                   </configuration>
@@ -335,7 +310,7 @@
                      <overwrite>true</overwrite>
                      <resources>
                         <resource>
-                           <directory>${basedir}/src/as-config</directory>
+                           <directory>${project.build.testOutputDirectory}/as-config</directory>
                         </resource>
                      </resources>
                   </configuration>
@@ -356,7 +331,7 @@
                   <configuration>
                      <skip>${skipTests}</skip>
                      <target>
-                        <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="create-distro">
+                        <ant antfile="${basedir}/../../server/integration/src/main/ant/infinispan-server.xml" target="create-distro">
                            <property name="server.build.dist" value="${server.build.dist}" />
                            <property name="server.dist" value="${ispnserver.dist}" />
                         </ant>
@@ -372,10 +347,10 @@
                   <configuration>
                      <skip>${skipTests}</skip>
                      <target>
-                        <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="kill-server">
+                        <ant antfile="${basedir}/../../server/integration/src/main/ant/infinispan-server.xml" target="kill-server">
                            <property name="hotrod.port" value="11222" />
                         </ant>
-                        <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="start-server">
+                        <ant antfile="${basedir}/../../server/integration/src/main/ant/infinispan-server.xml" target="start-server">
                            <property name="server.dist" value="${ispnserver.dist}" />
                            <property name="port.offset" value="0" />
                            <property name="management.port" value="9990" />
@@ -395,7 +370,7 @@
                   <configuration>
                      <skip>${skipTests}</skip>
                      <target>
-                        <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="kill-server">
+                        <ant antfile="${basedir}/../../server/integration/src/main/ant/infinispan-server.xml" target="kill-server">
                            <property name="hotrod.port" value="11222" />
                         </ant>
                      </target>
@@ -410,6 +385,24 @@
    </build>
 
    <profiles>
+
+      <profile>
+         <id>nexus-staging</id>
+         <activation>
+            <property><name>!skipNexusStaging</name></property>
+         </activation>
+         <build>
+            <plugins>
+               <plugin>
+                  <artifactId>maven-deploy-plugin</artifactId>
+                  <configuration>
+                     <skip>true</skip>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+
       <profile>
          <id>smoke</id>
          <properties>

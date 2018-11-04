@@ -12,7 +12,7 @@ import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 /**
- * Request implementation that waits for a response from a single target node.
+ * Request implementation that waits for a response from a single target site.
  *
  * @author Dan Berindei
  * @since 9.1
@@ -33,8 +33,9 @@ public class SingleSiteRequest<T> extends AbstractRequest<T> {
    }
 
    @Override
-   public void onNewView(Set<Address> members) {
+   public boolean onNewView(Set<Address> members) {
       // Ignore cluster views.
+      return false;
    }
 
    private void receiveResponse(Address sender, Response response) {
@@ -62,8 +63,8 @@ public class SingleSiteRequest<T> extends AbstractRequest<T> {
       completeExceptionally(log.requestTimedOut(requestId, site));
    }
 
-   public void sitesUnreachable(Set<String> sites) {
-      if (sites.contains(site)) {
+   public void sitesUnreachable(String unreachableSite) {
+      if (site.equals(unreachableSite)) {
          receiveResponse(null, CacheNotFoundResponse.INSTANCE);
       }
    }

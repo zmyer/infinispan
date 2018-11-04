@@ -4,25 +4,35 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-hibernate-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-hibernate-cache-commons</artifactId>
-   <packaging>jar</packaging>
+   <packaging>bundle</packaging>
    <name>Infinispan Hibernate Cache Commons</name>
    <description>Infinispan Hibernate Cache Commons module</description>
 
    <properties>
       <module.skipComponentMetaDataProcessing>false</module.skipComponentMetaDataProcessing>
-      <version.hibernate.core>5.1.10.Final</version.hibernate.core>
+      <version.hibernate.core>5.1.10.Final</version.hibernate.core><!-- TODO remove this -->
    </properties>
 
    <dependencies>
       <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-hibernate-cache-spi</artifactId>
+      </dependency>
+      <dependency>
          <groupId>org.hibernate</groupId>
          <artifactId>hibernate-core</artifactId>
          <version>${version.hibernate.core}</version>
+         <exclusions>
+            <exclusion>
+               <groupId>org.apache.geronimo.specs</groupId>
+               <artifactId>geronimo-jta_1.1_spec</artifactId>
+            </exclusion>
+         </exclusions>
       </dependency>
 
       <dependency>
@@ -37,15 +47,21 @@
             </exclusion>
          </exclusions>
       </dependency>
-      <dependency>
-         <groupId>org.hibernate</groupId>
-         <artifactId>hibernate-entitymanager</artifactId>
-         <version>${version.hibernate.core}</version>
-         <scope>test</scope>
-      </dependency>
    </dependencies>
 
    <build>
+      <resources>
+         <resource>
+            <directory>${project.basedir}/src/main/resources</directory>
+            <filtering>true</filtering>
+         </resource>
+      </resources>
+      <testResources>
+         <testResource>
+            <directory>${project.basedir}/src/test/resources</directory>
+            <filtering>true</filtering>
+         </testResource>
+      </testResources>
       <plugins>
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
@@ -56,6 +72,24 @@
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration combine.self="override">
                <skipTests>true</skipTests>
+            </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.felix</groupId>
+            <artifactId>maven-bundle-plugin</artifactId>
+            <configuration>
+               <instructions>
+                  <Export-Package>
+                     ${project.groupId}.hibernate.cache.commons.*,
+                     ${project.groupId}.hibernate.cache.commons.access.*,
+                     ${project.groupId}.hibernate.cache.commons.util.*;version=${project.version};-split-package:=error
+                  </Export-Package>
+                  <Include-Resource>
+                     {maven-resources},
+                     /META-INF/services=${project.basedir}/target/classes/META-INF/services,
+                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
+                  </Include-Resource>
+               </instructions>
             </configuration>
          </plugin>
       </plugins>

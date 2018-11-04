@@ -4,12 +4,12 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-commons</artifactId>
-   <packaging>bundle</packaging>
+   <packaging>jar</packaging>
    <name>Infinispan Commons</name>
    <description>Infinispan Commons</description>
 
@@ -26,7 +26,7 @@
 
       <dependency>
          <groupId>org.jboss.spec.javax.transaction</groupId>
-         <artifactId>jboss-transaction-api_1.1_spec</artifactId>
+         <artifactId>jboss-transaction-api_1.2_spec</artifactId>
          <scope>provided</scope>
       </dependency>
 
@@ -53,6 +53,12 @@
         <artifactId>framework</artifactId>
         <type>kar</type>
         <scope>provided</scope>
+        <exclusions>
+          <exclusion>
+            <groupId>*</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
 
       <dependency>
@@ -102,28 +108,6 @@
             </configuration>
          </plugin>
          <plugin>
-            <groupId>org.apache.felix</groupId>
-            <artifactId>maven-bundle-plugin</artifactId>
-            <configuration>
-               <instructions>
-                  <Export-Package>
-                     ${project.groupId}.commons.*;version=${project.version};-split-package:=error,
-                     ${project.groupId}.counter.*;version=${project.version};-split-package:=error,
-                     ${project.groupId}.multimap.*;version=${project.version};-split-package:=error
-                  </Export-Package>
-                  <!-- Relax the versioning rule for osgi packages as a specific version is provided by the container and
-                       it might not match the one used to build. -->
-                  <Import-Package><![CDATA[
-                  !sun.misc,
-                  *
-                  ]]>
-                  </Import-Package>
-                  <!-- Required for loading client classes. -->
-                  <DynamicImport-Package>*</DynamicImport-Package>
-               </instructions>
-            </configuration>
-         </plugin>
-         <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration>
@@ -134,16 +118,9 @@
                   <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
                   <build.directory>${project.build.directory}</build.directory>
                </systemPropertyVariables>
-               <argLine combine.self="override">-Xmx768m</argLine>
-               <properties>
-                  <property>
-                     <name>usedefaultlisteners</name>
-                     <value>false</value>
-                  </property>
-                  <property>
-                     <name>listener</name>
-                     <value>${junitListener}</value>
-                  </property>
+               <properties combine.self="override">
+                  <usedefaultlisteners>false</usedefaultlisteners>
+                  <listener>${junitListener}</listener>
                </properties>
                <disableXmlReport>false</disableXmlReport>
             </configuration>
@@ -177,6 +154,65 @@
                   </configuration>
                </execution>
             </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.felix</groupId>
+            <artifactId>maven-bundle-plugin</artifactId>
+            <extensions>false</extensions>
+            <configuration>
+               <instructions>
+                  <Bundle-DocURL>http://www.infinispan.org/</Bundle-DocURL>
+                  <!-- Required for loading client classes. -->
+                  <DynamicImport-Package>*</DynamicImport-Package>
+                  <Export-Package>
+                     ${project.groupId}.commons.*;version=${project.version};-split-package:=error,
+                     ${project.groupId}.counter.*;version=${project.version};-split-package:=error,
+                     ${project.groupId}.multimap.*;version=${project.version};-split-package:=error
+                  </Export-Package>
+                  <!-- Relax the versioning rule for osgi packages as a specific version is provided by the container and
+                       it might not match the one used to build. -->
+                  <Import-Package><![CDATA[
+                  !sun.misc,
+                  !sun.reflect,
+                  *
+                  ]]>
+                  </Import-Package>
+                  <_consumer-policy>${bnd.consumer.policy}</_consumer-policy>
+                  <_provider-policy>${bnd.provider.policy}</_provider-policy>
+                  <Include-Resource>{maven-resources}</Include-Resource>
+                  <Implementation-Build-Commit-Id>${buildNumber}</Implementation-Build-Commit-Id>
+                  <Implementation-Build-Branch>${scmBranch}</Implementation-Build-Branch>
+               </instructions>
+            </configuration>
+            <executions>
+               <execution>
+                  <id>versions</id>
+                  <phase>validate</phase>
+                  <goals>
+                     <goal>cleanVersions</goal>
+                  </goals>
+                  <configuration>
+                     <versions>
+                        <infinispan.osgi.version.clean>${project.version}</infinispan.osgi.version.clean>
+                     </versions>
+                  </configuration>
+               </execution>
+               <execution>
+                  <id>bundle-manifest</id>
+                  <phase>prepare-package</phase>
+                  <goals>
+                     <goal>manifest</goal>
+                  </goals>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <artifactId>maven-jar-plugin</artifactId>
+            <configuration>
+               <archive>
+                  <manifestFile>${project.build.outputDirectory}/META-INF/MANIFEST.MF</manifestFile>
+               </archive>
+            </configuration>
          </plugin>
          <plugin>
             <groupId>org.apache.karaf.tooling</groupId>

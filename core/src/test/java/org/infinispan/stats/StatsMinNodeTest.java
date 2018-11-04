@@ -14,7 +14,7 @@ import org.infinispan.metadata.Metadata;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -47,7 +47,7 @@ public class StatsMinNodeTest extends MultipleCacheManagersTest {
       timeService = new ControlledTimeService();
 
       for (int i = 0; i < NUM_NODES; ++i) {
-         TestingUtil.replaceComponent(cache(i), TimeService.class, timeService, true);
+         TestingUtil.replaceComponent(manager(i), TimeService.class, timeService, true);
       }
    }
 

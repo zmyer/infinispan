@@ -1,8 +1,13 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd" xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-   <version>9.2.1-SNAPSHOT</version>
    <modelVersion>4.0.0</modelVersion>
-   <groupId>org.infinispan</groupId>
+   <parent>
+      <groupId>org.infinispan</groupId>
+      <artifactId>infinispan-build-configuration-parent</artifactId>
+      <version>10.0.0-SNAPSHOT</version>
+      <relativePath>../build-configuration/pom.xml</relativePath>
+   </parent>
+
    <artifactId>infinispan-license</artifactId>
    <name>Infinispan License Bundle</name>
    <description>Infinispan License Bundle module</description>
@@ -27,21 +32,20 @@
 
    <properties>
       <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-      <jboss.releases.repo.url>https://repository.jboss.org/nexus/service/local/staging/deploy/maven2/</jboss.releases.repo.url>
-      <jboss.snapshots.repo.url>https://repository.jboss.org/nexus/content/repositories/snapshots/</jboss.snapshots.repo.url>
    </properties>
 
    <build>
       <plugins>
          <plugin>
             <artifactId>maven-remote-resources-plugin</artifactId>
-            <version>1.1</version>
+            <version>${version.maven.remote.resource}</version>
             <executions>
                <execution>
                   <id>generate-license-bundle</id>
                   <goals>
                      <goal>bundle</goal>
                   </goals>
+                  <phase>process-sources</phase>
                </execution>
             </executions>
          </plugin>
@@ -81,6 +85,34 @@
       </pluginManagement>
    </build>
 
+   <profiles>
+
+      <profile>
+         <!-- nexus-staging-maven-plugin blocks maven-deploy-plugin -->
+         <id>nexus-staging</id>
+         <activation>
+            <property><name>!skipNexusStaging</name></property>
+         </activation>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.sonatype.plugins</groupId>
+                  <artifactId>nexus-staging-maven-plugin</artifactId>
+                  <version>1.6.8</version>
+                  <configuration><!-- Does not inherit from infinispan-parent -->
+                     <autoReleaseAfterClose>false</autoReleaseAfterClose>
+                     <nexusUrl>${jboss.releases.nexus.url}</nexusUrl>
+                     <serverId>${jboss.releases.repo.id}</serverId>
+                     <stagingProfileId>2161b7b8da0080</stagingProfileId>
+                     <stagingRepositoryId>${stagingRepositoryId}</stagingRepositoryId>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+
+   </profiles>
+
    <!-- SCM and Distribution Management -->
    <scm>
       <connection>scm:git:git://github.com/infinispan/infinispan.git</connection>
@@ -90,12 +122,12 @@
 
    <distributionManagement>
       <repository>
-         <id>jboss-releases-repository</id>
+         <id>${jboss.releases.repo.id}</id>
          <name>JBoss Releases Repository</name>
          <url>${jboss.releases.repo.url}</url>
       </repository>
       <snapshotRepository>
-         <id>jboss-snapshots-repository</id>
+         <id>${jboss.snapshots.repo.id}</id>
          <name>JBoss Snapshots Repository</name>
          <url>${jboss.snapshots.repo.url}</url>
       </snapshotRepository>

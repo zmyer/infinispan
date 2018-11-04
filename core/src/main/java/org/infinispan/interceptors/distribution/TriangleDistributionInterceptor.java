@@ -22,6 +22,7 @@ import java.util.function.Supplier;
 import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.SegmentSpecificCommand;
 import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
@@ -43,6 +44,7 @@ import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
+import org.infinispan.commands.write.RemoveExpiredCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.InfinispanCollections;
@@ -117,6 +119,12 @@ public class TriangleDistributionInterceptor extends BaseDistributionInterceptor
    @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
       return handleSingleKeyWriteCommand(ctx, command, TriangleFunctionsUtil::backupFrom);
+   }
+
+   @Override
+   protected Object invokeRemoveExpiredCommand(InvocationContext ctx, RemoveExpiredCommand command, DistributionInfo distributionInfo) throws Throwable {
+      assert distributionInfo.isPrimary();
+      return localPrimaryOwnerWrite(ctx, command, distributionInfo, TriangleFunctionsUtil::backupFrom);
    }
 
    @Override
@@ -385,7 +393,7 @@ public class TriangleDistributionInterceptor extends BaseDistributionInterceptor
          return invokeNext(context, command);
       }
       LocalizedCacheTopology topology = checkTopologyId(command);
-      DistributionInfo distributionInfo = topology.getDistribution(command.getKey());
+      DistributionInfo distributionInfo = topology.getDistributionForSegment(command.getSegment());
 
       if (distributionInfo.isPrimary()) {
          assert context.lookupEntry(command.getKey()) != null;
@@ -563,14 +571,15 @@ public class TriangleDistributionInterceptor extends BaseDistributionInterceptor
       if (command.hasAnyFlag(FlagBitSets.SKIP_REMOTE_LOOKUP | FlagBitSets.CACHE_MODE_LOCAL)) {
          entryFactory.wrapExternalEntry(ctx, key, null, false, true);
       } else {
-         GetCacheEntryCommand fakeGetCommand = cf.buildGetCacheEntryCommand(key, command.getFlagsBitSet());
+         GetCacheEntryCommand fakeGetCommand = cf.buildGetCacheEntryCommand(key,
+               SegmentSpecificCommand.extractSegment(command, key, keyPartitioner), command.getFlagsBitSet());
          fakeGetCommand.setTopologyId(command.getTopologyId());
          futureList.add(remoteGet(ctx, fakeGetCommand, key, true).toCompletableFuture());
       }
    }
 
    private void checkTopologyId(int topologyId, Collector<?> collector) {
-      int currentTopologyId = stateTransferManager.getCacheTopology().getTopologyId();
+      int currentTopologyId = distributionManager.getCacheTopology().getTopologyId();
       if (currentTopologyId != topologyId && topologyId != -1) {
          collector.primaryException(OutdatedTopologyException.INSTANCE);
          throw OutdatedTopologyException.INSTANCE;

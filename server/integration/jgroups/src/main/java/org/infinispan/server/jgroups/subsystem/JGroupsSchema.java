@@ -21,35 +21,50 @@
  */
 package org.infinispan.server.jgroups.subsystem;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * Enumeration of the supported subsystem xml schemas.
- * @author Paul Ferraro
+ * Holds the supported subsystem xml schemas.
  */
-enum JGroupsSchema {
-
-    INFINISPAN_SERVER_JGROUPS_7_0("infinispan:server:jgroups", 7, 0),
-    INFINISPAN_SERVER_JGROUPS_8_0("infinispan:server:jgroups", 8, 0),
-    INFINISPAN_SERVER_JGROUPS_9_0("infinispan:server:jgroups", 9, 0),
-    INFINISPAN_SERVER_JGROUPS_9_2("infinispan:server:jgroups", 9, 2),
-    ;
-    public static final JGroupsSchema CURRENT = INFINISPAN_SERVER_JGROUPS_9_0;
-
+class JGroupsSchema {
     private static final String URN_PATTERN = "urn:%s:%d.%d";
+
+    static final List<JGroupsSchema> SCHEMAS;
+    static final JGroupsSchema CURRENT;
+    static {
+        SCHEMAS = new ArrayList<>();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(JGroupsSchema.class.getResourceAsStream("/schema/infinispan-jgroups.namespaces"), StandardCharsets.UTF_8))) {
+            r.lines().forEach(line -> {
+                int colon = line.lastIndexOf(':');
+                String parts[] = line.substring(colon + 1).split("\\.");
+                SCHEMAS.add(new JGroupsSchema(line.substring(0, colon), Integer.parseInt(parts[0]), Integer.parseInt(parts[1])));
+            });
+            CURRENT = SCHEMAS.get(SCHEMAS.size() - 1);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     private final String domain;
     private final int major;
     private final int minor;
 
-    JGroupsSchema(String domain, int major, int minor) {
+    private JGroupsSchema(String domain, int major, int minor) {
         this.domain = domain;
         this.major = major;
         this.minor = minor;
     }
 
+    public boolean since(int major, int minor) {
+        return (this.major > major || (this.major == major && this.minor >= minor));
+    }
+
     /**
-     * Indicates whether this version of the schema is greater than or equal to the version of the specified schema.
-     * @param a schema
-     * @return true, if this version of the schema is greater than or equal to the version of the specified schema, false otherwise.
+     * @return true, if this version of the schema is greater than or equal to the version of any of the specified schemas, false otherwise.
      */
     public boolean since(JGroupsSchema... schemas) {
         for(JGroupsSchema schema : schemas) {

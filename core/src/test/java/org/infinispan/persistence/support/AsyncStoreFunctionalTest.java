@@ -187,7 +187,7 @@ public class AsyncStoreFunctionalTest extends AbstractInfinispanTest {
                modApplyLatch.countDown();
             }
 
-            ExpirationManager expirationManager = TestingUtil.extractComponent(cache, ExpirationManager.class);
+            ExpirationManager expirationManager = cache.getAdvancedCache().getExpirationManager();
             expirationManager.processExpiration();
 
             Set<Integer> keys = cache.keySet();
@@ -312,8 +312,8 @@ public class AsyncStoreFunctionalTest extends AbstractInfinispanTest {
          extends AbstractNamedCacheComponentFactory implements AutoInstantiableFactory {
 
       @Override
-      public <T> T construct(Class<T> componentType) {
-         return (T) new CustomPersistenceManager();
+      public Object construct(String componentName) {
+         return new CustomPersistenceManager();
       }
 
    }

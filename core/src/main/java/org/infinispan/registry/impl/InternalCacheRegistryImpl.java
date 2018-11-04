@@ -13,6 +13,7 @@ import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.jmx.CacheManagerJmxRegistration;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.util.logging.Log;
@@ -27,6 +28,7 @@ import org.infinispan.util.logging.LogFactory;
 public class InternalCacheRegistryImpl implements InternalCacheRegistry {
    private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
    @Inject private EmbeddedCacheManager cacheManager;
+   @Inject private CacheManagerJmxRegistration cacheManagerJmxRegistration;
    private final ConcurrentMap<String, EnumSet<Flag>> internalCaches = new ConcurrentHashMap<>();
    private final Set<String> privateCaches = new ConcurrentHashSet<>();
 
@@ -54,7 +56,7 @@ public class InternalCacheRegistryImpl implements InternalCacheRegistry {
          // TODO: choose a merge policy
          builder.clustering()
                .cacheMode(CacheMode.REPL_SYNC)
-               .sync().stateTransfer().fetchInMemoryState(true).awaitInitialTransfer(false);
+               .sync().stateTransfer().fetchInMemoryState(true).awaitInitialTransfer(true);
       }
       if (flags.contains(Flag.PERSISTENT) && globalConfiguration.globalState().enabled()) {
          builder.persistence().addSingleFileStore().location(globalConfiguration.globalState().persistentLocation()).purgeOnStartup(false).preload(true).fetchPersistentState(true);
@@ -70,8 +72,11 @@ public class InternalCacheRegistryImpl implements InternalCacheRegistry {
    public synchronized void unregisterInternalCache(String name) {
       if (isInternalCache(name)) {
          Cache<Object, Object> cache = cacheManager.getCache(name, false);
-         if (cache != null)
+         if (cache != null) {
             cache.stop();
+            String cacheMode = cache.getCacheConfiguration().clustering().cacheModeString();
+            cacheManagerJmxRegistration.unregisterCacheMBean(name, cacheMode);
+         }
          internalCaches.remove(name);
          privateCaches.remove(name);
          SecurityActions.undefineConfiguration(cacheManager, name);

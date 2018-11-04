@@ -1,6 +1,7 @@
+[[locking_concurrency]]
 ==  Locking and Concurrency
-Infinispan makes use of multi-versioned concurrency control (link:http://en.wikipedia.org/wiki/Multiversion_concurrency_control[MVCC]) - a concurrency scheme popular with relational databases and other data stores.
-MVCC offers many advantages over coarse-grained Java synchronization and even JDK Locks for access to shared data, including: 
+{brandname} makes use of multi-versioned concurrency control (link:http://en.wikipedia.org/wiki/Multiversion_concurrency_control[MVCC]) - a concurrency scheme popular with relational databases and other data stores.
+MVCC offers many advantages over coarse-grained Java synchronization and even JDK Locks for access to shared data, including:
 
 * allowing concurrent readers and writers
 * readers and writers do not block one another
@@ -8,9 +9,9 @@ MVCC offers many advantages over coarse-grained Java synchronization and even JD
 * internal locks can be striped
 
 === Locking implementation details
-Infinispan's MVCC implementation makes use of minimal locks and synchronizations, leaning heavily towards lock-free techniques such as link:http://en.wikipedia.org/wiki/Compare-and-swap[compare-and-swap] and lock-free data structures wherever possible, which helps optimize for multi-CPU and multi-core environments. 
+{brandname}'s MVCC implementation makes use of minimal locks and synchronizations, leaning heavily towards lock-free techniques such as link:http://en.wikipedia.org/wiki/Compare-and-swap[compare-and-swap] and lock-free data structures wherever possible, which helps optimize for multi-CPU and multi-core environments.
 
-In particular, Infinispan's MVCC implementation is heavily optimized for readers.
+In particular, {brandname}'s MVCC implementation is heavily optimized for readers.
 Reader threads do not acquire explicit locks for entries, and instead directly read the entry in question.
 
 Writers, on the other hand, need to acquire a write lock.
@@ -39,12 +40,12 @@ NOTE: If the operation is executed locally in the primary owner, the first step 
 ==== Transactional caches
 
 The transactional cache supports optimistic and pessimistic locking mode.
-Check section <<tx:locking>> for more information about it.
+Check section link:#tx_locking[Transaction Locking] for more information about it.
 
 ==== Isolation levels
 
 Isolation level affects what transactions can read when running concurrently with other transaction.
-Check section <<tx:isolation-levels>> for more details about it.
+Check section link:#tx_isolation_levels[Isolation Levels] for more details about it.
 
 ==== The LockManager
 The `LockManager` is a component that is responsible for locking an entry for writing.
@@ -59,8 +60,7 @@ The alternative is to disable lock striping - which would mean a _new_ lock is c
 This approach _may_ give you greater concurrent throughput, but it will be at the cost of additional memory usage, garbage collection churn, etc.
 
 .Default lock striping settings
-IMPORTANT: From Infinispan 5.0, lock striping is disabled by default, due to potential deadlocks that can happen if locks for different keys end up in the same lock stripe.
-Previously, in Infinispan 4.x lock striping used to be enabled by default.
+IMPORTANT: lock striping is disabled by default, due to potential deadlocks that can happen if locks for different keys end up in the same lock stripe.
 
 The size of the shared lock collection used by lock striping can be tuned using the `concurrencyLevel` attribute of the `<locking /> configuration element.
 
@@ -80,7 +80,7 @@ new ConfigurationBuilder().locking().useLockStriping(false|true);
 
 ==== Concurrency levels
 In addition to determining the size of the striped lock container, this concurrency level is also used to tune any JDK `ConcurrentHashMap` based collections where related, such as internal to ``DataContainer``s.
-Please refer to the JDK `ConcurrentHashMap` Javadocs for a detailed discussion of concurrency levels, as this parameter is used in exactly the same way in Infinispan.
+Please refer to the JDK `ConcurrentHashMap` Javadocs for a detailed discussion of concurrency levels, as this parameter is used in exactly the same way in {brandname}.
 
 *Configuration example:*
 
@@ -123,14 +123,12 @@ If another transaction, `TX2`, is started on `B` (or any other node) and `TX2` t
 The reason for this is the that the lock for a key `K` is always, deterministically, acquired on the same node of the cluster, regardless of where the transaction originates.
 
 ===  Data Versioning
-Infinispan supports two forms of data versioning: simple and external.
-The simple versioning is used in transactional caches for write skew check.
-Check section <<tx:write-skew>> section for detail about it.
+{brandname} supports two forms of data versioning: simple and external.
+The simple versioning is used in transactional caches for write skew check. See link:#tx_write_skew[Write Skews].
 
-The external versioning is used to encapsulate an external source of data versioning within Infinispan, such as when using Infinispan with Hibernate which in turn gets its data version information directly from a database.
+The external versioning is used to encapsulate an external source of data versioning within {brandname}, such as when using {brandname} with Hibernate which in turn gets its data version information directly from a database.
 
 In this scheme, a mechanism to pass in the version becomes necessary, and overloaded versions of `put()` and `putForExternalRead()` will be provided in `AdvancedCache` to take in an external data version.
 This is then stored on the `InvocationContext` and applied to the entry at commit time.
 
 NOTE: Write skew checks cannot and will not be performed in the case of external data versioning.
-

@@ -2,7 +2,7 @@
 <!-- See src/resources/configuration/ReadMe.txt for how the configuration assembly works -->
 <config default-supplement="default">
    <extension-module>org.infinispan.server.endpoint</extension-module>
-   <subsystem xmlns="urn:infinispan:server:endpoint:9.2">
+   <subsystem xmlns="urn:infinispan:server:endpoint:${infinispan.core.schema.version}">
       <?CONNECTORS?>
    </subsystem>
    <supplement name="default">
@@ -89,7 +89,7 @@
          </hotrod-connector>
       </replacement>
    </supplement>
-   <supplement name="compatibility-mode">
+   <supplement name="endpoint-interoperability">
       <replacement placeholder="@@default-cache-container@@" attributeValue="local" />
       <replacement placeholder="CONNECTORS">
          <hotrod-connector socket-binding="hotrod" cache-container="local">
@@ -160,17 +160,10 @@
          <memcached-connector socket-binding="memcached" cache-container="clustered" cache="default"/>
       </replacement>
    </supplement>
-   <supplement name="websocket-local">
-      <replacement placeholder="@@default-cache-container@@" attributeValue="local" />
-      <replacement placeholder="CONNECTORS">
-         <websocket-connector socket-binding="websocket" cache-container="local" />
-      </replacement>
-   </supplement>
    <socket-binding name="hotrod" port="11222" />
    <socket-binding name="hotrod-internal" port="11223" />
    <socket-binding name="hotrod-multi-tenancy" port="11224" />
    <socket-binding name="memcached" port="11211" />
-   <socket-binding name="websocket" port="8181" />
    <socket-binding name="rest" port="8080" />
    <socket-binding name="rest-ssl" port="8443" />
    <socket-binding name="rest-multi-tenancy" port="8081" />

@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 import org.infinispan.Cache;
 import org.infinispan.commons.util.ServiceFinder;
 import org.infinispan.commons.util.Util;
+import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.SurvivesRestarts;
 import org.infinispan.factories.scopes.Scope;
@@ -14,7 +15,7 @@ import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.Parameter;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -34,6 +35,7 @@ public class RollingUpgradeManager {
    private final Set<SourceMigrator> sourceMigrators = new HashSet<>(2);
    @Inject private Cache<Object, Object> cache;
    @Inject private TimeService timeService;
+   @Inject private GlobalConfiguration globalConfiguration;
 
    @ManagedOperation(
          description = "Synchronizes data from the old cluster to this using the specified migrator",
@@ -72,7 +74,7 @@ public class RollingUpgradeManager {
    }
 
    private TargetMigrator getMigrator(String name) throws Exception {
-      ClassLoader cl = cache.getCacheManager().getCacheManagerConfiguration().classLoader();
+      ClassLoader cl = globalConfiguration.classLoader();
       for (TargetMigrator m : ServiceFinder.load(TargetMigrator.class, cl)) {
          if (name.equalsIgnoreCase(m.getName())) {
             return m;

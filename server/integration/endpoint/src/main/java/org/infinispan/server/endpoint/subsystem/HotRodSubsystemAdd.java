@@ -65,7 +65,7 @@ class HotRodSubsystemAdd extends ProtocolServiceSubsystemAdd {
       ModelNode config = Resource.Tools.readModel(context.readResource(PathAddress.EMPTY_ADDRESS));
       // Create the builder
       HotRodServerConfigurationBuilder configurationBuilder = new HotRodServerConfigurationBuilder();
-      configureProtocolServer(configurationBuilder, config);
+      configureProtocolServer(context, configurationBuilder, config);
       configureProtocolServerTopology(context, configurationBuilder, config);
       // Create the service
       final ProtocolServerService service = new ProtocolServerService(getServiceName(operation), HotRodServer.class, configurationBuilder);
@@ -191,10 +191,5 @@ class HotRodSubsystemAdd extends ProtocolServiceSubsystemAdd {
             builder.topologyAwaitInitialTransfer(TopologyStateTransferResource.AWAIT_INITIAL_RETRIEVAL.resolveModelAttribute(context, config).asBoolean());
          }
       }
-   }
-
-   @Override
-   protected boolean requiresRuntimeVerification() {
-      return false;
    }
 }

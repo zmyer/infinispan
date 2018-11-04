@@ -35,7 +35,7 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.persistence.manager.OrderedUpdatesManager;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -75,7 +75,7 @@ import java.util.function.BiConsumer;
  */
 public class ScatteredCacheWriterInterceptor extends CacheWriterInterceptor {
 
-   private static final Log log = LogFactory.getLog(DistCacheWriterInterceptor.class);
+   private static final Log log = LogFactory.getLog(ScatteredCacheWriterInterceptor.class);
 
    @Inject private DistributionManager dm;
    @Inject private TimeService timeService;

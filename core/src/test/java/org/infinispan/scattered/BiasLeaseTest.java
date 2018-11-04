@@ -4,6 +4,7 @@ import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertTrue;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -15,12 +16,12 @@ import org.infinispan.commands.remote.RenewBiasCommand;
 import org.infinispan.commands.remote.RevokeBiasCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
-import org.infinispan.commands.write.PrimaryAckCommand;
 import org.infinispan.configuration.cache.BiasAcquisition;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ClusteringConfiguration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.distribution.MagicKey;
+import org.infinispan.remoting.inboundhandler.AbstractDelegatingHandler;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
 import org.infinispan.remoting.inboundhandler.Reply;
@@ -29,7 +30,7 @@ import org.infinispan.test.TestingUtil;
 import org.infinispan.util.ControlledRpcManager;
 import org.infinispan.util.ControlledTimeService;
 import org.infinispan.util.CountingRpcManager;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
@@ -48,9 +49,10 @@ public class BiasLeaseTest extends MultipleCacheManagersTest {
       // Scan biases frequently
       builder.expiration().wakeUpInterval(100);
       createCluster(builder, 3);
+      waitForClusterToForm();
 
-      IntStream.of(0, 1, 2).mapToObj(this::cache).forEach(
-            c -> TestingUtil.replaceComponent(c, TimeService.class, timeService, true));
+      Arrays.stream(managers()).forEach(
+            cm -> TestingUtil.replaceComponent(cm, TimeService.class, timeService, true));
       rpcManager0 = ControlledRpcManager.replaceRpcManager(cache(0));
       rpcManager1 = CountingRpcManager.replaceRpcManager(cache(1));
       TestingUtil.wrapInboundInvocationHandler(cache(0), handler -> handler0 = new RenewWaitingInvocationHandler(handler));
@@ -64,7 +66,7 @@ public class BiasLeaseTest extends MultipleCacheManagersTest {
    }
 
    public void testBiasTimesOut() throws Exception {
-      rpcManager0.excludeCommands(PrimaryAckCommand.class, ExceptionAckCommand.class);
+      rpcManager0.excludeCommands(ExceptionAckCommand.class);
       MagicKey key = new MagicKey(cache(0));
       cache(1).put(key, "v0");
       assertTrue(biasManager(1).hasLocalBias(key));
@@ -80,7 +82,7 @@ public class BiasLeaseTest extends MultipleCacheManagersTest {
 
    public void testBiasLeaseRenewed() throws Exception {
       MagicKey key = new MagicKey(cache(0));
-      rpcManager0.excludeCommands(PrimaryAckCommand.class, ExceptionAckCommand.class);
+      rpcManager0.excludeCommands(ExceptionAckCommand.class);
       cache(1).put(key, "v0");
       assertEquals(Collections.singletonList(address(1)), biasManager(0).getRemoteBias(key));
       assertTrue(biasManager(1).hasLocalBias(key));
@@ -103,12 +105,11 @@ public class BiasLeaseTest extends MultipleCacheManagersTest {
       return cache(index).getAdvancedCache().getComponentRegistry().getComponent(BiasManager.class);
    }
 
-   private class RenewWaitingInvocationHandler implements PerCacheInboundInvocationHandler {
-      private final PerCacheInboundInvocationHandler delegate;
+   private class RenewWaitingInvocationHandler extends AbstractDelegatingHandler {
       private volatile CountDownLatch latch;
 
       private RenewWaitingInvocationHandler(PerCacheInboundInvocationHandler delegate) {
-         this.delegate = delegate;
+         super(delegate);
       }
 
       @Override

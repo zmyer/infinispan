@@ -161,13 +161,13 @@ class ChannelPool {
       boolean idle = record.isIdle();
       if (!idle) {
          int currentActive = active.decrementAndGet();
-         assert currentActive >= 0;
+         assert currentActive >= 0 : "Error releasing " + channel;
          record.setIdle();
       }
 
       if (!channel.isActive()) {
          int currentCreated = created.decrementAndGet();
-         assert currentCreated >= 0;
+         assert currentCreated >= 0 : "Error releasing " + channel;
          return;
       } else if (idle) {
          log.debugf("Not releasing idle non-closed channel %s", channel);
@@ -256,6 +256,19 @@ class ChannelPool {
       } finally {
          lock.writeLock().unlock();
       }
+   }
+
+   @Override
+   public String toString() {
+      return "ChannelPool[" +
+            "address=" + address +
+            ", maxWait=" + maxWait +
+            ", maxConnections=" + maxConnections +
+            ", maxPendingRequests=" + maxPendingRequests +
+            ", created=" + created +
+            ", active=" + active +
+            ", terminated=" + terminated +
+            ']';
    }
 
    private class TimeoutCallback implements ChannelOperation, Runnable {

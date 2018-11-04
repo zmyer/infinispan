@@ -4,13 +4,13 @@
 
    <parent>
       <groupId>org.infinispan</groupId>
-      <artifactId>infinispan-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
-      <relativePath>../../pom.xml</relativePath>
+      <artifactId>infinispan-integrationtests-parent</artifactId>
+      <version>10.0.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-cdi-jcache-it</artifactId>
-   <name>Integration tests: Infinispan CDI/JCache interactions</name>
+   <name>Integration tests - CDI/JCache interactions</name>
    <description>Integration tests for Infinispan's CDI and JCache modules</description>
 
    <dependencies>
@@ -74,6 +74,12 @@
    </dependencies>
 
    <build>
+      <testResources>
+         <testResource>
+            <directory>${project.basedir}/src/test/resources</directory>
+            <filtering>true</filtering>
+         </testResource>
+      </testResources>
       <plugins>
          <!-- Disable parallel execution of tests ARQ-127 -->
          <plugin>

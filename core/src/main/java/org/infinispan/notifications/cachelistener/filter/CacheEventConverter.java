@@ -1,5 +1,7 @@
 package org.infinispan.notifications.cachelistener.filter;
 
+import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.commons.util.Experimental;
 import org.infinispan.metadata.Metadata;
 
 /**
@@ -21,4 +23,19 @@ public interface CacheEventConverter<K, V, C> {
     * @return The converted value to be used in the event
     */
    public C convert(K key, V oldValue, Metadata oldMetadata, V newValue, Metadata newMetadata, EventType eventType);
+
+   default MediaType format() {
+      return MediaType.APPLICATION_OBJECT;
+   }
+
+   /**
+    * @return if true, {@link #convert(Object, Object, Metadata, Object, Metadata, EventType)} will be presented with data
+    * in the request format rather than the format specified in {@link #format()}. The request format is defined as the MediaType
+    * that a cache was previously decorated with {@link org.infinispan.AdvancedCache#withMediaType(String, String)}.
+    */
+   @Experimental
+   default boolean useRequestFormat() {
+      return false;
+   }
+
 }

@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 
 import org.infinispan.Cache;
 import org.infinispan.IllegalLifecycleStateException;
@@ -20,20 +21,21 @@ import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.persistence.Store;
 import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.commons.util.Util;
-import org.infinispan.filter.KeyFilter;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.metadata.InternalMetadata;
-import org.infinispan.persistence.TaskContextImpl;
 import org.infinispan.persistence.spi.AdvancedCacheExpirationWriter;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.persistence.spi.AdvancedCacheWriter;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.InitializationContext;
+import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.util.KeyValuePair;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+
+import io.reactivex.Flowable;
 
 /**
  * A Dummy cache store which stores objects in memory. Instance of the store can be shared
@@ -60,6 +62,8 @@ public class DummyInMemoryStore implements AdvancedLoadWriteStore, AdvancedCache
    private DummyInMemoryStoreConfiguration configuration;
    private InitializationContext ctx;
    private volatile boolean running;
+   private volatile boolean available;
+   private AtomicInteger startAttempts = new AtomicInteger();
 
    @Override
    public void init(InitializationContext ctx) {
@@ -168,36 +172,29 @@ public class DummyInMemoryStore implements AdvancedLoadWriteStore, AdvancedCache
    }
 
    @Override
-   public void process(KeyFilter filter, CacheLoaderTask task, Executor executor, boolean fetchValue, boolean fetchMetadata) {
+   public Flowable<MarshalledEntry> publishEntries(Predicate filter, boolean fetchValue, boolean fetchMetadata) {
       assertRunning();
-      record("process");
-      log.tracef("Processing entries in store %s with filter %s and callback %s", storeName, filter, task);
-      final long currentTimeMillis = timeService.wallClockTime();
-      TaskContext tx = new TaskContextImpl();
-      for (Iterator<Map.Entry<Object, byte[]>> i = store.entrySet().iterator(); i.hasNext();) {
-         Map.Entry<Object, byte[]> entry = i.next();
-         if (tx.isStopped()) break;
-         if (filter == null || filter.accept(entry.getKey())) {
-            MarshalledEntry se = deserialize(entry.getKey(), entry.getValue(), fetchValue, fetchMetadata);
-            if (isExpired(se, currentTimeMillis)) {
-               log.tracef("Key %s exists, but has expired.  Entry is %s", entry.getKey(), se);
-               i.remove();
-            } else {
-               try {
-                  task.processEntry(se,tx);
-               } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-                  break;
-               }
-            }
+      record("publishEntries");
+      log.tracef("Publishing entries in store %s with filter %s", storeName, filter);
+      Flowable<Map.Entry<Object, byte[]>> flowable = Flowable.fromIterable(store.entrySet());
+      return flowable.compose(f -> {
+         // We compose so current time millis is retrieved for each subscriber
+         final long currentTimeMillis = timeService.wallClockTime();
+         if (filter != null) {
+            f = f.filter(e -> filter.test(e.getKey()));
          }
-      }
+         return f.map(entry -> deserialize(entry.getKey(), entry.getValue(), fetchValue, fetchMetadata))
+               .filter(me -> !isExpired(me, currentTimeMillis));
+      });
    }
 
    @Override
    public void start() {
       if (store != null)
          return;
+
+      if (configuration.startFailures() > startAttempts.incrementAndGet())
+         throw new PersistenceException();
 
       store = new ConcurrentHashMap<>();
       stats = newStatsMap();
@@ -220,6 +217,7 @@ public class DummyInMemoryStore implements AdvancedLoadWriteStore, AdvancedCache
       // record at the end!
       record("start");
       running = true;
+      available = true;
    }
 
    private ConcurrentMap<String, AtomicInteger> newStatsMap() {
@@ -237,6 +235,7 @@ public class DummyInMemoryStore implements AdvancedLoadWriteStore, AdvancedCache
    public void stop() {
       record("stop");
       running = false;
+      available = false;
 
       if (configuration.purgeOnStartup()) {
          if (storeName != null) {
@@ -244,6 +243,15 @@ public class DummyInMemoryStore implements AdvancedLoadWriteStore, AdvancedCache
          }
       }
       store = null;
+   }
+
+   @Override
+   public boolean isAvailable() {
+      return available;
+   }
+
+   public void setAvailable(boolean available) {
+      this.available = available;
    }
 
    public String getStoreName() {
@@ -367,8 +375,10 @@ public class DummyInMemoryStore implements AdvancedLoadWriteStore, AdvancedCache
    }
 
    private void assertRunning() {
-      if (!running) {
+      if (!running)
          throw new IllegalLifecycleStateException();
-      }
+
+      if (!available)
+         throw new PersistenceException();
    }
 }

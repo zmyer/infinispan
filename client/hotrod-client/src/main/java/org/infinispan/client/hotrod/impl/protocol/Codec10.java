@@ -1,29 +1,33 @@
 package org.infinispan.client.hotrod.impl.protocol;
 
+import static org.infinispan.client.hotrod.marshall.MarshallerUtil.bytes2obj;
+
 import java.lang.annotation.Annotation;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
+import org.infinispan.client.hotrod.DataFormat;
 import org.infinispan.client.hotrod.Flag;
 import org.infinispan.client.hotrod.annotation.ClientListener;
 import org.infinispan.client.hotrod.counter.impl.HotRodCounterEvent;
-import org.infinispan.client.hotrod.event.ClientEvent;
+import org.infinispan.client.hotrod.event.impl.AbstractClientEvent;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
 import org.infinispan.client.hotrod.exceptions.InvalidResponseException;
 import org.infinispan.client.hotrod.exceptions.RemoteNodeSuspectException;
+import org.infinispan.client.hotrod.impl.operations.PingOperation.PingResponse;
 import org.infinispan.client.hotrod.impl.transport.netty.ByteBufUtil;
 import org.infinispan.client.hotrod.impl.transport.netty.ChannelFactory;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
+import org.infinispan.commons.configuration.ClassWhiteList;
 import org.infinispan.commons.marshall.Marshaller;
-import org.infinispan.commons.util.Either;
 
 import io.netty.buffer.ByteBuf;
 
@@ -51,10 +55,10 @@ public class Codec10 implements Codec {
 
    @Override
    public void writeExpirationParams(ByteBuf buf, long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
-      if (!CodecUtils.isIntCompatible(lifespan)) {
+      if (!CodecUtils.isGreaterThan4bytes(lifespan)) {
          getLog().warn("Lifespan value greater than the max supported size (Integer.MAX_VALUE), this can cause precision loss");
       }
-      if (!CodecUtils.isIntCompatible(maxIdle)) {
+      if (!CodecUtils.isGreaterThan4bytes(maxIdle)) {
          getLog().warn("MaxIdle value greater than the max supported size (Integer.MAX_VALUE), this can cause precision loss");
       }
       int lifespanSeconds = CodecUtils.toSeconds(lifespan, lifespanTimeUnit);
@@ -85,7 +89,7 @@ public class Codec10 implements Codec {
       //todo change once TX support is added
       buf.writeByte(params.txMarker);
       if (trace) getLog().tracef("Wrote header for message %d. Operation code: %#04x. Flags: %#x",
-         params.messageId, params.opCode, flagInt);
+            params.messageId, params.opCode, flagInt);
       return params;
    }
 
@@ -116,8 +120,14 @@ public class Codec10 implements Codec {
    }
 
    @Override
-   public short readHeader(ByteBuf buf, HeaderParams params, ChannelFactory channelFactory, SocketAddress serverAddress) {
+   public short readOpCode(ByteBuf buf) {
       short receivedOpCode = buf.readUnsignedByte();
+      if (trace) getLog().tracef("Received operation code is: %#04x", receivedOpCode);
+      return receivedOpCode;
+   }
+
+   @Override
+   public short readHeader(ByteBuf buf, double receivedOpCode, HeaderParams params, ChannelFactory channelFactory, SocketAddress serverAddress) {
       // Read both the status and new topology (if present),
       // before deciding how to react to error situations.
       short status = buf.readUnsignedByte();
@@ -134,30 +144,30 @@ public class Codec10 implements Codec {
                "Invalid response operation. Expected %#x and received %#x",
                params.opRespCode, receivedOpCode));
       }
-      if (trace) getLog().tracef("Received operation code is: %#04x", receivedOpCode);
+
 
       return status;
    }
 
    @Override
-   public ClientEvent readEvent(ByteBuf buf, byte[] expectedListenerId, Marshaller marshaller, List<String> whitelist, SocketAddress serverAddress) {
+   public AbstractClientEvent readCacheEvent(ByteBuf buf, Function<byte[], DataFormat> dataFormatFunction, short eventTypeId, ClassWhiteList whitelist, SocketAddress serverAddress) {
       return null;  // No events sent in Hot Rod 1.x protocol
    }
 
    @Override
-   public Either<Short, ClientEvent> readHeaderOrEvent(ByteBuf buf, HeaderParams params, byte[] expectedListenerId, Marshaller marshaller, List<String> whitelist, ChannelFactory channelFactory, SocketAddress serverAddress) {
+   public HotRodCounterEvent readCounterEvent(ByteBuf buf) {
       return null;  // No events sent in Hot Rod 1.x protocol
    }
 
    @Override
-   public HotRodCounterEvent readCounterEvent(ByteBuf buf, byte[] listenerId) {
-      return null;  // No events sent in Hot Rod 1.x protocol
+   public boolean isObjectStorageHinted(PingResponse pingResponse) {
+      return false;
    }
 
    @Override
-   public Object returnPossiblePrevValue(ByteBuf buf, short status, int flags, List<String> whitelist, Marshaller marshaller) {
+   public Object returnPossiblePrevValue(ByteBuf buf, short status, DataFormat dataFormat, int flags, ClassWhiteList whitelist, Marshaller marshaller) {
       if (hasForceReturn(flags)) {
-         return CodecUtils.readUnmarshallByteArray(buf, status, whitelist, marshaller);
+         return bytes2obj(marshaller, ByteBufUtil.readArray(buf), dataFormat.isObjectStorage(), whitelist);
       } else {
          return null;
       }
@@ -170,11 +180,6 @@ public class Codec10 implements Codec {
    @Override
    public Log getLog() {
       return log;
-   }
-
-   @Override
-   public <T> T readUnmarshallByteArray(ByteBuf buf, short status, List<String> whitelist, Marshaller marshaller) {
-      return CodecUtils.readUnmarshallByteArray(buf, status, whitelist, marshaller);
    }
 
    public void writeClientListenerInterests(ByteBuf buf, Set<Class<? extends Annotation>> classes) {
@@ -197,12 +202,13 @@ public class Codec10 implements Codec {
                String msgFromServer = ByteBufUtil.readString(buf);
                if (status == HotRodConstants.COMMAND_TIMEOUT_STATUS && trace) {
                   localLog.tracef("Server-side timeout performing operation: %s", msgFromServer);
-               } if (msgFromServer.contains("SuspectException")
+               }
+               if (msgFromServer.contains("SuspectException")
                      || msgFromServer.contains("SuspectedException")) {
                   // Handle both Infinispan's and JGroups' suspicions
                   if (trace)
                      localLog.tracef("A remote node was suspected while executing messageId=%d. " +
-                        "Check if retry possible. Message from server: %s", params.messageId, msgFromServer);
+                           "Check if retry possible. Message from server: %s", params.messageId, msgFromServer);
                   // TODO: This will be better handled with its own status id in version 2 of protocol
                   throw new RemoteNodeSuspectException(msgFromServer, params.messageId, status);
                } else {
@@ -272,8 +278,8 @@ public class Codec10 implements Codec {
                                                                short hashFunctionVersion, int hashSpace, int clusterSize) {
       if (trace) {
          localLog.tracef("Topology change request: newTopologyId=%d, numKeyOwners=%d, " +
-                       "hashFunctionVersion=%d, hashSpaceSize=%d, clusterSize=%d",
-                 newTopologyId, numKeyOwners, hashFunctionVersion, hashSpace, clusterSize);
+                     "hashFunctionVersion=%d, hashSpaceSize=%d, clusterSize=%d",
+               newTopologyId, numKeyOwners, hashFunctionVersion, hashSpace, clusterSize);
       }
 
       Map<SocketAddress, Set<Integer>> servers2Hash = new LinkedHashMap<SocketAddress, Set<Integer>>();

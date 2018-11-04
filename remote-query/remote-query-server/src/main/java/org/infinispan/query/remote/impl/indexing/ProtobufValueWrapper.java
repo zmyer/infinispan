@@ -26,13 +26,25 @@ public final class ProtobufValueWrapper implements WrappedBytes {
 
    public static final IndexedTypeIdentifier INDEXING_TYPE = PojoIndexedTypeIdentifier.convertFromLegacy(ProtobufValueWrapper.class);
 
-   // The protobuf encoded payload
+   /**
+    * Max number of bytes to include in {@link #toString()}.
+    */
+   private static final int MAX_BYTES_IN_TOSTRING = 40;
+
+   /**
+    * The protobuf encoded payload.
+    */
    private final byte[] binary;
 
-   private int hashCode = 0;
+   /**
+    * The lazily computed hashCode. Transient field!
+    */
+   private transient int hashCode = 0;
 
-   // The Descriptor of the message (if it's a Message and not a primitive value). Transient field!
-   private Descriptor messageDescriptor;
+   /**
+    * The Descriptor of the message (if it's a Message and not a primitive value, or null otherwise). Transient field!
+    */
+   private transient Descriptor messageDescriptor;
 
    public ProtobufValueWrapper(byte[] binary) {
       if (binary == null) {
@@ -41,15 +53,30 @@ public final class ProtobufValueWrapper implements WrappedBytes {
       this.binary = binary;
    }
 
+   /**
+    * Gets the internal byte array. Callers should not modify the contents of the array.
+    *
+    * @return the wrapped byte array
+    */
    public byte[] getBinary() {
       return binary;
    }
 
+   /**
+    * Returns the Protobuf descriptor of the message type of the payload.
+    *
+    * @see #setMessageDescriptor
+    */
    public Descriptor getMessageDescriptor() {
       return messageDescriptor;
    }
 
-   public void setMessageDescriptor(Descriptor messageDescriptor) {
+   /**
+    * Sets the Protobuf descriptor of the message type of the payload.
+    *
+    * @see ProtobufValueWrapperSearchWorkCreator#discoverMessageType
+    */
+   void setMessageDescriptor(Descriptor messageDescriptor) {
       this.messageDescriptor = messageDescriptor;
    }
 
@@ -73,7 +100,7 @@ public final class ProtobufValueWrapper implements WrappedBytes {
    @Override
    public String toString() {
       // Render only max 40 bytes
-      int len = Math.min(binary.length, 40);
+      int len = Math.min(binary.length, MAX_BYTES_IN_TOSTRING);
       StringBuilder sb = new StringBuilder(50 + 3 * len);
       sb.append("ProtobufValueWrapper(length=").append(binary.length).append(", binary=[");
       for (int i = 0; i < len; i++) {
@@ -107,6 +134,16 @@ public final class ProtobufValueWrapper implements WrappedBytes {
    @Override
    public byte getByte(int offset) {
       return binary[offset];
+   }
+
+   @Override
+   public boolean equalsWrappedBytes(WrappedBytes other) {
+      if (other == null) return false;
+      if (other.getLength() != binary.length) return false;
+      for (int i = 0; i < binary.length; ++i) {
+         if (binary[i] != other.getByte(i)) return false;
+      }
+      return true;
    }
 
    public static final class Externalizer extends AbstractExternalizer<ProtobufValueWrapper> {

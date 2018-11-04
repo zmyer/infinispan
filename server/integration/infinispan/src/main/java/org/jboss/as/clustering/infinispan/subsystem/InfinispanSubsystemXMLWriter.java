@@ -56,7 +56,7 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
      */
     @Override
     public void writeContent(XMLExtendedStreamWriter writer, SubsystemMarshallingContext context) throws XMLStreamException {
-        context.startSubsystemElement(Namespace.CURRENT.getUri(), false);
+        context.startSubsystemElement(InfinispanSchema.CURRENT.getNamespaceUri(), false);
         ModelNode model = context.getModelNode();
         if (model.isDefined()) {
             for (Property entry: model.get(ModelKeys.CACHE_CONTAINER).asPropertyList()) {
@@ -83,20 +83,6 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
                     this.writeOptional(writer, Attribute.STRICT_PEER_TO_PEER, transport, ModelKeys.STRICT_PEER_TO_PEER);
                     this.writeOptional(writer, Attribute.INITIAL_CLUSTER_SIZE, transport, ModelKeys.INITIAL_CLUSTER_SIZE);
                     this.writeOptional(writer, Attribute.INITIAL_CLUSTER_TIMEOUT, transport, ModelKeys.INITIAL_CLUSTER_TIMEOUT);
-                    writer.writeEndElement();
-                }
-
-                if (container.hasDefined(ModelKeys.MODULES)) {
-                    writer.writeStartElement(Element.MODULES.getLocalName());
-                    ModelNode modules = container.get(ModelKeys.MODULES, ModelKeys.MODULES_NAME);
-                    for (ModelNode moduleNode : modules.asList()) {
-                        writer.writeStartElement(Element.MODULE.getLocalName());
-                        CacheContainerModuleResource.NAME.marshallAsAttribute(moduleNode.get(ModelKeys.NAME), writer);
-                        if (moduleNode.hasDefined(ModelKeys.SLOT)) {
-                            CacheContainerModuleResource.SLOT.marshallAsAttribute(moduleNode.get(ModelKeys.SLOT), false, writer);
-                        }
-                        writer.writeEndElement();
-                    }
                     writer.writeEndElement();
                 }
 
@@ -174,11 +160,29 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
                     writeThreadPoolElements(Element.ASYNC_OPERATIONS_THREAD_POOL, ThreadPoolResource.ASYNC_OPERATIONS, writer, container);
                     writeScheduledThreadPoolElements(Element.EXPIRATION_THREAD_POOL, ScheduledThreadPoolResource.EXPIRATION, writer, container);
                     writeThreadPoolElements(Element.LISTENER_THREAD_POOL, ThreadPoolResource.LISTENER, writer, container);
-                    writeThreadPoolElements(Element.PERSISTENCE_THREAD_POOL, ThreadPoolResource.PERSISTENCE, writer, container);
+                    writeScheduledThreadPoolElements(Element.PERSISTENCE_THREAD_POOL, ScheduledThreadPoolResource.PERSISTENCE, writer, container);
                     writeThreadPoolElements(Element.REMOTE_COMMAND_THREAD_POOL, ThreadPoolResource.REMOTE_COMMAND, writer, container);
                     writeScheduledThreadPoolElements(Element.REPLICATION_QUEUE_THREAD_POOL, ScheduledThreadPoolResource.REPLICATION_QUEUE, writer, container);
                     writeThreadPoolElements(Element.STATE_TRANSFER_THREAD_POOL, ThreadPoolResource.STATE_TRANSFER, writer, container);
                     writeThreadPoolElements(Element.TRANSPORT_THREAD_POOL, ThreadPoolResource.TRANSPORT, writer, container);
+                }
+
+                // write modules
+                if (container.hasDefined(ModelKeys.MODULES)) {
+                   writer.writeStartElement(Element.MODULES.getLocalName());
+                   ModelNode modules = container.get(ModelKeys.MODULES, ModelKeys.MODULES_NAME, ModelKeys.MODULE);
+                   for (ModelNode moduleNode : modules.asList()) {
+                      if (moduleNode.isDefined()) {
+                         ModelNode modelNode = moduleNode.get(0);
+                         writer.writeStartElement(Element.MODULE.getLocalName());
+                         writeAttribute(writer, modelNode, CacheContainerModuleResource.NAME);
+                         if (modelNode.hasDefined(ModelKeys.SLOT)) {
+                            writeAttribute(writer, modelNode, CacheContainerModuleResource.SLOT);
+                         }
+                         writer.writeEndElement();
+                      }
+                   }
+                   writer.writeEndElement();
                 }
 
                 ModelNode configurations = container.get(ModelKeys.CONFIGURATIONS, ModelKeys.CONFIGURATIONS_NAME);
@@ -469,15 +473,18 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
             if ((memoryValues = memory.get(ModelKeys.BINARY_NAME)).isDefined()) {
                 writer.writeStartElement(Element.BINARY.getLocalName());
                 this.writeOptional(writer, Attribute.SIZE, memoryValues, ModelKeys.SIZE);
+                this.writeOptional(writer, Attribute.STRATEGY, memoryValues, ModelKeys.STRATEGY);
                 this.writeOptional(writer, Attribute.EVICTION, memoryValues, ModelKeys.EVICTION);
                 writer.writeEndElement();
             } else if ((memoryValues = memory.get(ModelKeys.OBJECT_NAME)).isDefined()) {
                 writer.writeStartElement(Element.OBJECT.getLocalName());
                 this.writeOptional(writer, Attribute.SIZE, memoryValues, ModelKeys.SIZE);
+                this.writeOptional(writer, Attribute.STRATEGY, memoryValues, ModelKeys.STRATEGY);
                 writer.writeEndElement();
             } else if ((memoryValues = memory.get(ModelKeys.OFF_HEAP_NAME)).isDefined()) {
                 writer.writeStartElement(Element.OFF_HEAP.getLocalName());
                 this.writeOptional(writer, Attribute.SIZE, memoryValues, ModelKeys.SIZE);
+                this.writeOptional(writer, Attribute.STRATEGY, memoryValues, ModelKeys.STRATEGY);
                 this.writeOptional(writer, Attribute.EVICTION, memoryValues, ModelKeys.EVICTION);
                 this.writeOptional(writer, Attribute.ADDRESS_COUNT, memoryValues, ModelKeys.ADDRESS_COUNT);
                 writer.writeEndElement();
@@ -610,6 +617,7 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
                 this.writeOptional(writer, Attribute.CACHE_SIZE, store, ModelKeys.CACHE_SIZE);
                 this.writeOptional(writer, Attribute.CLEAR_THRESHOLD, store, ModelKeys.CLEAR_THRESHOLD);
                 this.writeStoreAttributes(writer, store);
+                this.writeStoreWriteBehind(writer, store);
                 this.writeRocksDBStoreExpiration(writer, store);
                 this.writeRocksDBStoreCompression(writer, store);
                 this.writeStoreProperties(writer, store);

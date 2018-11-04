@@ -3,14 +3,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-       <groupId>org.infinispan</groupId>
-       <artifactId>infinispan-parent</artifactId>
-       <version>9.2.1-SNAPSHOT</version>
-       <relativePath>../../pom.xml</relativePath>
+      <groupId>org.infinispan</groupId>
+      <artifactId>infinispan-integrationtests-parent</artifactId>
+      <version>10.0.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
    </parent>
 
     <artifactId>infinispan-spring-boot-it</artifactId>
-    <name>Integration tests: Spring Boot</name>
+    <name>Integration tests - Spring Boot</name>
     <description>Integration tests for Infinispan and Spring Boot</description>
 
     <properties>
@@ -18,18 +18,6 @@
         <!-- Spring Boot needs the MockUtil constructor to be public, so it can't use mockito-core 2+ -->
         <overridden.version.mockito>1.10.19</overridden.version.mockito>
     </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${version.spring-boot}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <!-- Those are normal dependencies that are recommended for Spring Boot users -->
@@ -102,6 +90,11 @@
             <scope>test</scope>
             <version>${overridden.version.mockito}</version>
         </dependency>
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <profiles>
@@ -133,8 +126,21 @@
                     <groups combine.self="override">${defaultJUnitGroups}</groups>
                     <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
                     <systemPropertyVariables>
-                        <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
-                        <build.directory>${project.build.directory}</build.directory>
+                       <!-- Copied from parent POM -->
+                       <infinispan.test.jgroups.protocol>${infinispan.test.jgroups.protocol}</infinispan.test.jgroups.protocol>
+                       <jgroups.bind_addr>127.0.0.1</jgroups.bind_addr>
+                       <jgroups.join_timeout>2000</jgroups.join_timeout>
+                       <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
+                       <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
+                       <build.directory>${project.build.directory}</build.directory>
+                       <com.arjuna.ats.arjuna.common.propertiesFile>test-jbossts-properties.xml</com.arjuna.ats.arjuna.common.propertiesFile>
+
+                       <!-- this is picked up in the log4j xml which prepends it to each module's log file-->
+                       <infinispan.module-suffix>${infinispan.module-suffix}</infinispan.module-suffix>
+                       <ansi.strip>${ansi.strip}</ansi.strip>
+                       <!-- Log the correct thread name after we call Thread.setName(),
+                            see https://issues.apache.org/jira/browse/LOG4J2-2052 -->
+                       <AsyncLogger.ThreadNameStrategy>UNCACHED</AsyncLogger.ThreadNameStrategy>
                     </systemPropertyVariables>
                     <trimStackTrace>false</trimStackTrace>
                     <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>

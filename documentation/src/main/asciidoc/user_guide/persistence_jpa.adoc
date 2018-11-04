@@ -1,14 +1,17 @@
+[[jpa_cache_store]]
 === JPA Cache Store
 The implementation depends on JPA 2.0 specification to access entity meta model.
 
-In normal use cases, it's recommended to leverage Infinispan for JPA second level cache and/or query cache.
-However, if you'd like to use only Infinispan API and you want Infinispan to persist into a cache store using a common format (e.g., a database with well defined schema), then JPA Cache Store could be right for you.
+In normal use cases, it's recommended to leverage {brandname} for JPA second level cache and/or query cache.
+However, if you'd like to use only {brandname} API and you want {brandname} to persist into a cache store using a common format (e.g., a database with well defined schema), then JPA Cache Store could be right for you.
 
 .Things to note
 * When using JPA Cache Store, the key should be the ID of the entity, while the value should be the entity object.
 * Only a single `@Id` or `@EmbeddedId` annotated property is allowed.
 * Auto-generated ID is not supported.
 * Lastly, all entries will be stored as immortal entries.
+
+NOTE: This store doesn't support being segmented
 
 ==== Sample Usage
 For example, given a persistence unit "myPersistenceUnit", and a JPA entity User:
@@ -61,7 +64,7 @@ usersCache.put("raytsang", new User(...));
 
 ----
 
-Normally a single Infinispan cache can store multiple types of key/value pairs, for example:
+Normally a single {brandname} cache can store multiple types of key/value pairs, for example:
 
 [source,java]
 ----
@@ -127,8 +130,8 @@ Configuration cacheConfig = new ConfigurationBuilder().persistence()
 [options="header"]
 |===============
 |Parameter|Description
-|persistenceUnitName| JPA persistence unit name in JPA configuration ﻿(persistence.xml) that contains the JPA entity class 
-|entityClass| JPA entity class that is expected to be stored in this cache.  Only one class is allowed. 
+|persistenceUnitName| JPA persistence unit name in JPA configuration ﻿(persistence.xml) that contains the JPA entity class
+|entityClass| JPA entity class that is expected to be stored in this cache.  Only one class is allowed.
 |===============
 
 ===== Sample XML Configuration
@@ -150,12 +153,12 @@ Configuration cacheConfig = new ConfigurationBuilder().persistence()
 [options="header"]
 |===============
 |Parameter|Description
-|persistence-unit| JPA persistence unit name in JPA configuration ﻿(persistence.xml) that contains the JPA entity class 
+|persistence-unit| JPA persistence unit name in JPA configuration ﻿(persistence.xml) that contains the JPA entity class
 |entity-class|Fully qualified JPA entity class name that is expected to be stored in this cache.  Only one class is allowed.
 
 |===============
 
 ==== Additional References
-Refer to the link:https://github.com/infinispan/infinispan/blob/master/persistence/jpa/src/test/java/org/infinispan/persistence/jpa/JpaConfigurationTest.java[test case] for code samples in action. 
+Refer to the link:https://github.com/infinispan/infinispan/blob/master/persistence/jpa/src/test/java/org/infinispan/persistence/jpa/JpaConfigurationTest.java[test case] for code samples in action.
 
 Refer to link:https://github.com/infinispan/infinispan/blob/master/persistence/jpa/src/test/resources/config/jpa-config.xml[test configurations] for configuration samples.

@@ -2,6 +2,7 @@ package org.infinispan.stress;
 
 import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
@@ -9,21 +10,21 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.infinispan.container.DataContainer;
-import org.infinispan.container.DefaultDataContainer;
-import org.infinispan.container.InternalEntryFactoryImpl;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.DefaultDataContainer;
+import org.infinispan.container.impl.InternalEntryFactoryImpl;
 import org.infinispan.eviction.ActivationManager;
 import org.infinispan.eviction.EvictionManager;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.eviction.PassivationManager;
-import org.infinispan.expiration.ExpirationManager;
+import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.TestingUtil;
-import org.infinispan.util.DefaultTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.util.EmbeddedTimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
@@ -71,7 +72,7 @@ public class DataContainerStressTest {
 
    private void initializeDefaultDataContainer(DefaultDataContainer dc) {
       InternalEntryFactoryImpl entryFactory = new InternalEntryFactoryImpl();
-      TimeService timeService = new DefaultTimeService();
+      TimeService timeService = new EmbeddedTimeService();
       TestingUtil.inject(entryFactory, timeService);
       // Mockito cannot be used as it will run out of memory from keeping all the invocations, thus we use blank impls
       TestingUtil.inject(dc, (EvictionManager) evicted -> {}, new PassivationManager() {
@@ -130,7 +131,7 @@ public class DataContainerStressTest {
                  public long getActivationCount() {
                     return 0;
                  }
-              }, null, timeService, null, new ExpirationManager() {
+              }, null, timeService, null, new InternalExpirationManager() {
                  @Override
                  public void processExpiration() {
 
@@ -147,6 +148,17 @@ public class DataContainerStressTest {
                  }
 
                  @Override
+                 public CompletableFuture<Boolean> entryExpiredInMemory(InternalCacheEntry entry, long currentTime,
+                       boolean writeOperation) {
+                    return null;
+                 }
+
+                 @Override
+                 public CompletableFuture<Boolean> entryExpiredInMemoryFromIteration(InternalCacheEntry entry, long currentTime) {
+                    return null;
+                 }
+
+                 @Override
                  public void handleInStoreExpiration(Object key) {
 
                  }
@@ -157,13 +169,8 @@ public class DataContainerStressTest {
                  }
 
                  @Override
-                 public void registerWriteIncoming(Object key) {
-
-                 }
-
-                 @Override
-                 public void unregisterWrite(Object key) {
-
+                 public CompletableFuture<Long> retrieveLastAccess(Object key, Object value, int segment) {
+                    return null;
                  }
               });
    }

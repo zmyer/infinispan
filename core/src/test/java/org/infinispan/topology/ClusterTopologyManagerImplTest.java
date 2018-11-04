@@ -24,6 +24,7 @@ import org.infinispan.distribution.ch.ConsistentHashFactory;
 import org.infinispan.distribution.ch.impl.ReplicatedConsistentHashFactory;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.KnownComponentNames;
+import org.infinispan.factories.impl.BasicComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifierImpl;
@@ -40,7 +41,7 @@ import org.testng.annotations.Test;
 public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
    private static final String CACHE_NAME = "testCache";
 
-   ExecutorService transportExecutor = Executors.newFixedThreadPool(2, getTestThreadFactory("Transport"));
+   private ExecutorService transportExecutor = Executors.newFixedThreadPool(2, getTestThreadFactory("Transport"));
 
    private static final Address A = new TestAddress(0, "A");
    private static final Address B = new TestAddress(1, "B");
@@ -62,21 +63,22 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       GlobalConfiguration gc = GlobalConfigurationBuilder.defaultClusteredBuilder().build();
       EmbeddedCacheManager cacheManager = mock(EmbeddedCacheManager.class);
       GlobalComponentRegistry gcr = new GlobalComponentRegistry(gc, cacheManager, Collections.emptySet());
+      BasicComponentRegistry gbcr = gcr.getComponent(BasicComponentRegistry.class);
 
       CacheManagerNotifierImpl managerNotifier = new CacheManagerNotifierImpl();
-      gcr.registerComponent(managerNotifier, CacheManagerNotifier.class);
+      gbcr.replaceComponent(CacheManagerNotifier.class.getName(), managerNotifier, false);
       managerNotifier.start();
 
       MockTransport transport = new MockTransport(A);
-      gcr.registerComponent(transport, Transport.class);
+      gbcr.replaceComponent(Transport.class.getName(), transport, false);
 
       PersistentUUIDManager persistentUUIDManager = new PersistentUUIDManagerImpl();
-      gcr.registerComponent(persistentUUIDManager, PersistentUUIDManager.class);
+      gbcr.replaceComponent(PersistentUUIDManager.class.getName(), persistentUUIDManager, false);
 
-      gcr.registerComponent(transportExecutor, KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR);
+      gbcr.replaceComponent(KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR, transportExecutor, false);
 
       MockLocalTopologyManager ltm = new MockLocalTopologyManager(CACHE_NAME);
-      gcr.registerComponent(ltm, LocalTopologyManager.class);
+      gbcr.replaceComponent(LocalTopologyManager.class.getName(), ltm, false);
 
       // Initial conditions
       transport.init(1, singletonList(A));
@@ -84,7 +86,7 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
 
       // Component under test: ClusterTopologyManagerImpl on the coordinator (A)
       ClusterTopologyManagerImpl ctm = new ClusterTopologyManagerImpl();
-      gcr.registerComponent(ctm, ClusterTopologyManager.class);
+      gbcr.replaceComponent(ClusterTopologyManager.class.getName(), ctm, false);
 
       ctm.start();
 
@@ -136,21 +138,22 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       GlobalConfiguration gc = GlobalConfigurationBuilder.defaultClusteredBuilder().build();
       EmbeddedCacheManager cacheManager = mock(EmbeddedCacheManager.class);
       GlobalComponentRegistry gcr = new GlobalComponentRegistry(gc, cacheManager, Collections.emptySet());
+      BasicComponentRegistry gbcr = gcr.getComponent(BasicComponentRegistry.class);
 
       CacheManagerNotifierImpl managerNotifier = new CacheManagerNotifierImpl();
-      gcr.registerComponent(managerNotifier, CacheManagerNotifier.class);
+      gbcr.replaceComponent(CacheManagerNotifier.class.getName(), managerNotifier, false);
       managerNotifier.start();
 
       MockTransport transport = new MockTransport(B);
-      gcr.registerComponent(transport, Transport.class);
+      gbcr.replaceComponent(Transport.class.getName(), transport, false);
 
       PersistentUUIDManager persistentUUIDManager = new PersistentUUIDManagerImpl();
-      gcr.registerComponent(persistentUUIDManager, PersistentUUIDManager.class);
+      gbcr.replaceComponent(PersistentUUIDManager.class.getName(), persistentUUIDManager, false);
 
-      gcr.registerComponent(transportExecutor, KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR);
+      gbcr.replaceComponent(KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR, transportExecutor, false);
 
       MockLocalTopologyManager ltm = new MockLocalTopologyManager(CACHE_NAME);
-      gcr.registerComponent(ltm, LocalTopologyManager.class);
+      gbcr.replaceComponent(LocalTopologyManager.class.getName(), ltm, false);
 
       // Initial conditions (rebalance in phase 3, READ_NEW_WRITE_ALL)
       transport.init(2, asList(A, B));
@@ -173,7 +176,7 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
 
       // Component under test: ClusterTopologyManagerImpl on the new coordinator (B)
       ClusterTopologyManagerImpl ctm = new ClusterTopologyManagerImpl();
-      gcr.registerComponent(ctm, ClusterTopologyManager.class);
+      gbcr.replaceComponent(ClusterTopologyManager.class.getName(), ctm, false);
 
       // When CTMI starts as regular member it requests the rebalancing status from the coordinator
       runConcurrently(
@@ -188,11 +191,11 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       // Node B becomes coordinator and CTMI tries to recover the cluster status
       transport.expectTopologyCommand(CacheTopologyControlCommand.Type.GET_STATUS).finish();
 
-      // CTMI broadcasts the only cache topology it got, but without the pending CH
-      ltm.expectTopology(5, singletonList(A), null, CacheTopology.Phase.NO_REBALANCE);
+      // CTMI gets a single cache topology with READ_NEW and broadcasts a new topology with only the read CH
+      ltm.expectTopology(5, asList(A, B), null, CacheTopology.Phase.NO_REBALANCE);
       transport.expectTopologyCommand(CacheTopologyControlCommand.Type.CH_UPDATE, c -> {
          assertEquals(5, c.getTopologyId());
-         assertCHMembers(c.getCurrentCH(), A);
+         assertCHMembers(c.getCurrentCH(), A, B);
          assertNull(c.getPendingCH());
       });
       transport.expectTopologyCommand(CacheTopologyControlCommand.Type.STABLE_TOPOLOGY_UPDATE, c -> {
@@ -204,6 +207,13 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       // CTMI broadcasts a new cache topology with only node B
       ltm.expectTopology(6, singletonList(B), null, CacheTopology.Phase.NO_REBALANCE);
       transport.expectTopologyCommand(CacheTopologyControlCommand.Type.CH_UPDATE, c -> {
+         assertEquals(6, c.getTopologyId());
+         assertCHMembers(c.getCurrentCH(), B);
+         assertNull(c.getPendingCH());
+      });
+
+      // The new topology doesn't need rebalancing, so CTMI updates the stable topology
+      transport.expectTopologyCommand(CacheTopologyControlCommand.Type.STABLE_TOPOLOGY_UPDATE, c -> {
          assertEquals(6, c.getTopologyId());
          assertCHMembers(c.getCurrentCH(), B);
          assertNull(c.getPendingCH());

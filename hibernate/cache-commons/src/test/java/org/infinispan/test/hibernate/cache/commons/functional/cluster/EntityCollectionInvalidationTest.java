@@ -21,7 +21,10 @@ import java.util.stream.Stream;
 
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
-import org.infinispan.hibernate.cache.commons.InfinispanRegionFactory;
+import org.hibernate.engine.spi.SessionFactoryImplementor;
+import org.infinispan.commands.functional.ReadWriteKeyCommand;
+import org.infinispan.hibernate.cache.commons.InfinispanBaseRegion;
+import org.infinispan.hibernate.cache.spi.InfinispanProperties;
 import org.infinispan.hibernate.cache.commons.access.PutFromLoadValidator;
 import org.infinispan.hibernate.cache.commons.util.FutureUpdate;
 import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
@@ -29,12 +32,10 @@ import org.hibernate.cache.spi.access.AccessType;
 import org.infinispan.test.hibernate.cache.commons.functional.entities.Contact;
 import org.infinispan.test.hibernate.cache.commons.functional.entities.Customer;
 import org.infinispan.test.hibernate.cache.commons.util.ExpectingInterceptor;
-import org.infinispan.test.hibernate.cache.commons.util.TestInfinispanRegionFactory;
 import org.hibernate.testing.TestForIssue;
 import org.infinispan.AdvancedCache;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
-import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commons.util.Util;
 import org.infinispan.commons.util.concurrent.ConcurrentHashSet;
 import org.infinispan.context.InvocationContext;
@@ -43,7 +44,12 @@ import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.annotation.CacheEntryVisited;
 import org.infinispan.notifications.cachelistener.event.CacheEntryVisitedEvent;
+import org.infinispan.test.hibernate.cache.commons.util.TestRegionFactory;
+import org.infinispan.test.hibernate.cache.commons.util.TestSessionAccess;
+import org.infinispan.util.ControlledTimeService;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
@@ -62,13 +68,22 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 	private static final InfinispanMessageLogger log = InfinispanMessageLogger.Provider.getLog( EntityCollectionInvalidationTest.class );
 
 	private static final Integer CUSTOMER_ID = new Integer( 1 );
+	private static final TestSessionAccess TEST_SESSION_ACCESS = TestSessionAccess.findTestSessionAccess();
 
 	private EmbeddedCacheManager localManager, remoteManager;
 	private AdvancedCache localCustomerCache, remoteCustomerCache;
 	private AdvancedCache localContactCache, remoteContactCache;
 	private AdvancedCache localCollectionCache, remoteCollectionCache;
 	private MyListener localListener, remoteListener;
-	private SessionFactory localFactory, remoteFactory;
+	private SessionFactoryImplementor localFactory, remoteFactory;
+	private final ControlledTimeService timeService = new ControlledTimeService();
+	private InfinispanBaseRegion localCustomerRegion, remoteCustomerRegion;
+	private InfinispanBaseRegion localCollectionRegion, remoteCollectionRegion;
+	private InfinispanBaseRegion localContactRegion, remoteContactRegion;
+
+   @Rule
+   public TestName name = new TestName();
+
 
 	@Override
 	public List<Object[]> getParameters() {
@@ -80,7 +95,7 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 		super.startUp();
 		// Bind a listener to the "local" cache
 		// Our region factory makes its CacheManager available to us
-		localManager = ClusterAwareRegionFactory.getCacheManager( DualNodeTest.LOCAL );
+		localManager = ClusterAware.getCacheManager( DualNodeTest.LOCAL );
 		// Cache localCache = localManager.getCache("entity");
 		localCustomerCache = localManager.getCache( Customer.class.getName() ).getAdvancedCache();
 		localContactCache = localManager.getCache( Contact.class.getName() ).getAdvancedCache();
@@ -91,7 +106,7 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 		localCollectionCache.addListener( localListener );
 
 		// Bind a listener to the "remote" cache
-		remoteManager = ClusterAwareRegionFactory.getCacheManager( DualNodeTest.REMOTE );
+		remoteManager = ClusterAware.getCacheManager( DualNodeTest.REMOTE );
 		remoteCustomerCache = remoteManager.getCache( Customer.class.getName() ).getAdvancedCache();
 		remoteContactCache = remoteManager.getCache( Contact.class.getName() ).getAdvancedCache();
 		remoteCollectionCache = remoteManager.getCache( Customer.class.getName() + ".contacts" ).getAdvancedCache();
@@ -101,7 +116,14 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 		remoteCollectionCache.addListener( remoteListener );
 
 		localFactory = sessionFactory();
+		localCustomerRegion = TEST_SESSION_ACCESS.getRegion(localFactory, Customer.class.getName());
+		localContactRegion = TEST_SESSION_ACCESS.getRegion(localFactory, Contact.class.getName());
+		localCollectionRegion = TEST_SESSION_ACCESS.getRegion(localFactory, Customer.class.getName() + ".contacts");
 		remoteFactory = secondNodeEnvironment().getSessionFactory();
+		remoteCustomerRegion = TEST_SESSION_ACCESS.getRegion(remoteFactory, Customer.class.getName());
+		remoteContactRegion = TEST_SESSION_ACCESS.getRegion(remoteFactory, Contact.class.getName());
+		remoteCollectionRegion = TEST_SESSION_ACCESS.getRegion(remoteFactory, Customer.class.getName() + ".contacts");
+
 	}
 
 	@Override
@@ -120,11 +142,14 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 	@Override
 	protected void addSettings(Map settings) {
 		super.addSettings(settings);
-		settings.put(TestInfinispanRegionFactory.PENDING_PUTS_SIMPLE, false);
+		settings.put(TestRegionFactory.PENDING_PUTS_SIMPLE, false);
+		settings.put(TestRegionFactory.TIME_SERVICE, timeService);
 	}
 
 	@Test
 	public void testAll() throws Exception {
+      log.infof(name.getMethodName());
+
 		assertEmptyCaches();
 		assertTrue( remoteListener.isEmpty() );
 		assertTrue( localListener.isEmpty() );
@@ -134,6 +159,18 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 
 		assertTrue( remoteListener.isEmpty() );
 		assertTrue( localListener.isEmpty() );
+
+		// The create customer above removes the collection from the cache (see CollectionRecreateAction)
+		// and therefore the putFromLoad in getCustomer could be considered stale if executed too soon.
+		timeService.advance(1);
+
+      CountDownLatch remoteCollectionLoadLatch = null;
+      if (!cacheMode.isInvalidation()) {
+         remoteCollectionLoadLatch = new CountDownLatch(1);
+         ExpectingInterceptor.get(remoteCollectionCache)
+            .when((ctx, cmd) -> cmd instanceof ReadWriteKeyCommand)
+            .countDown(remoteCollectionLoadLatch);
+      }
 
 		log.debug( "Find node 0" );
 		// This actually brings the collection into the cache
@@ -148,6 +185,12 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 		// Check the read came from the cache
 		log.debug( "Check cache 0" );
 		assertLoadedFromCache( localListener, ids.customerId, ids.contactIds );
+
+      if (remoteCollectionLoadLatch != null) {
+         log.debug( "Wait for remote collection put from load to complete" );
+         assertTrue(remoteCollectionLoadLatch.await(2, TimeUnit.SECONDS));
+         ExpectingInterceptor.cleanup(remoteCollectionCache);
+      }
 
 		log.debug( "Find node 1" );
 		// This actually brings the collection into the cache since invalidation is in use
@@ -180,13 +223,13 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 			ExpectingInterceptor.cleanup(localCustomerCache);
 		}
 
-		assertEquals( 0, localCollectionCache.size() );
+		assertEquals( 0, localCollectionRegion.getElementCountInMemory());
 		if (cacheMode.isInvalidation()) {
 			// After modification, local cache should have been invalidated and hence should be empty
-			assertEquals(0, localCustomerCache.size());
+			assertEquals(0, localCustomerRegion.getElementCountInMemory());
 		} else {
 			// Replicated cache is updated, not invalidated
-			assertEquals(1, localCustomerCache.size());
+			assertEquals(1, localCustomerRegion.getElementCountInMemory());
 		}
 	}
 
@@ -203,7 +246,7 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 		Phaser getPhaser = new Phaser(2);
 		HookInterceptor hookInterceptor = new HookInterceptor(getException);
 		AdvancedCache remotePPCache = remoteCustomerCache.getCacheManager().getCache(
-				remoteCustomerCache.getName() + "-" + InfinispanRegionFactory.DEF_PENDING_PUTS_RESOURCE).getAdvancedCache();
+				remoteCustomerCache.getName() + "-" + InfinispanProperties.DEF_PENDING_PUTS_RESOURCE).getAdvancedCache();
 		remotePPCache.getAdvancedCache().addInterceptor(hookInterceptor, 0);
 
 		IdContainer idContainer = new IdContainer();
@@ -262,12 +305,12 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 	}
 
 	protected void assertEmptyCaches() {
-		assertTrue( localCustomerCache.isEmpty() );
-		assertTrue( localContactCache.isEmpty() );
-		assertTrue( localCollectionCache.isEmpty() );
-		assertTrue( remoteCustomerCache.isEmpty() );
-		assertTrue( remoteContactCache.isEmpty() );
-		assertTrue( remoteCollectionCache.isEmpty() );
+		assertEquals(0, localCustomerRegion.getElementCountInMemory());
+		assertEquals(0, localContactRegion.getElementCountInMemory());
+		assertEquals(0, localCollectionRegion.getElementCountInMemory());
+		assertEquals(0, remoteCustomerRegion.getElementCountInMemory());
+		assertEquals(0, remoteContactRegion.getElementCountInMemory());
+		assertEquals(0, remoteCollectionRegion.getElementCountInMemory());
 	}
 
 	private IdContainer createCustomer(SessionFactory sessionFactory)
@@ -330,7 +373,7 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 	}
 
 	private boolean isFutureUpdate(InvocationContext ctx, VisitableCommand cmd) {
-		return cmd instanceof PutKeyValueCommand && ((PutKeyValueCommand) cmd).getValue() instanceof FutureUpdate;
+		return cmd instanceof ReadWriteKeyCommand && ((ReadWriteKeyCommand) cmd).getFunction() instanceof FutureUpdate;
 	}
 
 	private Runnable mockValidator(AdvancedCache cache, CountDownLatch latch) {
@@ -413,31 +456,12 @@ public class EntityCollectionInvalidationTest extends DualNodeTest {
 	}
 
 	private void assertLoadedFromCache(MyListener listener, Integer custId, Set contactIds) {
-		assertTrue(
-				"Customer#" + custId + " was in cache", listener.visited.contains(
-				"Customer#"
-						+ custId
-		)
-		);
+		assertTrue("Customer#" + custId + " was in cache", listener.visited.contains("Customer#" + custId));
 		for ( Iterator it = contactIds.iterator(); it.hasNext(); ) {
 			Integer contactId = (Integer) it.next();
-			assertTrue(
-					"Contact#" + contactId + " was in cache", listener.visited.contains(
-					"Contact#"
-							+ contactId
-			)
-			);
-			assertTrue(
-					"Contact#" + contactId + " was in cache", listener.visited.contains(
-					"Contact#"
-							+ contactId
-			)
-			);
+			assertTrue("Contact#" + contactId + " was in cache", listener.visited.contains("Contact#"	+ contactId));
 		}
-		assertTrue(
-				"Customer.contacts" + custId + " was in cache", listener.visited
-				.contains( "Customer.contacts#" + custId )
-		);
+		assertTrue("Customer.contacts" + custId + " was in cache", listener.visited.contains( "Customer.contacts#" + custId ));
 	}
 
 	protected static void arriveAndAwait(Phaser phaser) throws TimeoutException, InterruptedException {

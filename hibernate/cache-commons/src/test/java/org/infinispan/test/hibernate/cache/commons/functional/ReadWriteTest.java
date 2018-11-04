@@ -6,11 +6,16 @@
  */
 package org.infinispan.test.hibernate.cache.commons.functional;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 import org.hibernate.Cache;
 import org.hibernate.Criteria;
@@ -21,26 +26,16 @@ import org.hibernate.cache.spi.entry.CacheEntry;
 import org.hibernate.criterion.Restrictions;
 import org.hibernate.stat.SecondLevelCacheStatistics;
 import org.hibernate.stat.Statistics;
-
 import org.hibernate.testing.TestForIssue;
+import org.infinispan.commons.util.ByRef;
 import org.infinispan.test.hibernate.cache.commons.functional.entities.Citizen;
 import org.infinispan.test.hibernate.cache.commons.functional.entities.Item;
 import org.infinispan.test.hibernate.cache.commons.functional.entities.NaturalIdOnManyToOne;
 import org.infinispan.test.hibernate.cache.commons.functional.entities.OtherItem;
 import org.infinispan.test.hibernate.cache.commons.functional.entities.State;
 import org.infinispan.test.hibernate.cache.commons.functional.entities.VersionedItem;
-import org.infinispan.test.hibernate.cache.commons.util.TestSessionAccess;
 import org.junit.After;
 import org.junit.Test;
-
-import org.infinispan.commons.util.ByRef;
-
-import static junit.framework.Assert.assertEquals;
-import static junit.framework.Assert.assertNotNull;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 /**
  * Functional entity transactional tests.
@@ -49,9 +44,6 @@ import static org.junit.Assert.fail;
  * @since 3.5
  */
 public class ReadWriteTest extends ReadOnlyTest {
-
-   protected static final TestSessionAccess TEST_SESSION_ACCESS = TestSessionAccess.findTestSessionAccess();
-
 	@Override
 	public List<Object[]> getParameters() {
 		return getParameters(true, true, false, true);
@@ -96,7 +88,8 @@ public class ReadWriteTest extends ReadOnlyTest {
 			assertEquals( 1, loaded.getItems().size() );
 		});
 
-		SecondLevelCacheStatistics cStats = stats.getSecondLevelCacheStatistics( Item.class.getName() + ".items" );
+		String itemsRegionName = Item.class.getName() + ".items";
+		SecondLevelCacheStatistics cStats = stats.getSecondLevelCacheStatistics(itemsRegionName);
 		assertEquals( 1, cStats.getElementCountInMemory() );
 
 		withTxSession(s -> {
@@ -105,8 +98,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 			assertEquals( item.getName(), loadedWithCachedCollection.getName() );
 			assertEquals( item.getItems().size(), loadedWithCachedCollection.getItems().size() );
 			assertEquals( 1, cStats.getHitCount() );
-			Map cacheEntries = cStats.getEntries();
-			assertEquals( 1, cacheEntries.size() );
+			assertEquals( 1, TEST_SESSION_ACCESS.getRegion(sessionFactory(), itemsRegionName).getElementCountInMemory());
 			Item itemElement = loadedWithCachedCollection.getItems().iterator().next();
 			itemElement.setOwner( null );
 			loadedWithCachedCollection.getItems().clear();
@@ -306,11 +298,10 @@ public class ReadWriteTest extends ReadOnlyTest {
 		}
 
 		// check the version value in the cache...
-		SecondLevelCacheStatistics slcs = stats.getSecondLevelCacheStatistics( VersionedItem.class.getName() );
-
-		Object entry = slcs.getEntries().get( item.getId() );
-		Long cachedVersionValue;
-		cachedVersionValue = (Long) ((CacheEntry) entry).getVersion();
+		Object entry = getEntry(VersionedItem.class.getName(), item.getId());
+		assertNotNull(entry);
+		Long cachedVersionValue = (Long) ((CacheEntry) entry).getVersion();
+		assertNotNull(cachedVersionValue);
 		assertEquals(initialVersion.longValue(), cachedVersionValue.longValue());
 
 		withTxSession(s -> {
@@ -340,7 +331,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 		});
 
 		// item should not be in entity cache.
-		assertEquals( Collections.EMPTY_MAP, slcs.getEntries() );
+		assertEquals(0, getNumberOfItems());
 
 		withTxSession(s -> {
 			Item item = s.get( Item.class, itemId.get() );
@@ -376,7 +367,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 
 		// item should not be in entity cache.
 		//slcs = stats.getSecondLevelCacheStatistics( Item.class.getName() );
-		assertEquals(Collections.EMPTY_MAP, slcs.getEntries() );
+		assertEquals(0, getNumberOfItems());
 
 		withTxSession(s -> {
 			Item item = s.get(Item.class, itemId.get());
@@ -395,8 +386,8 @@ public class ReadWriteTest extends ReadOnlyTest {
 		TIME_SERVICE.advance(1);
 
 		assertEquals(0, slcs.getPutCount());
-		assertEquals( 0, slcs.getElementCountInMemory() );
-		assertEquals( 0, slcs.getEntries().size() );
+		assertEquals(0, slcs.getElementCountInMemory());
+		assertEquals(0, getNumberOfItems());
 
 		ByRef<Long> idRef = new ByRef<>(null);
 		withTxSession(s -> {
@@ -409,7 +400,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 
 		assertEquals( 1, slcs.getPutCount() );
 		assertEquals( 1, slcs.getElementCountInMemory() );
-		assertEquals( 1, slcs.getEntries().size() );
+		assertEquals( 1, getNumberOfItems());
 
 		withTxSession(s -> {
 			Item item = s.get( Item.class, idRef.get() );
@@ -420,7 +411,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 
 		assertEquals( slcs.getPutCount(), 2 );
 
-		CacheEntry entry = (CacheEntry) slcs.getEntries().get( idRef.get() );
+		CacheEntry entry = getEntry(Item.class.getName(), idRef.get());
 		Serializable[] ser = entry.getDisassembledState();
 		assertTrue( ser[0].equals( "widget" ) );
 		assertTrue( ser[1].equals( "A bog standard item" ) );
@@ -696,4 +687,11 @@ public class ReadWriteTest extends ReadOnlyTest {
 		return (State) criteria.list().get( 0 );
 	}
 
+	private int getNumberOfItems() {
+		return (int) TEST_SESSION_ACCESS.getRegion(sessionFactory(), Item.class.getName()).getElementCountInMemory();
+	}
+
+	private CacheEntry getEntry(String regionName, Long key) {
+		return (CacheEntry) TEST_SESSION_ACCESS.getRegion(sessionFactory(), regionName).getCache().get(key);
+	}
 }

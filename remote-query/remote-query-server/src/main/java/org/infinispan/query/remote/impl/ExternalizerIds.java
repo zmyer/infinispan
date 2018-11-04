@@ -9,7 +9,6 @@ package org.infinispan.query.remote.impl;
  * @author anistor@redhat.com
  * @since 6.0
  */
-@SuppressWarnings("boxing")
 public interface ExternalizerIds {
 
    Integer PROTOBUF_VALUE_WRAPPER = 1700;
@@ -25,6 +24,4 @@ public interface ExternalizerIds {
    Integer ICKLE_CONTINUOUS_QUERY_RESULT = 1705;
 
    Integer ICKLE_FILTER_RESULT = 1706;
-
-   Integer REMOTE_QUERY_DEFINITION = 1707;
 }

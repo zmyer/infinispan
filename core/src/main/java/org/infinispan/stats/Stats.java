@@ -46,6 +46,13 @@ public interface Stats {
    long getOffHeapMemoryUsed();
 
    /**
+    * Provides how much memory the current eviction algorithm estimates is in use for data. This method will return a
+    * number 0 or greater if memory eviction is in use. If memory eviction is not enabled this method will always return 0.
+    * @return memory in use or 0 if memory eviction is not enabled
+    */
+   long getDataMemoryUsed();
+
+   /**
     * @return Number of put operations on the cache.
     */
    long getStores();
@@ -81,19 +88,34 @@ public interface Stats {
    long getEvictions();
 
    /**
-    * @return Average number of nanoseconds for a cache get on the cache
+    * @return Average number of milliseconds for a cache get on the cache
     */
    long getAverageReadTime();
 
    /**
-    * @return Average number of nanoseconds for a cache put on the cache
+    * @return Average number of nanoseconds for a cache get on the cache
+    */
+   long getAverageReadTimeNanos();
+
+   /**
+    * @return Average number of milliseconds for a cache put on the cache
     */
    long getAverageWriteTime();
 
    /**
-    * @return Average number of nanoseconds for a cache put on the cache
+    * @return Average number of milliseconds for a cache put on the cache
+    */
+   long getAverageWriteTimeNanos();
+
+   /**
+    * @return Average number of milliseconds for a cache remove on the cache
     */
    long getAverageRemoveTime();
+
+   /**
+    * @return Average number of nanoseconds for a cache remove on the cache
+    */
+   long getAverageRemoveTimeNanos();
 
    /**
     * @return Required minimum number of nodes to guarantee data consistency

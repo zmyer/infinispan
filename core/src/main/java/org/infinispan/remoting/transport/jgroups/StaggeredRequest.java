@@ -83,16 +83,20 @@ public class StaggeredRequest<T> extends MultiTargetRequest<T> {
             }
 
             if (target == null) {
-               // If the final targets were removed because they have left the cluster,
-               // onResponse() should have already completed the request.
-               throw new IllegalStateException("Request should have been completed already.");
+               // The final targets were removed because they have left the cluster,
+               // but the request is not yet complete because we're still waiting for a response
+               // from one of the other targets (i.e. we are being called from onTimeout).
+               // We don't need to send another message, just wait for the real timeout to expire.
+               long delayNanos = transport.getTimeService().remainingTime(deadline, TimeUnit.NANOSECONDS);
+               super.setTimeout(transport.getTimeoutExecutor(), delayNanos, TimeUnit.NANOSECONDS);
+               return;
             }
 
             isFinalTarget = targetIndex >= getTargetsSize();
          }
 
          // Sending may block in flow-control or even in TCP, so we must do it outside the critical section
-         transport.sendCommand(target, command, requestId, deliverOrder, false, true);
+         transport.sendCommand(target, command, requestId, deliverOrder, false, true, false);
 
          // Scheduling the timeout task may also block
          // If this is the last target, set the request timeout at the deadline

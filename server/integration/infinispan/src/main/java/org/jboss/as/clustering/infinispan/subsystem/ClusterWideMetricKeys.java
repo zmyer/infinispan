@@ -45,6 +45,9 @@ public class ClusterWideMetricKeys {
    public static final String AVERAGE_READ_TIME = "clusterwide-average-read-time";
    public static final String AVERAGE_WRITE_TIME = "clusterwide-average-write-time";
    public static final String AVERAGE_REMOVE_TIME = "clusterwide-average-remove-time";
+   public static final String AVERAGE_READ_TIME_NANOS = "clusterwide-average-read-time-nanos";
+   public static final String AVERAGE_WRITE_TIME_NANOS = "clusterwide-average-write-time-nanos";
+   public static final String AVERAGE_REMOVE_TIME_NANOS = "clusterwide-average-remove-time-nanos";
    public static final String TIME_SINCE_START = "clusterwide-time-since-start";
    public static final String EVICTIONS = "clusterwide-evictions";
    public static final String HIT_RATIO = "clusterwide-hit-ratio";
@@ -52,6 +55,7 @@ public class ClusterWideMetricKeys {
    public static final String MISSES = "clusterwide-misses";
    public static final String NUMBER_OF_ENTRIES = "clusterwide-number-of-entries";
    public static final String NUMBER_OF_ENTRIES_IN_MEMORY = "clusterwide-number-of-entries-in-memory";
+   public static final String DATA_MEMORY_USED = "clusterwide-data-memory-used";
    public static final String OFF_HEAP_MEMORY_USED = "clusterwide-off-heap-memory-used";
    public static final String MINIMUM_REQUIRED_NODES = "clusterwide-minimum-required-nodes";
    public static final String READ_WRITE_RATIO = "clusterwide-read-write-ratio";

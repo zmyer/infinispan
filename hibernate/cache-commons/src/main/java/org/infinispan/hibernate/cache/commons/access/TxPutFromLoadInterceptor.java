@@ -10,10 +10,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
-import org.infinispan.hibernate.cache.commons.util.CacheCommandInitializer;
-import org.infinispan.hibernate.cache.commons.util.EndInvalidationCommand;
-import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
-
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
@@ -21,19 +17,22 @@ import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.container.DataContainer;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.hibernate.cache.commons.util.CacheCommandInitializer;
+import org.infinispan.hibernate.cache.commons.util.EndInvalidationCommand;
+import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
 import org.infinispan.interceptors.impl.BaseRpcInterceptor;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.rpc.RpcOptions;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.logging.Log;
@@ -55,8 +54,8 @@ class TxPutFromLoadInterceptor extends BaseRpcInterceptor {
 
 	@Inject private RpcManager rpcManager;
 	@Inject private CacheCommandInitializer cacheCommandInitializer;
-	@Inject private DataContainer dataContainer;
-	@Inject private StateTransferManager stateTransferManager;
+	@Inject private InternalDataContainer dataContainer;
+	@Inject private DistributionManager distributionManager;
 
 	private RpcOptions asyncUnordered;
 
@@ -77,7 +76,7 @@ class TxPutFromLoadInterceptor extends BaseRpcInterceptor {
 
 		GlobalTransaction globalTransaction = txCtx.getGlobalTransaction();
 		if (!putFromLoadValidator.beginInvalidatingKey(globalTransaction, key)) {
-			log.failedInvalidatePendingPut(key, cacheName);
+			throw log.failedInvalidatePendingPut(key, cacheName.toString());
 		}
 	}
 
@@ -162,7 +161,7 @@ class TxPutFromLoadInterceptor extends BaseRpcInterceptor {
 					GlobalTransaction globalTransaction = ctx.getGlobalTransaction();
 					EndInvalidationCommand commitCommand = cacheCommandInitializer.buildEndInvalidationCommand(
 							cacheName, keys, globalTransaction);
-					List<Address> members = stateTransferManager.getCacheTopology().getMembers();
+					List<Address> members = distributionManager.getCacheTopology().getMembers();
 					rpcManager.invokeRemotely(members, commitCommand, asyncUnordered);
 
 					// If the transaction is not successful, *RegionAccessStrategy would not be called, therefore

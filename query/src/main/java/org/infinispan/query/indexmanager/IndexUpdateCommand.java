@@ -14,12 +14,12 @@ import org.infinispan.util.ByteString;
 import org.infinispan.util.concurrent.CompletableFutures;
 
 /**
- * Custom RPC command containing an index update request for the
- * Master IndexManager of a specific cache & index.
+ * Custom RPC command containing an index update request for the Master IndexManager of a specific cache and index.
  *
  * @author Sanne Grinovero
  */
 public class IndexUpdateCommand extends AbstractUpdateCommand {
+
    private static final Log log = LogFactory.getLog(IndexUpdateCommand.class, Log.class);
 
    public static final byte COMMAND_ID = ModuleCommandIds.UPDATE_INDEX;
@@ -29,7 +29,7 @@ public class IndexUpdateCommand extends AbstractUpdateCommand {
    }
 
    @Override
-   public CompletableFuture<Object> invokeAsync() throws Throwable {
+   public CompletableFuture<Object> invokeAsync() {
       if (queryInterceptor.isStopping()) {
          throw log.cacheIsStoppingNoCommandAllowed(cacheName.toString());
       }
@@ -48,5 +48,4 @@ public class IndexUpdateCommand extends AbstractUpdateCommand {
    public byte getCommandId() {
       return COMMAND_ID;
    }
-
 }

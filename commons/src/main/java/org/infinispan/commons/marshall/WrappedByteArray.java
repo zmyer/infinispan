@@ -15,6 +15,7 @@ import org.infinispan.commons.util.Util;
  * @since 9.0
  */
 public class WrappedByteArray implements WrappedBytes {
+   public static final WrappedByteArray EMPTY_BYTES = new WrappedByteArray(Util.EMPTY_BYTE_ARRAY);
    private final byte[] bytes;
    private transient int hashCode;
    private transient boolean initializedHashCode;
@@ -91,7 +92,7 @@ public class WrappedByteArray implements WrappedBytes {
             '}';
    }
 
-   public static class Externalizer extends AbstractExternalizer<WrappedByteArray> {
+   public static final class Externalizer extends AbstractExternalizer<WrappedByteArray> {
 
       @Override
       public Set<Class<? extends WrappedByteArray>> getTypeClasses() {
@@ -115,7 +116,7 @@ public class WrappedByteArray implements WrappedBytes {
       }
 
       @Override
-      public WrappedByteArray readObject(ObjectInput input) throws IOException, ClassNotFoundException {
+      public WrappedByteArray readObject(ObjectInput input) throws IOException {
          byte[] bytes = MarshallUtil.unmarshallByteArray(input);
          boolean hasHashCode = input.readBoolean();
          if (hasHashCode) {

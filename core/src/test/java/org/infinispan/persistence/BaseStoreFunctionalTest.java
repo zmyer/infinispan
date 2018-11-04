@@ -190,7 +190,7 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
       assertEquals("b", AtomicMapLookup.getAtomicMap(cache, m.getName()).get("a"));
    }
 
-   @Test(groups = "unstable")
+   @Test
    public void testRestoreTransactionalAtomicMap(final Method m) throws Exception {
       cacheManager.defineConfiguration(m.getName(), configureCacheLoader(null, false).build());
       Cache<String, Object> cache = cacheManager.getCache(m.getName());
@@ -291,7 +291,7 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
 
       Cache<String, Object> cache = cacheManager.getCache(cacheName);
       Map<String, Object> entriesMap = IntStream.range(0, numberOfEntries).boxed()
-            .collect(Collectors.toMap(i -> i.toString(), i -> wrap(i.toString(), "Val"+i)));
+            .collect(Collectors.toMap(Object::toString, i -> wrap(i.toString(), "Val"+i)));
       cache.putAll(entriesMap);
 
       assertEquals(numberOfEntries, cache.size());
@@ -308,7 +308,7 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
       Cache<String, Object> cache = cacheManager.getCache("testLoadKeySet");
 
       Map<String, Object> entriesMap = IntStream.range(0, numberOfEntries).boxed()
-            .collect(Collectors.toMap(i -> i.toString(), i -> wrap(i.toString(), "Val"+i)));
+            .collect(Collectors.toMap(Object::toString, i -> wrap(i.toString(), "Val"+i)));
       cache.putAll(entriesMap);
 
       cache.stop();
@@ -328,7 +328,7 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
       Cache<String, Object> cache = cacheManager.getCache("testReload");
 
       Map<String, Object> entriesMap = IntStream.range(0, numberOfEntries).boxed()
-            .collect(Collectors.toMap(i -> i.toString(), i -> wrap(i.toString(), "Val"+i)));
+            .collect(Collectors.toMap(Object::toString, i -> wrap(i.toString(), "Val"+i)));
       cache.putAll(entriesMap);
 
       assertEquals(numberOfEntries, cache.size());

@@ -29,15 +29,17 @@ import org.infinispan.Cache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.hash.MurmurHash3;
 import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.SmallIntSet;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.conflict.impl.InternalConflictManager;
-import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.ImmortalCacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.InvocationContextFactory;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.TestAddress;
 import org.infinispan.distribution.TriangleOrderManager;
 import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
@@ -71,6 +73,8 @@ import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
+
+import io.reactivex.Flowable;
 
 /**
  * Tests StateConsumerImpl.
@@ -140,7 +144,7 @@ public class StateConsumerTest extends AbstractInfinispanTest {
       Transport transport = mock(Transport.class);
       CommandsFactory commandsFactory = mock(CommandsFactory.class);
       PersistenceManager persistenceManager = mock(PersistenceManager.class);
-      DataContainer dataContainer = mock(DataContainer.class);
+      InternalDataContainer dataContainer = mock(InternalDataContainer.class);
       TransactionTable transactionTable = mock(TransactionTable.class);
       StateTransferLock stateTransferLock = mock(StateTransferLock.class);
       AsyncInterceptorChain interceptorChain = mock(AsyncInterceptorChain.class);
@@ -148,13 +152,16 @@ public class StateConsumerTest extends AbstractInfinispanTest {
       TotalOrderManager totalOrderManager = mock(TotalOrderManager.class);
       BlockingTaskAwareExecutorService remoteCommandsExecutor = mock(BlockingTaskAwareExecutorService.class);
       InternalConflictManager conflictManager = mock(InternalConflictManager.class);
+      DistributionManager distributionManager = mock(DistributionManager.class);
+
+      when(persistenceManager.publishKeys(any(), any())).thenReturn(Flowable.empty());
 
       when(commandsFactory.buildStateRequestCommand(any(StateRequestCommand.Type.class), any(Address.class), anyInt(), any(SmallIntSet.class)))
          .thenAnswer(invocation-> new StateRequestCommand(ByteString.fromString("cache1"),
                                                           (StateRequestCommand.Type) invocation.getArguments()[0],
                                                           (Address) invocation.getArguments()[1],
                                                           (Integer) invocation.getArguments()[2],
-                                                          (Set) invocation.getArguments()[3]));
+                                                          (IntSet) invocation.getArguments()[3]));
 
       when(transport.getViewId()).thenReturn(1);
       when(rpcManager.getAddress()).thenReturn(addresses[0]);
@@ -189,11 +196,11 @@ public class StateConsumerTest extends AbstractInfinispanTest {
       // create state provider
       final StateConsumerImpl stateConsumer = new StateConsumerImpl();
       TestingUtil.inject(stateConsumer, cache, TestingUtil.named(STATE_TRANSFER_EXECUTOR, pooledExecutorService),
-                         stateTransferManager, localTopologyManager, interceptorChain, icf, configuration, rpcManager, null,
+                         localTopologyManager, interceptorChain, icf, configuration, rpcManager,
                          commandsFactory, persistenceManager, dataContainer, transactionTable, stateTransferLock, cacheNotifier,
                          totalOrderManager, TestingUtil.named(REMOTE_COMMAND_EXECUTOR, remoteCommandsExecutor),
                          new CommitManager(), new CommandAckCollector(), new TriangleOrderManager(0),
-                         new HashFunctionPartitioner(), conflictManager);
+                         new HashFunctionPartitioner(), conflictManager, distributionManager);
       stateConsumer.start();
 
       final List<InternalCacheEntry> cacheEntries = new ArrayList<>();

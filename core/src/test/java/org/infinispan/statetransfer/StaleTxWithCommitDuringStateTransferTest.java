@@ -1,7 +1,6 @@
 package org.infinispan.statetransfer;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
@@ -19,7 +18,8 @@ import javax.transaction.TransactionManager;
 import org.infinispan.AdvancedCache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.container.DataContainer;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
@@ -74,7 +74,7 @@ public class StaleTxWithCommitDuringStateTransferTest extends MultipleCacheManag
          checkpoint.trigger("post_get_transactions_" + topologyId + "_from_" + source);
          checkpoint.awaitStrict("resume_get_transactions_" + topologyId + "_from_" + source, 10, SECONDS);
          return result;
-      }).when(spyProvider).getTransactionsForSegments(any(Address.class), anyInt(), anySet());
+      }).when(spyProvider).getTransactionsForSegments(any(Address.class), anyInt(), any());
       TestingUtil.replaceComponent(cache0, StateProvider.class, spyProvider, true);
 
       // Start a transaction on cache 0, which will block on cache 1
@@ -84,8 +84,8 @@ public class StaleTxWithCommitDuringStateTransferTest extends MultipleCacheManag
       final Transaction tx = tm0.suspend();
 
       // Start cache 1, but the tx data request will be blocked on cache 0
-      StateTransferManager stm0 = TestingUtil.extractComponent(cache0, StateTransferManager.class);
-      int initialTopologyId = stm0.getCacheTopology().getTopologyId();
+      DistributionManager dm0 = cache0.getDistributionManager();
+      int initialTopologyId = dm0.getCacheTopology().getTopologyId();
       int rebalanceTopologyId = initialTopologyId + 1;
       AdvancedCache<Object, Object> cache1 = advancedCache(1, CACHE_NAME);
       checkpoint.awaitStrict("post_get_transactions_" + rebalanceTopologyId + "_from_" + address(1), 10, SECONDS);
@@ -118,11 +118,11 @@ public class StaleTxWithCommitDuringStateTransferTest extends MultipleCacheManag
 
       // Check the key on all caches
       if (commit) {
-         assertEquals("v0", TestingUtil.extractComponent(cache0, DataContainer.class).get(key).getValue());
-         assertEquals("v0", TestingUtil.extractComponent(cache1, DataContainer.class).get(key).getValue());
+         assertEquals("v0", TestingUtil.extractComponent(cache0, InternalDataContainer.class).get(key).getValue());
+         assertEquals("v0", TestingUtil.extractComponent(cache1, InternalDataContainer.class).get(key).getValue());
       } else {
-         assertNull(TestingUtil.extractComponent(cache0, DataContainer.class).get(key));
-         assertNull(TestingUtil.extractComponent(cache1, DataContainer.class).get(key));
+         assertNull(TestingUtil.extractComponent(cache0, InternalDataContainer.class).get(key));
+         assertNull(TestingUtil.extractComponent(cache1, InternalDataContainer.class).get(key));
       }
 
       // Check for stale locks

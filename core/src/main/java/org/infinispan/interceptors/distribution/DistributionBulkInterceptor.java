@@ -18,9 +18,9 @@ import org.infinispan.commands.read.AbstractCloseableIteratorCollection;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.KeySetCommand;
 import org.infinispan.commons.util.CloseableIterator;
-import org.infinispan.commons.util.CloseableIteratorMapper;
 import org.infinispan.commons.util.CloseableSpliterator;
 import org.infinispan.commons.util.Closeables;
+import org.infinispan.commons.util.IteratorMapper;
 import org.infinispan.commons.util.RemovableCloseableIterator;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
@@ -30,6 +30,7 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.stream.StreamMarshalling;
 import org.infinispan.stream.impl.ClusterStreamManager;
@@ -46,7 +47,7 @@ import org.infinispan.util.EntryWrapper;
  * @param <V> The value type of entries
  */
 public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
-   @Inject private Cache<K, V> cache;
+   @Inject private ComponentRef<Cache<K, V>> cache;
 
    @Override
    public Object visitEntrySetCommand(InvocationContext ctx, EntrySetCommand command) throws Throwable {
@@ -60,10 +61,10 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
          EntrySetCommand entrySetCommand = (EntrySetCommand) rCommand;
          CacheSet<CacheEntry<K, V>> entrySet = (CacheSet<CacheEntry<K, V>>) rv;
          if (rCtx.isInTxScope()) {
-            entrySet = new TxBackingEntrySet<>(Caches.getCacheWithFlags(cache, entrySetCommand), entrySet, entrySetCommand,
-                  (LocalTxInvocationContext) rCtx);
+            entrySet = new TxBackingEntrySet<>(Caches.getCacheWithFlags(cache.wired(), entrySetCommand), entrySet, entrySetCommand,
+                                               (LocalTxInvocationContext) rCtx);
          } else {
-            entrySet = new BackingEntrySet<>(Caches.getCacheWithFlags(cache, entrySetCommand), entrySet, entrySetCommand);
+            entrySet = new BackingEntrySet<>(Caches.getCacheWithFlags(cache.wired(), entrySetCommand), entrySet, entrySetCommand);
          }
          return entrySet;
       });
@@ -82,7 +83,7 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
 
       @Override
       public CloseableIterator<CacheEntry<K, V>> iterator() {
-         return new CloseableIteratorMapper<>(new RemovableCloseableIterator<>(Closeables.iterator(stream()),
+         return new IteratorMapper<>(new RemovableCloseableIterator<>(Closeables.iterator(stream()),
                e -> cache.remove(e.getKey(), e.getValue())), e -> new EntryWrapper<>(cache, e));
       }
 
@@ -209,10 +210,10 @@ public class DistributionBulkInterceptor<K, V> extends DDAsyncInterceptor {
       return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
          CacheSet<K> keySet = (CacheSet<K>) rv;
          if (ctx.isInTxScope()) {
-            keySet = new TxBackingKeySet<>(Caches.getCacheWithFlags(cache, command), keySet, command,
-                  (LocalTxInvocationContext) ctx);
+            keySet = new TxBackingKeySet<>(Caches.getCacheWithFlags(cache.wired(), command), keySet, command,
+                                           (LocalTxInvocationContext) ctx);
          } else {
-            keySet = new BackingKeySet<>(Caches.getCacheWithFlags(cache, command), keySet, command);
+            keySet = new BackingKeySet<>(Caches.getCacheWithFlags(cache.wired(), command), keySet, command);
          }
          return keySet;
       });

@@ -66,6 +66,7 @@ import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.configuration.cache.StoreConfigurationBuilder;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ParserRegistry;
+import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.persistence.jdbc.DatabaseType;
@@ -470,16 +471,22 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
                 builder.memory().storageType(StorageType.OBJECT);
                 final long size = MemoryObjectConfigurationResource.SIZE.resolveModelAttribute(context, node).asLong();
                 builder.memory().size(size);
+                final EvictionStrategy strategy = EvictionStrategy.valueOf(MemoryObjectConfigurationResource.STRATEGY.resolveModelAttribute(context, node).asString());
+                builder.memory().evictionStrategy(strategy);
             } else if ((node = memoryNode.get(ModelKeys.BINARY_NAME)).isDefined()) {
                 builder.memory().storageType(StorageType.BINARY);
                 final long size = MemoryBinaryConfigurationResource.SIZE.resolveModelAttribute(context, node).asLong();
                 builder.memory().size(size);
+                final EvictionStrategy strategy = EvictionStrategy.valueOf(MemoryObjectConfigurationResource.STRATEGY.resolveModelAttribute(context, node).asString());
+                builder.memory().evictionStrategy(strategy);
                 final EvictionType type = EvictionType.valueOf(MemoryBinaryConfigurationResource.EVICTION.resolveModelAttribute(context, node).asString());
                 builder.memory().evictionType(type);
             } else if ((node = memoryNode.get(ModelKeys.OFF_HEAP_NAME)).isDefined()) {
                 builder.memory().storageType(StorageType.OFF_HEAP);
                 final long size = MemoryOffHeapConfigurationResource.SIZE.resolveModelAttribute(context, node).asLong();
                 builder.memory().size(size);
+                final EvictionStrategy strategy = EvictionStrategy.valueOf(MemoryObjectConfigurationResource.STRATEGY.resolveModelAttribute(context, node).asString());
+                builder.memory().evictionStrategy(strategy);
                 final EvictionType type = EvictionType.valueOf(MemoryOffHeapConfigurationResource.EVICTION.resolveModelAttribute(context, node).asString());
                 builder.memory().evictionType(type);
                 final int addressCount = MemoryOffHeapConfigurationResource.ADDRESS_COUNT.resolveModelAttribute(context, node).asInt();
@@ -513,14 +520,14 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
             ModelNode dataTypeNode = cache.get(ModelKeys.ENCODING);
             ModelNode node;
             if ((node = dataTypeNode.get(ModelKeys.KEY)).isDefined()) {
-                final String mediaType = KeyDataTypeConfigurationResource.MEDIA_TYPE.resolveModelAttribute(context, node).asString();
-                ContentTypeConfigurationBuilder keyTypeConfigurationBuilder = builder.encoding().key();
-                keyTypeConfigurationBuilder.mediaType(mediaType);
-
-            } else if ((node = dataTypeNode.get(ModelKeys.VALUE)).isDefined()) {
-                final String mediaType = ValueDataTypeConfigurationResource.MEDIA_TYPE.resolveModelAttribute(context, node).asString();
-                ContentTypeConfigurationBuilder valueTypeConfigurationBuilder = builder.encoding().value();
-                valueTypeConfigurationBuilder.mediaType(mediaType);
+               final String mediaType = KeyDataTypeConfigurationResource.MEDIA_TYPE.resolveModelAttribute(context, node).asString();
+               ContentTypeConfigurationBuilder keyTypeConfigurationBuilder = builder.encoding().key();
+               keyTypeConfigurationBuilder.mediaType(mediaType);
+            }
+            if ((node = dataTypeNode.get(ModelKeys.VALUE)).isDefined()) {
+               final String mediaType = ValueDataTypeConfigurationResource.MEDIA_TYPE.resolveModelAttribute(context, node).asString();
+               ContentTypeConfigurationBuilder valueTypeConfigurationBuilder = builder.encoding().value();
+               valueTypeConfigurationBuilder.mediaType(mediaType);
             }
         }
 
@@ -699,7 +706,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
     }
 
     private StoreConfigurationBuilder<?, ?> handleStoreOrLoaderClass(String className, PersistenceConfigurationBuilder persistenceBuilder) throws ClassNotFoundException {
-       if(isPresentInLoadClassLoader(className)) {
+       if (isPresentInLoadClassLoader(className)) {
           return createStoreConfigurationFromLocalClassloader(className, persistenceBuilder);
        }
        return createDeployedStoreConfiguration(className, persistenceBuilder);
@@ -965,6 +972,10 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
       if (shared != null && shared.isDefined()) {
          storeConfigurationBuilder.shared(shared.asBoolean());
       }
+       ModelNode segmented = store.get(ModelKeys.SEGMENTED);
+       if (segmented != null && segmented.isDefined()) {
+           storeConfigurationBuilder.segmented(segmented.asBoolean());
+       }
       ModelNode preload = store.get(ModelKeys.PRELOAD);
       if (preload != null && preload.isDefined()) {
          storeConfigurationBuilder.preload(preload.asBoolean());
@@ -1048,7 +1059,10 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
               .dataColumnName(this.getColumnProperty(context, table, ModelKeys.DATA_COLUMN, BaseJDBCStoreConfigurationResource.COLUMN_NAME, "datum"))
               .dataColumnType(this.getColumnProperty(context, table, ModelKeys.DATA_COLUMN, BaseJDBCStoreConfigurationResource.COLUMN_TYPE, "BINARY"))
               .timestampColumnName(this.getColumnProperty(context, table, ModelKeys.TIMESTAMP_COLUMN, BaseJDBCStoreConfigurationResource.COLUMN_NAME, "version"))
-              .timestampColumnType(this.getColumnProperty(context, table, ModelKeys.TIMESTAMP_COLUMN, BaseJDBCStoreConfigurationResource.COLUMN_TYPE, "BIGINT"));
+              .timestampColumnType(this.getColumnProperty(context, table, ModelKeys.TIMESTAMP_COLUMN, BaseJDBCStoreConfigurationResource.COLUMN_TYPE, "BIGINT"))
+              .segmentColumnName(this.getColumnProperty(context, table, ModelKeys.SEGMENT_COLUMN, BaseJDBCStoreConfigurationResource.COLUMN_NAME, "segment"))
+              .segmentColumnType(this.getColumnProperty(context, table, ModelKeys.SEGMENT_COLUMN, BaseJDBCStoreConfigurationResource.COLUMN_TYPE, "INTEGER"))
+        ;
     }
 
     private String getColumnProperty(OperationContext context, ModelNode table, String columnKey, AttributeDefinition columnAttribute, String defaultValue) throws OperationFailedException

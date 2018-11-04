@@ -6,7 +6,11 @@ import static org.jboss.logging.Logger.Level.WARN;
 import java.net.SocketAddress;
 
 import org.infinispan.commons.CacheConfigurationException;
+import org.infinispan.commons.CacheException;
+import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.server.core.dataconversion.TranscodingException;
 import org.jboss.logging.BasicLogger;
+import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageLogger;
@@ -85,4 +89,19 @@ public interface Log extends BasicLogger {
 
    @Message(value = "The supplied configuration for cache '%s' is missing a named configuration for it: %s", id = 5031)
    CacheConfigurationException missingCacheConfiguration(String name, String configuration);
+
+   @Message(value = "Error during transcoding", id = 5032)
+   TranscodingException errorDuringTranscoding(@Cause Throwable e);
+
+   @Message(value = "Data format '%s' not supported", id = 5033)
+   TranscodingException unsupportedDataFormat(MediaType contentFormat);
+
+   @Message(value = "Cannot create clustered caches in non-clustered servers", id = 5034)
+   UnsupportedOperationException cannotCreateClusteredCache();
+
+   @Message(value = "Class '%s' blocked by deserialization white list. Include the class name in the server cache manager white list to authorize.", id = 5035)
+   CacheException errorDeserializing(String className);
+
+   @Message(value = "Illegal number of ioThreads: %d", id = 5036)
+   IllegalArgumentException illegalIOThreads(int ioThreads);
 }

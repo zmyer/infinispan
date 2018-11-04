@@ -7,6 +7,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.infinispan.client.hotrod.DataFormat;
 import org.infinispan.client.hotrod.configuration.Configuration;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
 import org.infinispan.client.hotrod.exceptions.RemoteIllegalLifecycleStateException;
@@ -44,18 +45,24 @@ public abstract class RetryOnFailureOperation<T> extends HotRodOperation<T> impl
    private String currentClusterName;
 
    protected RetryOnFailureOperation(short requestCode, short responseCode, Codec codec, ChannelFactory channelFactory,
-                                     byte[] cacheName, AtomicInteger topologyId, int flags, Configuration cfg) {
-      super(requestCode, responseCode, codec, flags, cfg, cacheName, topologyId, channelFactory);
+                                     byte[] cacheName, AtomicInteger topologyId, int flags, Configuration cfg,
+                                     DataFormat dataFormat) {
+      super(requestCode, responseCode, codec, flags, cfg, cacheName, topologyId, channelFactory, dataFormat);
    }
 
    @Override
    public CompletableFuture<T> execute() {
       assert !isDone();
-      currentClusterName = channelFactory.getCurrentClusterName();
-      if (trace) {
-         log.tracef("Requesting channel for operation %s", this);
+      try {
+         currentClusterName = channelFactory.getCurrentClusterName();
+         if (trace) {
+            log.tracef("Requesting channel for operation %s", this);
+         }
+         fetchChannelAndInvoke(retryCount, failedServers);
+      } catch (Exception e) {
+         // if there's a bug before the operation is registered the operation wouldn't be completed
+         completeExceptionally(e);
       }
-      fetchChannelAndInvoke(retryCount, failedServers);
       return this;
    }
 
@@ -83,15 +90,25 @@ public abstract class RetryOnFailureOperation<T> extends HotRodOperation<T> impl
    }
 
    private void retryIfNotDone() {
-      if (!isDone()) {
+      if (isDone()) {
+         if (trace) {
+            log.tracef("Not retrying as done (exceptionally=%s), retryCount=%d", this.isCompletedExceptionally(), retryCount);
+         }
+      } else {
          reset();
          currentClusterName = channelFactory.getCurrentClusterName();
          fetchChannelAndInvoke(retryCount, failedServers);
       }
    }
 
+   // hook for stateful operations
    protected void reset() {
-      // hook for stateful operations
+      // The exception may happen when we try to fetch the channel; at this time the operation
+      // is not registered yet and timeoutFuture is null
+      if (timeoutFuture != null) {
+         timeoutFuture.cancel(false);
+         timeoutFuture = null;
+      }
    }
 
    private Set<SocketAddress> updateFailedServers(SocketAddress address) {
@@ -140,6 +157,11 @@ public abstract class RetryOnFailureOperation<T> extends HotRodOperation<T> impl
          cause = cause.getCause();
       }
       if (cause instanceof RemoteIllegalLifecycleStateException || cause instanceof IOException || cause instanceof TransportException) {
+         if (Thread.interrupted()) {
+            // Don't invalidate the transport if our thread was interrupted
+            completeExceptionally(new InterruptedException());
+            return null;
+         }
          if (address != null) {
             updateFailedServers(address);
          }

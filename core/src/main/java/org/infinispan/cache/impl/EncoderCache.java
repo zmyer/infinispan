@@ -29,14 +29,14 @@ import org.infinispan.commons.dataconversion.Wrapper;
 import org.infinispan.commons.util.InjectiveFunction;
 import org.infinispan.compat.BiFunctionMapper;
 import org.infinispan.compat.FunctionMapper;
-import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.ForwardingCacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.encoding.DataConversion;
-import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.lifecycle.ComponentStatus;
+import org.infinispan.factories.impl.BasicComponentRegistry;
+import org.infinispan.filter.KeyFilter;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.ListenerHolder;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
@@ -56,8 +56,10 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    private static Log log = LogFactory.getLog(EncoderCache.class);
 
-   @Inject private InternalEntryFactory entryFactory;
-   @Inject private ComponentRegistry componentRegistry;
+   @Inject
+   private InternalEntryFactory entryFactory;
+   @Inject
+   private BasicComponentRegistry componentRegistry;
 
    private final DataConversion keyDataConversion;
    private final DataConversion valueDataConversion;
@@ -119,9 +121,9 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    @Inject
    public void wireRealCache() {
-      componentRegistry.wireDependencies(keyDataConversion);
-      componentRegistry.wireDependencies(valueDataConversion);
-      componentRegistry.wireDependencies(cache);
+      componentRegistry.wireDependencies(keyDataConversion, false);
+      componentRegistry.wireDependencies(valueDataConversion, false);
+      componentRegistry.wireDependencies(cache, false);
    }
 
    private Map<K, V> encodeMapForWrite(Map<? extends K, ? extends V> map) {
@@ -477,8 +479,13 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
    }
 
    @Override
-   public void removeExpired(K key, V value, Long lifespan) {
-      super.removeExpired(keyToStorage(key), valueToStorage(value), lifespan);
+   public CompletableFuture<Void> removeLifespanExpired(K key, V value, Long lifespan) {
+      return super.removeLifespanExpired(keyToStorage(key), valueToStorage(value), lifespan);
+   }
+
+   @Override
+   public CompletableFuture<Boolean> removeMaxIdleExpired(K key, V value) {
+      return super.removeMaxIdleExpired(keyToStorage(key), valueToStorage(value));
    }
 
    @Override
@@ -488,11 +495,8 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
    }
 
    private void lookupEncoderWrapper() {
-      ComponentStatus status = cache.getAdvancedCache().getComponentRegistry().getStatus();
-      if (!status.equals(ComponentStatus.STOPPING) && !status.equals(ComponentStatus.TERMINATED)) {
-         componentRegistry.wireDependencies(keyDataConversion);
-         componentRegistry.wireDependencies(valueDataConversion);
-      }
+      componentRegistry.wireDependencies(keyDataConversion, true);
+      componentRegistry.wireDependencies(valueDataConversion, true);
    }
 
    private void initState(EncoderCache<K, V> encoderCache, EncoderCache<K, V> template) {
@@ -559,14 +563,15 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    /**
     * If encoders and wrappers are all identity we should just return the normal cache and avoid all wrappings
-    * @param keyEncoderClass the key encoder class
+    *
+    * @param keyEncoderClass   the key encoder class
     * @param valueEncoderClass the value encoder class
-    * @param keyWrapperClass the key wrapper class
+    * @param keyWrapperClass   the key wrapper class
     * @param valueWrapperClass the value wrapper class
     * @return true if all classes are identity oness
     */
    private boolean allIdentity(Class<? extends Encoder> keyEncoderClass, Class<? extends Encoder> valueEncoderClass,
-         Class<? extends Wrapper> keyWrapperClass, Class<? extends Wrapper> valueWrapperClass) {
+                               Class<? extends Wrapper> keyWrapperClass, Class<? extends Wrapper> valueWrapperClass) {
       return keyEncoderClass == IdentityEncoder.class && valueEncoderClass == IdentityEncoder.class &&
             keyWrapperClass == IdentityWrapper.class && valueWrapperClass == IdentityWrapper.class;
    }
@@ -634,22 +639,19 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    @Override
    public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
-      Object returned = super.compute(keyToStorage(key),
-            new BiFunctionMapper(remappingFunction, keyDataConversion, valueDataConversion));
+      Object returned = super.compute(keyToStorage(key), wrapBiFunction(remappingFunction));
       return valueFromStorage(returned);
    }
 
    @Override
    public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
-      Object returned = super.computeIfPresent(keyToStorage(key),
-            new BiFunctionMapper(remappingFunction, keyDataConversion, valueDataConversion));
+      Object returned = super.computeIfPresent(keyToStorage(key), wrapBiFunction(remappingFunction));
       return valueFromStorage(returned);
    }
 
    @Override
    public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
-      Object ret = super.computeIfAbsent(keyToStorage(key),
-            new FunctionMapper(mappingFunction, keyDataConversion, valueDataConversion));
+      Object ret = super.computeIfAbsent(keyToStorage(key), wrapFunction(mappingFunction));
       return valueFromStorage(ret);
    }
 
@@ -690,8 +692,7 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    @Override
    public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
-      Object returned = super.merge(keyToStorage(key), valueToStorage(value),
-            new BiFunctionMapper(remappingFunction, keyDataConversion, valueDataConversion));
+      Object returned = super.merge(keyToStorage(key), valueToStorage(value), wrapBiFunction(remappingFunction));
       return valueFromStorage(returned);
    }
 
@@ -716,7 +717,7 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
       EncoderEntryMapper<K, V, Map.Entry<K, V>> entryMapper = EncoderEntryMapper.newEntryMapper(keyDataConversion,
             valueDataConversion, entryFactory);
       return new WriteableCacheSetMapper<>(super.entrySet(), entryMapper,
-            e -> new EntryWrapper<>(e, entryMapper.apply(e, true)), this::toEntry, this::keyToStorage);
+            e -> new EntryWrapper<>(e, entryMapper.apply(e)), this::toEntry, this::keyToStorage);
    }
 
    Map.Entry<K, V> toEntry(Object o) {
@@ -788,6 +789,14 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
          storageEntry.setValue((B) valueToStorage(value));
          return entry.setValue(value);
       }
+
+      @Override
+      public String toString() {
+         return "EntryWrapper{" +
+               "key=" + entry.getKey() +
+               ", value=" + entry.getValue() +
+               "}";
+      }
    }
 
    private class CacheEntryWrapper<A, B> extends ForwardingCacheEntry<A, B> {
@@ -818,7 +827,7 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    @Override
    public void addListener(Object listener) {
-      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion);
+      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
       Cache unwrapped = super.unwrapCache(this.cache);
       if (unwrapped instanceof CacheImpl) {
          ((CacheImpl) unwrapped).addListener(listenerHolder);
@@ -828,24 +837,33 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
    }
 
    @Override
+   public void addListener(Object listener, KeyFilter<? super K> filter) {
+      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
+      Cache unwrapped = super.unwrapCache(this.cache);
+      if (unwrapped instanceof CacheImpl) {
+         ((CacheImpl) unwrapped).addListener(listenerHolder, filter);
+      } else {
+         super.addListener(listener, filter);
+      }
+   }
+
+   @Override
    public <C> void addListener(Object listener, CacheEventFilter<? super K, ? super V> filter,
                                CacheEventConverter<? super K, ? super V, C> converter) {
-      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion);
+      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
       Cache unwrapped = super.unwrapCache(this.cache);
       if (unwrapped instanceof CacheImpl) {
          ((CacheImpl) unwrapped).addListener(listenerHolder, filter, converter);
       } else {
          super.addListener(listener);
       }
-
    }
 
-   @Override
    public <C> void addFilteredListener(Object listener,
                                        CacheEventFilter<? super K, ? super V> filter,
                                        CacheEventConverter<? super K, ? super V, C> converter,
                                        Set<Class<? extends Annotation>> filterAnnotations) {
-      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion);
+      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
       Cache unwrapped = super.unwrapCache(this.cache);
       if (unwrapped instanceof CacheImpl) {
          ((CacheImpl) unwrapped).addFilteredListener(listenerHolder, filter, converter, filterAnnotations);
@@ -854,10 +872,26 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
       }
    }
 
-   //HACK!
-   public EncoderCache<K, V> withCache(AdvancedCache<K, V> otherCache) {
-      EncoderCache<K, V> cache = new EncoderCache<>(otherCache, keyDataConversion, valueDataConversion);
-      initState(cache, this);
-      return cache;
+   @Override
+   public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, true);
+      Cache unwrapped = super.unwrapCache(this.cache);
+      if (unwrapped instanceof CacheImpl) {
+         ((CacheImpl) unwrapped).addFilteredListener(listenerHolder, filter, converter, filterAnnotations);
+      } else {
+         super.addFilteredListener(listener, filter, converter, filterAnnotations);
+      }
+   }
+
+   private BiFunctionMapper wrapBiFunction(BiFunction<?, ?, ?> biFunction) {
+      return biFunction == null ?
+            null :
+            new BiFunctionMapper(biFunction, keyDataConversion, valueDataConversion);
+   }
+
+   private FunctionMapper wrapFunction(Function<?, ?> function) {
+      return function == null ?
+            null :
+            new FunctionMapper(function, keyDataConversion, valueDataConversion);
    }
 }

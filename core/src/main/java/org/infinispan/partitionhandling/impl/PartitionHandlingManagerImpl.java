@@ -1,5 +1,7 @@
 package org.infinispan.partitionhandling.impl;
 
+import static org.infinispan.commons.util.EnumUtil.EMPTY_BIT_SET;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -7,17 +9,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 
-import org.infinispan.Cache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
 import org.infinispan.commands.tx.TransactionBoundaryCommand;
 import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.container.versioning.EntryVersionsMap;
+import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.LocalizedCacheTopology;
+import org.infinispan.factories.KnownComponentNames;
+import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
@@ -31,7 +37,6 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.remoting.transport.impl.MapResponseCollector;
-import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.topology.LocalTopologyManager;
 import org.infinispan.transaction.xa.GlobalTransaction;
@@ -45,10 +50,10 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
    private final Map<GlobalTransaction, TransactionInfo> partialTransactions;
    private volatile AvailabilityMode availabilityMode = AvailabilityMode.AVAILABLE;
 
-   @Inject private Cache cache;
+   @ComponentName(KnownComponentNames.CACHE_NAME)
+   @Inject private String cacheName;
    @Inject private DistributionManager distributionManager;
    @Inject private LocalTopologyManager localTopologyManager;
-   @Inject private StateTransferManager stateTransferManager;
    @Inject private CacheNotifier notifier;
    @Inject private CommandsFactory commandsFactory;
    @Inject private Configuration configuration;
@@ -56,7 +61,6 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
    @Inject private LockManager lockManager;
    @Inject private Transport transport;
 
-   private String cacheName;
    private boolean isVersioned;
    private PartitionHandling partitionHandling;
 
@@ -66,7 +70,6 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
 
    @Start
    public void start() {
-      cacheName = cache.getName();
       isVersioned = Configurations.isTxVersioned(configuration);
       partitionHandling = configuration.clustering().partitionHandling().whenSplit();
    }
@@ -88,24 +91,24 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
 
    @Override
    public void checkWrite(Object key) {
-      doCheck(key, true);
+      doCheck(key, true, EMPTY_BIT_SET);
    }
 
    @Override
-   public void checkRead(Object key) {
-      doCheck(key, false);
+   public void checkRead(Object key, long flagBitSet) {
+      doCheck(key, false, flagBitSet);
    }
 
    @Override
    public void checkClear() {
-      if (!isOperationAllowed(true)) {
+      if (!isOperationAllowed(true, EMPTY_BIT_SET)) {
          throw log.clearDisallowedWhilePartitioned();
       }
    }
 
    @Override
    public void checkBulkRead() {
-      if (!isOperationAllowed(false)) {
+      if (!isOperationAllowed(false, EMPTY_BIT_SET)) {
          throw log.partitionDegraded();
       }
    }
@@ -239,14 +242,16 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
       return stableTopology != null && cacheTopology.getActualMembers().containsAll(stableTopology.getActualMembers()) && cacheTopology.getPhase() != CacheTopology.Phase.CONFLICT_RESOLUTION;
    }
 
-   protected void doCheck(Object key, boolean isWrite) {
+   protected void doCheck(Object key, boolean isWrite, long flagBitSet) {
       if (trace) log.tracef("Checking availability for key=%s, status=%s", key, availabilityMode);
       if (availabilityMode == AvailabilityMode.AVAILABLE)
          return;
 
-      Collection<Address> owners = distributionManager.getCacheTopology().getDistribution(key).writeOwners();
-      List<Address> actualMembers = stateTransferManager.getCacheTopology().getActualMembers();
-      if (!actualMembers.containsAll(owners) && !isOperationAllowed(isWrite)) {
+      LocalizedCacheTopology cacheTopology = distributionManager.getCacheTopology();
+      Collection<Address> owners = cacheTopology.getDistribution(key).writeOwners();
+      List<Address> actualMembers = cacheTopology.getActualMembers();
+      boolean operationAllowed = isOperationAllowed(isWrite, flagBitSet);
+      if (!actualMembers.containsAll(owners) && !operationAllowed) {
          if (trace) log.tracef("Partition is in %s mode, PartitionHandling is set to to %s, access is not allowed for key %s", availabilityMode, partitionHandling, key);
          throw log.degradedModeKeyUnavailable(key);
       } else {
@@ -254,10 +259,20 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
       }
    }
 
-   protected boolean isOperationAllowed(boolean isWrite) {
-      return availabilityMode == AvailabilityMode.AVAILABLE ||
-            partitionHandling == PartitionHandling.ALLOW_READ_WRITES ||
-            (!isWrite && partitionHandling != PartitionHandling.DENY_READ_WRITES);
+   protected boolean isOperationAllowed(boolean isWrite, long flagBitSet) {
+      if (availabilityMode == AvailabilityMode.AVAILABLE)
+         return true;
+
+      switch (partitionHandling) {
+         case ALLOW_READ_WRITES:
+            return true;
+         case ALLOW_READS:
+            if (EnumUtil.containsAny(flagBitSet, FlagBitSets.FORCE_WRITE_LOCK))
+               throw log.degradedModeLockUnavailable();
+            return !isWrite;
+         default:
+            return false;
+      }
    }
 
    private interface TransactionInfo {

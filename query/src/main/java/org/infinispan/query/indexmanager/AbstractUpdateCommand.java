@@ -11,21 +11,20 @@ import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.remote.BaseRpcCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.marshall.MarshallUtil;
-import org.infinispan.query.SearchManager;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.query.backend.QueryInterceptor;
-import org.infinispan.query.impl.CommandInitializer;
 import org.infinispan.query.impl.ComponentRegistryUtils;
 import org.infinispan.query.impl.CustomQueryCommand;
-import org.infinispan.query.impl.SearchManagerImpl;
 import org.infinispan.util.ByteString;
 
 /**
- * Base class for index commands
+ * Base class for index commands.
  *
  * @author gustavonalle
  * @since 7.0
  */
 public abstract class AbstractUpdateCommand extends BaseRpcCommand implements ReplicableCommand, CustomQueryCommand {
+
    protected SearchIntegrator searchFactory;
    protected String indexName;
    protected byte[] serializedModel;
@@ -53,7 +52,7 @@ public abstract class AbstractUpdateCommand extends BaseRpcCommand implements Re
    }
 
    @Override
-   public void readFrom(ObjectInput input) throws IOException, ClassNotFoundException {
+   public void readFrom(ObjectInput input) throws IOException {
       boolean hasIndexName = input.readBoolean();
       if (hasIndexName) {
          indexName = input.readUTF();
@@ -70,12 +69,11 @@ public abstract class AbstractUpdateCommand extends BaseRpcCommand implements Re
     * This is invoked only on the receiving node, before {@link #perform(org.infinispan.context.InvocationContext)}.
     */
    @Override
-   public void fetchExecutionContext(CommandInitializer ci) {
+   public void setCacheManager(EmbeddedCacheManager cm) {
       String name = cacheName.toString();
-      if (ci.getCacheManager().cacheExists(name)) {
-         Cache cache = ci.getCacheManager().getCache(name);
-         SearchManager searchManager = new SearchManagerImpl(cache.getAdvancedCache());
-         searchFactory = searchManager.unwrap(SearchIntegrator.class);
+      if (cm.cacheExists(name)) {
+         Cache cache = cm.getCache(name);
+         searchFactory = ComponentRegistryUtils.getSearchIntegrator(cache);
          queryInterceptor = ComponentRegistryUtils.getQueryInterceptor(cache);
       } else {
          throw new CacheException("Cache named '" + name + "' does not exist on this CacheManager, or was not started");

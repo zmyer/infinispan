@@ -1,6 +1,7 @@
 package org.infinispan.server.memcached.configuration;
 
 import org.infinispan.commons.configuration.Builder;
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.server.core.admin.AdminOperationsHandler;
 import org.infinispan.server.core.configuration.ProtocolServerConfigurationBuilder;
 
@@ -14,7 +15,7 @@ public class MemcachedServerConfigurationBuilder extends ProtocolServerConfigura
       Builder<MemcachedServerConfiguration> {
 
    public MemcachedServerConfigurationBuilder() {
-      super(MemcachedServerConfiguration.DEFAULT_MEMCACHED_PORT);
+      super(MemcachedServerConfiguration.DEFAULT_MEMCACHED_PORT, MemcachedServerConfiguration.attributeDefinitionSet());
       this.defaultCacheName(MemcachedServerConfiguration.DEFAULT_MEMCACHED_CACHE);
    }
 
@@ -38,10 +39,19 @@ public class MemcachedServerConfigurationBuilder extends ProtocolServerConfigura
       return this;
    }
 
+   /**
+    * The encoding to be used by clients of the memcached text protocol. When not specified, "application/octet-stream" is assumed.
+    * When encoding is set, the memcached text server will assume clients will be reading and writing values in that encoding, and
+    * will perform the necessary conversions between this encoding and the storage format.
+    */
+   public MemcachedServerConfigurationBuilder clientEncoding(MediaType payloadType) {
+      attributes.attribute(MemcachedServerConfiguration.CLIENT_ENCODING).set(payloadType);
+      return this;
+   }
+
    @Override
    public MemcachedServerConfiguration create() {
-      return new MemcachedServerConfiguration(defaultCacheName, name, host, port, idleTimeout, recvBufSize, sendBufSize,
-            ssl.create(), tcpNoDelay, workerThreads, ignoredCaches, startTransport, adminOperationsHandler);
+      return new MemcachedServerConfiguration(attributes.protect(), ssl.create());
    }
 
    public MemcachedServerConfiguration build(boolean validate) {

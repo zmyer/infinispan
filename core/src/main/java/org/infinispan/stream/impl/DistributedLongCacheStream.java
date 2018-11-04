@@ -30,7 +30,8 @@ import org.infinispan.CacheStream;
 import org.infinispan.DoubleCacheStream;
 import org.infinispan.IntCacheStream;
 import org.infinispan.LongCacheStream;
-import org.infinispan.commons.util.SmallIntSet;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.stream.impl.intops.primitive.l.AsDoubleLongOperation;
 import org.infinispan.stream.impl.intops.primitive.l.BoxedLongOperation;
 import org.infinispan.stream.impl.intops.primitive.l.DistinctLongOperation;
@@ -496,9 +497,13 @@ public class DistributedLongCacheStream<Original> extends AbstractCacheStream<Or
    }
 
    @Override
-   public LongCacheStream
-   filterKeySegments(Set<Integer> segments) {
-      segmentsToFilter = SmallIntSet.from(segments);
+   public LongCacheStream filterKeySegments(Set<Integer> segments) {
+      return filterKeySegments(IntSets.from(segments));
+   }
+
+   @Override
+   public LongCacheStream filterKeySegments(IntSet segments) {
+      segmentsToFilter = segments;
       return this;
    }
 

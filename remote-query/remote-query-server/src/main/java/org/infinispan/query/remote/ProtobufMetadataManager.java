@@ -21,7 +21,7 @@ public interface ProtobufMetadataManager extends ProtobufMetadataManagerMBean {
 
    ObjectName getObjectName();
 
-   void setObjectName(ObjectName objectName);
-
    void registerMarshaller(BaseMarshaller<?> marshaller);
+
+   void unregisterMarshaller(BaseMarshaller<?> marshaller);
 }

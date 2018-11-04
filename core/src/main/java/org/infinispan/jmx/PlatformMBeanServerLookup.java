@@ -13,7 +13,9 @@ import javax.management.MBeanServer;
  *
  * @author Mircea.Markus@jboss.com
  * @since 4.0
+ * @deprecated Use {@link org.infinispan.commons.jmx.PlatformMBeanServerLookup} instead
  */
+@Deprecated
 public class PlatformMBeanServerLookup implements MBeanServerLookup {
 
    @Override

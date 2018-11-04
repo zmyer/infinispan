@@ -12,13 +12,13 @@ import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheCon
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertTrue;
-import static org.testng.AssertJUnit.fail;
 
 import java.io.IOException;
 import java.util.List;
 
 import org.hibernate.search.spi.SearchIntegrator;
 import org.infinispan.Cache;
+import org.infinispan.client.hotrod.ProtocolVersion;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.Search;
@@ -68,6 +68,10 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
    protected RemoteCache<Object, Object> remoteCache;
    protected Cache<Object, Object> cache;
 
+   protected ProtocolVersion getProtocolVersion() {
+      return ProtocolVersion.DEFAULT_PROTOCOL_VERSION;
+   }
+
    @Override
    protected QueryFactory getQueryFactory() {
       return Search.getQueryFactory(remoteCache);
@@ -78,6 +82,9 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
       return ModelFactoryPB.INSTANCE;
    }
 
+   /**
+    * Both populating the cache and querying are done via remote cache.
+    */
    @Override
    protected RemoteCache<Object, Object> getCacheForQuery() {
       return remoteCache;
@@ -99,6 +106,7 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
       org.infinispan.client.hotrod.configuration.ConfigurationBuilder clientBuilder = new org.infinispan.client.hotrod.configuration.ConfigurationBuilder();
       clientBuilder.addServer().host("127.0.0.1").port(hotRodServer.getPort());
       clientBuilder.marshaller(new ProtoStreamMarshaller());
+      clientBuilder.version(getProtocolVersion());
       remoteCacheManager = new RemoteCacheManager(clientBuilder.build());
       remoteCache = remoteCacheManager.getCache();
       initProtoSchema(remoteCacheManager);
@@ -109,7 +117,7 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
       RemoteCache<String, String> metadataCache = remoteCacheManager.getCache(ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME);
       metadataCache.put("sample_bank_account/bank.proto", loadSchema());
       metadataCache.put("not_indexed.proto", NOT_INDEXED_PROTO_SCHEMA);
-      checkSchemaErrors(metadataCache);
+      RemoteQueryTestUtils.checkSchemaErrors(metadataCache);
 
       //initialize client-side serialization context
       SerializationContext serCtx = ProtoStreamMarshaller.getSerializationContext(remoteCacheManager);
@@ -120,22 +128,6 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
 
    protected String loadSchema() throws IOException {
       return Util.getResourceAsString("/sample_bank_account/bank.proto", getClass().getClassLoader());
-   }
-
-   /**
-    * Logs the Protobuf schema errors (if any) and fails the test appropriately.
-    */
-   protected void checkSchemaErrors(RemoteCache<String, String> metadataCache) {
-      if (metadataCache.containsKey(ProtobufMetadataManagerConstants.ERRORS_KEY_SUFFIX)) {
-         // The existence of this key indicates there are errors in some files
-         String files = metadataCache.get(ProtobufMetadataManagerConstants.ERRORS_KEY_SUFFIX);
-         for (String fname : files.split("\n")) {
-            String errorKey = fname + ProtobufMetadataManagerConstants.ERRORS_KEY_SUFFIX;
-            log.errorf("Found errors in Protobuf schema file: %s\n%s\n", fname, metadataCache.get(errorKey));
-         }
-
-         fail("There are errors in the following Protobuf schema files:\n" + files);
-      }
    }
 
    protected ConfigurationBuilder getConfigurationBuilder() {
@@ -157,7 +149,7 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
       SearchIntegrator searchIntegrator = org.infinispan.query.Search.getSearchManager(cache).unwrap(SearchIntegrator.class);
 
       assertTrue(searchIntegrator.getIndexBindings().containsKey(ProtobufValueWrapper.INDEXING_TYPE));
-      assertNotNull(searchIntegrator.getIndexManager(cache.getName() + ProgrammaticSearchMappingProviderImpl.INDEX_NAME_SUFFIX));
+      assertNotNull(searchIntegrator.getIndexManager(ProgrammaticSearchMappingProviderImpl.getIndexName(cache.getName())));
    }
 
    @Override

@@ -3,26 +3,31 @@ package org.infinispan.persistence;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntFunction;
+import java.util.function.Predicate;
 
-import org.infinispan.commons.util.ByRef;
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.container.DataContainer;
-import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.InternalCacheValue;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.metadata.InternalMetadata;
-import org.infinispan.metadata.Metadata;
 import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
-import org.infinispan.util.TimeService;
-import org.infinispan.util.concurrent.WithinThreadExecutor;
+import org.infinispan.persistence.spi.SegmentedAdvancedLoadWriteStore;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+import org.reactivestreams.Publisher;
+
+import io.reactivex.Flowable;
+import io.reactivex.schedulers.Schedulers;
 
 /**
  * @author Mircea Markus
@@ -37,26 +42,89 @@ public class PersistenceUtil {
       return filter == null ? KeyFilter.ACCEPT_ALL_FILTER : filter;
    }
 
+   private static final int SEGMENT_NOT_PROVIDED = -1;
+
+   /**
+    *
+    * @param acl
+    * @param filter
+    * @param <K>
+    * @param <V>
+    * @return
+    * @deprecated Please use {@link #count(AdvancedCacheLoader, Predicate)} instead
+    */
+   @Deprecated
    public static <K, V> int count(AdvancedCacheLoader<K, V> acl, KeyFilter<? super K> filter) {
-      final AtomicInteger result = new AtomicInteger(0);
-      acl.process(filter, (marshalledEntry, taskContext) -> result.incrementAndGet(), new WithinThreadExecutor(), false, false);
-      return result.get();
+      return count(acl, (Predicate<? super K>) filter);
    }
 
+   public static <K, V> int count(AdvancedCacheLoader<K, V> acl, Predicate<? super K> filter) {
+
+      // This can't be null
+      Long result = Flowable.fromPublisher(acl.publishKeys(filter)).count().blockingGet();
+      if (result > Integer.MAX_VALUE) {
+         return Integer.MAX_VALUE;
+      }
+      return result.intValue();
+   }
+
+   /**
+    * Counts how many entries are present in the segmented store. Only the segments provided will have entries counted.
+    * @param salws segmented store containing entries
+    * @param segments segments to count entries from
+    * @return count of entries that are in the provided segments
+    */
+   public static int count(SegmentedAdvancedLoadWriteStore<?, ?> salws, IntSet segments) {
+      Long result = Flowable.fromPublisher(salws.publishKeys(segments, null)).count().blockingGet();
+      if (result > Integer.MAX_VALUE) {
+         return Integer.MAX_VALUE;
+      }
+      return result.intValue();
+   }
+
+   /**
+    *
+    * @param acl
+    * @param filter
+    * @param <K>
+    * @param <V>
+    * @return
+    * @deprecated Please use {@link #toKeySet(AdvancedCacheLoader, Predicate)} instead
+    */
+   @Deprecated
    public static <K, V> Set<K> toKeySet(AdvancedCacheLoader<K, V> acl, KeyFilter<? super K> filter) {
-      if (acl == null)
-         return Collections.emptySet();
-      final Set<K> set = new HashSet<K>();
-      acl.process(filter, (marshalledEntry, taskContext) -> set.add(marshalledEntry.getKey()), new WithinThreadExecutor(), false, false);
-      return set;
+      return toKeySet(acl, (Predicate<? super K>) filter);
    }
 
-   public static <K, V> Set<InternalCacheEntry> toEntrySet(AdvancedCacheLoader<K, V> acl, KeyFilter<? super K> filter, final InternalEntryFactory ief) {
+   public static <K, V> Set<K> toKeySet(AdvancedCacheLoader<K, V> acl, Predicate<? super K> filter) {
       if (acl == null)
          return Collections.emptySet();
-      final Set<InternalCacheEntry> set = new HashSet<InternalCacheEntry>();
-      acl.process(filter, (ce, taskContext) -> set.add(ief.create(ce.getKey(), ce.getValue(), ce.getMetadata())), new WithinThreadExecutor(), true, true);
-      return set;
+      return Flowable.fromPublisher(acl.publishKeys(filter))
+            .collectInto(new HashSet<K>(), Set::add).blockingGet();
+   }
+
+   /**
+    *
+    * @param acl
+    * @param filter
+    * @param ief
+    * @param <K>
+    * @param <V>
+    * @return
+    * @deprecated Please use {@link #toEntrySet(AdvancedCacheLoader, Predicate, InternalEntryFactory)} instead
+    */
+   @Deprecated
+   public static <K, V> Set<InternalCacheEntry> toEntrySet(AdvancedCacheLoader<K, V> acl, KeyFilter<? super K> filter, final InternalEntryFactory ief) {
+      Set entrySet = toEntrySet(acl, (Predicate<? super K>) filter, ief);
+      return (Set<InternalCacheEntry>) entrySet;
+   }
+
+   public static <K, V> Set<InternalCacheEntry<K, V>> toEntrySet(AdvancedCacheLoader<K, V> acl, Predicate<? super K> filter, final InternalEntryFactory ief) {
+      if (acl == null)
+         return Collections.emptySet();
+      return Flowable.fromPublisher(acl.publishEntries(filter, true, true))
+            .map(me -> ief.create(me.getKey(), me.getValue(), me.getMetadata()))
+            .collectInto(new HashSet<InternalCacheEntry<K, V>>(), Set::add).blockingGet();
    }
 
    public static long getExpiryTime(InternalMetadata internalMetadata) {
@@ -71,104 +139,68 @@ public class PersistenceUtil {
       return icv.getMetadata() == null ? null : new InternalMetadataImpl(icv.getMetadata(), icv.getCreated(), icv.getLastUsed());
    }
 
-   public static <K, V> InternalCacheEntry<K,V> loadAndStoreInDataContainer(DataContainer<K, V> dataContainer, final PersistenceManager persistenceManager,
-                                                         K key, final InvocationContext ctx, final TimeService timeService,
+   /**
+    * @deprecated since 9.4 This method references PersistenceManager, which isn't a public class
+    */
+   @Deprecated
+   public static <K, V> InternalCacheEntry<K,V> loadAndStoreInDataContainer(DataContainer<K, V> dataContainer,
+         final PersistenceManager persistenceManager, K key, final InvocationContext ctx, final TimeService timeService,
+         final AtomicReference<Boolean> isLoaded) {
+      return org.infinispan.persistence.internal.PersistenceUtil.loadAndStoreInDataContainer(dataContainer,
+            persistenceManager, key, ctx, timeService, isLoaded);
+   }
+
+   /**
+    * @deprecated since 9.4 This method references PersistenceManager, which isn't a public class
+    */
+   @Deprecated
+   public static <K, V> InternalCacheEntry<K,V> loadAndStoreInDataContainer(DataContainer<K, V> dataContainer, int segment,
+         final PersistenceManager persistenceManager, K key, final InvocationContext ctx, final TimeService timeService,
                                                          final AtomicReference<Boolean> isLoaded) {
-      final ByRef<Boolean> expired = new ByRef<>(null);
-      InternalCacheEntry<K,V> entry = dataContainer.compute(key, (k, oldEntry, factory) -> {
-         //under the lock, check if the entry exists in the DataContainer
-         if (oldEntry != null) {
-            if (isLoaded != null) {
-               isLoaded.set(null); //not loaded
-            }
-            if (oldEntry.canExpire() && oldEntry.isExpired(timeService.wallClockTime())) {
-               expired.set(Boolean.TRUE);
-               return oldEntry;
-            }
-            return oldEntry; //no changes in container
-         }
-
-         // Load using key from command
-         MarshalledEntry<K, V> loaded = loadAndCheckExpiration(persistenceManager, key, ctx, timeService);
-         if (loaded == null) {
-            if (isLoaded != null) {
-               isLoaded.set(Boolean.FALSE); //not loaded
-            }
-            return null; //no changed in container
-         }
-
-         InternalCacheEntry<K, V> newEntry = convert(loaded, factory);
-
-         if (isLoaded != null) {
-            isLoaded.set(Boolean.TRUE); //loaded!
-         }
-         return newEntry;
-      });
-      if (expired.get() == Boolean.TRUE) {
-         return null;
-      } else {
-         return entry;
-      }
+      return org.infinispan.persistence.internal.PersistenceUtil.loadAndStoreInDataContainer(dataContainer, segment,
+            persistenceManager, key, ctx, timeService, isLoaded);
    }
 
-   public static <K, V> InternalCacheEntry<K,V> loadAndComputeInDataContainer(DataContainer<K, V> dataContainer, final PersistenceManager persistenceManager,
-                                                                              K key, final InvocationContext ctx, final TimeService timeService,
-                                                                              DataContainer.ComputeAction<K, V> action) {
-      final ByRef<Boolean> expired = new ByRef<>(null);
-      InternalCacheEntry<K,V> entry = dataContainer.compute(key, (k, oldEntry, factory) -> {
-         //under the lock, check if the entry exists in the DataContainer
-         if (oldEntry != null) {
-            if (oldEntry.canExpire() && oldEntry.isExpired(timeService.wallClockTime())) {
-               expired.set(Boolean.TRUE);
-               return oldEntry;
-            }
-            return action.compute(k, oldEntry, factory);
-         }
-
-         // Load using key from command
-         MarshalledEntry<K, V> loaded = loadAndCheckExpiration(persistenceManager, key, ctx, timeService);
-         if (loaded == null) {
-            return action.compute(k, null, factory);
-         }
-
-         InternalCacheEntry<K, V> newEntry = convert(loaded, factory);
-         return action.compute(k, newEntry, factory);
-      });
-      if (expired.get() == Boolean.TRUE) {
-         return null;
-      } else {
-         return entry;
-      }
+   /**
+    * @deprecated since 9.4 This method references PersistenceManager, which isn't a public class
+    */
+   @Deprecated
+   public static <K, V> InternalCacheEntry<K,V> loadAndComputeInDataContainer(DataContainer<K, V> dataContainer,
+         int segment, final PersistenceManager persistenceManager, K key, final InvocationContext ctx,
+         final TimeService timeService, DataContainer.ComputeAction<K, V> action) {
+      return org.infinispan.persistence.internal.PersistenceUtil.loadAndComputeInDataContainer(dataContainer, segment,
+            persistenceManager, key, ctx, timeService, action);
    }
 
+   /**
+    * @deprecated since 9.4 This method references PersistenceManager, which isn't a public class
+    */
+   @Deprecated
    public static <K, V> MarshalledEntry<K, V> loadAndCheckExpiration(PersistenceManager persistenceManager, Object key,
                                                         InvocationContext context, TimeService timeService) {
-      final MarshalledEntry<K, V> loaded = persistenceManager.loadFromAllStores(key, context.isOriginLocal());
-      if (trace) {
-         log.tracef("Loaded %s for key %s from persistence.", loaded, key);
-      }
-      if (loaded == null) {
-         return null;
-      }
-      InternalMetadata metadata = loaded.getMetadata();
-      if (metadata != null && metadata.isExpired(timeService.wallClockTime())) {
-         return null;
-      }
-      return loaded;
+      return org.infinispan.persistence.internal.PersistenceUtil.loadAndCheckExpiration(persistenceManager, key,
+            SEGMENT_NOT_PROVIDED, context);
    }
 
    public static <K, V> InternalCacheEntry<K, V> convert(MarshalledEntry<K, V> loaded, InternalEntryFactory factory) {
-      InternalMetadata metadata = loaded.getMetadata();
-      if (metadata != null) {
-         Metadata actual = metadata instanceof InternalMetadataImpl ? ((InternalMetadataImpl) metadata).actual() :
-               metadata;
-         //noinspection unchecked
-         return factory.create(loaded.getKey(), loaded.getValue(), actual, metadata.created(), metadata.lifespan(),
-                               metadata.lastUsed(), metadata.maxIdle());
-      } else {
-         //metadata is null!
-         //noinspection unchecked
-         return factory.create(loaded.getKey(), loaded.getValue(), (Metadata) null);
-      }
+      return org.infinispan.persistence.internal.PersistenceUtil.convert(loaded, factory);
+   }
+
+   /**
+    * Will create a publisher that parallelizes each publisher returned from the <b>publisherFunction</b> by executing
+    * them on the executor as needed.
+    * <p>
+    * Note that returned publisher will be publishing entries from the invocation of the executor. Thus any subscription
+    * will not block the thread it was invoked on, unless explicitly configured to do so.
+    * @param segments segments to parallelize across
+    * @param executor the executor execute parallelized operations on
+    * @param publisherFunction function that creates a different publisher for each segment
+    * @param <R> the returned value
+    * @return a publisher that
+    */
+   public static <R> Publisher<R> parallelizePublisher(IntSet segments, Executor executor,
+         IntFunction<Publisher<R>> publisherFunction) {
+      return org.infinispan.persistence.internal.PersistenceUtil.parallelizePublisher(segments, Schedulers.from(executor),
+            publisherFunction);
    }
 }

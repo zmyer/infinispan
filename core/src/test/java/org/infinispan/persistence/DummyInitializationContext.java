@@ -1,12 +1,15 @@
 package org.infinispan.persistence;
 
+import java.util.concurrent.ExecutorService;
+
 import org.infinispan.Cache;
 import org.infinispan.commons.io.ByteBufferFactory;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.StoreConfiguration;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.marshall.core.MarshalledEntryFactory;
 import org.infinispan.persistence.spi.InitializationContext;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 
 /**
  * @author Mircea Markus
@@ -19,17 +22,20 @@ public class DummyInitializationContext implements InitializationContext {
 
    ByteBufferFactory byteBufferFactory;
    MarshalledEntryFactory marshalledEntryFactory;
+   ExecutorService executorService;
 
    public DummyInitializationContext() {
    }
 
    public DummyInitializationContext(StoreConfiguration clc, Cache cache, StreamingMarshaller marshaller,
-                                     ByteBufferFactory byteBufferFactory, MarshalledEntryFactory marshalledEntryFactory) {
+                                     ByteBufferFactory byteBufferFactory, MarshalledEntryFactory marshalledEntryFactory,
+                                     ExecutorService executorService) {
       this.clc = clc;
       this.cache = cache;
       this.marshaller = marshaller;
       this.byteBufferFactory = byteBufferFactory;
       this.marshalledEntryFactory = marshalledEntryFactory;
+      this.executorService = executorService;
    }
 
    @Override
@@ -40,6 +46,11 @@ public class DummyInitializationContext implements InitializationContext {
    @Override
    public Cache getCache() {
       return cache;
+   }
+
+   @Override
+   public KeyPartitioner getKeyPartitioner() {
+      return cache.getAdvancedCache().getComponentRegistry().getComponent(KeyPartitioner.class);
    }
 
    @Override
@@ -60,5 +71,10 @@ public class DummyInitializationContext implements InitializationContext {
    @Override
    public MarshalledEntryFactory getMarshalledEntryFactory() {
       return marshalledEntryFactory;
+   }
+
+   @Override
+   public ExecutorService getExecutor() {
+      return executorService;
    }
 }

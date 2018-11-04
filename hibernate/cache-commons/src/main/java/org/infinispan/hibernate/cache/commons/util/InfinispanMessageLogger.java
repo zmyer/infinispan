@@ -10,8 +10,7 @@ import static org.jboss.logging.Logger.Level.ERROR;
 import static org.jboss.logging.Logger.Level.WARN;
 
 import org.hibernate.cache.CacheException;
-import org.infinispan.hibernate.cache.commons.InfinispanRegionFactory;
-import org.infinispan.hibernate.cache.commons.JndiInfinispanRegionFactory;
+import org.infinispan.hibernate.cache.spi.InfinispanProperties;
 import org.infinispan.util.ByteString;
 import org.jboss.logging.BasicLogger;
 import org.jboss.logging.Logger;
@@ -27,11 +26,11 @@ import javax.transaction.SystemException;
  * The jboss-logging {@link MessageLogger} for the hibernate-infinispan module.  It reserves message ids ranging from
  * 25001 to 30000 inclusively.
  *
- * @author Radim Vansa &ltrvansa@redhat.com&gt;
+ * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 @MessageLogger(projectCode = "HHH")
 public interface InfinispanMessageLogger extends BasicLogger {
-   // Workaround for JBLOGGING-120: cannot add static interface method
+	// Workaround for JBLOGGING-120: cannot add static interface method
 	class Provider {
 		public static InfinispanMessageLogger getLog(Class clazz) {
 			return Logger.getMessageLogger(InfinispanMessageLogger.class, clazz.getName());
@@ -52,7 +51,7 @@ public interface InfinispanMessageLogger extends BasicLogger {
 	CacheException pendingPutsMustHaveMaxIdle();
 
 	@LogMessage(level = WARN)
-	@Message(value = "Property '" + InfinispanRegionFactory.INFINISPAN_USE_SYNCHRONIZATION_PROP + "' is deprecated; 2LC with transactional cache must always use synchronizations.", id = 25005)
+	@Message(value = "Property '" + InfinispanProperties.INFINISPAN_USE_SYNCHRONIZATION_PROP + "' is deprecated; 2LC with transactional cache must always use synchronizations.", id = 25005)
 	void propertyUseSynchronizationDeprecated();
 
 	@LogMessage(level = ERROR)
@@ -89,7 +88,7 @@ public interface InfinispanMessageLogger extends BasicLogger {
 
 	@LogMessage(level = ERROR)
 	@Message(value = "Failure updating cache in afterCompletion, will retry", id = 25015)
-	void failureInAfterCompletion(@Cause Exception e);
+	void failureInAfterCompletion(@Cause Throwable e);
 
 	@LogMessage(level = ERROR)
 	@Message(value = "Failed to end invalidating pending putFromLoad calls for key %s from region %s; the key won't be cached until invalidation expires.", id = 25016)
@@ -120,13 +119,13 @@ public interface InfinispanMessageLogger extends BasicLogger {
 	CacheException cannotGetCurrentTx(@Cause SystemException e);
 
 	@Message(value = "Failed to invalidate pending putFromLoad calls for key %s from region %s", id = 25024)
-	CacheException failedInvalidatePendingPut(Object key, ByteString regionName);
+	CacheException failedInvalidatePendingPut(Object key, String regionName);
 
 	@LogMessage(level = ERROR)
 	@Message(value = "Failed to invalidate pending putFromLoad calls for region %s", id = 25025)
 	void failedInvalidateRegion(String regionName);
 
-	@Message(value = "Property '" + JndiInfinispanRegionFactory.CACHE_MANAGER_RESOURCE_PROP + "' not set", id = 25026)
+	@Message(value = "Property '" + InfinispanProperties.CACHE_MANAGER_RESOURCE_PROP + "' not set", id = 25026)
 	CacheException propertyCacheManagerResourceNotSet();
 
 	@Message(value = "Timestamp cache cannot be configured with invalidation", id = 25027)
@@ -139,4 +138,32 @@ public interface InfinispanMessageLogger extends BasicLogger {
 	@LogMessage(level = WARN)
 	@Message(value = "Property '%s' is deprecated, please use '%s' instead", id = 25029)
 	void deprecatedProperty(String deprecated, String alternative);
+
+	@LogMessage(level = WARN)
+	@Message(value = "Transactional caches are not supported. The configuration option will be ignored; please unset.", id = 25030)
+	void transactionalConfigurationIgnored();
+
+	@LogMessage(level = WARN)
+	@Message(value = "Configuration for pending-puts cache '%s' is already defined - another instance of SessionFactory was not closed properly.", id = 25031)
+	void pendingPutsCacheAlreadyDefined(String pendingPutsName);
+
+	@LogMessage(level = WARN)
+	@Message(value = "Cache configuration '%s' is present but the use has not been defined through " + InfinispanProperties.PREFIX + "%s" + InfinispanProperties.CONFIG_SUFFIX + "=%s", id = 25032)
+	void regionNameMatchesCacheName(String regionName, String regionName2, String regionName3);
+
+	@LogMessage(level = WARN)
+	@Message(value = "Configuration properties contain record for unqualified region name '%s' but it should contain qualified region name '%s'", id = 25033)
+	void usingUnqualifiedNameInConfiguration(String unqualifiedRegionName, String cacheName);
+
+	@LogMessage(level = WARN)
+	@Message(value = "Configuration for unqualified region name '%s' is defined but the cache will use qualified name '%s'", id = 25034)
+	void configurationWithUnqualifiedName(String unqualifiedRegionName, String cacheName);
+
+	@LogMessage(level = ERROR)
+	@Message(value = "Operation #%d scheduled to complete before transaction completion failed", id = 25035)
+	void failureBeforeTransactionCompletion(int index, @Cause Exception e);
+
+	@LogMessage(level = ERROR)
+	@Message(value = "Operation #%d scheduled after transaction completion failed (transaction successful? %s)", id = 25036)
+	void failureAfterTransactionCompletion(int index, boolean successful, @Cause Exception e);
 }

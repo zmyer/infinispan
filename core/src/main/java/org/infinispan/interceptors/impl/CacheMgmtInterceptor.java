@@ -38,12 +38,15 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ClusteringConfiguration;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
+import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.container.offheap.OffHeapMemoryAllocator;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
+import org.infinispan.eviction.EvictionType;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.functional.impl.StatsEnvelope;
 import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
@@ -52,8 +55,8 @@ import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
 import org.infinispan.jmx.annotations.Units;
 import org.infinispan.topology.CacheTopology;
-import org.infinispan.util.TimeService;
-import org.infinispan.util.concurrent.StripedCounters;
+import org.infinispan.commons.time.TimeService;
+import org.infinispan.commons.util.concurrent.StripedCounters;
 
 /**
  * Captures cache management statistics
@@ -63,8 +66,8 @@ import org.infinispan.util.concurrent.StripedCounters;
  */
 @MBean(objectName = "Statistics", description = "General statistics such as timings, hit/miss ratio, etc.")
 public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
-   @Inject private AdvancedCache cache;
-   @Inject private DataContainer dataContainer;
+   @Inject private ComponentRef<AdvancedCache> cache;
+   @Inject private InternalDataContainer dataContainer;
    @Inject private TimeService timeService;
    @Inject private OffHeapMemoryAllocator allocator;
 
@@ -97,6 +100,17 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       return visitDataReadCommand(ctx, command);
    }
 
+   public void addDataRead(boolean foundValue, long timeNanoSeconds) {
+      StripeB stripe = counters.stripeForCurrentThread();
+      if (foundValue) {
+         counters.add(StripeB.hitTimesFieldUpdater, stripe, timeNanoSeconds);
+         counters.increment(StripeB.hitsFieldUpdater, stripe);
+      } else {
+         counters.add(StripeB.missTimesFieldUpdater, stripe, timeNanoSeconds);
+         counters.increment(StripeB.missesFieldUpdater, stripe);
+      }
+   }
+
    private Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command) throws Throwable {
       boolean statisticsEnabled = getStatisticsEnabled(command);
       if (!statisticsEnabled || !ctx.isOriginLocal())
@@ -104,15 +118,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
       long start = timeService.time();
       return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
-         StripeB stripe = counters.stripeForCurrentThread();
-         long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
-         if (rv == null) {
-            counters.add(StripeB.missTimesFieldUpdater, stripe, intervalNanoseconds);
-            counters.increment(StripeB.missesFieldUpdater, stripe);
-         } else {
-            counters.add(StripeB.hitTimesFieldUpdater, stripe, intervalNanoseconds);
-            counters.increment(StripeB.hitsFieldUpdater, stripe);
-         }
+         addDataRead(rv != null, timeService.timeDuration(start, TimeUnit.NANOSECONDS));
       });
    }
 
@@ -128,9 +134,11 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
          int requests = ((GetAllCommand) rCommand).getKeys().size();
          int hitCount = 0;
-         for (Entry<Object, Object> entry : ((Map<Object, Object>) rv).entrySet()) {
-            if (entry.getValue() != null) {
-               hitCount++;
+         if (t == null) {
+            for (Entry<Object, Object> entry : ((Map<Object, Object>) rv).entrySet()) {
+               if (entry.getValue() != null) {
+                  hitCount++;
+               }
             }
          }
 
@@ -487,7 +495,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @ManagedAttribute(
-         description = "number of cache attribute put operations",
+         description = "Number of cache attribute put operations",
          displayName = "Number of cache puts" ,
          measurementType = MeasurementType.TRENDSUP,
          displayType = DisplayType.SUMMARY
@@ -524,7 +532,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @ManagedAttribute(
-         description = "read/writes ratio for the cache",
+         description = "Read/writes ratio for the cache",
          displayName = "Read/write ratio",
          units = Units.PERCENTAGE,
          displayType = DisplayType.SUMMARY
@@ -538,9 +546,9 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @ManagedAttribute(
-         description = "Average number of nanoseconds for a read operation on the cache",
+         description = "Average number of milliseconds for a read operation on the cache",
          displayName = "Average read time",
-         units = Units.NANOSECONDS,
+         units = Units.MILLISECONDS,
          displayType = DisplayType.SUMMARY
    )
    @SuppressWarnings("unused")
@@ -548,7 +556,36 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       long total = counters.get(StripeB.hitsFieldUpdater) + counters.get(StripeB.missesFieldUpdater);
       if (total == 0)
          return 0;
+      total = (counters.get(StripeB.hitTimesFieldUpdater) + counters.get(StripeB.missTimesFieldUpdater)) / total;
+      return TimeUnit.NANOSECONDS.toMillis(total);
+   }
+
+   @ManagedAttribute(
+         description = "Average number of nanoseconds for a read operation on the cache",
+         displayName = "Average read time",
+         units = Units.NANOSECONDS,
+         displayType = DisplayType.SUMMARY
+   )
+   @SuppressWarnings("unused")
+   public long getAverageReadTimeNanos() {
+      long total = counters.get(StripeB.hitsFieldUpdater) + counters.get(StripeB.missesFieldUpdater);
+      if (total == 0)
+         return 0;
       return (counters.get(StripeB.hitTimesFieldUpdater) + counters.get(StripeB.missTimesFieldUpdater)) / total;
+   }
+
+   @ManagedAttribute(
+         description = "Average number of milliseconds for a write operation in the cache",
+         displayName = "Average write time",
+         units = Units.MILLISECONDS,
+         displayType = DisplayType.SUMMARY
+   )
+   @SuppressWarnings("unused")
+   public long getAverageWriteTime() {
+      long sum = counters.get(StripeB.storesFieldUpdater);
+      if (sum == 0)
+         return 0;
+      return TimeUnit.NANOSECONDS.toMillis(counters.get(StripeB.storeTimesFieldUpdater) / sum);
    }
 
    @ManagedAttribute(
@@ -558,11 +595,25 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          displayType = DisplayType.SUMMARY
    )
    @SuppressWarnings("unused")
-   public long getAverageWriteTime() {
+   public long getAverageWriteTimeNanos() {
       long sum = counters.get(StripeB.storesFieldUpdater);
       if (sum == 0)
          return 0;
-      return (counters.get(StripeB.storeTimesFieldUpdater)) / sum;
+      return counters.get(StripeB.storeTimesFieldUpdater) / sum;
+   }
+
+   @ManagedAttribute(
+         description = "Average number of milliseconds for a remove operation in the cache",
+         displayName = "Average remove time",
+         units = Units.MILLISECONDS,
+         displayType = DisplayType.SUMMARY
+   )
+   @SuppressWarnings("unused")
+   public long getAverageRemoveTime() {
+      long removes = getRemoveHits();
+      if (removes == 0)
+         return 0;
+      return TimeUnit.NANOSECONDS.toMillis(counters.get(StripeB.removeTimesFieldUpdater) / removes);
    }
 
    @ManagedAttribute(
@@ -572,11 +623,11 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          displayType = DisplayType.SUMMARY
    )
    @SuppressWarnings("unused")
-   public long getAverageRemoveTime() {
+   public long getAverageRemoveTimeNanos() {
       long removes = getRemoveHits();
       if (removes == 0)
          return 0;
-      return (counters.get(StripeB.removeTimesFieldUpdater)) / removes;
+      return counters.get(StripeB.removeTimesFieldUpdater) / removes;
    }
 
    @ManagedAttribute(
@@ -585,7 +636,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          displayType = DisplayType.SUMMARY
    )
    public int getNumberOfEntries() {
-      return cache.withFlags(Flag.CACHE_MODE_LOCAL).size();
+      return cache.wired().withFlags(Flag.CACHE_MODE_LOCAL).size();
    }
 
    @ManagedAttribute(
@@ -595,6 +646,18 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    )
    public int getNumberOfEntriesInMemory() {
       return dataContainer.size();
+   }
+
+   @ManagedAttribute(
+         description = "Amount of memory in bytes allocated for use in eviction for data in the cache",
+         displayName = "Memory Used by data in the cache",
+         displayType = DisplayType.SUMMARY
+   )
+   public long getDataMemoryUsed() {
+      if (cacheConfiguration.memory().isEvictionEnabled() && cacheConfiguration.memory().evictionType() == EvictionType.MEMORY) {
+         return dataContainer.evictionSize();
+      }
+      return 0;
    }
 
    @ManagedAttribute(
@@ -612,7 +675,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          displayType = DisplayType.SUMMARY
    )
    public int getRequiredMinimumNumberOfNodes() {
-      return calculateRequiredMinimumNumberOfNodes(cache);
+      return calculateRequiredMinimumNumberOfNodes(cache.wired());
    }
 
    public static int calculateRequiredMinimumNumberOfNodes(AdvancedCache<?, ?> cache) {

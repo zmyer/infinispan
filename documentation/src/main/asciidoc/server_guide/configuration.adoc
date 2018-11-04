@@ -1,8 +1,8 @@
 == Configuration
-Since the server is based on the WildFly codebase, refer to the WildFly documentation, apart from the JGroups, Infinispan and Endpoint subsytems.
+Since the server is based on the WildFly codebase, refer to the WildFly documentation, apart from the JGroups, {brandname} and Endpoint subsytems.
 
 === JGroups subsystem configuration
-The JGroups subsystem configures the network transport and is only required when clustering multiple Infinispan Server nodes together.
+The JGroups subsystem configures the network transport and is only required when clustering multiple {brandname} Server nodes together.
 
 The subsystem declaration is enclosed in the following XML element:
 
@@ -170,7 +170,7 @@ The JGroups subsystem can be configured so that nodes need to authenticate each 
 </stack>
 ----
 
-In the above example the nodes will use the +DIGEST-MD5+ mech to authenticate against the +ClusterRealm+. In order to join, nodes need to have the +cluster+ role. If the +cluster-role+ attribute is not specified it defaults to the name of the Infinispan +cache-container+, as described below.
+In the above example the nodes will use the +DIGEST-MD5+ mech to authenticate against the +ClusterRealm+. In order to join, nodes need to have the +cluster+ role. If the +cluster-role+ attribute is not specified it defaults to the name of the {brandname} +cache-container+, as described below.
 Each node identifies itself using the +client_name+ property. If none is explicitly specified, the hostname on which the server is running will be used. This name can also be overridden by specifying the +jboss.node.name+ system property.
 The +client_password+ property contains the password of the node. It is recommended that this password be stored in the Vault. Refer to link:https://community.jboss.org/wiki/AS7UtilisingMaskedPasswordsViaTheVault[AS7: Utilising masked passwords via the vault] for instructions on how to do so.
 When using the GSSAPI mech, +client_name+ will be used as the name of a Kerberos-enabled login module defined within the security domain subsystem:
@@ -191,22 +191,22 @@ When using the GSSAPI mech, +client_name+ will be used as the name of a Kerberos
 </security-domain>
 ----
 
-=== Infinispan subsystem configuration
-The Infinispan subsystem configures the cache containers and caches.
+=== {brandname} subsystem configuration
+The {brandname} subsystem configures the cache containers and caches.
 
 The subsystem declaration is enclosed in the following XML element:
 
 [source,xml]
 ----
 
-<subsystem xmlns="urn:infinispan:server:core:9.2" default-cache-container="clustered">
+<subsystem xmlns="urn:infinispan:server:core:9.4" default-cache-container="clustered">
   ...
 </subsystem>
 
 ----
 
 ==== Containers
-The Infinispan subsystem can declare multiple containers. A container is declared as follows:
+The {brandname} subsystem can declare multiple containers. A container is declared as follows:
 
 [source,xml]
 ----
@@ -229,7 +229,7 @@ If you need to declare clustered caches (distributed, replicated, invalidation),
 ----
 
 ==== Caches
-Now you can declare your caches. Please be aware that only the caches declared in the configuration will be available to the endpoints and that attempting to access an undefined cache is an illegal operation. Contrast this with the default Infinispan library behaviour where obtaining an undefined cache will implicitly create one using the default settings. The following are example declarations for all four available types of caches:
+Now you can declare your caches. Please be aware that only the caches declared in the configuration will be available to the endpoints and that attempting to access an undefined cache is an illegal operation. Contrast this with the default {brandname} library behaviour where obtaining an undefined cache will implicitly create one using the default settings. The following are example declarations for all four available types of caches:
 
 [source,xml]
 ----
@@ -312,7 +312,7 @@ The possible attributes for the locking element are:
 *  _acquire-timeout_ maximum time to attempt a particular lock acquisition.
 
 
-*  _concurrency-level_ concurrency level for lock containers. Adjust this value according to the number of concurrent threads interacting with Infinispan.
+*  _concurrency-level_ concurrency level for lock containers. Adjust this value according to the number of concurrent threads interacting with {brandname}.
 
 
 *  _concurrent-updates_ for non-transactional caches only: if set to true(default value) the cache keeps data consistent in the case of concurrent updates. For clustered caches this comes at the cost of an additional RPC, so if you don't expect your application to write data concurrently, disabling this flag increases performance.
@@ -322,14 +322,18 @@ The possible attributes for the locking element are:
 While it is possible to configure server caches to be transactional, none of the available protocols offer transaction capabilities.
 
 ==== Loaders and Stores
-Loaders and stores can be defined in server mode in almost the same way as in embedded mode (link:../user_guide/user_guide.html#persistence[described here]).
+Loaders and stores can be defined in server mode in almost the same way as in embedded mode.
+ifndef::productized[]
+See link:../user_guide/user_guide.html#persistence[Persistence] in the User Guide.
+endif::productized[]
+
 However, in server mode it is no longer necessary to define the `<persistence>...</persistence>` tag. Instead, a store's attributes are
 now defined on the store type element. For example, to configure the H2 database with a distributed cache in domain mode
 we define the "default" cache as follows in our domain.xml configuration:
 
 [source,xml,options="nowrap"]
 ----
-  <subsystem xmlns="urn:infinispan:server:core:9.2">
+  <subsystem xmlns="urn:infinispan:server:core:9.4">
       <cache-container name="clustered" default-cache="default" statistics="true">
           <transport lock-timeout="60000"/>
           <global-state/>
@@ -483,6 +487,7 @@ The HotRod, Memcached and WebSocket protocol connectors support a number of tuni
 
 *  _receive-buffer-size_ Sets the size of the receive buffer.
 
+[[protocol_interoperability]]
 ==== Protocol Interoperability
 
 By default each protocol stores data in the cache in the most efficient format for that protocol, so that no transformations are required when retrieving entries. If instead you need to access the same data from multiple protocols, you should enable compatibility mode on the caches that you want to share. This is done by adding the `<compatibility />` element to a cache definition, as follows:
@@ -503,7 +508,7 @@ To specify a custom server-side compatibility marshaller use the "marshaller" at
 ordinary fully qualified class name or an 'extended' class name which is composed of a JBoss Modules module identifier,
 a slot name, and a fully qualified class name separated by the ':' character, (eg. "com.acme.my-module-name:my-slot:com.acme.CustomMarshaller").
 
-By using a plain fully qualified class name you will be able to reference only 'stock' marshallers provided by Infinispan,
+By using a plain fully qualified class name you will be able to reference only 'stock' marshallers provided by {brandname},
 like "org.infinispan.query.remote.CompatibilityProtoStreamMarshaller". This option is provided for conciseness and backwards
 compatibility. The second option of using 'extended' class names is more generic and is preferred as it allows you to
 really add new marshallers from an external module of your choice.
@@ -532,14 +537,14 @@ or
 
 ----
 
-NOTE: Past versions of Infinispan (prior to 9.1.x) did not support the 'extended' class name format and were unable to
-refer to classes outside the Infinispan implementation and instead relied on the user to manually modify the
+NOTE: Past versions of {brandname} (prior to 9.1.x) did not support the 'extended' class name format and were unable to
+refer to classes outside the {brandname} implementation and instead relied on the user to manually modify the
 'dependencies' or 'resources' element of the module.xml file of the "org.infinispan" module in order to 'inject' the
 user supplied jar containing the custom marshaller. This practice is suboptimal from the maintainability point of view
 and is now discouraged (but it still works) and you are urged to migrate to the new approach.
 
 ==== Custom Marshaller Bridges
-Infinispan provides two marshalling bridges for marshalling client/server requests using the Kryo and Protostuff libraries.
+{brandname} provides two marshalling bridges for marshalling client/server requests using the Kryo and Protostuff libraries.
 To utilise either of these marshallers, you simply place the dependency of the marshaller you require in your client
 pom. Custom schemas for object marshalling must then be registered with the selected library using the library's api on
 the client or by implementing a RegistryService for the given marshaller bridge. Examples of how to achieve this for both
@@ -593,7 +598,7 @@ via Java's ServiceLoader api, therefore the full path of the implementing class(
 
 ===== Server Compatibility Mode
 When using the Protostuff/Kryo bridges in compatibility mode, it is necessary for the class files of all custom objects to
-be placed on the classpath of the server.  To achieve this, you should follow the steps outlined in the link:#_protocol_interoperability[Protocol Interoperability]
+be placed on the classpath of the server.  To achieve this, you should follow the steps outlined in the link:#protocol_interoperability[Protocol Interoperability]
 section, to place a jar containing all of their custom classes on the server's classpath.
 
 When utilising a custom marshaller in compatibility mode, it is also necessary for the marshaller and it's runtime dependencies
@@ -618,4 +623,3 @@ in the same directory or module as the marshaller bundle and custom classes.
 NOTE: It is not necessary for the service provider implementation to be provided in the same jar as the user's custom
 classes, however the jar containing the provider must be in the same directory/module as the marshaller and custom class
 jars.
-

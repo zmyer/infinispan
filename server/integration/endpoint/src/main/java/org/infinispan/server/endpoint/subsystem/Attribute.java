@@ -41,7 +41,9 @@ public enum Attribute {
     CACHE_CONTAINER(ModelKeys.CACHE_CONTAINER),
     @Deprecated
     CACHE_SUFFIX(ModelKeys.CACHE_SUFFIX),
+   CLIENT_ENCODING(ModelKeys.CLIENT_ENCODING),
     IGNORED_CACHES(ModelKeys.IGNORED_CACHES),
+    IO_THREADS(ModelKeys.IO_THREADS),
     EXTENDED_HEADERS(ModelKeys.EXTENDED_HEADERS),
     EXTERNAL_HOST(ModelKeys.EXTERNAL_HOST),
     EXTERNAL_PORT(ModelKeys.EXTERNAL_PORT),
@@ -68,28 +70,24 @@ public enum Attribute {
     SOCKET_BINDING(ModelKeys.SOCKET_BINDING),
     REST_SOCKET_BINDING(ModelKeys.REST_SOCKET_BINDING),
     HOTROD_SOCKET_BINDING(ModelKeys.HOTROD_SOCKET_BINDING),
+    SINGLE_PORT_SOCKET_BINDING(ModelKeys.SINGLE_PORT_SOCKET_BINDING),
     SSL(ModelKeys.SSL),
     STRENGTH(ModelKeys.STRENGTH),
     TCP_NODELAY(ModelKeys.TCP_NODELAY),
+    TCP_KEEPALIVE(ModelKeys.TCP_KEEPALIVE),
     KEEP_ALIVE(ModelKeys.KEEP_ALIVE),
     UPDATE_TIMEOUT(ModelKeys.UPDATE_TIMEOUT),
     VALUE(ModelKeys.VALUE),
     VIRTUAL_HOST(ModelKeys.VIRTUAL_HOST),
     VIRTUAL_SERVER(ModelKeys.VIRTUAL_SERVER),
-    WORKER_THREADS(ModelKeys.WORKER_THREADS),
-    ;
+    WORKER_THREADS(ModelKeys.WORKER_THREADS);
 
     private final String name;
     private final AttributeDefinition definition;
 
-    private Attribute(final String name) {
+    Attribute(final String name) {
         this.name = name;
         this.definition = null;
-    }
-
-    private Attribute(final AttributeDefinition definition) {
-        this.name = definition.getXmlName();
-        this.definition = definition;
     }
 
     /**

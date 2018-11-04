@@ -35,5 +35,4 @@ public class Codec26 extends Codec25 {
 
       ByteBufUtil.writeVInt(buf, listenerInterests);
    }
-
 }

@@ -26,14 +26,14 @@ import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
 
 /**
- * @author Sanne Grinovero <sanne@infinispan.org> (C) 2011 Red Hat Inc.
+ * @author Sanne Grinovero &lt;sanne@infinispan.org&gt; (C) 2011 Red Hat Inc.
  */
 @Test(groups = "unit", testName = "query.config.MultipleCachesTest")
 public class MultipleCachesTest extends SingleCacheManagerTest {
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
-      String config = TestingUtil.InfinispanStartTag.LATEST + "\n" +
+      String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container default-cache=\"default\">" +
             "   <local-cache name=\"default\">\n" +
             "      <indexing index=\"NONE\" />\n" +
@@ -45,7 +45,7 @@ public class MultipleCachesTest extends SingleCacheManagerTest {
             "      </indexing>\n" +
             "   </local-cache>\n" +
             "</cache-container>"
-            + TestingUtil.INFINISPAN_END_TAG;
+      );
       log.tracef("Using test configuration:\n%s", config);
       InputStream is = new ByteArrayInputStream(config.getBytes());
       final EmbeddedCacheManager cm;
@@ -59,7 +59,7 @@ public class MultipleCachesTest extends SingleCacheManagerTest {
       return cm;
    }
 
-   @Test(expectedExceptions = IllegalArgumentException.class)
+   @Test(expectedExceptions = IllegalStateException.class)
    public void queryNotIndexedCache() throws ParseException {
       cacheManager.defineConfiguration("notIndexedA", cacheManager.getDefaultCacheConfiguration());
       final Cache<Object, Object> notIndexedCache = cacheManager.getCache("notIndexedA");

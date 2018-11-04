@@ -6,24 +6,37 @@ import static org.infinispan.commons.util.Util.toStr;
 import java.util.Objects;
 
 import org.infinispan.commands.DataCommand;
+import org.infinispan.commands.SegmentSpecificCommand;
 import org.infinispan.context.Flag;
 
 /**
  * @author Mircea.Markus@jboss.com
- * @author Sanne Grinovero <sanne@hibernate.org> (C) 2011 Red Hat Inc.
+ * @author Sanne Grinovero &lt;sanne@hibernate.org&gt; (C) 2011 Red Hat Inc.
  * @since 4.0
  */
-public abstract class AbstractDataCommand implements DataCommand {
+public abstract class AbstractDataCommand implements DataCommand, SegmentSpecificCommand {
    protected Object key;
    private long flags;
+   // These 2 ints have to stay next to each other to ensure they are aligned together
    private int topologyId = -1;
+   protected int segment;
 
-   protected AbstractDataCommand(Object key, long flagsBitSet) {
+   protected AbstractDataCommand(Object key, int segment, long flagsBitSet) {
       this.key = key;
+      if (segment < 0) {
+         throw new IllegalArgumentException("Segment must be 0 or greater");
+      }
+      this.segment = segment;
       this.flags = flagsBitSet;
    }
 
    protected AbstractDataCommand() {
+      this.segment = -1;
+   }
+
+   @Override
+   public int getSegment() {
+      return segment;
    }
 
    @Override

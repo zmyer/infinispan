@@ -1,44 +1,18 @@
 <project name="dist-dir" basedir="." default="clean">
+    <!--
+       Allow to trim both thin and fat servers
+    -->
 
-   <property name="output.dir" value="${project.build.directory}/${product.name}-${product.version}" />
+    <target name="trim-server" depends="trim-all"/>
 
-   <target name="trim-server" depends="trim-modules, trim-as" />
+    <target name="trim-all">
+        <delete includeemptydirs="true" verbose="true">
+            <fileset dir="${output.dir}" includesfile="trim-delete.txt" excludesfile="trim-keep.txt"/>
+        </delete>
+    </target>
 
-   <target name="trim-modules">
-      <delete includeemptydirs="true" verbose="true">
-         <fileset dir="${output.dir}/modules/system/layers/base" includesfile="trim-modules.txt" excludesfile="retain-modules.txt"/>
-      </delete>
-   </target>
+    <target name="default">
+        <echo message="This script needs to be executed by the maven ant plugin"/>
+    </target>
 
-   <target name="trim-as">
-      <delete>
-         <fileset dir="${output.dir}/bin">
-            <include name="appclient.*" />
-            <include name="run.*" />
-            <include name="wsconsume.*" />
-            <include name="wsprovide.*" />
-            <include name="jboss-cli.bat" />
-            <include name="jboss-cli.sh" />
-            <include name="jboss-cli.ps1" />
-         </fileset>
-      </delete>
-      <delete dir="${output.dir}/appclient" />
-      <delete dir="${output.dir}/welcome-content" />
-      <delete>
-         <fileset dir="${output.dir}/docs/schema" excludesfile="keep-schemas.txt"/>
-      </delete>
-   </target>
-   
-   <target name="server-version">
-      <copy todir="${output.dir}" overwrite="true">
-          <fileset dir="src/main/resources" />
-          <filterset>
-              <filter token="project.version" value="${project.version}"/>
-          </filterset>
-      </copy>
-   </target>
-   
-   <target name="default">
-       <echo message="This script needs to be executed by the maven ant plugin" />
-   </target>
 </project>

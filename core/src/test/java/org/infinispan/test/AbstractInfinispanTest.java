@@ -10,6 +10,7 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,26 +29,30 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
+
 import javax.transaction.TransactionManager;
 
 import org.infinispan.commons.api.BasicCache;
 import org.infinispan.commons.api.BasicCacheContainer;
+import org.infinispan.commons.test.TestNGLongTestsHook;
 import org.infinispan.functional.FunctionalMap;
 import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.partitionhandling.BasePartitionHandlingTest;
 import org.infinispan.remoting.transport.impl.RequestRepository;
 import org.infinispan.test.fwk.ChainMethodInterceptor;
+import org.infinispan.test.fwk.FakeTestClass;
 import org.infinispan.test.fwk.NamedTestMethod;
 import org.infinispan.test.fwk.TestResourceTracker;
 import org.infinispan.test.fwk.TestSelector;
-import org.infinispan.util.DefaultTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.util.EmbeddedTimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.jgroups.stack.Protocol;
 import org.testng.IMethodInstance;
 import org.testng.IMethodInterceptor;
 import org.testng.ITestContext;
+import org.testng.TestNGException;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeClass;
@@ -62,9 +67,10 @@ import org.testng.internal.MethodInstance;
  * @author Mircea.Markus@jboss.com
  * @since 4.0
  */
-@Listeners(ChainMethodInterceptor.class)
+@Listeners({ChainMethodInterceptor.class, TestNGLongTestsHook.class})
 @TestSelector(interceptors = AbstractInfinispanTest.OrderByInstance.class)
-public class AbstractInfinispanTest {
+public abstract class AbstractInfinispanTest {
+
    protected interface Condition {
       boolean isSatisfied() throws Exception;
    }
@@ -77,12 +83,13 @@ public class AbstractInfinispanTest {
                                                                                     new SynchronousQueue<>(),
                                                                                  defaultThreadFactory);
 
-   public static final TimeService TIME_SERVICE = new DefaultTimeService();
+   public static final TimeService TIME_SERVICE = new EmbeddedTimeService();
 
    public static class OrderByInstance implements IMethodInterceptor {
       @Override
       public List<IMethodInstance> intercept(List<IMethodInstance> methods, ITestContext context) {
          Map<Object, List<IMethodInstance>> methodsByInstance = new IdentityHashMap<>();
+         Map<String, Object> instancesByName = new HashMap<>();
          for (IMethodInstance method : methods) {
             methodsByInstance.computeIfAbsent(method.getInstance(), k -> new ArrayList<>()).add(method);
          }
@@ -90,6 +97,16 @@ public class AbstractInfinispanTest {
          for (Map.Entry<Object, List<IMethodInstance>> instanceAndMethods : methodsByInstance.entrySet()) {
             Object instance = instanceAndMethods.getKey();
             if (instance instanceof AbstractInfinispanTest) {
+               String instanceName = ((AbstractInfinispanTest) instance).getTestName();
+               Object otherInstance = instancesByName.putIfAbsent(instanceName, instance);
+               if (otherInstance != null) {
+                  String message = String.format("Duplicate test name: %s, classes %s and %s", instanceName,
+                                                 instance.getClass().getName(), otherInstance.getClass().getName());
+                  MethodInstance methodInstance =
+                     FakeTestClass.newFailureMethodInstance(new TestNGException(message), context.getCurrentXmlTest(),
+                                                            context);
+                  newOrder.add(methodInstance);
+               }
                String parameters = ((AbstractInfinispanTest) instance).parameters();
                if (parameters != null) {
                   for (IMethodInstance method : instanceAndMethods.getValue()) {
@@ -115,32 +132,21 @@ public class AbstractInfinispanTest {
 
    @BeforeClass(alwaysRun = true)
    protected final void testClassStarted(ITestContext context) {
-      String fullName = context.getName();
-      String simpleName = fullName.substring(fullName.lastIndexOf('.') + 1);
-      Class testClass = context.getCurrentXmlTest().getXmlClasses().get(0).getSupportClass();
-      if (!simpleName.equals(testClass.getSimpleName()) && !Thread.currentThread().getName().equals("main")) {
-         log.warnf("Wrong test name %s for class %s", simpleName, testClass.getSimpleName());
-      }
-
       TestResourceTracker.testStarted(getTestName());
    }
 
    @AfterClass(alwaysRun = true)
-   protected final void testClassFinished() {
+   protected final void testClassFinished(ITestContext context) {
       killSpawnedThreads();
       nullOutFields();
       TestResourceTracker.testFinished(getTestName());
    }
 
    public String getTestName() {
-      // will qualified test name and parameters, thread names can be quite long when debugging
-      if (Boolean.getBoolean("test.infinispan.shortTestName")) {
-         return "test";
-      }
+      String className = getClass().getName();
       String parameters = parameters();
-      return parameters == null ? getClass().getName() : getClass().getName() + parameters;
+      return parameters == null ? className : className + parameters;
    }
-
 
    protected void killSpawnedThreads() {
       List<Runnable> runnables = defaultExecutorService.shutdownNow();
@@ -528,6 +534,4 @@ public class AbstractInfinispanTest {
          }
       }
    }
-
-
 }

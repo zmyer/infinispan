@@ -1,49 +1,51 @@
 package org.infinispan.server.hotrod;
 
+import java.util.Map;
 import java.util.concurrent.Executor;
 
-import org.infinispan.commons.marshall.Marshaller;
-import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
+import javax.security.auth.Subject;
+
+import org.infinispan.AdvancedCache;
+import org.infinispan.commons.logging.LogFactory;
+import org.infinispan.commons.util.Util;
+import org.infinispan.server.hotrod.logging.Log;
 import org.infinispan.tasks.TaskContext;
 import org.infinispan.tasks.TaskManager;
 
 import io.netty.channel.Channel;
 
 public class TaskRequestProcessor extends BaseRequestProcessor {
+   private static final Log log = LogFactory.getLog(TaskRequestProcessor.class, Log.class);
+
    private final HotRodServer server;
    private final TaskManager taskManager;
 
    TaskRequestProcessor(Channel channel, Executor executor, HotRodServer server) {
-      super(channel, executor);
+      super(channel, executor, server);
       this.server = server;
       this.taskManager = SecurityActions.getGlobalComponentRegistry(server.getCacheManager()).getComponent(TaskManager.class);
    }
 
-   public void exec(CacheDecodeContext cdc) {
-      ExecRequestContext execContext = (ExecRequestContext) cdc.operationDecodeContext;
-      // TODO: could we store the marshaller in a final field?
-      Marshaller marshaller;
-      if (server.getMarshaller() != null) {
-         marshaller = server.getMarshaller();
-      } else {
-         marshaller = new GenericJBossMarshaller();
-      }
+   public void exec(HotRodHeader header, Subject subject, String taskName, Map<String, byte[]> taskParams) {
+      AdvancedCache<byte[], byte[]> cache = server.cache(header, subject);
       TaskContext taskContext = new TaskContext()
-            .marshaller(marshaller)
-            .cache(cdc.cache())
-            .parameters(execContext.getParams())
-            .subject(cdc.subject);
+            .cache(cache)
+            .parameters(taskParams)
+            .subject(subject);
       // TODO: TaskManager API is already asynchronous, though we cannot be sure that it won't block anywhere
-      taskManager.runTask(execContext.getName(), taskContext).whenComplete((result, throwable) -> handleExec(cdc, result, throwable));
+      taskManager.runTask(taskName, taskContext).whenComplete((result, throwable) -> handleExec(header, result, throwable));
    }
 
-   private void handleExec(CacheDecodeContext cdc, Object result, Throwable throwable) {
+   private void handleExec(HotRodHeader header, Object result, Throwable throwable) {
       if (throwable != null) {
-         writeException(cdc, throwable);
+         writeException(header, throwable);
       } else {
-         HotRodHeader h = cdc.header;
-         writeResponse(new ExecResponse(h.version, h.messageId, h.cacheName, h.clientIntel, h.topologyId,
-                     result == null ? new byte[]{} : (byte[]) result));
+         if (result != null && !(result instanceof byte[])) {
+            writeException(header, log.errorSerializingResponse(result));
+         } else {
+            writeResponse(header, header.encoder().valueResponse(header, server, channel.alloc(), OperationStatus.Success,
+                  result == null ? Util.EMPTY_BYTE_ARRAY : (byte[]) result));
+         }
       }
    }
 }

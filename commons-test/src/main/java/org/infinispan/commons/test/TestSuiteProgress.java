@@ -37,7 +37,7 @@ public class TestSuiteProgress {
       log.info(message);
    }
 
-   void testFinished(String name) {
+   void testSucceeded(String name) {
       succeeded.incrementAndGet();
       String message = "Test succeeded: " + name;
       progress(GREEN, message);
@@ -66,10 +66,18 @@ public class TestSuiteProgress {
       log.info(message, exception);
    }
 
-   void setupFailed(String name, Throwable exception) {
+   void configurationStarted(String name) {
+      log.debug("Test configuration started: " + name);
+   }
+
+   void configurationFinished(String name) {
+      log.debug("Test configuration finished: " + name);
+   }
+
+   void configurationFailed(String name, Throwable exception) {
       failed.incrementAndGet();
-      String message = "Test setup failed: " + name;
-      progress(RED, message);
+      String message = "Test configuration failed: " + name;
+      progress(RED, message, exception);
       log.error(message, exception);
    }
 
@@ -82,15 +90,15 @@ public class TestSuiteProgress {
    }
 
    synchronized void progress(String color, CharSequence message, Throwable t) {
+      String actualColor = "";
+      String actualReset = "";
       if (useColor && color != null) {
-         out.print(color);
+         actualColor = color;
+         actualReset = RESET;
       }
-      out.printf("[OK: %5s, KO: %5s, SKIP: %5s] %s%n", succeeded.get(), failed.get(), skipped.get(), message);
+      out.printf("%s[OK: %5s, KO: %5s, SKIP: %5s] %s%s%n", actualColor, succeeded.get(), failed.get(), skipped.get(), message, actualReset);
       if (t != null) {
          t.printStackTrace(out);
-      }
-      if (useColor && color != null) {
-         out.print(RESET);
       }
    }
 }

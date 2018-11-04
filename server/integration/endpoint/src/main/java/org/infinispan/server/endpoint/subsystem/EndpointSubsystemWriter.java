@@ -55,7 +55,7 @@ class EndpointSubsystemWriter implements XMLStreamConstants, XMLElementWriter<Su
    @Override
    public void writeContent(final XMLExtendedStreamWriter writer, final SubsystemMarshallingContext context)
          throws XMLStreamException {
-      context.startSubsystemElement(Namespace.CURRENT.getUri(), false);
+      context.startSubsystemElement(EndpointSchema.CURRENT.getNamespaceUri(), false);
       final ModelNode node = context.getModelNode();
       writeConnectors(writer, node);
       writer.writeEndElement();
@@ -70,9 +70,6 @@ class EndpointSubsystemWriter implements XMLStreamConstants, XMLElementWriter<Su
       }
       for (Property property : getConnectorsByType(node, ModelKeys.REST_CONNECTOR)) {
          writeRestConnector(writer, property.getValue());
-      }
-      for (Property property : getConnectorsByType(node, ModelKeys.WEBSOCKET_CONNECTOR)) {
-         writeWebSocketConnector(writer, property.getValue());
       }
       for (Property property : getConnectorsByType(node, ModelKeys.ROUTER_CONNECTOR)) {
          writeRouterConnector(writer, property.getValue());
@@ -123,33 +120,43 @@ class EndpointSubsystemWriter implements XMLStreamConstants, XMLElementWriter<Su
       writer.writeEndElement();
    }
 
-   private void writeWebSocketConnector(final XMLExtendedStreamWriter writer, final ModelNode connector)
-         throws XMLStreamException {
-      writer.writeStartElement(Element.WEBSOCKET_CONNECTOR.getLocalName());
-      writeCommonConnector(writer, connector);
-      writeProtocolServerConnector(writer, connector);
-      writer.writeEndElement();
-   }
-
    private void writeRouterConnector(final XMLExtendedStreamWriter writer, final ModelNode connector)
            throws XMLStreamException {
       writer.writeStartElement(Element.ROUTER_CONNECTOR.getLocalName());
       for (SimpleAttributeDefinition attribute : RouterConnectorResource.ROUTER_CONNECTOR_ATTRIBUTES) {
          attribute.marshallAsAttribute(connector, true, writer);
       }
-      writer.writeStartElement(Element.MULTI_TENANCY.getLocalName());
-      ModelNode multiTenancy = connector.get(ModelKeys.MULTI_TENANCY, ModelKeys.MULTI_TENANCY_NAME);
-      writeHotrod(writer, multiTenancy);
-      writeRest(writer, multiTenancy);
-      writer.writeEndElement(); //multi-tenancy
+
+      if (connector.hasDefined(ModelKeys.SINGLE_PORT)) {
+         ModelNode singlePort = connector.get(ModelKeys.SINGLE_PORT, ModelKeys.SINGLE_PORT_NAME);
+         writer.writeStartElement(Element.SINGLE_PORT.getLocalName());
+
+         for (SimpleAttributeDefinition attribute : SinglePortResource.SINGLE_PORT_ATTRIBUTES) {
+            attribute.marshallAsAttribute(singlePort, true, writer);
+         }
+
+         writeSinglePortRest(writer, singlePort);
+         writeSinglePortHotRod(writer, singlePort);
+         writer.writeEndElement(); //single-port
+      }
+
+      if(connector.hasDefined(ModelKeys.MULTI_TENANCY)) {
+         writer.writeStartElement(Element.MULTI_TENANCY.getLocalName());
+         ModelNode multiTenancy = connector.get(ModelKeys.MULTI_TENANCY, ModelKeys.MULTI_TENANCY_NAME);
+         writeMultiTenantHotRod(writer, multiTenancy);
+         writeMultiTenantRest(writer, multiTenancy);
+         writer.writeEndElement(); //multi-tenancy
+      }
+
+
       writer.writeEndElement(); //router-connector
    }
 
-   private void writeHotrod(XMLExtendedStreamWriter writer, ModelNode parentNode) throws XMLStreamException {
+   private void writeMultiTenantHotRod(XMLExtendedStreamWriter writer, ModelNode parentNode) throws XMLStreamException {
       if (parentNode.hasDefined(ModelKeys.HOTROD)) {
          for (ModelNode hotrodNode: parentNode.get(ModelKeys.HOTROD).asList()) {
             writer.writeStartElement(Element.HOTROD.getLocalName());
-            for (SimpleAttributeDefinition hotrodAttribute : RouterHotRodResource.ROUTER_HOTROD_ATTRIBUTES) {
+            for (SimpleAttributeDefinition hotrodAttribute : MultiTenantHotRodResource.ROUTER_HOTROD_ATTRIBUTES) {
                hotrodAttribute.marshallAsAttribute(hotrodNode.get(0), true, writer);
             }
             writeSni(writer, hotrodNode.get(0));
@@ -158,11 +165,36 @@ class EndpointSubsystemWriter implements XMLStreamConstants, XMLElementWriter<Su
       }
    }
 
-   private void writeRest(XMLExtendedStreamWriter writer, ModelNode parentNode) throws XMLStreamException {
+   private void writeSinglePortHotRod(XMLExtendedStreamWriter writer, ModelNode parentNode) throws XMLStreamException {
+      if (parentNode.hasDefined(ModelKeys.HOTROD)) {
+         for (ModelNode hotrodNode: parentNode.get(ModelKeys.HOTROD).asList()) {
+            writer.writeStartElement(Element.HOTROD.getLocalName());
+            for (SimpleAttributeDefinition hotrodAttribute : SinglePortHotRodResource.SINGLE_PORT_HOTROD_ATTRIBUTES) {
+               hotrodAttribute.marshallAsAttribute(hotrodNode.get(0), true, writer);
+            }
+            writer.writeEndElement();
+         }
+      }
+   }
+
+   private void writeMultiTenantRest(XMLExtendedStreamWriter writer, ModelNode parentNode) throws XMLStreamException {
       if (parentNode.hasDefined(ModelKeys.REST)) {
          for (ModelNode hotrodNode: parentNode.get(ModelKeys.REST).asList()) {
             writer.writeStartElement(Element.REST.getLocalName());
-            for (SimpleAttributeDefinition hotrodAttribute : RouterRestResource.ROUTER_REST_ATTRIBUTES) {
+            for (SimpleAttributeDefinition hotrodAttribute : MultiTenantRestResource.ROUTER_REST_ATTRIBUTES) {
+               hotrodAttribute.marshallAsAttribute(hotrodNode.get(0), true, writer);
+            }
+            writePrefix(writer, hotrodNode.get(0));
+            writer.writeEndElement();
+         }
+      }
+   }
+
+   private void writeSinglePortRest(XMLExtendedStreamWriter writer, ModelNode parentNode) throws XMLStreamException {
+      if (parentNode.hasDefined(ModelKeys.REST)) {
+         for (ModelNode hotrodNode: parentNode.get(ModelKeys.REST).asList()) {
+            writer.writeStartElement(Element.REST.getLocalName());
+            for (SimpleAttributeDefinition hotrodAttribute : SinglePortRestResource.SINGLE_PORT_REST_ATTRIBUTES) {
                hotrodAttribute.marshallAsAttribute(hotrodNode.get(0), true, writer);
             }
             writePrefix(writer, hotrodNode.get(0));

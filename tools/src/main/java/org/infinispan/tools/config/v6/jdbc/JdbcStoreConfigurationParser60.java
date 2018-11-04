@@ -13,7 +13,6 @@ import org.infinispan.configuration.cache.StoreConfigurationBuilder;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ConfigurationParser;
 import org.infinispan.configuration.parsing.Namespace;
-import org.infinispan.configuration.parsing.Namespaces;
 import org.infinispan.configuration.parsing.ParseUtils;
 import org.infinispan.configuration.parsing.XMLExtendedStreamReader;
 import org.infinispan.persistence.jdbc.configuration.AbstractJdbcStoreConfigurationBuilder;
@@ -31,11 +30,9 @@ import org.kohsuke.MetaInfServices;
  * @since 6.0
  */
 @MetaInfServices
-@Namespaces({
-      @Namespace(uri = "urn:infinispan:config:jdbc:6.0", root = "stringKeyedJdbcStore"),
-      @Namespace(uri = "urn:infinispan:config:jdbc:6.0", root = "binaryKeyedJdbcStore"),
-      @Namespace(uri = "urn:infinispan:config:jdbc:6.0", root = "mixedKeyedJdbcStore"),
-})
+@Namespace(uri = "urn:infinispan:config:jdbc:6.0", root = "stringKeyedJdbcStore")
+@Namespace(uri = "urn:infinispan:config:jdbc:6.0", root = "binaryKeyedJdbcStore")
+@Namespace(uri = "urn:infinispan:config:jdbc:6.0", root = "mixedKeyedJdbcStore")
 public class JdbcStoreConfigurationParser60 implements ConfigurationParser {
 
    public JdbcStoreConfigurationParser60() {
@@ -60,7 +57,7 @@ public class JdbcStoreConfigurationParser60 implements ConfigurationParser {
          case BINARY_KEYED_JDBC_STORE:
          case MIXED_KEYED_JDBC_STORE: {
             throw new UnsupportedOperationException("Since Infinispan 9.x, Binary and Mixed Keyed JDBC Stores no longer exist. " +
-                  "You can migrate an existing Mixed/Binary store to the JdbcStringBasedStore by using org.infinispan.tools.jdbc.migrator.JDBCMigrator");
+                  "You can migrate an existing Mixed/Binary store to the JdbcStringBasedStore by using StoreMigrator");
          }
          default: {
             throw ParseUtils.unexpectedElement(reader);

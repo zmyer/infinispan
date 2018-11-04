@@ -13,6 +13,7 @@ import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.objectfilter.ObjectFilter;
 import org.infinispan.query.dsl.QueryFactory;
 import org.infinispan.query.dsl.impl.BaseQuery;
+import org.infinispan.query.impl.PartitionHandlingSupport;
 
 /**
  * Base class for embedded-mode query implementations. Subclasses need to implement {@link #getIterator()} and {@link
@@ -30,6 +31,8 @@ abstract class BaseEmbeddedQuery extends BaseQuery {
 
    protected final AdvancedCache<?, ?> cache;
 
+   protected final PartitionHandlingSupport partitionHandlingSupport;
+
    /**
     * The cached results, lazily evaluated.
     */
@@ -44,6 +47,7 @@ abstract class BaseEmbeddedQuery extends BaseQuery {
                                String[] projection, long startOffset, int maxResults) {
       super(queryFactory, queryString, namedParameters, projection, startOffset, maxResults);
       this.cache = cache;
+      this.partitionHandlingSupport = new PartitionHandlingSupport(cache);
    }
 
    @Override
@@ -53,6 +57,7 @@ abstract class BaseEmbeddedQuery extends BaseQuery {
 
    @Override
    public <T> List<T> list() {
+      partitionHandlingSupport.checkCacheAvailable();
       if (results == null) {
          results = listInternal();
       }

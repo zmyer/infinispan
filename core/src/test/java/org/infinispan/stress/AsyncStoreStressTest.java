@@ -15,12 +15,13 @@ import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commons.io.ByteBufferFactoryImpl;
 import org.infinispan.commons.marshall.StreamingMarshaller;
-import org.infinispan.container.InternalEntryFactory;
-import org.infinispan.container.InternalEntryFactoryImpl;
+import org.infinispan.container.impl.InternalEntryFactory;
+import org.infinispan.container.impl.InternalEntryFactoryImpl;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
 import org.infinispan.marshall.core.MarshalledEntry;
@@ -38,6 +39,7 @@ import org.infinispan.persistence.spi.AdvancedCacheWriter;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.support.DelegatingCacheLoader;
+import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.KeyValuePair;
 import org.infinispan.util.concurrent.locks.impl.LockContainer;
@@ -58,7 +60,7 @@ import org.testng.annotations.Test;
  * @since 5.2
  */
 @Test(testName = "stress.AsyncStoreStressTest", groups = "stress")
-public class AsyncStoreStressTest {
+public class AsyncStoreStressTest extends AbstractInfinispanTest {
 
    static final Log log = LogFactory.getLog(AsyncStoreStressTest.class);
    static final boolean trace = log.isTraceEnabled();
@@ -128,7 +130,7 @@ public class AsyncStoreStressTest {
                   .storeName(storeName)
                   .create();
       store.init(new DummyInitializationContext(dummyConfiguration, null, marshaller, new ByteBufferFactoryImpl(),
-                                                new MarshalledEntryFactoryImpl(marshaller)));
+                                                new MarshalledEntryFactoryImpl(marshaller), Executors.newScheduledThreadPool(1, getTestThreadFactory("PersistenceExecutorThreadFactory"))));
       store.start();
       return store;
    }

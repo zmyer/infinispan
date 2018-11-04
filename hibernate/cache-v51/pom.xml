@@ -4,18 +4,18 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-hibernate-parent</artifactId>
-      <version>9.2.1-SNAPSHOT</version>
+      <version>10.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-hibernate-cache-v51</artifactId>
-   <packaging>jar</packaging>
+   <packaging>bundle</packaging>
    <name>Infinispan Hibernate 5.1 Cache</name>
    <description>Infinispan Hibernate 5.1 Cache module</description>
 
    <properties>
       <module.skipComponentMetaDataProcessing>true</module.skipComponentMetaDataProcessing>
-      <version.hibernate.core>5.1.10.Final</version.hibernate.core>
+      <version.hibernate.core>5.1.11.Final</version.hibernate.core>
    </properties>
 
    <dependencies>
@@ -27,6 +27,16 @@
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-hibernate-cache-commons</artifactId>
          <type>test-jar</type>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.glassfish.jaxb</groupId>
+         <artifactId>jaxb-runtime</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>javax.activation</groupId>
+         <artifactId>activation</artifactId>
          <scope>test</scope>
       </dependency>
    </dependencies>
@@ -54,6 +64,22 @@
                   <jgroups.udp.enable_bundling>false</jgroups.udp.enable_bundling>
                   <jgroups.bind_addr>localhost</jgroups.bind_addr>
                   <hibernate.cache.infinispan.jgroups_cfg>2lc-test-tcp.xml</hibernate.cache.infinispan.jgroups_cfg>
+
+                  <!-- Copied from parent POM -->
+                  <infinispan.test.jgroups.protocol>${infinispan.test.jgroups.protocol}</infinispan.test.jgroups.protocol>
+                  <jgroups.bind_addr>127.0.0.1</jgroups.bind_addr>
+                  <jgroups.join_timeout>2000</jgroups.join_timeout>
+                  <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
+                  <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
+                  <build.directory>${project.build.directory}</build.directory>
+                  <com.arjuna.ats.arjuna.common.propertiesFile>test-jbossts-properties.xml</com.arjuna.ats.arjuna.common.propertiesFile>
+
+                  <!-- this is picked up in the log4j xml which prepends it to each module's log file-->
+                  <infinispan.module-suffix>${infinispan.module-suffix}</infinispan.module-suffix>
+                  <ansi.strip>${ansi.strip}</ansi.strip>
+                  <!-- Log the correct thread name after we call Thread.setName(),
+                       see https://issues.apache.org/jira/browse/LOG4J2-2052 -->
+                  <AsyncLogger.ThreadNameStrategy>UNCACHED</AsyncLogger.ThreadNameStrategy>
                </systemPropertyVariables>
             </configuration>
             <dependencies>
@@ -63,6 +89,44 @@
                   <version>${version.maven.surefire}</version>
                </dependency>
             </dependencies>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.felix</groupId>
+            <artifactId>maven-bundle-plugin</artifactId>
+            <configuration>
+               <instructions>
+                  <Export-Package>
+                     ${project.groupId}.hibernate.cache.v51.*;version=${project.version};-split-package:=error
+                  </Export-Package>
+                  <Include-Resource>
+                     {maven-resources},
+                     /META-INF/services=${project.basedir}/target/classes/META-INF/services,
+                     /OSGI-INF/blueprint/blueprint.xml=${project.basedir}/target/classes/OSGI-INF/blueprint/blueprint.xml
+                  </Include-Resource>
+               </instructions>
+            </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>build-helper-maven-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>attach-artifacts</id>
+                  <phase>package</phase>
+                  <goals>
+                     <goal>attach-artifact</goal>
+                  </goals>
+                  <configuration>
+                     <artifacts>
+                        <artifact>
+                           <file>target/classes/features.xml</file>
+                           <type>xml</type>
+                           <classifier>features</classifier>
+                        </artifact>
+                     </artifacts>
+                  </configuration>
+               </execution>
+            </executions>
          </plugin>
       </plugins>
    </build>

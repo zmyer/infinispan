@@ -7,12 +7,18 @@
 package org.infinispan.hibernate.cache.commons.access;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
+import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.Ownership;
+import org.infinispan.hibernate.cache.commons.util.CompletableFunction;
 import org.infinispan.interceptors.InvocationFinallyFunction;
 import org.infinispan.interceptors.locking.NonTransactionalLockingInterceptor;
+import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.locks.LockPromise;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -32,6 +38,7 @@ import org.infinispan.util.logging.LogFactory;
  */
 public class LockingInterceptor extends NonTransactionalLockingInterceptor {
 	private static final Log log = LogFactory.getLog(LockingInterceptor.class);
+	private static final boolean trace = log.isTraceEnabled();
 
    protected final InvocationFinallyFunction unlockAllReturnCheckCompletableFutureHandler = (rCtx, rCommand, rv, throwable) -> {
       lockManager.unlockAll(rCtx);
@@ -39,6 +46,17 @@ public class LockingInterceptor extends NonTransactionalLockingInterceptor {
          throw throwable;
 
       if (rv instanceof CompletableFuture) {
+         // See CompletableFunction javadoc for explanation
+         if (rCommand instanceof ReadWriteKeyCommand) {
+            Function function = ((ReadWriteKeyCommand) rCommand).getFunction();
+            if (function instanceof CompletableFunction) {
+               ((CompletableFunction) function).markComplete();
+            }
+         }
+         // Similar to CompletableFunction above, signals that the command has been applied for non-functional commands
+         FlagAffectedCommand flagCmd = (FlagAffectedCommand) rCommand;
+         flagCmd.setFlagsBitSet(flagCmd.getFlagsBitSet() & ~FlagBitSets.FORCE_WRITE_LOCK);
+
          // The future is produced in UnorderedDistributionInterceptor.
          // We need the EWI to commit the entry & unlock before the remote call completes
          // but here we wait for the other nodes, without blocking concurrent updates.
@@ -50,6 +68,11 @@ public class LockingInterceptor extends NonTransactionalLockingInterceptor {
    protected final InvocationFinallyFunction invokeNextAndUnlock = (rCtx, rCommand, rv, throwable) -> {
       if (throwable != null) {
          lockManager.unlockAll(rCtx);
+         DataWriteCommand dataWriteCommand = (DataWriteCommand) rCommand;
+         if (throwable instanceof TimeoutException && dataWriteCommand.hasAnyFlag(FlagBitSets.ZERO_LOCK_ACQUISITION_TIMEOUT)) {
+            dataWriteCommand.fail();
+            return null;
+         }
          throw throwable;
       } else {
          return invokeNextAndHandle(rCtx, rCommand, unlockAllReturnCheckCompletableFutureHandler);
@@ -59,7 +82,7 @@ public class LockingInterceptor extends NonTransactionalLockingInterceptor {
    @Override
    protected Object visitDataWriteCommand(InvocationContext ctx, DataWriteCommand command) throws Throwable {
       try {
-         if (log.isTraceEnabled()) {
+         if (trace) {
             Ownership ownership = cdl.getCacheTopology().getDistribution(command.getKey()).writeOwnership();
             log.tracef( "Am I owner for key=%s ? %s", command.getKey(), ownership);
          }

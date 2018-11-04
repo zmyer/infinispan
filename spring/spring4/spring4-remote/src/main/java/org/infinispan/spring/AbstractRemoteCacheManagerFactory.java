@@ -200,4 +200,44 @@ public abstract class AbstractRemoteCacheManagerFactory {
    public void setForceReturnValues(final boolean forceReturnValues) {
       this.configurationPropertiesOverrides.setForceReturnValues(forceReturnValues);
    }
+
+   /**
+    * @param readTimeout
+    * @see org.infinispan.spring.ConfigurationPropertiesOverrides#setReadTimeout(long)
+    */
+   public void setReadTimeout(final long readTimeout) {
+      this.configurationPropertiesOverrides.setReadTimeout(readTimeout);
+   }
+
+   /**
+    * @param writeTimeout
+    * @see org.infinispan.spring.ConfigurationPropertiesOverrides#setWriteTimeout(long)
+    */
+   public void setWriteTimeout(final long writeTimeout) {
+      this.configurationPropertiesOverrides.setWriteTimeout(writeTimeout);
+   }
+
+   /**
+    * @param mode
+    * @see org.infinispan.spring.ConfigurationPropertiesOverrides#setNearCacheMode(String)
+    */
+   public void setNearCacheMode(String mode) {
+      this.configurationPropertiesOverrides.setNearCacheMode(mode);
+   }
+
+   /**
+    * @param maxEntries
+    * @see org.infinispan.spring.ConfigurationPropertiesOverrides#setNearCacheMaxEntries(int)
+    */
+   public void setNearCacheMaxEntries(int maxEntries) {
+      this.configurationPropertiesOverrides.setNearCacheMaxEntries(maxEntries);
+   }
+
+   /**
+    * @param pattern
+    * @see org.infinispan.spring.ConfigurationPropertiesOverrides#setNearCacheNamePattern(String)
+    */
+   public void setNearCacheNamePattern(String pattern) {
+      this.configurationPropertiesOverrides.setNearCacheNamePattern(pattern);
+   }
 }

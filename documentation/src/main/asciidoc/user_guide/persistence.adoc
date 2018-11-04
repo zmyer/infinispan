@@ -1,10 +1,11 @@
-==  Persistence
-Persistence allows configuring external (persistent) storage engines complementary to the default in memory storage offered by Infinispan.
+[[persistence]]
+== Persistence
+Persistence allows configuring external (persistent) storage engines complementary to the default in memory storage offered by {brandname}.
 An external persistent storage might be useful for several reasons:
 
 * Increased Durability. Memory is volatile, so a cache store could increase the life-span of the information store in the cache.
 
-* Write-through. Interpose Infinispan as a caching layer between an application and a (custom) external storage engine.
+* Write-through. Interpose {brandname} as a caching layer between an application and a (custom) external storage engine.
 
 * Overflow Data. By using eviction and passivation, one can store only the "hot" data in memory and overflow the data that is less frequently used to disk.
 
@@ -14,7 +15,7 @@ These SPIs allow for the following features:
 
 * Alignment with link:http://jcp.org/en/jsr/detail?id=107[JSR-107]. The link:{javadocroot}/org/infinispan/persistence/spi/CacheWriter.html[CacheWriter] and link:{javadocroot}/org/infinispan/persistence/spi/CacheLoader.html[CacheLoader] interface are similar to the the loader and writer in JSR 107. This should considerably help writing portable stores across JCache compliant vendors.
 
-* Simplified Transaction Integration. All necessary locking is handled by Infinispan automatically and implementations don’t have to be concerned with coordinating concurrent access to the store. Even though concurrent writes on the same key are not going to happen (depending locking mode in use), implementors should expect operations on the store to happen from multiple/different threads and code the implementation accordingly.
+* Simplified Transaction Integration. All necessary locking is handled by {brandname} automatically and implementations don’t have to be concerned with coordinating concurrent access to the store. Even though concurrent writes on the same key are not going to happen (depending locking mode in use), implementors should expect operations on the store to happen from multiple/different threads and code the implementation accordingly.
 
 * Parallel Iteration. It is now possible to iterate over entries in the store with multiple threads in parallel.
 
@@ -25,7 +26,11 @@ These SPIs allow for the following features:
 Stores (readers and/or writers) can be configured in a chain. Cache read operation looks at all of the specified `CacheLoader` s, in the order they are configured, until it finds a valid and non-null element of data. When performing writes all cache `CacheWriter` s are written to, except if the `ignoreModifications` element has been set to true for a specific cache writer.
 
 .Implementing both a CacheWriter and CacheLoader
-IMPORTANT: it is possible and recommended for a store provider to implement both the `CacheWriter` and the `CacheLoader` interface. The stores that do this are considered both for reading and writing(assuming `read-only=false`) data.
+
+[IMPORTANT]
+====
+Store providers should implement both the `CacheWriter` and the `CacheLoader` interfaces. Stores that do this are considered both for reading and writing (assuming `read-only=false`) data.
+====
 
 [source,xml]
 ----
@@ -35,7 +40,7 @@ This is the configuration of a custom(not shipped with infinispan) store:
          <store
             class="org.acme.CustomStore"
             fetch-state="false" preload="true" shared="false"
-            purge="true" read-only="false" singleton="false">
+            purge="true" read-only="false" singleton="false" segmented="true">
 
             <write-behind modification-queue-size="123" thread-pool-size="23" />
 
@@ -46,32 +51,130 @@ This is the configuration of a custom(not shipped with infinispan) store:
 
 ----
 
-Explanation of the configuration options:
+Parameters that you can use to configure persistence are as follows:
 
-* `passivation` (false by default) has a significant impact on how Infinispan interacts with the loaders, and is discussed in the <<cache-passivation,Cache Passivation>> section.
+`connection-attempts`::
+Sets the maximum number of attempts to start each configured
+CacheWriter/CacheLoader. If the attempts to start are not successful, an
+exception is thrown and the cache does not start.
 
-* `class` defines the class of the store and must implement CacheLoader, CacheWriter or both
+`connection-interval`::
+Specifies the time, in milliseconds, to wait between connection attempts on
+startup. A negative or zero value means no wait between connection attempts.
 
-* `fetch-state` (false by default) determines whether or not to fetch the persistent state of a cache when joining a cluster. The aim here is to take the persistent state of a cache and apply it to the local cache store of the joining node. Fetch persistent state is ignored if a cache store is configured to be shared, since they access the same data. Only one configured cache loader may set this property to true; if more than one cache loader does so, a configuration exception will be thrown when starting your cache service.
+`availability-interval`::
+Specifies the time, in milliseconds, between availability checks to determine
+if the PersistenceManager is available. In other words, this interval sets how
+often stores/loaders are polled via their
+`org.infinispan.persistence.spi.CacheWriter#isAvailable` or
+`org.infinispan.persistence.spi.CacheLoader#isAvailable` implementation. If a
+single store/loader is not available, an exception is thrown during cache
+operations.
 
-* `preload` (false by default) if true, when the cache starts, data stored in the cache loader will be pre-loaded into memory. This is particularly useful when data in the cache loader is needed immediately after startup and you want to avoid cache operations being delayed as a result of loading this data lazily. Can be used to provide a 'warm-cache' on startup, however there is a performance penalty as startup time is affected by this process. Note that preloading is done in a local fashion, so any data loaded is only stored locally in the node. No replication or distribution of the preloaded data happens. Also, Infinispan only preloads up to the maximum configured number of entries in <<eviction_anchor,eviction>>.
+`passivation`::
+Enables passivation. The default value is `false` (boolean).
++
+This property has a significant impact on {brandname} interactions with the loaders. See link:#cache_passivation[Cache Passivation] for more information.
 
-* `shared` (false by default) indicates that the cache loader is shared among different cache instances, for example where all instances in a cluster use the same JDBC settings to talk to the same remote, shared database. Setting this to true prevents repeated and unnecessary writes of the same data to the cache loader by different cache instances.
+`class`::
+Defines the class of the store and must implement `CacheLoader`, `CacheWriter`,
+or both.
 
-* `purge` (false by default) empties the specified cache loader (if `read-only` is false) when the cache loader starts up.
+`fetch-state`::
+Fetches the persistent state of a cache when joining a cluster. The default
+value is `false` (boolean).
++
+The purpose of this property is to retrieve the persistent state of a cache and
+apply it to the local cache store of a node when it joins a cluster. Fetching
+the persistent state does not apply if a cache store is shared because it
+accesses the same data as the other stores.
++
+This property can be `true` for one configured cache loader only. If more than
+one cache loader fetches the persistent state, a configuration exception is
+thrown when the cache service starts.
 
-* `read-only` (false by default) prevents new data to be persisted to the store.
+`preload`::
+Pre-loads data into memory from the cache loader when the cache starts. The
+default value is `false` (boolean).
++
+This property is useful when data in the cache loader is required immediately
+after startup to prevent delays with cache operations when the data is loaded
+lazily. This property can provide a "warm cache" on startup but it impacts
+performance because it affects start time.
++
+Pre-loading data is done locally, so any data loaded is stored locally in the node only. The pre-loaded data is not replicated or distributed. Likewise, {brandname} pre-loads data only up to the maximum configured number of entries in link:#eviction_anchor[eviction].
 
-* `max-batch-size` (#{AbstractStore-maxBatchSize} by default) The maximum size of a batch to be inserted/deleted from the store. If the value is less than one, then no upper limit is placed on the number of operations in a batch.
+`shared`::
+Determines if the cache loader is shared between cache instances. The default value is `false` (boolean).
++
+This property prevents duplicate writes of data to the cache loader by
+different cache instances. An example is where all cache instances in a cluster
+use the same JDBC settings for the same remote, shared database.
 
-* `write-behind` (disabled by default) element has to do with a persisting data asynchronously to the actual store. It is discussed in detail <<_write_behind_asynchronous, here>>.
+`segmented`::
+Configures a cache store to segment data. The default value is `false`
+(boolean).
++
+If `true` the cache store stores data in buckets. The `hash.numSegments` property configures how many buckets there are for storing data.
++
+Depending on the cache store implementation, segmenting data can cause slower
+write operations. However, performance improves for other cache operations. See
+link:#segmented_stores[Segmented Stores] for more information.
 
-* `singleton` (disabled by default) attribute enables modifications to be stored by only one node in the cluster, the coordinator. Essentially, whenever any data comes in to some node it is always replicated(or distributed) so as to keep the caches in-memory states in sync; the coordinator, though, has the sole responsibility of pushing that state to disk. This functionality must be configured by setting the enabled attribute to true in all nodes. Only the coordinator of the cluster will persist data, but all nodes must have this configured to prevent others from persisting as well. You cannot configure a store as shared and singleton.
+`read-only`::
+Prevents new data from being persisted to the cache store. The default value is
+`false` (boolean).
 
-* additional attributes can be configures within the `properties` section. These attributes configure aspects specific to each cache loader, e.g. the `myProp` attribute in the previous example. Other loaders, with more complex configuration, also introduce additional sub-elements to the basic configuration. See for example the JDBC cache store configuration examples below
+`purge`::
+Empties the specified cache loader at startup. The default value is `false`
+(boolean). This property takes effect only if the `read-only` property is set
+to `false`.
 
+`max-batch-size`::
+ifndef::productized[]
+Sets the maximum size of a batch to insert of delete from the cache store. The
+default value is #{AbstractStore-maxBatchSize}.
+endif::productized[]
+ifdef::productized[]
+Sets the maximum size of a batch to insert of delete from the cache store. The
+default value is 100.
+endif::productized[]
++
+If the value is less than `1`, no upper limit applies to the number of
+operations in a batch.
 
-The configuration above is used for a generic store implementation. However the store implementation provided by default with Infinispan have a more rich configuration schema, in which the `properties` section is replaced with XML attributes:
+`write-behind`::
+Asynchronously persists data to the cache store. The default value is `false`
+(boolean). See link:#write_behind_asynchronous[Asynchronous Write-Behind] for
+more information.
+
+`singleton`::
+Enables one node in the cluster, the coordinator, to store modifications. The
+default value is `false` (boolean).
++
+Whenever data enters a node, it is replicated or distributed to keep the
+in-memory state of the caches synchronized. The coordinator is responsible for
+pushing that state to disk.
++
+If `true` you must set this property on all nodes in the cluster. Only the
+coordinator of the cluster persists data. However, all nodes must have this
+property enabled to prevent other nodes from persisting data.
++
+You cannot enable the `singleton` property if the cache store is shared.
+
+[NOTE]
+====
+You can define additional attributes in the `properties` section to configure
+specific aspects of each cache loader, such as the `myProp` attribute in the previous example.
+
+Other cache loaders with more complex configurations also include additional
+properties. See the following JDBC cache store configuration for examples.
+====
+
+The preceding configuration applies a generic cache store implementation.
+However, the default {brandname} store implementation has a more complex
+configuration schema, in which the `properties` section is replaced with XML
+attributes:
 
 [source,xml]
 ----
@@ -113,7 +216,7 @@ The same configuration can be achieved programmatically:
 
 ----
 
-[[cache-passivation]]
+[[cache_passivation]]
 === Cache Passivation
 A CacheWriter can be used to enforce entry passivation and activation on eviction in a cache. Cache passivation is the
 process of removing an object from in-memory cache and writing it to a secondary data store (e.g., file system, database)
@@ -128,8 +231,15 @@ entry has been loaded a notification is emitted to the cache listeners that the 
 enable passivation just set passivation to true (false by default). When passivation is used, only the first cache loader
 configured is used and all others are ignored.
 
-NOTE: Entries which have been activated, i.e. brought back from the store to memory, will still continue to exist in
-the cache store if this has been configured as `shared`. This happens because backup owners might still need to access it.
+==== Limitations
+
+Due to the unique nature of passivation, it is not supported with some other store configurations.
+
+* Transactional store - Passivation writes/removes entries from the store
+outside the scope of the actual Infinispan commit boundaries.
+* Shared store - Shared store requires entries always being in the store for
+other owners. Thus passivation makes no sense as we can't remove the entry from
+the store.
 
 ==== Cache Loader Behavior with Passivation Disabled vs Enabled
 When passivation is disabled, whenever an element is modified, added or removed, then that modification is persisted in
@@ -181,14 +291,14 @@ That means that it is possible to have inconsistencies at cache loader level: th
 Manual recovery would not work with caches stores.
 
 ===  Write-Through And Write-Behind Caching
-Infinispan can optionally be configured with one or several cache stores allowing it to store data in a persistent location such as shared JDBC database, a local filesystem, etc. Infinispan can handle updates to the cache store in two different ways:
+{brandname} can optionally be configured with one or several cache stores allowing it to store data in a persistent location such as shared JDBC database, a local filesystem, etc. {brandname} can handle updates to the cache store in two different ways:
 
 
 * Write-Through (Synchronous)
 * Write-Behind (Asynchronous)
 
 ==== Write-Through (Synchronous)
-In this mode, which is supported in version 4.0, when clients update a cache entry, i.e. via a Cache.put() invocation, the call will not return until Infinispan has gone to the underlying cache store and has updated it. Normally, this means that updates to the cache store are done within the boundaries of the client thread.
+In this mode, which is supported in version 4.0, when clients update a cache entry, i.e. via a Cache.put() invocation, the call will not return until {brandname} has gone to the underlying cache store and has updated it. Normally, this means that updates to the cache store are done within the boundaries of the client thread.
 
 The main advantage of this mode is that the cache store is updated at the same time as the cache, hence the cache store is consistent with the cache contents. On the other hand, using this mode reduces performance because the latency of having to access and update the cache store directly impacts the duration of the cache operation.
 
@@ -204,15 +314,26 @@ Configuring a write-through or synchronous cache store does not require any part
 
 ----
 
+[[write_behind_asynchronous]]
 ==== Write-Behind (Asynchronous)
-In this mode, updates to the cache are asynchronously written to the cache store. Normally, this means that updates to the cache store are done by a separate thread to the client thread interacting with the cache.
+In this mode, updates to the cache are asynchronously written to the cache
+store. {brandname} puts pending changes into a modification queue so that it can quickly store changes.
 
-One of the major advantages of this mode is that the performance of a cache operation does not get affected by the update of the underlying store. On the other hand, since the update happens asynchronously, there's a time window during the which the cache store can contain stale data compared to the cache. Even within write-behind, there are different strategies that can be used to store data:
+The configured number of threads consume the queue and apply the modifications
+to the underlying cache store. If the configured number of threads cannot consume the modifications fast enough, or if the underlying store becomes unavailable, the modification queue becomes full. In this event, the cache store becomes write-through until the queue can accept new entries.
 
-===== Unscheduled Write-Behind Strategy
-In this mode, which is supported in version 4.0, Infinispan tries to store changes as quickly as possible by taking the pending changes and applying them in parallel. Normally, this means that there are several threads waiting for modifications to occur and once they're available, they apply them to underlying cache store.
+This mode provides an advantage in that cache operations are not affected by
+updates to the underlying store. However, because updates happen
+asynchronously, there is a period of time during which data in the cache store
+is inconsistent with data in the cache.
 
-This strategy is suited for cache stores with low latency and cheap operation cost. One such example would a local unshared file based cache store, where the cache store is local to the cache itself. With this strategy, the window of inconsistency between the contents of the cache and the cache store are reduced to the lowest possible time. Please find below a sample configuration file of this strategy:
+The write-behind strategy is suitable for cache stores with low latency and
+small operational cost; for example, an unshared file-based cache store that is
+local to the cache itself. In this case, the time during which data is
+inconsistent between the cache store and the cache is reduced to the lowest
+possible period.
+
+The following is an example configuration for the write-behind strategy:
 
 [source,xml]
 ----
@@ -220,20 +341,50 @@ This strategy is suited for cache stores with low latency and cheap operation co
    <file-store fetch-state="true"
                read-only="false"
                purge="false" path="${java.io.tmpdir}">
-   <!-- write behind configuration starts here -->
-   <write-behind />
-   <!-- write behind configuration ends here -->
+   <!-- start write-behind configuration -->
+   <write-behind modification-queue-size="123" thread-pool-size="23" />
+   <!-- end write-behind configuration -->
    </file-store>
 </persistence>
 ----
 
-===== Scheduled Write-Behind Strategy
-First of all, please note that this strategy is not included in version 4.0 but it will be implemented at a later stage. link:https://jira.jboss.org/jira/browse/ISPN-328[ISPN-328] has been created to track this feature request. If you want it implemented, please vote for it on that page, and watch it to be notified of any changes. The following explanation refers to how we envision it to work.
+[[segmented_stores]]
+==== Segmented Stores
+You can configure stores so that data resides in segments to which keys map.
+See link:#key_ownership[Key Ownership] for more information about segments and
+ownership.
 
-In this mode, Infinispan would periodically store changes to the underlying cache store. The periodicity could be defined in seconds, minutes, days, etc.
+Segmented stores increase read performance for bulk operations; for example,
+streaming over data (`Cache.size`, `Cache.entrySet.stream`), pre-loading the
+cache, and doing state transfer operations.
 
-Since this strategy is oriented at cache stores with high latency or expensive operation cost, it makes sense to coalesce changes, so that if there are multiple operations queued on the same key, only the latest value is applied to cache store. With this strategy, the window of inconsistency between the contents of the cache and the cache store depends on the delay or periodicity configured. The higher the periodicity, the higher the chance of inconsistency.
+However, segmented stores can also result in loss of performance for write
+operations. This performance loss applies particularly to batch write
+operations that can take place with transactions or write-behind stores. For
+this reason, you should evaluate the overhead for write operations before you
+enable segmented stores. The performance gain for bulk read operations might
+not be acceptable if there is a significant performance loss for write
+operations.
 
+[IMPORTANT]
+====
+Loss of data can occur if the number of segments in a cache store are not
+changed gracefully. For this reason, if you change the `numSegments` setting in the store configuration, you must migrate the existing store to use the new configuration.
+
+The recommended method to migrate the cache store configuration is to perform a
+rolling upgrade. The store migrator supports migrating a non-segmented cache
+store to a segmented cache store only. The store migrator does not currently
+support migrating from a segmented cache store.
+====
+
+[NOTE]
+====
+Not all cache stores support segmentation. See the appropriate section for each
+store to determine if it supports segmentation.
+
+If you plan to convert or write a new store to support segmentation, see the
+following SPI section that provides more details.
+====
 
 === Filesystem based cache stores
 
@@ -249,38 +400,20 @@ context, failures when writing to the file (which happens during the commit
 phase) cannot be recovered.
 
 include::persistence_sfs.adoc[]
-
 include::persistence_sifs.adoc[]
-
 include::persistence_jdbc.adoc[]
-
 include::persistence_remote.adoc[]
-
 include::persistence_cluster.adoc[]
-
 include::persistence_cli.adoc[]
 include::persistence_rocksdb.adoc[]
 include::persistence_leveldb.adoc[]
 include::persistence_jpa.adoc[]
-
 include::persistence_custom.adoc[]
+include::persistence_storemigrator.adoc[]
 
-[[_Data_migration_section]]
-=== Data Migration
+Following sections describe the SPI and also discuss the SPI implementations that {brandname} ships out of the box.
 
-The format in which data is persisted has changed in Infinispan 6.0, so this
-means that if you stored data using Infinispan 4.x or Infinispan 5.x,
-Infinispan 6.0 won't be able to read it. The best way to upgrade persisted
-data from Infinispan 4.x/5.x to Infinispan 6.0 is to use the mechanisms
-explained in the <<_Rolling_chapter,Rolling Upgrades section>>.
-In other words, by starting a rolling upgrade, data stored in Infinispan
-4.x/5.x can be migrated to a Infinispan 6.0 installation where persitence
-is configured with a different location for the data. The location
-configuration varies according to the specific details of each cache store.
-
-Following sections describe the SPI and also discuss the SPI implementations that Infinispan ships out of the box.
-
-=== API
+=== SPI
 
 The following class diagram presents the main SPI interfaces of the persistence API:
 
@@ -298,11 +431,25 @@ Some notes about the classes:
 
 * link:{javadocroot}/org/infinispan/persistence/spi/AdvancedCacheLoader.html[AdvancedCacheLoader] and link:{javadocroot}/org/infinispan/persistence/spi/AdvancedCacheWriter.html[AdvancedCacheWriter] provide operations to manipulate the underlaying storage in bulk: parallel iteration and purging of expired entries, clear and size.
 
+* link:{javadocroot}/org/infinispan/persistence/spi/SegmentedAdvancedLoadWriteStore.html[SegmentedAdvancedLoadWriteStore] provide all the various operations that deal with segments.
+
+A cache store can be segmented if it does one of the following:
+
+* Implements the
+link:{javadocroot}/org/infinispan/persistence/spi/SegmentedAdvancedLoadWriteStore.html[SegmentedAdvancedLoadWriteStore] interface. In this case only a single
+store instance is used per cache.
+
+* Has a configuration that extends the link:{javadocroot}/org/infinispan/configuration/cache/AbstractSegmentedConfiguration.html[AbstractSegmentedConfiguration] abstract class. Doing this requires you to implement the `newConfigurationFrom` method where it is expected
+that a new `StoreConfiguration` instance is created per invocation. This
+creates a store instance per segment to which a node can write. Stores might
+start and stop as data is moved between nodes.
+
+
 A provider might choose to only implement a subset of these interfaces:
 
 * Not implementing the  link:{javadocroot}/org/infinispan/persistence/spi/AdvancedCacheWriter.html[AdvancedCacheWriter] makes the given writer not usable for purging expired entries or clear
 
-* If a loader does not implement the link:{javadocroot}/org/infinispan/persistence/spi/AdvancedCacheWriter.html[AdvancedCacheWriter]
+* If a loader does not implement the link:{javadocroot}/org/infinispan/persistence/spi/AdvancedCacheLoader.html[AdvancedCacheLoader]
 inteface, then it will not participate in preloading nor in cache iteration
 (required also for stream operations).
 
@@ -311,5 +458,3 @@ If you're looking at migrating your existing store to the new API or to write a 
 === More implementations
 Many more cache loader and cache store implementations exist.
 Visit link:http://infinispan.org/cache-store-implementations[this website] for more details.
-
-

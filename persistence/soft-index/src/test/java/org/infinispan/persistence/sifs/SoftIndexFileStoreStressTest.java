@@ -18,8 +18,8 @@ import java.util.stream.Stream;
 
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.container.InternalEntryFactory;
-import org.infinispan.container.InternalEntryFactoryImpl;
+import org.infinispan.container.impl.InternalEntryFactory;
+import org.infinispan.container.impl.InternalEntryFactoryImpl;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
@@ -29,7 +29,7 @@ import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.test.fwk.TestInternalCacheEntryFactory;
-import org.infinispan.util.DefaultTimeService;
+import org.infinispan.util.EmbeddedTimeService;
 import org.infinispan.util.PersistenceMockUtil;
 import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.testng.annotations.AfterMethod;
@@ -51,7 +51,7 @@ public class SoftIndexFileStoreStressTest extends AbstractInfinispanTest {
    private String tmpDirectory;
    private ExecutorService executorService;
    private volatile boolean terminate;
-   private DefaultTimeService timeService;
+   private EmbeddedTimeService timeService;
 
    @BeforeMethod(alwaysRun = true)
    public void setUp() throws Exception {
@@ -69,7 +69,7 @@ public class SoftIndexFileStoreStressTest extends AbstractInfinispanTest {
             .purgeOnStartup(false)
             .maxFileSize(1000);
 
-      timeService = new DefaultTimeService();
+      timeService = new EmbeddedTimeService();
       store.init(PersistenceMockUtil.createContext(getClass().getSimpleName(), builder.build(), marshaller, timeService));
       TestingUtil.inject(factory, timeService);
       store.start();

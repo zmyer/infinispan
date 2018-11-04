@@ -1,9 +1,12 @@
 package org.infinispan.conflict.impl;
 
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+
 import org.infinispan.conflict.ConflictManager;
-import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.remoting.transport.Address;
 import org.infinispan.topology.CacheTopology;
 
 /**
@@ -12,8 +15,8 @@ import org.infinispan.topology.CacheTopology;
  */
 @Scope(Scopes.NAMED_CACHE)
 public interface InternalConflictManager<K, V> extends ConflictManager<K, V> {
-   void onTopologyUpdate(LocalizedCacheTopology cacheTopology);
    void cancelVersionRequests();
    void restartVersionRequests();
-   void resolveConflicts(CacheTopology cacheTopology);
+   void cancelConflictResolution();
+   CompletableFuture<Void> resolveConflicts(CacheTopology cacheTopology, Set<Address> preferredNodes);
 }

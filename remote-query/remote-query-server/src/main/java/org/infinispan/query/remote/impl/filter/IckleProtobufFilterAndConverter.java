@@ -9,17 +9,17 @@ import java.util.Map;
 import java.util.Set;
 
 import org.infinispan.Cache;
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.io.UnsignedNumeric;
 import org.infinispan.commons.marshall.AbstractExternalizer;
-import org.infinispan.metadata.Metadata;
-import org.infinispan.objectfilter.ObjectFilter;
 import org.infinispan.objectfilter.impl.ProtobufMatcher;
 import org.infinispan.query.dsl.embedded.impl.IckleFilterAndConverter;
 import org.infinispan.query.remote.impl.ExternalizerIds;
 import org.infinispan.query.remote.impl.RemoteQueryManager;
 
 /**
- * A subclass of JPAFilterAndConverter that is able to deal with binary values wrapped in a ProtobufValueWrapper.
+ * A subclass of {@link IckleFilterAndConverter} that is able to deal with binary protobuf values wrapped in a
+ * ProtobufValueWrapper.
  *
  * @author anistor@redhat.com
  * @since 7.2
@@ -33,21 +33,8 @@ public final class IckleProtobufFilterAndConverter extends IckleFilterAndConvert
    @Override
    protected void injectDependencies(Cache cache) {
       RemoteQueryManager remoteQueryManager = cache.getAdvancedCache().getComponentRegistry().getComponent(RemoteQueryManager.class);
-      matcherImplClass = remoteQueryManager.getMatcher().getClass();
+      matcherImplClass = remoteQueryManager.getMatcherClass(MediaType.APPLICATION_PROTOSTREAM);
       super.injectDependencies(cache);
-   }
-
-   @Override
-   public ObjectFilter.FilterResult filterAndConvert(Object key, Object value, Metadata metadata) {
-      if (value == null) {
-         return null;
-      }
-      return getObjectFilter().filter(value);
-   }
-
-   @Override
-   public String toString() {
-      return "IckleProtobufFilterAndConverter{queryString='" + getQueryString() + "'}";
    }
 
    public static final class Externalizer extends AbstractExternalizer<IckleProtobufFilterAndConverter> {

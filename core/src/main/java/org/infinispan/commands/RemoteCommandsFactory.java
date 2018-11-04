@@ -26,6 +26,8 @@ import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.remote.RenewBiasCommand;
 import org.infinispan.commands.remote.RevokeBiasCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
+import org.infinispan.commands.remote.expiration.RetrieveLastAccessCommand;
+import org.infinispan.commands.remote.expiration.UpdateLastAccessCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTransactionsCommand;
 import org.infinispan.commands.remote.recovery.GetInDoubtTxInfoCommand;
@@ -72,7 +74,6 @@ import org.infinispan.stream.impl.StreamIteratorNextCommand;
 import org.infinispan.stream.impl.StreamIteratorRequestCommand;
 import org.infinispan.stream.impl.StreamRequestCommand;
 import org.infinispan.stream.impl.StreamResponseCommand;
-import org.infinispan.stream.impl.StreamSegmentResponseCommand;
 import org.infinispan.topology.CacheTopologyControlCommand;
 import org.infinispan.topology.HeartBeatCommand;
 import org.infinispan.util.ByteString;
@@ -315,9 +316,6 @@ public class RemoteCommandsFactory {
             case StreamRequestCommand.COMMAND_ID:
                command = new StreamRequestCommand(cacheName);
                break;
-            case StreamSegmentResponseCommand.COMMAND_ID:
-               command = new StreamSegmentResponseCommand<>(cacheName);
-               break;
             case StreamResponseCommand.COMMAND_ID:
                command = new StreamResponseCommand(cacheName);
                break;
@@ -353,6 +351,12 @@ public class RemoteCommandsFactory {
                break;
             case RenewBiasCommand.COMMAND_ID:
                command = new RenewBiasCommand(cacheName);
+               break;
+            case RetrieveLastAccessCommand.COMMAND_ID:
+               command = new RetrieveLastAccessCommand(cacheName);
+               break;
+            case UpdateLastAccessCommand.COMMAND_ID:
+               command = new UpdateLastAccessCommand(cacheName);
                break;
             default:
                throw new CacheException("Unknown command id " + id + "!");

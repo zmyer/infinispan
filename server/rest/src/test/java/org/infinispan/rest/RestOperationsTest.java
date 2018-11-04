@@ -1,24 +1,37 @@
 package org.infinispan.rest;
 
 import static org.eclipse.jetty.http.HttpHeader.ACCEPT_ENCODING;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JBOSS_MARSHALLING_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JSON;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JSON_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT_TYPE;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OCTET_STREAM_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_SERIALIZED_OBJECT_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_XML;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_XML_TYPE;
 import static org.infinispan.commons.dataconversion.MediaType.TEXT_PLAIN_TYPE;
 import static org.infinispan.commons.util.Util.getResourceAsString;
 import static org.infinispan.dataconversion.Gzip.decompress;
 import static org.infinispan.rest.JSONConstants.TYPE;
+import static org.infinispan.rest.assertion.ResponseAssertion.assertThat;
 import static org.testng.Assert.assertEquals;
 
 import org.assertj.core.api.Assertions;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.ContentResponse;
+import org.eclipse.jetty.client.util.BytesContentProvider;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.infinispan.Cache;
 import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.commons.marshall.JavaSerializationMarshaller;
+import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.rest.assertion.ResponseAssertion;
+import org.infinispan.rest.search.entity.Person;
+import org.infinispan.server.core.dataconversion.JsonTranscoder;
+import org.infinispan.server.core.dataconversion.XMLTranscoder;
 import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "rest.RestOperationsTest")
@@ -26,11 +39,6 @@ public class RestOperationsTest extends BaseRestOperationsTest {
 
    public ConfigurationBuilder getDefaultCacheBuilder() {
       return new ConfigurationBuilder();
-   }
-
-   @Override
-   protected boolean enableCompatibility() {
-      return true;
    }
 
    @Override
@@ -60,9 +68,9 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .send();
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasContentType("text/plain");
-      ResponseAssertion.assertThat(response).hasReturnedText("test");
+      assertThat(response).isOk();
+      assertThat(response).hasContentType("text/plain");
+      assertThat(response).hasReturnedText("test");
    }
 
    @Test
@@ -79,9 +87,9 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .send();
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasContentType("application/json");
-      ResponseAssertion.assertThat(response).hasReturnedText("{\"" + TYPE + "\":\"" + TestClass.class.getName() + "\",\"name\":\"test\"}");
+      assertThat(response).isOk();
+      assertThat(response).hasContentType("application/json");
+      assertThat(response).hasReturnedText("{\"" + TYPE + "\":\"" + TestClass.class.getName() + "\",\"name\":\"test\"}");
    }
 
    @Test
@@ -98,18 +106,18 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .send();
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasContentType("application/xml");
-      ResponseAssertion.assertThat(response).hasReturnedText(
+      assertThat(response).isOk();
+      assertThat(response).hasContentType("application/xml");
+      assertThat(response).hasReturnedText(
             "<org.infinispan.rest.TestClass>\n" +
                   "  <name>test</name>\n" +
                   "</org.infinispan.rest.TestClass>");
    }
 
    @Test
-   public void shouldReadAsBinaryWithCompatMode() throws Exception {
+   public void shouldReadAsBinaryWithPojoCache() throws Exception {
       //given
-      String cacheName = "compatCache";
+      String cacheName = "pojoCache";
       String key = "test";
       TestClass value = new TestClass();
       value.setName("test");
@@ -120,14 +128,14 @@ public class RestOperationsTest extends BaseRestOperationsTest {
       ContentResponse response = get(cacheName, key, APPLICATION_OCTET_STREAM_TYPE);
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasContentType(APPLICATION_OCTET_STREAM_TYPE);
+      assertThat(response).isOk();
+      assertThat(response).hasContentType(APPLICATION_OCTET_STREAM_TYPE);
    }
 
    @Test
-   public void shouldReadTextWithCompatMode() throws Exception {
+   public void shouldReadTextWithPojoCache() throws Exception {
       //given
-      String cacheName = "compatCache";
+      String cacheName = "pojoCache";
       String key = "k1";
       String value = "v1";
 
@@ -137,55 +145,55 @@ public class RestOperationsTest extends BaseRestOperationsTest {
       ContentResponse response = get(cacheName, key, TEXT_PLAIN_TYPE);
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasContentType(TEXT_PLAIN_TYPE);
-      ResponseAssertion.assertThat(response).hasReturnedText(value);
+      assertThat(response).isOk();
+      assertThat(response).hasContentType(TEXT_PLAIN_TYPE);
+      assertThat(response).hasReturnedText(value);
    }
 
    @Test
-   public void shouldReadByteArrayWithCompatMode() throws Exception {
+   public void shouldReadByteArrayWithPojoCache() throws Exception {
       //given
-      Cache cache = restServer.getCacheManager().getCache("compatCache").getAdvancedCache()
+      Cache cache = restServer.getCacheManager().getCache("pojoCache").getAdvancedCache()
             .withEncoding(IdentityEncoder.class);
       cache.put("k1", "v1".getBytes());
 
       //when
       ContentResponse response = client
-            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "compatCache", "k1"))
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "pojoCache", "k1"))
             .header(HttpHeader.ACCEPT, APPLICATION_OCTET_STREAM_TYPE)
             .send();
 
       //then
-      ResponseAssertion.assertThat(response).hasReturnedBytes("v1".getBytes());
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasContentType(APPLICATION_OCTET_STREAM_TYPE);
+      assertThat(response).hasReturnedBytes("v1".getBytes());
+      assertThat(response).isOk();
+      assertThat(response).hasContentType(APPLICATION_OCTET_STREAM_TYPE);
    }
 
    @Test
-   public void shouldReadAsJsonWithCompatMode() throws Exception {
+   public void shouldReadAsJsonWithPojoCache() throws Exception {
       //given
       TestClass testClass = new TestClass();
       testClass.setName("test");
-      putValueInCache("compatCache", "test", testClass);
+      putValueInCache("pojoCache", "test", testClass);
 
       //when
       ContentResponse response = client
-            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "compatCache", "test"))
-            .header(HttpHeader.ACCEPT, MediaType.APPLICATION_JSON_TYPE)
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "pojoCache", "test"))
+            .header(HttpHeader.ACCEPT, APPLICATION_JSON_TYPE)
             .send();
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasContentType(MediaType.APPLICATION_JSON_TYPE);
-      ResponseAssertion.assertThat(response).hasReturnedText("{\"" + TYPE + "\":\"org.infinispan.rest.TestClass\",\"name\":\"test\"}");
+      assertThat(response).isOk();
+      assertThat(response).hasContentType(APPLICATION_JSON_TYPE);
+      assertThat(response).hasReturnedText("{\"" + TYPE + "\":\"org.infinispan.rest.TestClass\",\"name\":\"test\"}");
    }
 
    @Test
-   public void shouldNegotiateFromCompatCacheWithoutAccept() throws Exception {
+   public void shouldNegotiateFromPojoCacheWithoutAccept() throws Exception {
       //given
       TestClass testClass = new TestClass();
       testClass.setName("test");
-      String cacheName = "compatCache";
+      String cacheName = "pojoCache";
       String key = "k1";
 
       putValueInCache(cacheName, key, testClass);
@@ -194,26 +202,26 @@ public class RestOperationsTest extends BaseRestOperationsTest {
       ContentResponse response = get(cacheName, key, null);
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasContentType(MediaType.TEXT_PLAIN_TYPE);
-      ResponseAssertion.assertThat(response).hasReturnedText(testClass.toString());
+      assertThat(response).isOk();
+      assertThat(response).hasContentType(MediaType.TEXT_PLAIN_TYPE);
+      assertThat(response).hasReturnedText(testClass.toString());
    }
 
    @Test
-   public void shouldWriteTextContentWithCompatMode() throws Exception {
+   public void shouldWriteTextContentWithPjoCache() throws Exception {
       //given
-      putStringValueInCache("compatCache", "key1", "data");
+      putStringValueInCache("pojoCache", "key1", "data");
 
       //when
       ContentResponse response = client
-            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "compatCache", "key1"))
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "pojoCache", "key1"))
             .header(HttpHeader.ACCEPT, TEXT_PLAIN_TYPE)
             .send();
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasReturnedText("data");
-      ResponseAssertion.assertThat(response).hasContentType(TEXT_PLAIN_TYPE);
+      assertThat(response).isOk();
+      assertThat(response).hasReturnedText("data");
+      assertThat(response).hasContentType(TEXT_PLAIN_TYPE);
    }
 
    @Test
@@ -226,9 +234,9 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .send();
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).hasReturnedBytes("<hey>ho</hey>".getBytes());
-      ResponseAssertion.assertThat(response).hasContentType(APPLICATION_OCTET_STREAM_TYPE);
+      assertThat(response).isOk();
+      assertThat(response).hasReturnedBytes("<hey>ho</hey>".getBytes());
+      assertThat(response).hasContentType(APPLICATION_OCTET_STREAM_TYPE);
    }
 
    @Test
@@ -237,15 +245,15 @@ public class RestOperationsTest extends BaseRestOperationsTest {
       String url = String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "default", "K");
 
       ContentResponse response = client.newRequest(url).send();
-      ResponseAssertion.assertThat(response).isOk();
+      assertThat(response).isOk();
 
       restServer.ignoreCache("default");
       response = client.newRequest(url).send();
-      ResponseAssertion.assertThat(response).isServiceUnavailable();
+      assertThat(response).isServiceUnavailable();
 
       restServer.unignoreCache("default");
       response = client.newRequest(url).send();
-      ResponseAssertion.assertThat(response).isOk();
+      assertThat(response).isOk();
    }
 
    @Test
@@ -259,7 +267,7 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .send();
 
       //then
-      ResponseAssertion.assertThat(response).isOk();
+      assertThat(response).isOk();
       Assertions.assertThat(restServer.getCacheManager().getCache("default")).isEmpty();
    }
 
@@ -276,9 +284,9 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .send();
 
 
-      ResponseAssertion.assertThat(preFlight).isOk();
-      ResponseAssertion.assertThat(preFlight).hasNoContent();
-      ResponseAssertion.assertThat(preFlight).containsAllHeaders("access-control-allow-origin", "access-control-allow-methods");
+      assertThat(preFlight).isOk();
+      assertThat(preFlight).hasNoContent();
+      assertThat(preFlight).containsAllHeaders("access-control-allow-origin", "access-control-allow-methods");
    }
 
    @Test
@@ -291,8 +299,8 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .header(HttpHeader.ORIGIN, "http://127.0.0.1:80")
             .send();
 
-      ResponseAssertion.assertThat(response).isOk();
-      ResponseAssertion.assertThat(response).containsAllHeaders("access-control-allow-origin");
+      assertThat(response).isOk();
+      assertThat(response).containsAllHeaders("access-control-allow-origin");
    }
 
    @Test
@@ -309,8 +317,8 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .header(HttpHeader.ACCEPT, "text/plain")
             .send();
 
-      ResponseAssertion.assertThat(response).hasNoContentEncoding();
-      ResponseAssertion.assertThat(response).hasContentLength(payload.getBytes().length);
+      assertThat(response).hasNoContentEncoding();
+      assertThat(response).hasContentLength(payload.getBytes().length);
       client.getContentDecoderFactories().clear();
 
       response = uncompressingClient
@@ -319,8 +327,61 @@ public class RestOperationsTest extends BaseRestOperationsTest {
             .header(ACCEPT_ENCODING, "gzip")
             .send();
 
-      ResponseAssertion.assertThat(response).hasGzipContentEncoding();
+      assertThat(response).hasGzipContentEncoding();
       assertEquals(decompress(response.getContent()), payload);
+   }
+
+   @Test
+   public void testServerDeserialization() throws Exception {
+      Object value = new Person();
+
+      byte[] jbossMarshalled = new GenericJBossMarshaller().objectToByteBuffer(value);
+      byte[] jsonMarshalled = (byte[]) new JsonTranscoder().transcode(value, APPLICATION_OBJECT, APPLICATION_JSON);
+      byte[] xmlMarshalled = (byte[]) new XMLTranscoder().transcode(value, APPLICATION_OBJECT, APPLICATION_XML);
+      byte[] javaMarshalled = new JavaSerializationMarshaller().objectToByteBuffer(value);
+
+      String expectError = "Class '" + value.getClass().getName() + "' blocked by deserialization white list";
+
+      ContentResponse response1 = client
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "objectCache", "addr1"))
+            .content(new BytesContentProvider(jbossMarshalled))
+            .header(HttpHeader.CONTENT_TYPE, APPLICATION_JBOSS_MARSHALLING_TYPE)
+            .method(HttpMethod.PUT)
+            .send();
+
+      assertThat(response1).isError();
+      assertThat(response1).containsReturnedText(expectError);
+
+      ContentResponse response2 = client
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "objectCache", "addr2"))
+            .content(new BytesContentProvider(jsonMarshalled))
+            .header(HttpHeader.CONTENT_TYPE, APPLICATION_JSON_TYPE)
+            .method(HttpMethod.PUT)
+            .send();
+
+      assertThat(response2).isError();
+      assertThat(response2).containsReturnedText(expectError);
+
+      ContentResponse response3 = client
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "objectCache", "addr3"))
+            .content(new BytesContentProvider(xmlMarshalled))
+            .header(HttpHeader.CONTENT_TYPE, APPLICATION_XML_TYPE)
+            .method(HttpMethod.PUT)
+            .send();
+
+      assertThat(response3).isError();
+      assertThat(response3).containsReturnedText(expectError);
+
+      ContentResponse response4 = client
+            .newRequest(String.format("http://localhost:%d/rest/%s/%s", restServer.getPort(), "objectCache", "addr4"))
+            .content(new BytesContentProvider(javaMarshalled))
+            .header(HttpHeader.CONTENT_TYPE, APPLICATION_SERIALIZED_OBJECT_TYPE)
+            .method(HttpMethod.PUT)
+            .send();
+
+      assertThat(response4).isError();
+      assertThat(response4).containsReturnedText(expectError);
+
    }
 
 }

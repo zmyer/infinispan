@@ -38,8 +38,9 @@ import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.testng.annotations.AfterMethod;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 /**
@@ -151,6 +152,7 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
             memoryConfigurationBuilder.evictionType(EvictionType.MEMORY).size(convertAmountForStorage(SIZE) + 16);
             break;
          case OFF_HEAP:
+            memoryConfigurationBuilder.addressCount(1 << 7);
             // Each entry takes up 63 bytes total for our tests, however tests that add expiration require 16 more
             memoryConfigurationBuilder.evictionType(EvictionType.MEMORY).size(24 +
                   // If we are running optimistic transactions we have to store version so it is larger than pessimistic
@@ -230,21 +232,26 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
 
    /**
     * Asserts that number of entries worth of counts is stored in the interceptors
-    * @param entryCount
     */
-   void assertInterceptorCount(long entryCount) {
-      entryCount = convertAmountForStorage(entryCount);
-      long currentCount = 0;
-      for (Cache cache : caches()) {
-         TransactionalExceptionEvictionInterceptor interceptor = cache.getAdvancedCache().getAsyncInterceptorChain()
-               .findInterceptorWithClass(TransactionalExceptionEvictionInterceptor.class);
-         long size = interceptor.getCurrentSize();
-         log.debugf("Exception eviction size for cache: %s is: %d", cache.getName(), size);
-         currentCount += size;
-         entryCount += interceptor.getMinSize();
-      }
+   void assertInterceptorCount() {
 
-      assertEquals(entryCount, currentCount);
+      for (Cache cache : caches()) {
+         // We use eventually as waitForNoRebalance does not wait until old entries are removed - causing random failures
+         eventually(() -> {
+            long expectedCount = convertAmountForStorage(cache.getAdvancedCache().getDataContainer().sizeIncludingExpired());
+            TransactionalExceptionEvictionInterceptor interceptor = cache.getAdvancedCache().getAsyncInterceptorChain()
+                  .findInterceptorWithClass(TransactionalExceptionEvictionInterceptor.class);
+            long size = interceptor.getCurrentSize();
+            log.debugf("Exception eviction size for cache: %s is: %d", cache.getCacheManager().getAddress(), size);
+            expectedCount += interceptor.getMinSize();
+
+            boolean equal = expectedCount == size;
+            if (!equal) {
+               log.fatal("Expected: " + expectedCount + " but was: " + size + " for: " + cache.getCacheManager().getAddress());
+            }
+            return equal;
+         });
+      }
    }
 
    public void testExceptionOnInsert() {
@@ -307,7 +314,7 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
          cache(0).put(i, i);
       }
 
-      assertInterceptorCount(nodeCount * (SIZE - 1));
+      assertInterceptorCount();
 
       TransactionManager tm = cache(0).getAdvancedCache().getTransactionManager();
       tm.begin();
@@ -316,13 +323,13 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
 
       tm.rollback();
 
-      assertInterceptorCount(nodeCount * (SIZE - 1));
+      assertInterceptorCount();
 
       assertNull(cache(0).get(0));
 
       cache(0).put(SIZE + 1, SIZE + 1);
 
-      assertInterceptorCount(nodeCount * SIZE);
+      assertInterceptorCount();
 
       // This should fail now
       try {
@@ -332,7 +339,7 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
          Exceptions.assertException(ContainerFullException.class, getMostNestedSuppressedThrowable(t));
       }
 
-      assertInterceptorCount(nodeCount * SIZE);
+      assertInterceptorCount();
    }
 
    /**
@@ -399,34 +406,98 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
       }
    }
 
-   /**
-    * This tests to verify that when an entry is expired and removed from the data container that it properly updates
-    * the current count
-    */
-   public void testOnEntryExpiration() {
-      cache(0).put(0, 0, 10, TimeUnit.SECONDS);
+   @DataProvider(name = "expiration")
+   public Object[][] expirationParams() {
+      return new Object[][] {
+            { true, true },
+            { true, false },
+            { false, true },
+            { false, false }
+      };
+   }
 
+   @Test(dataProvider = "expiration")
+   public void testEntryExpirationOverwritten(boolean maxIdle, boolean readInTx) throws Exception {
+      Object expiringKey = 0;
+      if (maxIdle) {
+         cache(0).put(expiringKey, 0, -1, null, 10, TimeUnit.SECONDS);
+      } else {
+         cache(0).put(expiringKey, 0, 10, TimeUnit.SECONDS);
+      }
+      // Note that i starts at 1 so this adds SIZE - 1 entries
       for (int i = 1; i < SIZE; ++i) {
          cache(0).put(i, i);
       }
 
       timeService.advance(TimeUnit.SECONDS.toMillis(11));
 
-      // This should eventually expire all entries
-      assertNull(cache(0).get(0));
+      if (readInTx) {
+         TestingUtil.withTx(cache(0).getAdvancedCache().getTransactionManager(), () -> {
+            // This should eventually expire all entries
+            assertNull(cache(0).get(expiringKey));
+            return null;
+         });
+      } else {
+         // Make sure that it is updated outside of tx as well
+         assertNull(cache(0).get(expiringKey));
+      }
+
+      // We overwrite the existing key - which should work
+      cache(0).put(expiringKey, 0);
+
+      // This should fail now as we are back to full again
+      try {
+         cache(0).put(-1, -1);
+         fail("Should have thrown an exception!");
+      } catch (Throwable t) {
+         Exceptions.assertException(ContainerFullException.class, getMostNestedSuppressedThrowable(t));
+      }
+   }
+
+   /**
+    * This tests to verify that when an entry is expired and removed from the data container that it properly updates
+    * the current count
+    */
+   @Test(dataProvider = "expiration")
+   public void testEntryExpiration(boolean maxIdle, boolean readInTx) throws Exception {
+      Object expiringKey = 0;
+      if (maxIdle) {
+         cache(0).put(expiringKey, 0, -1, null, 10, TimeUnit.SECONDS);
+      } else {
+         cache(0).put(expiringKey, 0, 10, TimeUnit.SECONDS);
+      }
+      // Note that i starts at 1 so this adds SIZE - 1 entries
+      for (int i = 1; i < SIZE; ++i) {
+         cache(0).put(i, i);
+      }
+
+      timeService.advance(TimeUnit.SECONDS.toMillis(11));
+
+      if (readInTx) {
+         TestingUtil.withTx(cache(0).getAdvancedCache().getTransactionManager(), () -> {
+            // This should eventually expire all entries
+            assertNull(cache(0).get(expiringKey));
+            return null;
+         });
+      } else {
+         // Make sure that it is updated outside of tx as well
+         assertNull(cache(0).get(expiringKey));
+      }
 
       // Off heap doesn't expire entries on access yet ISPN-8380
-      if (storageType == StorageType.OFF_HEAP) {
+      // Also max idle in a transaction don't remove entries until reaper runs
+      if (storageType == StorageType.OFF_HEAP || maxIdle) {
          for (Cache cache : caches()) {
-            ExpirationManager em = TestingUtil.extractComponent(cache, ExpirationManager.class);
+            ExpirationManager em = cache.getAdvancedCache().getExpirationManager();
             em.processExpiration();
          }
       }
 
+      Object storageKey = cache(0).getAdvancedCache().getKeyDataConversion().toStorage(expiringKey);
       // Entry should be completely removed at some point - note that expired entries, that haven't been removed, still
       // count against counts
       for (Cache cache : caches()) {
-         eventually(() -> cache.getAdvancedCache().getDataContainer().peek(0) == null);
+         eventually(() -> cache.getAdvancedCache().getDataContainer().peek(storageKey) == null);
       }
 
       // This insert should work now
@@ -487,7 +558,7 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
          }
 
          // We should have interceptor count equal to number of owners times how much storage takes up
-         assertInterceptorCount(nodeCount * SIZE);
+         assertInterceptorCount();
 
          for (Cache cache : caches()) {
             if (targetNode.equals(cache.getCacheManager().getAddress())) {
@@ -505,7 +576,7 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
          }
 
          // Now that it partially failed it should have rolled back all the results
-         assertInterceptorCount(nodeCount * SIZE);
+         assertInterceptorCount();
       } finally {
          killMember(3);
          killMember(3);
@@ -556,7 +627,7 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
    /**
     * Test to make sure the counts are properly updated after adding and taking down nodes
     */
-   public void testSizeCorrectWithStateTransfer() {
+   public void testInterceptorSizeCorrectWithStateTransfer() {
       // Test only works with REPL or DIST (latter only if numOwners > 1)
       if (!cacheMode.isClustered() || cacheMode.isDistributed() && nodeCount == 1) {
          return;
@@ -567,7 +638,7 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
 
       int numberToKill = 0;
 
-      assertInterceptorCount(nodeCount * SIZE);
+      assertInterceptorCount();
 
       try {
          addClusterEnabledCacheManager(configurationBuilder);
@@ -576,8 +647,7 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
 
          numberToKill++;
 
-         boolean dist = cacheMode.isDistributed();
-         assertInterceptorCount((dist ? nodeCount : nodeCount + 1) * SIZE);
+         assertInterceptorCount();
 
          addClusterEnabledCacheManager(configurationBuilder);
 
@@ -585,19 +655,19 @@ public class ExceptionEvictionTest extends MultipleCacheManagersTest {
 
          numberToKill++;
 
-         assertInterceptorCount((dist ? nodeCount : nodeCount + 2) * SIZE);
+         assertInterceptorCount();
 
          killMember(nodeCount);
 
          numberToKill--;
 
-         assertInterceptorCount((dist ? nodeCount : nodeCount + 1) * SIZE);
+         assertInterceptorCount();
 
          killMember(nodeCount);
 
          numberToKill--;
 
-         assertInterceptorCount(nodeCount * SIZE);
+         assertInterceptorCount();
       } finally {
          for (int i = 0; i < numberToKill; ++i) {
             killMember(nodeCount);

@@ -12,6 +12,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.infinispan.IllegalLifecycleStateException;
 import org.infinispan.Version;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commons.CacheException;
@@ -44,7 +45,7 @@ import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
-import org.infinispan.util.TimeService;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -69,13 +70,15 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
    @Inject private TimeService timeService;
    @Inject private GlobalStateManager globalStateManager;
    @Inject private PersistentUUIDManager persistentUUIDManager;
+   // Not used directly, but we have to start the ClusterTopologyManager before sending the join request
+   @Inject private ClusterTopologyManager clusterTopologyManager;
 
    private final WithinThreadExecutor withinThreadExecutor = new WithinThreadExecutor();
 
    // We synchronize on the entire map while handling a status request, to make sure there are no concurrent topology
    // updates from the old coordinator.
    private final Map<String, LocalCacheStatus> runningCaches =
-         Collections.synchronizedMap(new HashMap<String, LocalCacheStatus>());
+         Collections.synchronizedMap(new HashMap<>());
    private volatile boolean running;
    @GuardedBy("runningCaches")
    private int latestStatusResponseViewId;
@@ -106,14 +109,16 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
       latestStatusResponseViewId = transport.getViewId();
    }
 
-   // Need to stop before the JGroupsTransport
-   @Stop(priority = 9)
+   // Need to stop after ClusterTopologyManagerImpl and before the JGroupsTransport
+   @Stop(priority = 110)
    public void stop() {
       if (trace) {
          log.tracef("Stopping LocalTopologyManager on %s", transport.getAddress());
       }
-      persistentUUIDManager.removePersistentAddressMapping(persistentUUID);
       running = false;
+      for (LocalCacheStatus cache : runningCaches.values()) {
+         cache.getTopologyUpdatesExecutor().shutdownNow();
+      }
       withinThreadExecutor.shutdown();
    }
 
@@ -252,10 +257,19 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
    @Override
    public void handleTopologyUpdate(final String cacheName, final CacheTopology cacheTopology,
          final AvailabilityMode availabilityMode, final int viewId, final Address sender) throws InterruptedException {
-      if (ignoreTopologyUpdate(cacheName, cacheTopology))
+      if (!running) {
+         log.tracef("Ignoring consistent hash update %s for cache %s, the local cache manager is not running",
+                    cacheTopology.getTopologyId(), cacheName);
          return;
+      }
 
-      final LocalCacheStatus cacheStatus = runningCaches.get(cacheName);
+      LocalCacheStatus cacheStatus = runningCaches.get(cacheName);
+      if (cacheStatus == null) {
+         log.tracef("Ignoring consistent hash update %s for cache %s that doesn't exist locally",
+                    cacheTopology.getTopologyId(), cacheName);
+         return;
+      }
+
       cacheStatus.getTopologyUpdatesExecutor().execute(() -> {
          try {
             doHandleTopologyUpdate(cacheName, cacheTopology, availabilityMode, viewId, sender, cacheStatus);
@@ -263,21 +277,6 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
             log.topologyUpdateError(cacheName, t);
          }
       });
-   }
-
-   private boolean ignoreTopologyUpdate(final String cacheName, final CacheTopology cacheTopology) {
-      if (!running) {
-         log.tracef("Ignoring consistent hash update %s for cache %s, the local cache manager is not running",
-               cacheTopology.getTopologyId(), cacheName);
-         return true;
-      }
-
-      if (runningCaches.get(cacheName) == null) {
-         log.tracef("Ignoring consistent hash update %s for cache %s that doesn't exist locally",
-               cacheTopology.getTopologyId(), cacheName);
-         return true;
-      }
-      return false;
    }
 
    /**
@@ -310,11 +309,11 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
             return false;
          }
 
-         CacheTopologyHandler handler = cacheStatus.getHandler();
-         resetLocalTopologyBeforeRebalance(cacheName, cacheTopology, existingTopology, handler);
-
          if (!updateCacheTopology(cacheName, cacheTopology, viewId, sender, cacheStatus))
             return false;
+
+         CacheTopologyHandler handler = cacheStatus.getHandler();
+         resetLocalTopologyBeforeRebalance(cacheName, cacheTopology, existingTopology, handler);
 
          ConsistentHash currentCH = cacheTopology.getCurrentCH();
          ConsistentHash pendingCH = cacheTopology.getPendingCH();
@@ -354,7 +353,7 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
             handler.updateConsistentHash(unionTopology);
          }
 
-         if (!updateAvailabilityModeFirst && !startConflictResolution) {
+         if (!updateAvailabilityModeFirst) {
             cacheStatus.getPartitionHandlingManager().setAvailabilityMode(availabilityMode);
          }
          return true;
@@ -405,14 +404,16 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
 
    private void resetLocalTopologyBeforeRebalance(String cacheName, CacheTopology newCacheTopology,
          CacheTopology oldCacheTopology, CacheTopologyHandler handler) {
-      boolean newRebalance = newCacheTopology.getPendingCH() != null;
+      // Cannot rely on the pending CH, because it is also used for conflict resolution
+      boolean newRebalance = newCacheTopology.getPhase() != CacheTopology.Phase.NO_REBALANCE &&
+                             newCacheTopology.getPhase() != CacheTopology.Phase.CONFLICT_RESOLUTION;
       if (newRebalance) {
          // The initial topology doesn't need a reset because we are guaranteed not to be a member
          if (oldCacheTopology == null)
             return;
 
          // We only need a reset if we missed a topology update
-         if (newCacheTopology.getTopologyId() == oldCacheTopology.getTopologyId() + 1)
+         if (newCacheTopology.getTopologyId() <= oldCacheTopology.getTopologyId() + 1)
             return;
 
          // We have missed a topology update, and that topology might have removed some of our segments.
@@ -474,6 +475,8 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
       cacheStatus.getTopologyUpdatesExecutor().execute(() -> {
          try {
             doHandleRebalance(viewId, cacheStatus, cacheTopology, cacheName, sender);
+         } catch (IllegalLifecycleStateException e) {
+            // Ignore errors when the cache is shutting down
          } catch (Throwable t) {
             log.rebalanceStartError(cacheName, t);
          }
@@ -701,8 +704,8 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
       if (transport.isCoordinator()) {
          asyncTransportExecutor.execute(() -> {
             if (trace) log.tracef("Attempting to execute command on self: %s", command);
-            gcr.wireDependencies(command);
             try {
+               gcr.wireDependencies(command);
                command.invoke();
             } catch (Throwable t) {
                log.errorf(t, "Failed to execute ReplicableCommand %s on coordinator async: %s", command, t.getMessage());
@@ -776,7 +779,9 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
 
    @Override
    public void prepareForPersist(ScopedPersistentState state) {
-      state.setProperty("uuid", persistentUUID.toString());
+      if (persistentUUID != null) {
+         state.setProperty("uuid", persistentUUID.toString());
+      }
    }
 
    @Override

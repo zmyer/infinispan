@@ -79,6 +79,7 @@ import org.infinispan.marshall.exts.OptionalExternalizer;
 import org.infinispan.marshall.exts.ReplicableCommandExternalizer;
 import org.infinispan.marshall.exts.TriangleAckExternalizer;
 import org.infinispan.marshall.exts.UuidExternalizer;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryImpl;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.notifications.cachelistener.cluster.ClusterEvent;
@@ -93,6 +94,8 @@ import org.infinispan.notifications.cachelistener.filter.KeyFilterAsCacheEventFi
 import org.infinispan.notifications.cachelistener.filter.KeyValueFilterAsCacheEventFilter;
 import org.infinispan.notifications.cachelistener.filter.KeyValueFilterConverterAsCacheEventFilterConverter;
 import org.infinispan.partitionhandling.AvailabilityMode;
+import org.infinispan.reactive.publisher.PublisherReducers;
+import org.infinispan.reactive.publisher.impl.SegmentPublisherResult;
 import org.infinispan.remoting.MIMECacheEntry;
 import org.infinispan.remoting.responses.BiasRevocationResponse;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
@@ -269,6 +272,8 @@ final class InternalExternalizers {
       addInternalExternalizer(new ScopedState.Externalizer(), exts);
       addInternalExternalizer(new ScopeFilter.Externalizer(), exts);
       addInternalExternalizer(new AdminFlagExternalizer(), exts);
+      addInternalExternalizer(new SegmentPublisherResult.Externalizer(), exts);
+      addInternalExternalizer(new PublisherReducers.PublisherReducersExternalizer(), exts);
 
       return exts;
    }

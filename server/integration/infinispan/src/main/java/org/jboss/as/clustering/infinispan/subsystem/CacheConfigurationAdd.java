@@ -79,6 +79,7 @@ import org.infinispan.persistence.remote.configuration.SslConfigurationBuilder;
 import org.infinispan.persistence.rest.configuration.RestStoreConfigurationBuilder;
 import org.infinispan.persistence.rocksdb.configuration.CompressionType;
 import org.infinispan.persistence.rocksdb.configuration.RocksDBStoreConfigurationBuilder;
+import org.infinispan.persistence.sifs.configuration.SoftIndexFileStoreConfigurationBuilder;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.server.infinispan.spi.service.CacheContainerServiceName;
 import org.infinispan.server.infinispan.spi.service.CacheServiceName;
@@ -128,10 +129,6 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
     private static final Logger log = Logger.getLogger(CacheConfigurationAdd.class.getPackage().getName());
     private static final String DEFAULTS = "infinispan-defaults.xml";
     private static volatile Map<CacheMode, Configuration> defaults = null;
-
-    private static final String[] loaderKeys = new String[] { ModelKeys.LOADER, ModelKeys.CLUSTER_LOADER };
-    private static final String[] storeKeys = new String[] { ModelKeys.STORE, ModelKeys.FILE_STORE,
-            ModelKeys.STRING_KEYED_JDBC_STORE, ModelKeys.REMOTE_STORE, ModelKeys.REST_STORE, ModelKeys.ROCKSDB_STORE };
 
     public static synchronized Configuration getDefaultConfiguration(CacheMode cacheMode) {
         if (defaults == null) {
@@ -600,14 +597,26 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
             }
         }
 
-        // loaders are a child resource
-        for (String loaderKey : loaderKeys) {
-            handleLoaderProperties(context, cache, loaderKey, containerName, builder, dependencies);
-        }
+        if (cache.hasDefined(ModelKeys.PERSISTENCE)) {
+            for (Property property : cache.get(ModelKeys.PERSISTENCE).asPropertyList()) {
+                ModelNode persistence = property.getValue();
+                final int availabilityInterval = PersistenceConfigurationResource.AVAILABILITY_INTERVAL.resolveModelAttribute(context, persistence).asInt();
+                final int connectionAttempts = PersistenceConfigurationResource.CONNECTION_ATTEMPTS.resolveModelAttribute(context, persistence).asInt();
+                final int connectionInterval = PersistenceConfigurationResource.CONNECTION_INTERVAL.resolveModelAttribute(context, persistence).asInt();
+                final boolean passivation = PersistenceConfigurationResource.PASSIVATION.resolveModelAttribute(context, persistence).asBoolean();
 
-        // stores are a child resource
-        for (String storeKey : storeKeys) {
-            handleStoreProperties(context, cache, storeKey, containerName, builder, dependencies);
+                PersistenceConfigurationBuilder persistenceBuilder = builder.persistence();
+                      persistenceBuilder.availabilityInterval(availabilityInterval)
+                      .connectionAttempts(connectionAttempts)
+                      .connectionInterval(connectionInterval)
+                      .passivation(passivation);
+
+                for (String loaderKey : PersistenceConfigurationResource.LOADER_KEYS)
+                    handleLoaderProperties(context, persistence, loaderKey, persistenceBuilder);
+
+                for (String storeKey : PersistenceConfigurationResource.STORE_KEYS)
+                    handleStoreProperties(context, persistence, storeKey, containerName, persistenceBuilder, dependencies);
+            }
         }
 
         if (cache.hasDefined(ModelKeys.BACKUP)) {
@@ -639,16 +648,13 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
         }
     }
 
-    private void handleLoaderProperties(OperationContext context, ModelNode cache, String loaderKey, String containerName,
-                                        ConfigurationBuilder builder, List<Dependency<?>> dependencies)
+    private void handleLoaderProperties(OperationContext context, ModelNode persistence, String loaderKey, PersistenceConfigurationBuilder builder)
             throws OperationFailedException {
-        if (cache.hasDefined(loaderKey)) {
-            for (Property loaderEntry : cache.get(loaderKey).asPropertyList()) {
+        if (persistence.hasDefined(loaderKey)) {
+            for (Property loaderEntry : persistence.get(loaderKey).asPropertyList()) {
                 ModelNode loader = loaderEntry.getValue();
-                PersistenceConfigurationBuilder persistence = builder.persistence();
-                StoreConfigurationBuilder<?, ?> scb = buildCacheLoader(persistence,
-                                                                       loader, loaderKey);
-                parseCommonAttributes(context, persistence, loader, scb);
+                StoreConfigurationBuilder<?, ?> scb = buildCacheLoader(builder, loader, loaderKey);
+                parseCommonAttributes(context, loader, scb);
                 final Properties properties = getProperties(loader);
                 scb.withProperties(properties);
             }
@@ -668,18 +674,15 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
       return properties;
    }
 
-   private void handleStoreProperties(OperationContext context, ModelNode cache, String storeKey, String containerName,
-                                            ConfigurationBuilder builder, List<Dependency<?>> dependencies)
+   private void handleStoreProperties(OperationContext context, ModelNode persistence, String storeKey, String containerName,
+                                      PersistenceConfigurationBuilder builder, List<Dependency<?>> dependencies)
             throws OperationFailedException {
 
-        if (cache.hasDefined(storeKey)) {
-           for (Property storeEntry : cache.get(storeKey).asPropertyList()) {
+        if (persistence.hasDefined(storeKey)) {
+           for (Property storeEntry : persistence.get(storeKey).asPropertyList()) {
                 ModelNode store = storeEntry.getValue();
-
-                final boolean passivation = BaseStoreConfigurationResource.PASSIVATION.resolveModelAttribute(context, store).asBoolean();
-                PersistenceConfigurationBuilder loadersBuilder = builder.persistence().passivation(passivation);
-                StoreConfigurationBuilder<?, ?> scb = buildCacheStore(context, loadersBuilder, containerName, store, storeKey, dependencies);
-                parseCommonAttributes(context, loadersBuilder, store, scb);
+                StoreConfigurationBuilder<?, ?> scb = buildCacheStore(context, builder, containerName, store, storeKey, dependencies);
+                parseCommonAttributes(context, store, scb);
             }
         }
     }
@@ -756,8 +759,8 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
             if (store.hasDefined(ModelKeys.MAX_ENTRIES)) {
                 builder.maxEntries(store.get(ModelKeys.MAX_ENTRIES).asInt());
             }
-            final String path = ((resolvedValue = FileStoreResource.PATH.resolveModelAttribute(context, store)).isDefined()) ? resolvedValue.asString() : InfinispanExtension.SUBSYSTEM_NAME + File.separatorChar + containerName;
-            final String relativeTo = ((resolvedValue = FileStoreResource.RELATIVE_TO.resolveModelAttribute(context, store)).isDefined()) ? resolvedValue.asString() : ServerEnvironment.SERVER_DATA_DIR;
+            final String path = path(FileStoreResource.PATH.resolveModelAttribute(context, store), subsystemPath(containerName, ""));
+            final String relativeTo = path(FileStoreResource.RELATIVE_TO.resolveModelAttribute(context, store));
             Injector<PathManager> injector = new SimpleInjector<PathManager>() {
                 volatile PathManager.Callback.Handle callbackHandle;
                 @Override
@@ -847,8 +850,8 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
             return builder;
         } else if (storeKey.equals(ModelKeys.ROCKSDB_STORE)) {
             final RocksDBStoreConfigurationBuilder builder = persistenceBuilder.addStore(RocksDBStoreConfigurationBuilder.class);
-            final String path = ((resolvedValue = RocksDBStoreConfigurationResource.PATH.resolveModelAttribute(context, store)).isDefined()) ? resolvedValue.asString() : InfinispanExtension.SUBSYSTEM_NAME + File.separatorChar + containerName + File.separatorChar + "data";
-            final String relativeTo = ((resolvedValue = RocksDBStoreConfigurationResource.RELATIVE_TO.resolveModelAttribute(context, store)).isDefined()) ? resolvedValue.asString() : ServerEnvironment.SERVER_DATA_DIR;
+            final String path = path(RocksDBStoreConfigurationResource.PATH.resolveModelAttribute(context, store), subsystemPath(containerName, ""));
+            final String relativeTo = path(RocksDBStoreConfigurationResource.RELATIVE_TO.resolveModelAttribute(context, store));
             Injector<PathManager> injector = new SimpleInjector<PathManager>() {
                 volatile PathManager.Callback.Handle callbackHandle;
                 @Override
@@ -874,7 +877,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
                 expirationPath = RocksDBExpirationConfigurationResource.PATH.resolveModelAttribute(context, expiration).asString();
                 builder.expiryQueueSize(RocksDBExpirationConfigurationResource.QUEUE_SIZE.resolveModelAttribute(context, expiration).asInt());
             } else {
-                expirationPath = InfinispanExtension.SUBSYSTEM_NAME + File.separatorChar + containerName + File.separatorChar + "expiration";
+                expirationPath = subsystemPath(containerName, "expiration");
             }
 
             injector = new SimpleInjector<PathManager>() {
@@ -948,9 +951,44 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
            } catch (Exception e) {
               throw InfinispanMessages.MESSAGES.invalidCacheStore(e, className);
            }
+        } else if (storeKey.equals(ModelKeys.SOFT_INDEX_FILE_STORE)) {
+            SoftIndexFileStoreConfigurationBuilder builder = persistenceBuilder.addStore(SoftIndexFileStoreConfigurationBuilder.class);
+            builder.compactionThreshold(SoftIndexConfigurationResource.COMPACTION_THRESHOLD.resolveModelAttribute(context, store).asDouble())
+                  .openFilesLimit(SoftIndexConfigurationResource.OPEN_FILES_LIMIT.resolveModelAttribute(context, store).asInt());
+
+            if (store.hasDefined(ModelKeys.DATA)) {
+                ModelNode data = store.get(ModelKeys.DATA);
+                String dataLocation = path(SoftIndexConfigurationResource.PATH.resolveModelAttribute(context, data), subsystemPath(containerName, "Data"));
+                builder.dataLocation(dataLocation)
+                      .maxFileSize(SoftIndexConfigurationResource.MAX_FILE_SIZE.resolveModelAttribute(context, data).asInt())
+                      .syncWrites(SoftIndexConfigurationResource.SYNC_WRITES.resolveModelAttribute(context, data).asBoolean());
+            }
+
+            if (store.hasDefined(ModelKeys.INDEX)) {
+                ModelNode index = store.get(ModelKeys.INDEX);
+                String indexLocation = path(SoftIndexConfigurationResource.PATH.resolveModelAttribute(context, index), subsystemPath(containerName, "Index"));
+                builder.indexLocation(indexLocation)
+                      .indexQueueLength(SoftIndexConfigurationResource.MAX_QUEUE_LENGTH.resolveModelAttribute(context, store).asInt())
+                      .indexSegments(SoftIndexConfigurationResource.SEGMENTS.resolveModelAttribute(context, store).asInt())
+                      .maxNodeSize(SoftIndexConfigurationResource.MAX_NODE_SIZE.resolveModelAttribute(context, store).asInt())
+                      .minNodeSize(SoftIndexConfigurationResource.MIN_NODE_SIZE.resolveModelAttribute(context, store).asInt());
+            }
+            return builder;
         } else {
            throw new IllegalStateException();
         }
+    }
+
+    private String path(ModelNode resolvedModelAttr) {
+        return path(resolvedModelAttr, ServerEnvironment.SERVER_DATA_DIR);
+    }
+
+    private String path(ModelNode resolvedModelAttr, String alternative) {
+        return resolvedModelAttr.isDefined() ? resolvedModelAttr.asString() : alternative;
+    }
+
+    private String subsystemPath(String containerName, String suffix) {
+        return InfinispanExtension.SUBSYSTEM_NAME + File.separatorChar + containerName + File.separatorChar + suffix;
     }
 
    private void buildDbVersions(AbstractJdbcStoreConfigurationBuilder builder, OperationContext context, ModelNode store) throws OperationFailedException {
@@ -967,7 +1005,7 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
       return CacheLoader.class.getClassLoader().loadClass(className).newInstance();
    }
 
-   private void parseCommonAttributes(OperationContext context, PersistenceConfigurationBuilder persistenceBuilder, ModelNode store, StoreConfigurationBuilder storeConfigurationBuilder) throws OperationFailedException {
+   private void parseCommonAttributes(OperationContext context, ModelNode store, StoreConfigurationBuilder storeConfigurationBuilder) throws OperationFailedException {
       ModelNode shared = store.get(ModelKeys.SHARED);
       if (shared != null && shared.isDefined()) {
          storeConfigurationBuilder.shared(shared.asBoolean());
@@ -983,10 +1021,6 @@ public abstract class CacheConfigurationAdd extends AbstractAddStepHandler imple
       ModelNode fetchState = store.get(ModelKeys.FETCH_STATE);
       if (fetchState != null && fetchState.isDefined()) {
          storeConfigurationBuilder.fetchPersistentState(fetchState.asBoolean());
-      }
-      ModelNode passivation = store.get(ModelKeys.PASSIVATION);
-      if (passivation != null && passivation.isDefined()) {
-         persistenceBuilder.passivation(passivation.asBoolean());
       }
       ModelNode purge = store.get(ModelKeys.PURGE);
       if (purge != null && purge.isDefined()) {

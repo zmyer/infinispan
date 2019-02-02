@@ -5,8 +5,13 @@ import org.infinispan.rest.authentication.Authenticator;
 import org.infinispan.rest.authentication.impl.VoidAuthenticator;
 import org.infinispan.rest.cachemanager.RestCacheManager;
 import org.infinispan.rest.configuration.RestServerConfiguration;
-import org.infinispan.rest.operations.CacheOperations;
-import org.infinispan.rest.operations.SearchOperations;
+import org.infinispan.rest.framework.ResourceManager;
+import org.infinispan.rest.framework.RestDispatcher;
+import org.infinispan.rest.framework.impl.ResourceManagerImpl;
+import org.infinispan.rest.framework.impl.RestDispatcherImpl;
+import org.infinispan.rest.resources.CacheResource;
+import org.infinispan.rest.resources.ConfigResource;
+import org.infinispan.rest.resources.SplashResource;
 import org.infinispan.server.core.AbstractProtocolServer;
 import org.infinispan.server.core.transport.NettyInitializers;
 
@@ -23,8 +28,8 @@ import io.netty.channel.ChannelOutboundHandler;
 public class RestServer extends AbstractProtocolServer<RestServerConfiguration> {
 
    private Authenticator authenticator = new VoidAuthenticator();
-   private CacheOperations cacheOperations;
-   private SearchOperations searchOperations;
+   private RestDispatcher restDispatcher;
+   private RestCacheManager<Object> restCacheManager;
 
    public RestServer() {
       super("REST");
@@ -63,12 +68,8 @@ public class RestServer extends AbstractProtocolServer<RestServerConfiguration> 
       return authenticator;
    }
 
-   CacheOperations getCacheOperations() {
-      return cacheOperations;
-   }
-
-   SearchOperations getSearchOperations() {
-      return searchOperations;
+   RestDispatcher getRestDispatcher() {
+      return restDispatcher;
    }
 
    /**
@@ -81,15 +82,26 @@ public class RestServer extends AbstractProtocolServer<RestServerConfiguration> 
    }
 
    @Override
+   public void stop() {
+      super.stop();
+      restCacheManager.stop();
+   }
+
+   @Override
    protected void startInternal(RestServerConfiguration configuration, EmbeddedCacheManager cacheManager) {
       super.startInternal(configuration, cacheManager);
-      RestCacheManager<Object> restCacheManager = new RestCacheManager<>(cacheManager, this::isCacheIgnored);
-      this.cacheOperations = new CacheOperations(configuration, restCacheManager);
-      this.searchOperations = new SearchOperations(configuration, restCacheManager);
+      restCacheManager = new RestCacheManager<>(cacheManager, this::isCacheIgnored);
+      String rootContext = configuration.startTransport() ? configuration.contextPath() : "*";
+      ResourceManager resourceManager = new ResourceManagerImpl(rootContext);
+      resourceManager.registerResource(new CacheResource(restCacheManager, configuration));
+      resourceManager.registerResource(new SplashResource());
+      resourceManager.registerResource(new ConfigResource(cacheManager));
+      this.restDispatcher = new RestDispatcherImpl(resourceManager);
    }
 
    @Override
    public int getWorkerThreads() {
-      return Integer.getInteger("infinispan.server.rest.workerThreads", configuration.workerThreads());
+      // Unused for now, so just return the smallest possible valid value
+      return 1;
    }
 }

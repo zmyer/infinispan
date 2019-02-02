@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<module xmlns="urn:jboss:module:1.5" name="org.infinispan.extension" slot="@infinispan.module.slot@">
+<module xmlns="urn:jboss:module:1.3" name="org.infinispan.extension" slot="@infinispan.module.slot@">
    <properties>
       <property name="jboss.api" value="private" />
    </properties>
@@ -17,6 +17,7 @@
       <module name="org.infinispan.persistence.remote" services="import" slot="@infinispan.module.slot@"/>
       <module name="org.infinispan.persistence.rest" services="import" slot="@infinispan.module.slot@"/>
       <module name="org.infinispan.persistence.rocksdb" services="import" slot="@infinispan.module.slot@"/>
+      <module name="org.infinispan.persistence.soft-index" services="import" slot="@infinispan.module.slot@"/>
       <module name="org.infinispan.hotrod.client" optional="true" slot="@infinispan.module.slot@"/>
       <module name="org.infinispan.cli.interpreter" services="import" slot="@infinispan.module.slot@"/>
       <module name="org.infinispan.server" services="import" slot="@infinispan.module.slot@"/>

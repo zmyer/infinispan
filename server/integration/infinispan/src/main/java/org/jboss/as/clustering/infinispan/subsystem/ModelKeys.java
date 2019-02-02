@@ -43,6 +43,7 @@ public class ModelKeys {
     static final String AUTHORIZATION = "authorization";
     static final String AUTHORIZATION_NAME = "AUTHORIZATION";
     static final String AUTO_CONFIG = "auto-config";
+    static final String AVAILABILITY_INTERVAL = "availability-interval";
     static final String AWAIT_INITIAL_TRANSFER = "await-initial-transfer";
     static final String BACKUP = "backup";
     static final String BACKUP_FAILURE_POLICY = "failure-policy";
@@ -71,6 +72,7 @@ public class ModelKeys {
     static final String CLUSTER_REBALANCE = "cluster-rebalance";
     static final String CLUSTER_ROLE_MAPPER = "cluster-role-mapper";
     static final String COMMON_NAME_ROLE_MAPPER = "common-name-role-mapper";
+    static final String COMPACTION_THRESHOLD = "compaction-threshold";
     static final String COMPATIBILITY = "compatibility";
     static final String COMPATIBILITY_NAME = "COMPATIBILITY";
     static final String COMPRESSION = "compression";
@@ -81,6 +83,8 @@ public class ModelKeys {
     static final String CONFIGURATION_STORAGE_CLASS = "configuration-storage-class";
     static final String CONFIGURATIONS = "configurations";
     static final String CONFIGURATIONS_NAME = "CONFIGURATIONS";
+    static final String CONNECTION_ATTEMPTS = "connection-attempts";
+    static final String CONNECTION_INTERVAL = "connection-interval";
     static final String CONNECTION_POOL = "connection-pool";
     static final String CONNECTION_TIMEOUT = "connection-timeout";
     static final String COUNTERS = "counters";
@@ -88,6 +92,8 @@ public class ModelKeys {
     static final String CREATE_ON_START = "create-on-start";
     static final String CUSTOM_CONFIGURATION_STORAGE = "custom-configuration-storage";
     static final String CUSTOM_ROLE_MAPPER = "custom-role-mapper";
+    static final String DATA = "data";
+    static final String DATA_NAME = "DATA";
     static final String DATA_COLUMN = "data-column";
     static final String DATASOURCE = "datasource";
     static final String DEFAULT_CACHE = "default-cache";
@@ -125,6 +131,7 @@ public class ModelKeys {
     static final String IMPLEMENTATION = "implementation";
     static final String IMPLEMENTATION_NAME = "IMPLEMENTATION";
     static final String INDEX = "index";
+    static final String INDEX_NAME = "INDEX";
     static final String INDEXED_ENTITIES = "indexed-entities";
     static final String INDEXED_ENTITY = "indexed-entity";
     static final String INDEXING = "indexing";
@@ -168,15 +175,19 @@ public class ModelKeys {
     static final String MAX_CONNECTIONS_PER_HOST = "max-connections-per-host";
     static final String MAX_CONTENT_LENGTH = "max-content-length";
     static final String MAX_ENTRIES = "max-entries";
+    static final String MAX_FILE_SIZE = "max-file-size";
     static final String MAX_IDLE = "max-idle";
+    static final String MAX_NODE_SIZE = "max-node-size";
     static final String MAX_RETRIES = "max-retries";
     static final String MAX_THREADS = "max-threads";
     static final String MAX_TOTAL_CONNECTIONS = "max-total-connections";
+    static final String MAX_QUEUE_LENGTH = "max-queue-length";
     static final String MECHANISM = "mechanism";
     static final String MEMORY = "memory";
     static final String MERGE_POLICY = "merge-policy";
     static final String MIGRATOR_NAME = "migrator-name";
     static final String MEDIA_TYPE = "media-type";
+    static final String MIN_NODE_SIZE = "min-node-size";
     static final String MIN_THREADS = "min-threads";
     static final String MODE = "mode";
     static final String MODIFICATION_QUEUE_SIZE = "modification-queue-size";
@@ -188,6 +199,7 @@ public class ModelKeys {
     static final String NOTIFICATIONS = "notifications";
     static final String OBJECT_NAME = "OBJECT";
     static final String OFF_HEAP_NAME = "OFF-HEAP";
+    static final String OPEN_FILES_LIMIT = "open-files-limit";
     static final String OUTBOUND_SOCKET_BINDING = "outbound-socket-binding";
     static final String OVERLAY_CONFIGURATION_STORAGE = "overlay-configuration-storage";
     static final String OWNERS = "owners";
@@ -199,6 +211,7 @@ public class ModelKeys {
     static final String PERMISSIONS = "permissions";
     static final String PERSISTENCE = "persistence";
     static final String PERSISTENT_LOCATION = "persistent-location";
+    static final String PERSISTENCE_NAME = "PERSISTENCE";
     static final String RELIABILITY = "reliability";
     static final String PLAIN = "plain";
     static final String PREFIX = "prefix";
@@ -251,6 +264,8 @@ public class ModelKeys {
     static final String SLOT = "slot";
     static final String SNI_HOSTNAME = "sni-hostname";
     static final String SOCKET_TIMEOUT = "socket-timeout";
+    static final String SOFT_INDEX_FILE_STORE = "soft-index-file-store";
+    static final String SOFT_INDEX_FILE_STORE_NAME = "SOFT_INDEX_FILE_STORE";
     static final String STACK = "stack";
     static final String START = "start";
     static final String STATE_TRANSFER = "state-transfer";
@@ -265,12 +280,14 @@ public class ModelKeys {
     static final String STRICT_PEER_TO_PEER = "strict-peer-to-peer";
     static final String STRATEGY = "strategy";
     static final String STRIPING = "striping";
+    static final String SYNC_WRITES = "sync-writes";
     static final String TAKE_BACKUP_OFFLINE_AFTER_FAILURES = "after-failures";
     static final String TAKE_BACKUP_OFFLINE_MIN_WAIT = "min-wait";
     static final String TAKE_OFFLINE = "take-offline";
     static final String TCP_NO_DELAY = "tcp-no-delay";
     static final String TEMPLATE = "template";
     static final String TEMPORARY_LOCATION = "temporary-location";
+    static final String THREAD_POOL = "thread-pool";
     static final String THREAD_POOL_SIZE = "thread-pool-size";
     static final String TIMEOUT = "timeout";
     static final String TIMESTAMP_COLUMN = "timestamp-column";

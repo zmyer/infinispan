@@ -24,6 +24,7 @@ import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.query.dsl.Query;
 import org.infinispan.query.dsl.QueryFactory;
 import org.infinispan.query.dsl.embedded.testdomain.Address;
@@ -49,6 +50,12 @@ public class MultiHotRodServerQueryTest extends MultiHotRodServersTest {
    }
 
    @Override
+   protected void modifyGlobalConfiguration(GlobalConfigurationBuilder builder) {
+      super.modifyGlobalConfiguration(builder);
+      builder.globalJmxStatistics().enable();
+   }
+
+   @Override
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder builder = hotRodCacheConfiguration(getDefaultClusteredCacheConfig(CacheMode.REPL_SYNC, useTransactions()));
       builder.indexing().index(Index.ALL)
@@ -64,8 +71,8 @@ public class MultiHotRodServerQueryTest extends MultiHotRodServersTest {
    }
 
    @Override
-   protected org.infinispan.client.hotrod.configuration.ConfigurationBuilder createHotRodClientConfigurationBuilder(int serverPort) {
-      return super.createHotRodClientConfigurationBuilder(serverPort)
+   protected org.infinispan.client.hotrod.configuration.ConfigurationBuilder createHotRodClientConfigurationBuilder(String host, int serverPort) {
+      return super.createHotRodClientConfigurationBuilder(host, serverPort)
             .marshaller(new ProtoStreamMarshaller());
    }
 

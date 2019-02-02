@@ -1,10 +1,9 @@
 package org.infinispan.persistence.rest.configuration;
 
-import static org.infinispan.commons.util.StringPropertyReplacer.replaceProperties;
-
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 
+import org.infinispan.commons.configuration.ConfigurationBuilderInfo;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
@@ -78,7 +77,7 @@ public class RestStoreConfigurationParser implements ConfigurationParser {
          throws XMLStreamException {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case HOST:
@@ -100,7 +99,7 @@ public class RestStoreConfigurationParser implements ConfigurationParser {
    private void parseConnectionPool(XMLExtendedStreamReader reader, ConnectionPoolConfigurationBuilder builder) throws XMLStreamException {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case CONNECTION_TIMEOUT: {
@@ -139,7 +138,7 @@ public class RestStoreConfigurationParser implements ConfigurationParser {
          throws XMLStreamException {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          String attributeName = reader.getAttributeLocalName(i);
          Attribute attribute = Attribute.forName(attributeName);
          switch (attribute) {
@@ -176,4 +175,8 @@ public class RestStoreConfigurationParser implements ConfigurationParser {
       return ParseUtils.getNamespaceAnnotations(getClass());
    }
 
+   @Override
+   public Class<? extends ConfigurationBuilderInfo> getConfigurationBuilderInfo() {
+      return RestStoreConfigurationBuilder.class;
+   }
 }

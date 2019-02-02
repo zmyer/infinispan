@@ -1,6 +1,5 @@
 package org.infinispan.persistence.sifs;
 
-import static org.infinispan.persistence.PersistenceUtil.internalMetadata;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertNull;
@@ -11,11 +10,11 @@ import java.io.File;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.persistence.BaseStoreTest;
 import org.infinispan.persistence.sifs.configuration.SoftIndexFileStoreConfigurationBuilder;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
@@ -85,9 +84,9 @@ public class SoftIndexFileStoreTest extends BaseStoreTest {
       ConfigurationBuilder builder = TestCacheManagerFactory
             .getDefaultCacheConfiguration(false);
       builder.persistence()
-               .addStore(SoftIndexFileStoreConfigurationBuilder.class)
-                  .indexLocation(tmpDirectory).dataLocation(tmpDirectory + "/data")
-                  .maxFileSize(1000);
+            .addStore(SoftIndexFileStoreConfigurationBuilder.class)
+            .indexLocation(tmpDirectory).dataLocation(tmpDirectory + "/data")
+            .maxFileSize(1000);
 
       store.init(createContext(builder.build()));
       return store;
@@ -102,27 +101,27 @@ public class SoftIndexFileStoreTest extends BaseStoreTest {
       int numEntries = 10000;
       for (int i = 0; i < numEntries; ++i) {
          InternalCacheEntry ice = TestInternalCacheEntryFactory.create(key(i), "value" + i);
-         store.write(new MarshalledEntryImpl(ice.getKey(), ice.getValue(), internalMetadata(ice), getMarshaller()));
+         store.write(MarshalledEntryUtil.create(ice, getMarshaller()));
       }
       for (int i = 0; i < numEntries; ++i) {
-         assertNotNull(key(i), store.load(key(i)));
+         assertNotNull(key(i), store.loadEntry(key(i)));
          assertTrue(key(i), store.delete(key(i)));
       }
       store.clear();
       for (int i = 0; i < numEntries; ++i) {
          InternalCacheEntry ice = TestInternalCacheEntryFactory.create(key(i), "value" + i);
-         store.write(new MarshalledEntryImpl(ice.getKey(), ice.getValue(), internalMetadata(ice), getMarshaller()));
+         store.write(MarshalledEntryUtil.create(ice, getMarshaller()));
       }
       for (int i = numEntries - 1; i >= 0; --i) {
-         assertNotNull(key(i), store.load(key(i)));
+         assertNotNull(key(i), store.loadEntry(key(i)));
          assertTrue(key(i), store.delete(key(i)));
       }
    }
 
    // test for ISPN-5658
    public void testStopStartAndMultipleWrites() {
-      MarshalledEntry<Object, Object> entry1 = marshalledEntry(internalCacheEntry("k1", "v1", -1));
-      MarshalledEntry<Object, Object> entry2 = marshalledEntry(internalCacheEntry("k1", "v2", -1));
+      MarshallableEntry<Object, Object> entry1 = marshalledEntry(internalCacheEntry("k1", "v1", -1));
+      MarshallableEntry<Object, Object> entry2 = marshalledEntry(internalCacheEntry("k1", "v2", -1));
 
       store.write(entry1);
       store.write(entry1);
@@ -131,7 +130,7 @@ public class SoftIndexFileStoreTest extends BaseStoreTest {
       store.stop();
       store.start();
 
-      MarshalledEntry entry = store.load("k1");
+      MarshallableEntry entry = store.loadEntry("k1");
       assertNotNull(entry);
       assertEquals("v1", entry.getValue());
       store.write(entry2);
@@ -139,7 +138,7 @@ public class SoftIndexFileStoreTest extends BaseStoreTest {
       store.stop();
       store.start();
 
-      entry = store.load("k1");
+      entry = store.loadEntry("k1");
       assertNotNull(entry);
       assertEquals("v2", entry.getValue());
    }
@@ -147,8 +146,8 @@ public class SoftIndexFileStoreTest extends BaseStoreTest {
    // test for ISPN-5743
    public void testStopStartWithRemoves() {
       String KEY = "k1";
-      MarshalledEntry<Object, Object> entry1 = marshalledEntry(internalCacheEntry(KEY, "v1", -1));
-      MarshalledEntry<Object, Object> entry2 = marshalledEntry(internalCacheEntry(KEY, "v2", -1));
+      MarshallableEntry<Object, Object> entry1 = marshalledEntry(internalCacheEntry(KEY, "v1", -1));
+      MarshallableEntry<Object, Object> entry2 = marshalledEntry(internalCacheEntry(KEY, "v2", -1));
 
       store.write(entry1);
       store.delete(KEY);
@@ -156,7 +155,7 @@ public class SoftIndexFileStoreTest extends BaseStoreTest {
       store.stop();
       store.start();
 
-      assertNull(store.load(KEY));
+      assertNull(store.loadEntry(KEY));
       store.write(entry2);
       store.delete(KEY);
       store.write(entry1);
@@ -165,7 +164,7 @@ public class SoftIndexFileStoreTest extends BaseStoreTest {
       startIndex = false;
       store.start();
 
-      assertEquals(entry1.getValue(), store.load(KEY).getValue());
+      assertEquals(entry1.getValue(), store.loadEntry(KEY).getValue());
       startIndex = true;
       store.startIndex();
    }
@@ -182,7 +181,7 @@ public class SoftIndexFileStoreTest extends BaseStoreTest {
       store.stop();
       store.start();
       // value1 has been overwritten and value2 has expired
-      MarshalledEntry entry = store.load("key");
+      MarshallableEntry entry = store.loadEntry("key");
       assertNull(entry != null ? entry.getKey() + "=" + entry.getValue() : null, entry);
    }
 

@@ -25,7 +25,6 @@
 -ga('send', 'pageview');
 -} catch(err) {}&lt;/script&gt;
       </analytics.code>
-      <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
    </properties>
 
    <dependencies>
@@ -136,17 +135,17 @@
 
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-spring4-common</artifactId>
+         <artifactId>infinispan-spring5-common</artifactId>
       </dependency>
 
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-spring4-embedded</artifactId>
+         <artifactId>infinispan-spring5-embedded</artifactId>
       </dependency>
 
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-spring4-remote</artifactId>
+         <artifactId>infinispan-spring5-remote</artifactId>
       </dependency>
 
       <dependency>
@@ -165,7 +164,6 @@
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-javadoc-plugin</artifactId>
-            <version>3.0.0-M1</version>
             <executions>
                <execution>
                   <id>javadoc</id>
@@ -176,9 +174,9 @@
                   <configuration>
                      <doclet>org.infinispan.doclets.DocletMultiplexer</doclet>
                      <docletArtifact>
-                        <groupId>org.infinispan</groupId>
+                        <groupId>org.infinispan.doclets</groupId>
                         <artifactId>infinispan-doclets</artifactId>
-                        <version>${project.version}</version>
+                        <version>${version.infinispan.doclets}</version>
                      </docletArtifact>
                      <doctitle>${infinispan.brand.name} ${infinispan.base.version} Embedded API</doctitle>
 
@@ -228,9 +226,6 @@
                      <dependencySourceIncludes>
                         <dependencySourceInclude>org.infinispan:*</dependencySourceInclude>
                      </dependencySourceIncludes>
-                     <dependencySourceExcludes>
-                        <dependencySourceExclude>org.infinispan:infinispan-license</dependencySourceExclude>
-                     </dependencySourceExcludes>
                      <javadocDirectory>${basedir}/src/main/javadoc</javadocDirectory>
                      <links>
                         <link>http://docs.oracle.com/javase/8/docs/api/</link>
@@ -246,6 +241,7 @@
                      <stylesheetfile>${basedir}/src/main/javadoc/stylesheet.css</stylesheetfile>
                      <subpackages>org.infinispan</subpackages>
                      <additionalparam>-Xdoclint:none</additionalparam>
+                     <useStandardDocletOptions>false</useStandardDocletOptions>
 
                      <additionalDependencies>
                         <additionalDependency>
@@ -286,26 +282,14 @@
                            <version>${version.hibernate.core}</version>
                         </additionalDependency>
                         <additionalDependency>
-                           <groupId>com.mchange</groupId>
-                           <artifactId>c3p0</artifactId>
-                           <version>${version.c3p0}</version>
-                        </additionalDependency>
-                        <additionalDependency>
-                           <groupId>com.zaxxer</groupId>
-                           <artifactId>HikariCP</artifactId>
-                           <version>${version.hikaricp}</version>
+                           <groupId>io.agroal</groupId>
+                           <artifactId>agroal-api</artifactId>
+                           <version>${version.io.agroal}</version>
                         </additionalDependency>
                      </additionalDependencies>
                   </configuration>
                </execution>
             </executions>
-            <dependencies>
-               <dependency>
-                  <groupId>org.infinispan</groupId>
-                  <artifactId>infinispan-doclets</artifactId>
-                  <version>${version.infinispan}</version>
-               </dependency>
-            </dependencies>
          </plugin>
          <plugin>
             <artifactId>maven-surefire-plugin</artifactId>

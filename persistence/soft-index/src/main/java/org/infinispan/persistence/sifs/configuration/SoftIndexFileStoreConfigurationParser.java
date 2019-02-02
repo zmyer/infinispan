@@ -1,10 +1,9 @@
 package org.infinispan.persistence.sifs.configuration;
 
-import static org.infinispan.commons.util.StringPropertyReplacer.replaceProperties;
-
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 
+import org.infinispan.commons.configuration.ConfigurationBuilderInfo;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ConfigurationParser;
@@ -52,7 +51,7 @@ public class SoftIndexFileStoreConfigurationParser implements ConfigurationParse
    private void parseSoftIndexFileStore(XMLExtendedStreamReader reader, SoftIndexFileStoreConfigurationBuilder builder) throws XMLStreamException {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          String attrName = reader.getAttributeLocalName(i);
          Attribute attribute = Attribute.forName(attrName);
          switch (attribute) {
@@ -134,5 +133,8 @@ public class SoftIndexFileStoreConfigurationParser implements ConfigurationParse
       ParseUtils.requireNoContent(reader);
    }
 
-
+   @Override
+   public Class<? extends ConfigurationBuilderInfo> getConfigurationBuilderInfo() {
+      return SoftIndexFileStoreConfigurationBuilder.class;
+   }
 }

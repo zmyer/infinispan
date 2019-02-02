@@ -23,7 +23,6 @@ import javax.transaction.TransactionManager;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.DataContainer;
@@ -31,13 +30,13 @@ import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.persistence.spi.AdvancedCacheWriter;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.CacheLoader;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.TestingUtil;
@@ -69,7 +68,6 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
    TransactionManager tm;
    ConfigurationBuilder cfg;
    EmbeddedCacheManager cm;
-   StreamingMarshaller sm;
 
    long lifespan = 60000000; // very large lifespan so nothing actually expires
 
@@ -82,7 +80,6 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
       store = TestingUtil.getFirstLoader(cache);
       writer = TestingUtil.getFirstLoader(cache);
       tm = TestingUtil.getTransactionManager(cache);
-      sm = cache.getAdvancedCache().getComponentRegistry().getCacheMarshaller();
    }
 
    public CacheLoaderFunctionalTest segmented(boolean segmented) {
@@ -150,7 +147,7 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
    private <K> void assertInCacheAndStore(Cache<? super K, ?> cache, CacheLoader loader, K key, Object value, long lifespanMillis) throws PersistenceException {
       InternalCacheEntry se = cache.getAdvancedCache().getDataContainer().get(key);
       testStoredEntry(se.getValue(), value, se.getLifespan(), lifespanMillis, "Cache", key);
-      MarshalledEntry load = loader.load(key);
+      MarshallableEntry load = loader.loadEntry(key);
       testStoredEntry(load.getValue(), value, load.getMetadata() == null ? -1 : load.getMetadata().lifespan(), lifespanMillis, "Store", key);
    }
 
@@ -296,7 +293,7 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
 
    public void testLoading() throws PersistenceException {
       assertNotInCacheAndStore("k1", "k2", "k3", "k4");
-      for (int i = 1; i < 5; i++) writer.write(new MarshalledEntryImpl("k" + i, "v" + i, null, sm));
+      for (int i = 1; i < 5; i++) writer.write(MarshalledEntryUtil.create("k" + i, "v" + i, cache));
       for (int i = 1; i < 5; i++) assertEquals("v" + i, cache.get("k" + i));
       // make sure we have no stale locks!!
       assertNoLocks(cache);
@@ -495,8 +492,8 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
 
    public void testLoadingToMemory() throws PersistenceException {
       assertNotInCacheAndStore("k1", "k2");
-      store.write(new MarshalledEntryImpl("k1", "v1", null, sm));
-      store.write(new MarshalledEntryImpl("k2", "v2", null, sm));
+      store.write(MarshalledEntryUtil.create("k1", "v1", cache));
+      store.write(MarshalledEntryUtil.create("k2", "v2", cache));
 
       assertInStoreNotInCache("k1", "k2");
 
@@ -547,7 +544,7 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
          assertNull(cache.get("k1"));
 
          // Now simulate that someone else wrote to the store while during our tx
-         store.write(new MarshalledEntryImpl("k1", "v1", null, sm));
+         store.write(MarshalledEntryUtil.create("k1", "v1", cache));
          IsolationLevel level = cache.getCacheConfiguration().locking().isolationLevel();
          switch(level) {
             case READ_COMMITTED:
@@ -655,7 +652,7 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
          final long lifespan = i % 2 == 1 ? -1 : this.lifespan;
          boolean found = false;
          InternalCacheEntry se = preloadingCache.getAdvancedCache().getDataContainer().get(key);
-         MarshalledEntry load = preloadingCacheLoader.load(key);
+         MarshallableEntry load = preloadingCacheLoader.loadEntry(key);
          if (se != null) {
             testStoredEntry(se.getValue(), value, se.getLifespan(), lifespan, "Cache", key);
             found = true;
@@ -686,7 +683,7 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
          final long lifespan = i % 2 == 1 ? -1 : this.lifespan;
          boolean found = false;
          InternalCacheEntry se = preloadingCache.getAdvancedCache().getDataContainer().get(key);
-         MarshalledEntry load = preloadingCacheLoader.load(key);
+         MarshallableEntry load = preloadingCacheLoader.loadEntry(key);
          if (se != null) {
             testStoredEntry(se.getValue(), value, se.getLifespan(), lifespan, "Cache", key);
             found = true;

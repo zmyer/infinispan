@@ -8,6 +8,8 @@ import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentMap;
 
@@ -58,18 +61,20 @@ public class ParserRegistry implements NamespaceMappingParser {
    private static final Log log = LogFactory.getLog(ParserRegistry.class);
    private final WeakReference<ClassLoader> cl;
    private final ConcurrentMap<QName, NamespaceParserPair> parserMappings;
+   private final Properties properties;
 
    public ParserRegistry() {
       this(Thread.currentThread().getContextClassLoader());
    }
 
    public ParserRegistry(ClassLoader classLoader) {
-      this(classLoader, false);
+      this(classLoader, false, SecurityActions.getSystemProperties());
    }
 
-   public ParserRegistry(ClassLoader classLoader, boolean defaultOnly) {
+   public ParserRegistry(ClassLoader classLoader, boolean defaultOnly, Properties properties) {
       this.parserMappings = CollectionFactory.makeConcurrentMap();
       this.cl = new WeakReference<>(classLoader);
+      this.properties = properties;
       Collection<ConfigurationParser> parsers = ServiceFinder.load(ConfigurationParser.class, cl.get(), ParserRegistry.class.getClassLoader());
       for (ConfigurationParser parser : parsers) {
 
@@ -113,10 +118,27 @@ public class ParserRegistry implements NamespaceMappingParser {
       }
    }
 
+   public ConfigurationBuilderHolder parseFile(File file) throws IOException {
+      InputStream is = new FileInputStream(file);
+      if (is == null) {
+         throw new FileNotFoundException(file.getAbsolutePath());
+      }
+      try {
+         return parse(is);
+      } finally {
+         Util.close(is);
+      }
+   }
+
    public ConfigurationBuilderHolder parse(String s) {
       return parse(new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8)));
    }
 
+   /**
+    * Parses the supplied {@link InputStream} returning a new {@link ConfigurationBuilderHolder}
+    * @param is an {@link InputStream} pointing to a configuration file
+    * @return a new {@link ConfigurationBuilderHolder} which contains the parsed configuration
+    */
    public ConfigurationBuilderHolder parse(InputStream is) {
       try {
          ConfigurationBuilderHolder holder = new ConfigurationBuilderHolder(cl.get());
@@ -130,19 +152,29 @@ public class ParserRegistry implements NamespaceMappingParser {
       }
    }
 
-   public void parse(InputStream is, ConfigurationBuilderHolder holder) throws XMLStreamException {
+   private void setIfSupported(final XMLInputFactory inputFactory, final String property, final Object value) {
+      if (inputFactory.isPropertySupported(property)) {
+         inputFactory.setProperty(property, value);
+      }
+   }
+
+   public ConfigurationBuilderHolder parse(InputStream is, ConfigurationBuilderHolder holder) throws XMLStreamException {
       BufferedInputStream input = new BufferedInputStream(is);
-      XMLStreamReader subReader = XMLInputFactory.newInstance().createXMLStreamReader(input);
-      XMLExtendedStreamReader reader = new XMLExtendedStreamReaderImpl(this, subReader);
+      XMLInputFactory factory = XMLInputFactory.newInstance();
+      setIfSupported(factory, XMLInputFactory.IS_VALIDATING, Boolean.FALSE);
+      setIfSupported(factory, XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
+      XMLStreamReader subReader = factory.createXMLStreamReader(input);
+      XMLExtendedStreamReader reader = new XMLExtendedStreamReaderImpl(this, subReader, properties);
       parse(reader, holder);
       subReader.close();
       // Fire all parsingComplete events if any
       for (ParserContext parserContext : holder.getParserContexts().values()) {
          parserContext.fireParsingComplete();
       }
+      return holder;
    }
 
-   public void parse(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder) throws XMLStreamException {
+   public ConfigurationBuilderHolder parse(XMLExtendedStreamReader reader, ConfigurationBuilderHolder holder) throws XMLStreamException {
       try {
          reader.require(START_DOCUMENT, null, null);
          reader.nextTag();
@@ -151,6 +183,7 @@ public class ParserRegistry implements NamespaceMappingParser {
          while (reader.next() != END_DOCUMENT) {
             // consume remaining parsing events
          }
+         return holder;
       } finally {
          try {
             reader.close();
@@ -170,6 +203,7 @@ public class ParserRegistry implements NamespaceMappingParser {
          int lastColon = uri.lastIndexOf(':');
          String baseUri = uri.substring(0,  lastColon + 1) + "*";
          parser = parserMappings.get(new QName(baseUri, name.getLocalPart()));
+         // See if we can get a default parser instead
          if (parser == null || !isSupportedNamespaceVersion(parser.namespace, uri.substring(lastColon + 1)))
             throw log.unsupportedConfiguration(name.getLocalPart(), name.getNamespaceURI());
       }

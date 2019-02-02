@@ -12,6 +12,7 @@ import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 import org.infinispan.Version;
 import org.infinispan.commons.equivalence.AnyEquivalence;
@@ -41,6 +42,8 @@ import org.infinispan.persistence.remote.configuration.ConnectionPoolConfigurati
 import org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration;
 import org.infinispan.persistence.rest.configuration.RestStoreConfiguration;
 import org.infinispan.persistence.rocksdb.configuration.RocksDBStoreConfiguration;
+import org.infinispan.remoting.transport.jgroups.FileJGroupsChannelConfigurator;
+import org.infinispan.remoting.transport.jgroups.JGroupsChannelConfigurator;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.tools.config.ConfigurationConverter;
 import org.infinispan.tools.customs.CustomDataContainer;
@@ -67,7 +70,9 @@ public class ConfigurationConverterTest extends AbstractInfinispanTest {
          baos.writeTo(outputStream);
       }
 
-      ParserRegistry parserRegistry = new ParserRegistry(Thread.currentThread().getContextClassLoader(), true);
+      Properties properties = new Properties();
+
+      ParserRegistry parserRegistry = new ParserRegistry(Thread.currentThread().getContextClassLoader(), true, properties);
       ConfigurationBuilderHolder holder = parserRegistry.parseFile(SERIALIZED_CONFIG_FILE_NAME);
       assertGlobalPropertiesConverted(holder);
       assertDefaultConfigApplied(holder);
@@ -99,8 +104,11 @@ public class ConfigurationConverterTest extends AbstractInfinispanTest {
       TypedProperties props = globalConfiguration.transport().properties();
       boolean stackVerified = false;
       for (String name: props.stringPropertyNames()) {
-         if (name.startsWith("stackFilePath-")) {
-            assertEquals("jgroups-udp.xml", props.get(name));
+         if ("stack".equals(name)) {
+            String stackName = props.getProperty(name);
+            JGroupsChannelConfigurator jGroupsStack = holder.getJGroupsStack(stackName);
+            assertEquals(FileJGroupsChannelConfigurator.class, jGroupsStack.getClass());
+            assertEquals("udp.xml", ((FileJGroupsChannelConfigurator)jGroupsStack).getPath());
             stackVerified = true;
          }
       }
@@ -487,7 +495,7 @@ public class ConfigurationConverterTest extends AbstractInfinispanTest {
       config = holder.getNamedConfigurationBuilders().get("syncRepl").build();
       assertTrue(config.clustering().cacheMode().isReplicated());
       assertTrue(config.clustering().cacheMode().isSynchronous());
-      assertEquals(15000, config.clustering().sync().replTimeout());
+      assertEquals(15000, config.clustering().remoteTimeout());
       assertEquals(15000, config.clustering().remoteTimeout());
       assertFalse(config.clustering().stateTransfer().fetchInMemoryState());
       assertTrue(config.clustering().stateTransfer().awaitInitialTransfer());
@@ -681,7 +689,7 @@ public class ConfigurationConverterTest extends AbstractInfinispanTest {
       config = holder.getNamedConfigurationBuilders().get("lockingWithJDBCLoader").build();
       assertTrue(config.clustering().cacheMode().isClustered());
       assertTrue(config.clustering().cacheMode().isSynchronous());
-      assertEquals(20000, config.clustering().sync().replTimeout());
+      assertEquals(20000, config.clustering().remoteTimeout());
       assertFalse(config.persistence().usingAsyncStore());
       assertTrue(config.persistence().passivation());
       assertTrue(config.persistence().usingStores());
@@ -696,7 +704,7 @@ public class ConfigurationConverterTest extends AbstractInfinispanTest {
       assertFalse(singleFileStoreConfiguration.shared());
       assertFalse(singleFileStoreConfiguration.async().enabled());
       assertTrue(singleFileStoreConfiguration.singletonStore().enabled());
-      assertEquals("${java.io.tmpdir}", singleFileStoreConfiguration.location());
+      assertEquals(System.getProperty("java.io.tmpdir"), singleFileStoreConfiguration.location());
 
       //--------------------------------------------------------------------------------------------
       config = holder.getNamedConfigurationBuilders().get("jdbcStringBasedWithConnectionPool").build();
@@ -813,7 +821,7 @@ public class ConfigurationConverterTest extends AbstractInfinispanTest {
       assertEquals(5000, remoteStoreConfiguration.connectionTimeout());
       assertFalse(remoteStoreConfiguration.hotRodWrapping());
       assertEquals("org.infinispan.commons.marshall.jboss.GenericJBossMarshaller", remoteStoreConfiguration.marshaller());
-      assertEquals("1.0", remoteStoreConfiguration.protocolVersion());
+      assertEquals("2.0", remoteStoreConfiguration.protocolVersion());
       assertTrue(remoteStoreConfiguration.rawValues());
       assertEquals("test", remoteStoreConfiguration.remoteCacheName());
       assertEquals(12500, remoteStoreConfiguration.socketTimeout());

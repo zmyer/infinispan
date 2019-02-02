@@ -34,6 +34,7 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.rpc.RpcManager;
+import org.infinispan.remoting.rpc.RpcOptions;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.ResponseCollector;
 import org.infinispan.server.hotrod.HotRodMultiNodeTest;
@@ -73,7 +74,7 @@ import org.testng.annotations.Test;
 public class TxReaperAndRecoveryTest extends HotRodMultiNodeTest {
 
    private static final AtomicInteger XID_GENERATOR = new AtomicInteger(1);
-   private final ControlledTimeService timeService = new ControlledTimeService(0);
+   private final ControlledTimeService timeService = new ControlledTimeService();
 
    private static DummyXid newXid() {
       return new DummyXid(XID_GENERATOR.getAndIncrement());
@@ -479,13 +480,15 @@ public class TxReaperAndRecoveryTest extends HotRodMultiNodeTest {
 
       @Override
       protected <T> CompletionStage<T> performRequest(Collection<Address> targets, ReplicableCommand command,
-            ResponseCollector<T> collector, Function<ResponseCollector<T>, CompletionStage<T>> invoker) {
+                                                      ResponseCollector<T> collector,
+                                                      Function<ResponseCollector<T>, CompletionStage<T>> invoker,
+                                                      RpcOptions rpcOptions) {
          if (command instanceof RollbackCommand) {
             queue.add("rollback");
          } else if (command instanceof PrepareCommand) {
             queue.add("prepare");
          }
-         return super.performRequest(targets, command, collector, invoker);
+         return super.performRequest(targets, command, collector, invoker, rpcOptions);
       }
    }
 

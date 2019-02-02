@@ -42,7 +42,7 @@ import org.testng.annotations.Test;
 public class RecoveryTest extends MultiHotRodServersTest {
 
    private static final AtomicInteger XID_GENERATOR = new AtomicInteger(1);
-   private final ControlledTimeService timeService = new ControlledTimeService(0);
+   private final ControlledTimeService timeService = new ControlledTimeService();
 
    private static DummyXid newXid() {
       return new DummyXid((byte) XID_GENERATOR.getAndIncrement());
@@ -162,9 +162,9 @@ public class RecoveryTest extends MultiHotRodServersTest {
 
    @Override
    protected org.infinispan.client.hotrod.configuration.ConfigurationBuilder createHotRodClientConfigurationBuilder(
-         int serverPort) {
+         String host, int serverPort) {
       org.infinispan.client.hotrod.configuration.ConfigurationBuilder clientBuilder = super
-            .createHotRodClientConfigurationBuilder(serverPort);
+            .createHotRodClientConfigurationBuilder(host, serverPort);
       clientBuilder.forceReturnValues(false);
       clientBuilder.transaction().transactionManagerLookup(RemoteTransactionManagerLookup.getInstance());
       clientBuilder.transaction().transactionMode(TransactionMode.FULL_XA);

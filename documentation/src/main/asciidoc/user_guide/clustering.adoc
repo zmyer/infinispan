@@ -342,6 +342,24 @@ With cross-site replication as well, the "site master" should only deal with for
 commands between sites and shouldn't handle user requests, so it makes sense to configure
 it with a capacity factor of `0`.
 
+===== Zero Capacity Node
+You might need to configure a whole node where the capacity factor is `0` for every cache,
+user defined caches and internal caches.
+When defining a zero capacity node, the node won't hold any data.
+This is how you declare a zero capacity node:
+
+[source,xml]
+----
+   <cache-container zero-capacity-node="true" />
+----
+
+[source, java]
+----
+new GlobalConfigurationBuilder().zeroCapacityNode(true);
+----
+However, note that this will be true for distributed caches only. If you are using replicated
+caches, the node will still keep a copy of the value. Use only distributed caches to make the
+best use of this feature.
 
 ===== Hashing Configuration
 This is how you configure hashing declaratively, via XML:

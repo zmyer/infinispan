@@ -54,3 +54,10 @@
 :Performance: {FullProductName} Performance Guide
 :ServerGuide: {FullProductName} Server Guide
 :Upgrading: Upgrading {FullProductName}
+
+//
+// Dependencies
+//
+:sb_starter: infinispan-spring-boot-starter-2.1.1.Final-redhat-00001
+:sb_starter_embedded: infinispan-spring-boot-starter-embedded-2.1.1.Final-redhat-00001
+:sb_starter_remote: infinispan-spring-boot-starter-remote-2.1.1.Final-redhat-00001

@@ -23,7 +23,6 @@
         <jdk.docroot>${jdk.root}/api</jdk.docroot>
         <javaee.docroot>https://docs.oracle.com/javaee/7/api</javaee.docroot>
         <skipTests>true</skipTests>
-        <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
         <defaults.file>${project.build.directory}/default-attributes.adoc</defaults.file>
         <asciidoctor.version>1.5.7</asciidoctor.version>
         <asciidoctorj.pdf.version>1.5.0-alpha.16</asciidoctorj.pdf.version>
@@ -46,10 +45,6 @@
         <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-cachestore-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-cachestore-leveldb</artifactId>
         </dependency>
         <dependency>
             <groupId>org.infinispan</groupId>
@@ -111,7 +106,6 @@
                                 <jar>infinispan-core</jar>
                                 <jar>infinispan-cachestore-jdbc</jar>
                                 <jar>infinispan-cachestore-jpa</jar>
-                                <jar>infinispan-cachestore-leveldb</jar>
                                 <jar>infinispan-cachestore-rocksdb</jar>
                                 <jar>infinispan-cachestore-remote</jar>
                                 <jar>infinispan-cachestore-rest</jar>

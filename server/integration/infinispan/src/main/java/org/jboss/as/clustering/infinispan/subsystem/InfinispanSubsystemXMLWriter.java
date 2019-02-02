@@ -23,9 +23,11 @@
 package org.jboss.as.clustering.infinispan.subsystem;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import javax.xml.stream.XMLStreamException;
 
@@ -523,6 +525,57 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
             writer.writeEndElement();
         }
 
+        ModelNode persistence = cache.get(ModelKeys.PERSISTENCE, ModelKeys.PERSISTENCE_NAME);
+        String[] attrStrings = Arrays.stream(PersistenceConfigurationResource.ATTRIBUTES).map(AttributeDefinition::getName).toArray(String[]::new);
+        boolean attrOrElementExists = Stream.of(attrStrings, PersistenceConfigurationResource.LOADER_KEYS, PersistenceConfigurationResource.STORE_KEYS)
+              .flatMap(Arrays::stream)
+              .anyMatch(persistence::hasDefined);
+
+        // If attribute exists, or a child element exists then we must write the persistence element
+        if (attrOrElementExists) {
+           writer.writeStartElement(ModelKeys.PERSISTENCE);
+           this.writeOptional(writer, Attribute.AVAILABILITY_INTERVAL, persistence, ModelKeys.AVAILABILITY_INTERVAL);
+           this.writeOptional(writer, Attribute.CONNECTION_ATTEMPTS, persistence, ModelKeys.CONNECTION_ATTEMPTS);
+           this.writeOptional(writer, Attribute.CONNECTION_INTERVAL, persistence, ModelKeys.CONNECTION_INTERVAL);
+           this.writeOptional(writer, Attribute.PASSIVATION, persistence, ModelKeys.PASSIVATION);
+           writePersistence(writer, persistence);
+           writer.writeEndElement();
+        }
+
+        if (cache.get(ModelKeys.INDEXING, ModelKeys.INDEXING_NAME).isDefined()) {
+           ModelNode indexing = cache.get(ModelKeys.INDEXING, ModelKeys.INDEXING_NAME);
+           writer.writeStartElement(Element.INDEXING.getLocalName());
+           IndexingConfigurationResource.INDEXING.marshallAsAttribute(indexing, writer);
+           IndexingConfigurationResource.INDEXING_AUTO_CONFIG.marshallAsAttribute(indexing, writer);
+           if (indexing.get(ModelKeys.INDEXED_ENTITIES).isDefined()) {
+              writer.writeStartElement(Element.INDEXED_ENTITIES.getLocalName());
+              IndexingConfigurationResource.INDEXED_ENTITIES.marshallAsElement(indexing, writer);
+              writer.writeEndElement();
+           }
+           IndexingConfigurationResource.INDEXING_PROPERTIES.marshallAsElement(indexing, writer);
+           writer.writeEndElement();
+        }
+
+        if (cache.get(ModelKeys.STATE_TRANSFER, ModelKeys.STATE_TRANSFER_NAME).isDefined()) {
+           ModelNode stateTransfer = cache.get(ModelKeys.STATE_TRANSFER, ModelKeys.STATE_TRANSFER_NAME);
+           writer.writeStartElement(Element.STATE_TRANSFER.getLocalName());
+           this.writeOptional(writer, Attribute.AWAIT_INITIAL_TRANSFER, stateTransfer, ModelKeys.AWAIT_INITIAL_TRANSFER);
+           this.writeOptional(writer, Attribute.ENABLED, stateTransfer, ModelKeys.ENABLED);
+           this.writeOptional(writer, Attribute.TIMEOUT, stateTransfer, ModelKeys.TIMEOUT);
+           this.writeOptional(writer, Attribute.CHUNK_SIZE, stateTransfer, ModelKeys.CHUNK_SIZE);
+           writer.writeEndElement();
+        }
+
+        if (cache.get(ModelKeys.PARTITION_HANDLING, ModelKeys.PARTITION_HANDLING_NAME).isDefined()) {
+           ModelNode partitionHandling = cache.get(ModelKeys.PARTITION_HANDLING, ModelKeys.PARTITION_HANDLING_NAME);
+           writer.writeStartElement(Element.PARTITION_HANDLING.getLocalName());
+           this.writeOptional(writer, Attribute.WHEN_SPLIT, partitionHandling, ModelKeys.WHEN_SPLIT);
+           this.writeOptional(writer, Attribute.MERGE_POLICY, partitionHandling, ModelKeys.MERGE_POLICY);
+           writer.writeEndElement();
+        }
+    }
+
+    private void writePersistence(XMLExtendedStreamWriter writer, ModelNode cache) throws XMLStreamException {
         if (cache.get(ModelKeys.LOADER).isDefined()) {
             for (Property clusterLoaderEntry : cache.get(ModelKeys.LOADER).asPropertyList()) {
                 ModelNode loader = clusterLoaderEntry.getValue();
@@ -721,38 +774,44 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
             }
         }
 
-        if (cache.get(ModelKeys.INDEXING, ModelKeys.INDEXING_NAME).isDefined()) {
-            ModelNode indexing = cache.get(ModelKeys.INDEXING, ModelKeys.INDEXING_NAME);
-            writer.writeStartElement(Element.INDEXING.getLocalName());
-            IndexingConfigurationResource.INDEXING.marshallAsAttribute(indexing, writer);
-            IndexingConfigurationResource.INDEXING_AUTO_CONFIG.marshallAsAttribute(indexing, writer);
-            if (indexing.get(ModelKeys.INDEXED_ENTITIES).isDefined()) {
-                writer.writeStartElement(Element.INDEXED_ENTITIES.getLocalName());
-                IndexingConfigurationResource.INDEXED_ENTITIES.marshallAsElement(indexing, writer);
+       if (cache.get(ModelKeys.SOFT_INDEX_FILE_STORE).isDefined()) {
+          for (Property softIndexEntry : cache.get(ModelKeys.SOFT_INDEX_FILE_STORE).asPropertyList()) {
+             ModelNode store = softIndexEntry.getValue();
+             writer.writeStartElement(Element.SOFT_INDEX_FILE_STORE.getLocalName());
+
+             ModelNode name = new ModelNode();
+             name.get(ModelKeys.NAME).set(softIndexEntry.getName());
+             SoftIndexConfigurationResource.NAME.marshallAsAttribute(name, false, writer);
+
+             this.writeOptional(writer, Attribute.COMPACTION_THRESHOLD, store, ModelKeys.COMPACTION_THRESHOLD);
+             this.writeOptional(writer, Attribute.OPEN_FILES_LIMIT, store, ModelKeys.OPEN_FILES_LIMIT);
+             this.writeStoreAttributes(writer, store);
+
+             if (store.hasDefined(ModelKeys.DATA)) {
+                ModelNode data = store.get(SoftIndexConfigurationResource.DATA_PATH.getKeyValuePair());
+                writer.writeStartElement(Element.DATA.getLocalName());
+                this.writeOptional(writer, Attribute.PATH, data, ModelKeys.PATH);
+                this.writeOptional(writer, Attribute.MAX_FILE_SIZE, data, ModelKeys.MAX_FILE_SIZE);
+                this.writeOptional(writer, Attribute.SYNC_WRITES, data, ModelKeys.SYNC_WRITES);
                 writer.writeEndElement();
-            }
-            IndexingConfigurationResource.INDEXING_PROPERTIES.marshallAsElement(indexing, writer);
-            writer.writeEndElement();
-        }
+             }
 
-        if (cache.get(ModelKeys.STATE_TRANSFER, ModelKeys.STATE_TRANSFER_NAME).isDefined()) {
-            ModelNode stateTransfer = cache.get(ModelKeys.STATE_TRANSFER, ModelKeys.STATE_TRANSFER_NAME);
-            writer.writeStartElement(Element.STATE_TRANSFER.getLocalName());
-            this.writeOptional(writer, Attribute.AWAIT_INITIAL_TRANSFER, stateTransfer, ModelKeys.AWAIT_INITIAL_TRANSFER);
-            this.writeOptional(writer, Attribute.ENABLED, stateTransfer, ModelKeys.ENABLED);
-            this.writeOptional(writer, Attribute.TIMEOUT, stateTransfer, ModelKeys.TIMEOUT);
-            this.writeOptional(writer, Attribute.CHUNK_SIZE, stateTransfer, ModelKeys.CHUNK_SIZE);
-            writer.writeEndElement();
-        }
+             if (store.hasDefined(ModelKeys.INDEX)) {
+                ModelNode index = store.get(SoftIndexConfigurationResource.INDEX_PATH.getKeyValuePair());
+                writer.writeStartElement(Element.INDEX.getLocalName());
+                this.writeOptional(writer, Attribute.PATH, index, ModelKeys.PATH);
+                this.writeOptional(writer, Attribute.MAX_NODE_SIZE, index, ModelKeys.MAX_NODE_SIZE);
+                this.writeOptional(writer, Attribute.MIN_NODE_SIZE, index, ModelKeys.MIN_NODE_SIZE);
+                this.writeOptional(writer, Attribute.MAX_QUEUE_LENGTH, index, ModelKeys.MAX_QUEUE_LENGTH);
+                this.writeOptional(writer, Attribute.SEGMENTS, index, ModelKeys.SEGMENTS);
+                writer.writeEndElement();
+             }
 
-        if (cache.get(ModelKeys.PARTITION_HANDLING, ModelKeys.PARTITION_HANDLING_NAME).isDefined()) {
-            ModelNode partitionHandling = cache.get(ModelKeys.PARTITION_HANDLING, ModelKeys.PARTITION_HANDLING_NAME);
-            writer.writeStartElement(Element.PARTITION_HANDLING.getLocalName());
-            this.writeOptional(writer, Attribute.WHEN_SPLIT, partitionHandling, ModelKeys.WHEN_SPLIT);
-            this.writeOptional(writer, Attribute.MERGE_POLICY, partitionHandling, ModelKeys.MERGE_POLICY);
-            writer.writeEndElement();
-        }
-
+             this.writeStoreWriteBehind(writer, store);
+             this.writeStoreProperties(writer, store);
+             writer.writeEndElement();
+          }
+       }
     }
 
     private void writeListAsAttribute(XMLExtendedStreamWriter writer, Attribute attribute, ModelNode node, String key) throws XMLStreamException {
@@ -814,7 +873,6 @@ public class InfinispanSubsystemXMLWriter implements XMLElementWriter<SubsystemM
     private void writeStoreAttributes(XMLExtendedStreamWriter writer, ModelNode store) throws XMLStreamException {
         this.writeOptional(writer, Attribute.SHARED, store, ModelKeys.SHARED);
         this.writeOptional(writer, Attribute.PRELOAD, store, ModelKeys.PRELOAD);
-        this.writeOptional(writer, Attribute.PASSIVATION, store, ModelKeys.PASSIVATION);
         this.writeOptional(writer, Attribute.FETCH_STATE, store, ModelKeys.FETCH_STATE);
         this.writeOptional(writer, Attribute.PURGE, store, ModelKeys.PURGE);
         this.writeOptional(writer, Attribute.READ_ONLY, store, ModelKeys.READ_ONLY);

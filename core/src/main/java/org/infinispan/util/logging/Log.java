@@ -16,13 +16,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-import javax.management.InstanceAlreadyExistsException;
-import javax.management.MBeanRegistrationException;
-import javax.management.ObjectName;
-import javax.naming.NamingException;
 import javax.transaction.Synchronization;
 import javax.transaction.TransactionManager;
-import javax.transaction.xa.XAException;
 import javax.transaction.xa.XAResource;
 import javax.xml.namespace.QName;
 
@@ -194,7 +189,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = WARN)
    @Message(value = "Unable to unregister Cache MBeans with pattern %s", id = 33)
-   void unableToUnregisterMBeanWithPattern(String pattern, @Cause MBeanRegistrationException e);
+   void unableToUnregisterMBeanWithPattern(String pattern, @Cause Throwable e);
 
    @Message(value = "There's already a JMX MBean instance %s already registered under " +
          "'%s' JMX domain. If you want to allow multiple instances configured " +
@@ -420,7 +415,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = ERROR)
    @Message(value = "Failed creating initial JNDI context", id = 105)
-   void failedToCreateInitialCtx(@Cause NamingException e);
+   void failedToCreateInitialCtx(@Cause Throwable e);
 
    @LogMessage(level = ERROR)
    @Message(value = "Found WebSphere TransactionManager factory class [%s], but " +
@@ -433,7 +428,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = ERROR)
    @Message(value = "Error enlisting resource", id = 108)
-   void errorEnlistingResource(@Cause XAException e);
+   void errorEnlistingResource(@Cause Throwable e);
 
    @LogMessage(level = ERROR)
    @Message(value = "beforeCompletion() failed for %s", id = 109)
@@ -449,7 +444,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = WARN)
    @Message(value = "exception while committing", id = 112)
-   void errorCommittingTx(@Cause XAException e);
+   void errorCommittingTx(@Cause Throwable e);
 
 //   @LogMessage(level = ERROR)
 //   @Message(value = "Unbinding of DummyTransactionManager failed", id = 113)
@@ -560,7 +555,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = INFO)
    @Message(value = "Could not register object with name: %s", id = 138)
-   void couldNotRegisterObjectName(ObjectName objectName, @Cause InstanceAlreadyExistsException e);
+   void couldNotRegisterObjectName(Object objectName, @Cause Throwable e);
 
 //   @LogMessage(level = WARN)
 //   @Message(value = "Infinispan configuration schema could not be resolved locally nor fetched from URL. Local path=%s, schema path=%s, schema URL=%s", id = 139)
@@ -740,8 +735,8 @@ public interface Log extends BasicLogger {
    void failedToRecoverClusterState(@Cause Throwable cause);
 
    @LogMessage(level = WARN)
-   @Message(value = "Error updating cluster member list", id = 197)
-   void errorUpdatingMembersList(@Cause Throwable cause);
+   @Message(value = "Error updating cluster member list for view %d, waiting for next view", id = 197)
+   void errorUpdatingMembersList(int viewId, @Cause Throwable cause);
 
    @LogMessage(level = INFO)
    @Message(value = "Unable to register MBeans for default cache", id = 198)
@@ -1232,6 +1227,9 @@ public interface Log extends BasicLogger {
 
    @Message(value = "Using a L1 lifespan of 0 or a negative value is meaningless", id = 351)
    CacheConfigurationException l1InvalidLifespan();
+
+   @Message(value = "Enabling the L1 cache is not supported when using EXCEPTION based eviction.", id = 352)
+   CacheConfigurationException l1NotValidWithExpirationEviction();
 
    @Message(value = "Cannot define both interceptor class (%s) and interceptor instance (%s)", id = 354)
    CacheConfigurationException interceptorClassAndInstanceDefined(String customInterceptorClassName, String customInterceptor);
@@ -1802,8 +1800,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Maximum startup attempts exceeded for store %s", id = 527)
    PersistenceException storeStartupAttemptsExceeded(String storeName, @Cause Throwable t);
 
-   @Message(value = "Cannot acquire lock as this partition is DEGRADED", id = 528)
-   AvailabilityException degradedModeLockUnavailable();
+   @Message(value = "Cannot acquire lock %s as this partition is DEGRADED", id = 528)
+   AvailabilityException degradedModeLockUnavailable(Object key);
 
    @Message(value = "Class '%s' blocked by deserialization white list. Include the class name in the server white list to authorize.", id = 529)
    CacheException errorDeserializing(String className);
@@ -1834,4 +1832,34 @@ public interface Log extends BasicLogger {
    @LogMessage(level = ERROR)
    @Message(value = "Error stopping module %s", id = 538)
    void moduleStopError(String module, @Cause Throwable t);
+
+   @Message(value = "Duplicate JGroups stack '%s'", id = 539)
+   CacheConfigurationException duplicateJGroupsStack(String name);
+
+   @Message(value = "No such JGroups stack '%s'", id = 540)
+   CacheConfigurationException missingJGroupsStack(String name);
+
+   @Message(value = "Error while trying to create a channel using the specified configuration '%s'", id = 541)
+   CacheConfigurationException errorCreatingChannelFromConfigurator(String configurator, @Cause Throwable t);
+
+   @Message(value = "Invalid parser scope. Expected '%s' but was '%s'", id = 542)
+   CacheConfigurationException invalidScope(String expected, String found);
+
+   @Message(value = "Cannot use stack.position when stack.combine is '%s'", id = 543)
+   CacheConfigurationException jgroupsNoStackPosition(String combineMode);
+
+   @Message(value = "The protocol '%s' does not exist in the base stack for operation '%s'", id = 544)
+   CacheConfigurationException jgroupsNoSuchProtocol(String protocolName, String combineMode);
+
+   @Message(value = "Inserting protocol '%s' in a JGroups stack requires the 'stack.position' attribute", id = 545)
+   CacheConfigurationException jgroupsInsertAfterRequiresPosition(String protocolName);
+
+   @Message(value = "Duplicate remote site '%s' in stack '%s'", id = 546)
+   CacheConfigurationException duplicateRemoteSite(String remoteSite, String name);
+
+   @Message(value = "JGroups stack '%s' declares remote sites but does not have a RELAY2 protocol", id = 547)
+   CacheConfigurationException jgroupsRemoteSitesWithoutRelay(String name);
+
+   @Message(value = "JGroups stack '%s' has a RELAY2 protocol without remote sites", id = 548)
+   CacheConfigurationException jgroupsRelayWithoutRemoteSites(String name);
 }

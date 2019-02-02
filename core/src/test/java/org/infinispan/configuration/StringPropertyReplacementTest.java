@@ -9,6 +9,8 @@ import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ParserRegistry;
+import org.infinispan.remoting.transport.jgroups.FileJGroupsChannelConfigurator;
+import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.annotations.Test;
@@ -24,12 +26,13 @@ import org.testng.annotations.Test;
 public class StringPropertyReplacementTest extends AbstractInfinispanTest {
 
    protected ConfigurationBuilderHolder parse() throws Exception {
-      System.setProperty("StringPropertyReplacementTest.asyncListenerMaxThreads","2");
-      System.setProperty("StringPropertyReplacementTest.persistenceMaxThreads","4");
-      System.setProperty("StringPropertyReplacementTest.IsolationLevel","READ_COMMITTED");
-      System.setProperty("StringPropertyReplacementTest.writeSkewCheck","true");
-      System.setProperty("StringPropertyReplacementTest.SyncCommitPhase","true");
-      ParserRegistry parserRegistry = new ParserRegistry(Thread.currentThread().getContextClassLoader(), true);
+      Properties properties = new Properties();
+      properties.setProperty("StringPropertyReplacementTest.asyncListenerMaxThreads","2");
+      properties.setProperty("StringPropertyReplacementTest.persistenceMaxThreads","4");
+      properties.setProperty("StringPropertyReplacementTest.IsolationLevel","READ_COMMITTED");
+      properties.setProperty("StringPropertyReplacementTest.writeSkewCheck","true");
+      properties.setProperty("StringPropertyReplacementTest.SyncCommitPhase","true");
+      ParserRegistry parserRegistry = new ParserRegistry(Thread.currentThread().getContextClassLoader(), true, properties);
       return parserRegistry.parseFile("configs/string-property-replaced.xml");
    }
 
@@ -44,8 +47,8 @@ public class StringPropertyReplacementTest extends AbstractInfinispanTest {
             gc.persistenceThreadPool().threadPoolFactory();
       assertEquals(4, persistenceThreadPool.maxThreads());
 
-      Properties transportProps = gc.transport().properties();
-      assertEquals("jgroups-tcp.xml", transportProps.get("configurationFile"));
+      FileJGroupsChannelConfigurator transportConfigurator = (FileJGroupsChannelConfigurator) gc.transport().properties().get(JGroupsTransport.CHANNEL_CONFIGURATOR);
+      assertEquals("stacks/tcp.xml", transportConfigurator.getPath());
 
       Configuration configuration = holder.getDefaultConfigurationBuilder().build();
       assertEquals(IsolationLevel.READ_COMMITTED, configuration.locking().isolationLevel());

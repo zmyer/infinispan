@@ -33,9 +33,9 @@ import org.infinispan.marshall.core.EncoderRegistry;
 import org.infinispan.protostream.SerializationContext;
 import org.infinispan.query.backend.QueryInterceptor;
 import org.infinispan.query.remote.ProtobufMetadataManager;
-import org.infinispan.query.remote.client.Externalizers.QueryRequestExternalizer;
 import org.infinispan.query.remote.client.ProtostreamSerializationContextInitializer;
-import org.infinispan.query.remote.client.QueryRequest;
+import org.infinispan.query.remote.client.impl.Externalizers.QueryRequestExternalizer;
+import org.infinispan.query.remote.client.impl.QueryRequest;
 import org.infinispan.query.remote.impl.dataconversion.ProtostreamBinaryTranscoder;
 import org.infinispan.query.remote.impl.dataconversion.ProtostreamJsonTranscoder;
 import org.infinispan.query.remote.impl.dataconversion.ProtostreamObjectTranscoder;
@@ -91,7 +91,9 @@ public final class LifecycleManager implements ModuleLifecycle {
       BasicComponentRegistry basicComponentRegistry = gcr.getComponent(BasicComponentRegistry.class);
       basicComponentRegistry.registerComponent(ProtobufMetadataManager.class, protobufMetadataManager, true)
                             .running();
-      registerProtobufMetadataManagerMBean(protobufMetadataManager, gcr);
+      if (globalCfg.globalJmxStatistics().enabled()) {
+         registerProtobufMetadataManagerMBean(protobufMetadataManager, gcr);
+      }
 
       SerializationContext serCtx = protobufMetadataManager.getSerializationContext();
       ClassLoader classLoader = globalCfg.classLoader();
@@ -141,7 +143,9 @@ public final class LifecycleManager implements ModuleLifecycle {
 
    @Override
    public void cacheManagerStopping(GlobalComponentRegistry gcr) {
-      unregisterProtobufMetadataManagerMBean(gcr);
+      if (gcr.getGlobalConfiguration().globalJmxStatistics().enabled()) {
+         unregisterProtobufMetadataManagerMBean(gcr);
+      }
    }
 
    private void unregisterProtobufMetadataManagerMBean(GlobalComponentRegistry gcr) {
@@ -168,6 +172,11 @@ public final class LifecycleManager implements ModuleLifecycle {
          ProtobufMetadataManagerImpl protobufMetadataManager =
             (ProtobufMetadataManagerImpl) gcr.getComponent(ProtobufMetadataManager.class).running();
          protobufMetadataManager.addCacheDependency(cacheName);
+
+         SerializationContext serCtx = protobufMetadataManager.getSerializationContext();
+         RemoteQueryManager remoteQueryManager = buildQueryManager(cfg, serCtx, cr);
+         cr.registerComponent(remoteQueryManager, RemoteQueryManager.class);
+
       }
    }
 
@@ -203,10 +212,6 @@ public final class LifecycleManager implements ModuleLifecycle {
          Configuration cfg = cr.getComponent(Configuration.class);
          ProtobufMetadataManagerImpl protobufMetadataManager = (ProtobufMetadataManagerImpl) cr.getGlobalComponentRegistry().getComponent(ProtobufMetadataManager.class);
          SerializationContext serCtx = protobufMetadataManager.getSerializationContext();
-
-         RemoteQueryManager remoteQueryManager = buildQueryManager(cfg, serCtx, cr);
-
-         cr.registerComponent(remoteQueryManager, RemoteQueryManager.class);
 
          if (cfg.indexing().index().isEnabled()) {
             log.debugf("Wrapping the SearchWorkCreator for indexed cache %s", cacheName);

@@ -61,12 +61,14 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
    private ScheduledExecutorService timeoutExecutor;
 
    private long transactionDataTimeout;
+   private boolean isScattered;
 
    private final InvocationFinallyFunction handleLocalGetKeysInGroupReturn = this::handleLocalGetKeysInGroupReturn;
 
    @Start
    public void start() {
       transactionDataTimeout = configuration.clustering().remoteTimeout();
+      isScattered = configuration.clustering().cacheMode().isScattered();
    }
 
    @Override
@@ -80,10 +82,8 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
             GetKeysInGroupCommand cmd = (GetKeysInGroupCommand) rCommand;
             final int commandTopologyId = cmd.getTopologyId();
             if (currentTopologyId() != commandTopologyId &&
-                  distributionManager.getCacheTopology().isWriteOwner(cmd.getGroupName())) {
-               throw new OutdatedTopologyException(
-                     "Cache topology changed while the command was executing: expected " +
-                           commandTopologyId + ", got " + currentTopologyId());
+                !distributionManager.getCacheTopology().isReadOwner(cmd.getGroupName())) {
+               throw OutdatedTopologyException.RETRY_NEXT_TOPOLOGY;
             }
          });
       }
@@ -182,43 +182,41 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
    protected <C extends VisitableCommand & TopologyAffectedCommand & FlagAffectedCommand> Object handleReadCommand(
          InvocationContext ctx, C command) {
       updateTopologyId(command);
+      if (isScattered) {
+         // In scattered mode read requests only go to the primary owner and cannot return a valid value
+         // if the primary owner has an older topology
+         if (command.getTopologyId() > distributionManager.getCacheTopology().getTopologyId()) {
+            Object invokeNext = asyncInvokeNext(ctx, command, stateTransferLock.transactionDataFuture(command.getTopologyId()));
+            return makeStage(invokeNext).andHandle(ctx, command, handleReadCommandReturn);
+         }
+      }
       return invokeNextAndHandle(ctx, command, handleReadCommandReturn);
    }
 
-   private Object handleExceptionOnCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Throwable t) throws Throwable {
+   private Object handleExceptionOnReadCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Throwable t) throws Throwable {
       Throwable ce = t;
       while (ce instanceof RemoteException) {
          ce = ce.getCause();
       }
       TopologyAffectedCommand cmd = (TopologyAffectedCommand) rCommand;
       final CacheTopology cacheTopology = distributionManager.getCacheTopology();
-      int currentTopologyId = cacheTopology == null ? -1 : cacheTopology.getTopologyId();
-      int requestedTopologyId = currentTopologyId;
+      int currentTopologyId = cacheTopology.getTopologyId();
+      int requestedTopologyId;
       if (ce instanceof SuspectException) {
-         if (trace)
-            getLog().tracef("Retrying command because of suspected node, current topology is %d: %s",
-                  currentTopologyId, rCommand);
-         // It is possible that current topology is actual but the view still contains a node that's about to leave;
-         // a broadcast to all nodes then can end with suspect exception, but we won't get any new topology.
-         // An example of this situation is when a node sends leave - topology can be installed before the new view.
-         // To prevent suspect exceptions use SYNCHRONOUS_IGNORE_LEAVERS response mode.
-         if (currentTopologyId == cmd.getTopologyId() && !cacheTopology.getActualMembers().contains(((SuspectException) ce).getSuspect())) {
-            throw new IllegalStateException("Command was not sent with SYNCHRONOUS_IGNORE_LEAVERS?");
-         }
+         // Read commands must ignore CacheNotFoundResponses
+         throw new IllegalStateException("Read commands must ignore leavers");
       } else if (ce instanceof OutdatedTopologyException) {
          logRetry(currentTopologyId, cmd);
-         // In scattered cache, when we have contacted the primary owner in current topology and this does respond
-         // with UnsureResponse we don't know about any other read owners; we need to wait for the next topology
-         if (cacheConfiguration.clustering().cacheMode().isScattered()) {
-            OutdatedTopologyException ote = (OutdatedTopologyException) ce;
-            if (ote.requestedTopologyId >= 0) {
-               requestedTopologyId = Math.max(currentTopologyId, ote.requestedTopologyId);
-            } else {
-               // OTEs without requested topology are a result of UnsureResponse/CNFR as OTE based on old command
-               // topology would be prone to race between SDI and STI
-               requestedTopologyId = Math.max(currentTopologyId, cmd.getTopologyId() + 1);
-            }
-         }
+
+         // We can get OTE for dist reads even if current topology information is sufficient:
+         // 1. A has topology in phase READ_ALL_WRITE_ALL, sends message to both old owner B and new C
+         // 2. C has old topology with READ_OLD_WRITE_ALL, so it responds with UnsureResponse
+         // 3. C updates topology to READ_ALL_WRITE_ALL, B updates to READ_NEW_WRITE_ALL
+         // 4. B receives the read, but it already can't read: responds with UnsureResponse
+         // 5. A receives two unsure responses and throws OTE
+         // However, now we are sure that we can immediately retry the request, because C must have updated its topology
+         OutdatedTopologyException ote = (OutdatedTopologyException) ce;
+         requestedTopologyId = cmd.getTopologyId() + ote.topologyIdDelta;
       } else if (ce instanceof AllOwnersLostException) {
          if (trace)
             getLog().tracef("All owners for command %s have been lost.", cmd);
@@ -227,27 +225,18 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
          // only based on the availability status.
          // In other cache modes, during partition the exception is already handled in PartitionHandlingInterceptor,
          // and if the handling is not enabled, we can't but return null.
-         if (cacheConfiguration.clustering().cacheMode().isScattered()) {
-            requestedTopologyId = Math.max(currentTopologyId, cmd.getTopologyId() + 1);
-         } else {
-            return rCommand.acceptVisitor(rCtx, LostDataVisitor.INSTANCE);
-         }
+         requestedTopologyId = cmd.getTopologyId() + 1;
       } else {
          throw t;
       }
-      // We can get OTE even if current topology information is sufficient:
-      // 1. A has topology in phase READ_ALL_WRITE_ALL, sends message to both old owner B and new C
-      // 2. C has old topology with READ_OLD_WRITE_ALL, so it responds with UnsureResponse
-      // 3. C updates topology to READ_ALL_WRITE_ALL, B updates to READ_NEW_WRITE_ALL
-      // 4. B receives the read, but it already can't read: responds with UnsureResponse
-      // 5. A receives two unsure responses and throws OTE
-      // However, now we are sure that we can immediately retry the request, because C must have updated its topology
-      cmd.setTopologyId(requestedTopologyId);
+      // Only retry once if currentTopologyId > cmdTopologyId + 1
+      int retryTopologyId = Math.max(currentTopologyId, requestedTopologyId);
+      cmd.setTopologyId(retryTopologyId);
       ((FlagAffectedCommand) cmd).addFlags(FlagBitSets.COMMAND_RETRY);
-      if (requestedTopologyId == currentTopologyId) {
+      if (retryTopologyId == currentTopologyId) {
          return invokeNextAndHandle(rCtx, rCommand, handleReadCommandReturn);
       } else {
-         return makeStage(asyncInvokeNext(rCtx, rCommand, stateTransferLock.transactionDataFuture(requestedTopologyId)))
+         return makeStage(asyncInvokeNext(rCtx, rCommand, stateTransferLock.transactionDataFuture(retryTopologyId)))
                .andHandle(rCtx, rCommand, handleReadCommandReturn);
       }
    }
@@ -258,18 +247,18 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
          return rv;
 
       // Separate method to allow for inlining of this method since exception should rarely occur
-      return handleExceptionOnCommandReturn(rCtx, rCommand, t);
+      return handleExceptionOnReadCommandReturn(rCtx, rCommand, t);
    }
 
    protected int getNewTopologyId(Throwable ce, int currentTopologyId, TopologyAffectedCommand command) {
-      int requestedTopologyId = command.getTopologyId() + 1;
+      int requestedDelta;
       if (ce instanceof OutdatedTopologyException) {
-         OutdatedTopologyException ote = (OutdatedTopologyException) ce;
-         if (ote.requestedTopologyId >= 0) {
-            requestedTopologyId = ote.requestedTopologyId;
-         }
+         requestedDelta = ((OutdatedTopologyException) ce).topologyIdDelta;
+      } else {
+         // SuspectException
+         requestedDelta = 1;
       }
-      return Math.max(currentTopologyId, requestedTopologyId);
+      return Math.max(currentTopologyId, command.getTopologyId() + requestedDelta);
    }
 
    @Override

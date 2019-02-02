@@ -38,6 +38,7 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.filter.CollectionKeyFilter;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.metadata.InternalMetadata;
+import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.SuccessfulResponse;
@@ -285,32 +286,31 @@ public class ScatteredStateConsumerImpl extends StateConsumerImpl {
          if (stProvider != null) {
             try {
                CollectionKeyFilter filter = new CollectionKeyFilter(new ReadOnlyDataContainerBackedKeySet(dataContainer));
-               AdvancedCacheLoader.CacheLoaderTask task = (me, taskContext) -> {
-                  int segmentId = keyPartitioner.getSegment(me.getKey());
-                  if (finalCompletedSegments.contains(segmentId)) {
-                     try {
-                        InternalMetadata metadata = me.getMetadata();
-                        if (metadata instanceof RemoteMetadata) {
-                           Address backup = ((RemoteMetadata) metadata).getAddress();
-                           retrieveEntry(me.getKey(), backup);
-                           for (Address member : cacheTopology.getActualMembers()) {
-                              if (!member.equals(backup)) {
-                                 invalidate(me.getKey(), metadata.version(), member);
+               Flowable.fromPublisher(stProvider.entryPublisher(filter::accept, true, true))
+                     .blockingForEach(me -> {
+                        int segmentId = keyPartitioner.getSegment(me.getKey());
+                        if (finalCompletedSegments.contains(segmentId)) {
+                           try {
+                              InternalMetadata metadata = me.getMetadata();
+                              if (metadata instanceof RemoteMetadata) {
+                                 Address backup = ((RemoteMetadata) metadata).getAddress();
+                                 retrieveEntry(me.getKey(), backup);
+                                 for (Address member : cacheTopology.getActualMembers()) {
+                                    if (!member.equals(backup)) {
+                                       invalidate(me.getKey(), metadata.version(), member);
+                                    }
+                                 }
+                              } else {
+                                 backupEntry(entryFactory.create(me.getKey(), me.getValue(), me.getMetadata()));
+                                 for (Address member : nonBackupAddresses) {
+                                    invalidate(me.getKey(), metadata.version(), member);
+                                 }
                               }
-                           }
-                        } else {
-                           backupEntry(entryFactory.create(me.getKey(), me.getValue(), me.getMetadata()));
-                           for (Address member : nonBackupAddresses) {
-                              invalidate(me.getKey(), metadata.version(), member);
+                           } catch (CacheException e) {
+                              log.failedLoadingValueFromCacheStore(me.getKey(), e);
                            }
                         }
-                     } catch (CacheException e) {
-                        log.failedLoadingValueFromCacheStore(me.getKey(), e);
-                     }
-                  }
-               };
-               Flowable.fromPublisher(stProvider.publishEntries(filter::accept, true, true))
-                     .blockingForEach(me -> task.processEntry(me, null));
+                     });
             } catch (CacheException e) {
                log.failedLoadingKeysFromCacheStore(e);
             }
@@ -508,8 +508,11 @@ public class ScatteredStateConsumerImpl extends StateConsumerImpl {
             // the GetAllCommand. We'll just avoid NPEs here: data is lost as > 1 nodes have left.
             continue;
          }
+         // CallInterceptor will preserve the timestamps if the metadata is an InternalMetadataImpl instance
+         InternalMetadataImpl metadata = new InternalMetadataImpl(icv);
          PutKeyValueCommand put = commandsFactory.buildPutKeyValueCommand(key, icv.getValue(),
-               keyPartitioner.getSegment(key), icv.getMetadata(), STATE_TRANSFER_FLAGS);
+                                                                          keyPartitioner.getSegment(key), metadata,
+                                                                          STATE_TRANSFER_FLAGS);
          try {
             interceptorChain.invoke(icf.createSingleKeyNonTxInvocationContext(), put);
          } catch (Exception e) {

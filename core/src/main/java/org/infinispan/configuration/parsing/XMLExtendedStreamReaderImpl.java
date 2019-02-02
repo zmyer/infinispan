@@ -2,12 +2,15 @@ package org.infinispan.configuration.parsing;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Properties;
 
 import javax.xml.namespace.NamespaceContext;
 import javax.xml.namespace.QName;
 import javax.xml.stream.Location;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+
+import static org.infinispan.commons.util.StringPropertyReplacer.replaceProperties;
 
 /**
  * @author <a href="mailto:david.lloyd@redhat.com">David M. Lloyd</a>
@@ -20,10 +23,12 @@ final class XMLExtendedStreamReaderImpl implements XMLExtendedStreamReader {
    private final XMLStreamReader streamReader;
    private final Deque<Context> stack = new ArrayDeque<Context>();
    private Schema schema;
+   private Properties properties;
 
-   XMLExtendedStreamReaderImpl(final NamespaceMappingParser parser, final XMLStreamReader streamReader) {
+   XMLExtendedStreamReaderImpl(final NamespaceMappingParser parser, final XMLStreamReader streamReader, Properties properties) {
       this.parser = parser;
       this.streamReader = streamReader;
+      this.properties = properties;
       stack.push(new Context());
    }
 
@@ -49,7 +54,11 @@ final class XMLExtendedStreamReaderImpl implements XMLExtendedStreamReader {
 
    @Override
    public Object getProperty(final String name) throws IllegalArgumentException {
-      return streamReader.getProperty(name);
+      if (properties.containsKey(name)) {
+         return properties.getProperty(name);
+      } else {
+         return streamReader.getProperty(name);
+      }
    }
 
    @Override
@@ -79,7 +88,8 @@ final class XMLExtendedStreamReaderImpl implements XMLExtendedStreamReader {
 
    @Override
    public String getElementText() throws XMLStreamException {
-      return streamReader.getElementText().trim();
+      String text = streamReader.getElementText().trim();
+      return replaceProperties(text, properties);
    }
 
    @Override
@@ -139,7 +149,8 @@ final class XMLExtendedStreamReaderImpl implements XMLExtendedStreamReader {
 
    @Override
    public String getAttributeValue(final String namespaceURI, final String localName) {
-      return streamReader.getAttributeValue(namespaceURI, localName);
+      String value = streamReader.getAttributeValue(namespaceURI, localName);
+      return replaceProperties(value, properties);
    }
 
    @Override
@@ -174,7 +185,8 @@ final class XMLExtendedStreamReaderImpl implements XMLExtendedStreamReader {
 
    @Override
    public String getAttributeValue(final int index) {
-      return streamReader.getAttributeValue(index);
+      String value = streamReader.getAttributeValue(index);
+      return replaceProperties(value, properties);
    }
 
    @Override
@@ -315,6 +327,11 @@ final class XMLExtendedStreamReaderImpl implements XMLExtendedStreamReader {
    @Override
    public void setSchema(Schema schema) {
       this.schema = schema;
+   }
+
+   @Override
+   public Properties getProperties() {
+      return properties;
    }
 
    // private members

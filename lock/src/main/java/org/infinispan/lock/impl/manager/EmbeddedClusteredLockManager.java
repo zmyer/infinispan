@@ -20,12 +20,13 @@ import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.lock.api.ClusteredLock;
 import org.infinispan.lock.api.ClusteredLockConfiguration;
 import org.infinispan.lock.api.ClusteredLockManager;
+import org.infinispan.lock.configuration.ClusteredLockManagerConfiguration;
 import org.infinispan.lock.exception.ClusteredLockException;
 import org.infinispan.lock.impl.entries.ClusteredLockKey;
 import org.infinispan.lock.impl.entries.ClusteredLockState;
 import org.infinispan.lock.impl.entries.ClusteredLockValue;
 import org.infinispan.lock.impl.lock.ClusteredLockImpl;
-import org.infinispan.lock.impl.log.Log;
+import org.infinispan.lock.logging.Log;
 import org.infinispan.util.ByteString;
 
 /**
@@ -48,13 +49,15 @@ public class EmbeddedClusteredLockManager implements ClusteredLockManager {
 
    private final ConcurrentHashMap<String, ClusteredLock> locks = new ConcurrentHashMap<>();
    private final CompletableFuture<CacheHolder> cacheHolderFuture;
+   private final ClusteredLockManagerConfiguration config;
    private ScheduledExecutorService scheduledExecutorService;
    private Executor executor;
 
    private AdvancedCache<ClusteredLockKey, ClusteredLockValue> cache;
 
-   public EmbeddedClusteredLockManager(CompletableFuture<CacheHolder> cacheHolderFuture) {
+   public EmbeddedClusteredLockManager(CompletableFuture<CacheHolder> cacheHolderFuture, ClusteredLockManagerConfiguration config) {
       this.cacheHolderFuture = cacheHolderFuture;
+      this.config = config;
    }
 
    @Inject
@@ -96,13 +99,18 @@ public class EmbeddedClusteredLockManager implements ClusteredLockManager {
          cache = extractCacheHolder(cacheHolderFuture).getClusteredLockCache();
       }
 
-      return locks.computeIfAbsent(name, k -> {
-         ClusteredLockKey key = new ClusteredLockKey(ByteString.fromString(k));
-         if (!cache.containsKey(key)) {
-            throw new ClusteredLockException(String.format("Lock does %s not exist", name));
-         }
-         return new ClusteredLockImpl(k, key, cache, this);
-      });
+      return locks.computeIfAbsent(name, this::createLock);
+   }
+
+   private ClusteredLockImpl createLock(String lockName) {
+      ClusteredLockConfiguration configuration = getConfiguration(lockName);
+      if (configuration == null) {
+         throw new ClusteredLockException(String.format("Lock does %s not exist", lockName));
+      }
+      ClusteredLockKey key = new ClusteredLockKey(ByteString.fromString(lockName));
+      cache.putIfAbsent(key, ClusteredLockValue.INITIAL_STATE);
+      ClusteredLockImpl lock = new ClusteredLockImpl(lockName, key, cache, this);
+      return lock;
    }
 
    @Override
@@ -112,9 +120,15 @@ public class EmbeddedClusteredLockManager implements ClusteredLockManager {
       }
       CacheHolder cacheHolder = extractCacheHolder(cacheHolderFuture);
       cache = cacheHolder.getClusteredLockCache();
+
       if (cache.containsKey(new ClusteredLockKey(ByteString.fromString(name)))) {
          return new ClusteredLockConfiguration();
       }
+
+      if (config.locks().containsKey(name)) {
+         return new ClusteredLockConfiguration();
+      }
+
       throw new ClusteredLockException(String.format("Lock does %s not exist", name));
    }
 
@@ -141,10 +155,14 @@ public class EmbeddedClusteredLockManager implements ClusteredLockManager {
       }
       CacheHolder cacheHolder = extractCacheHolder(cacheHolderFuture);
       AdvancedCache<ClusteredLockKey, ClusteredLockValue> clusteredLockCache = cacheHolder.getClusteredLockCache();
-      return clusteredLockCache.removeAsync(new ClusteredLockKey(ByteString.fromString(name))).thenApply(value -> {
+      ClusteredLockImpl clusteredLock = (ClusteredLockImpl) locks.get(name);
+      if (clusteredLock != null) {
+         clusteredLock.stop();
          locks.remove(name);
-         return value != null;
-      });
+      }
+      return clusteredLockCache.removeAsync(new ClusteredLockKey(ByteString.fromString(name))).thenApply(value ->
+            value != null
+      );
    }
 
    @ManagedOperation(
@@ -158,7 +176,11 @@ public class EmbeddedClusteredLockManager implements ClusteredLockManager {
       }
       CacheHolder cacheHolder = extractCacheHolder(cacheHolderFuture);
       AdvancedCache<ClusteredLockKey, ClusteredLockValue> clusteredLockCache = cacheHolder.getClusteredLockCache();
-      locks.remove(name);
+      ClusteredLockImpl clusteredLock = (ClusteredLockImpl) locks.get(name);
+      if (clusteredLock != null) {
+         clusteredLock.stop();
+         locks.remove(name);
+      }
       return clusteredLockCache.remove(new ClusteredLockKey(ByteString.fromString(name))) != null;
    }
 

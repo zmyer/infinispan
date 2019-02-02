@@ -82,6 +82,7 @@ import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.SuccessfulResponse;
 import org.infinispan.remoting.rpc.RpcManager;
@@ -248,7 +249,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
       InternalCacheValue maxValue = null;
       for (Response response : responseMap.values()) {
          if (!response.isSuccessful()) {
-            throw OutdatedTopologyException.INSTANCE;
+            throw OutdatedTopologyException.RETRY_NEXT_TOPOLOGY;
          }
          SuccessfulResponse successfulResponse = (SuccessfulResponse) response;
          InternalCacheValue icv = (InternalCacheValue) successfulResponse.getResponseValue();
@@ -260,7 +261,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
             // Clustered get is sent with SKIP_OWNERSHIP_CHECK and that means that the topology won't be checked.
             // PrefetchInterceptor on the remote node won't try to fetch the value either, so retrieving remote value
             // from another node is possible.
-            throw OutdatedTopologyException.INSTANCE;
+            throw OutdatedTopologyException.RETRY_NEXT_TOPOLOGY;
          }
          if (metadata != null && metadata.version() != null) {
             if (maxVersion == null || maxVersion.compareTo(metadata.version()) == InequalVersionComparisonResult.BEFORE) {
@@ -282,7 +283,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
       // from the main comman d correct.
       entryFactory.wrapExternalEntry(ctx, dataCommand.getKey(), maxValue.toInternalCacheEntry(dataCommand.getKey()), true, true);
       PutKeyValueCommand putKeyValueCommand = commandsFactory.buildPutKeyValueCommand(
-            dataCommand.getKey(), maxValue.getValue(), dataCommand.getSegment(), maxValue.getMetadata(), STATE_TRANSFER_FLAGS);
+         dataCommand.getKey(), maxValue.getValue(), dataCommand.getSegment(), new InternalMetadataImpl(maxValue), STATE_TRANSFER_FLAGS);
       putKeyValueCommand.setTopologyId(dataCommand.getTopologyId());
       return invokeNext(ctx, putKeyValueCommand);
    }
@@ -301,7 +302,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
          InternalCacheValue[] maxValues = new InternalCacheValue[keys.size()];
          for (Response response : responseMap.values()) {
             if (!response.isSuccessful()) {
-               throw OutdatedTopologyException.INSTANCE;
+               throw OutdatedTopologyException.RETRY_NEXT_TOPOLOGY;
             }
             InternalCacheValue[] values = (InternalCacheValue[]) ((SuccessfulResponse) response).getResponseValue();
             int i = 0;
@@ -310,7 +311,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
                   Metadata metadata = icv.getMetadata();
                   if (metadata instanceof RemoteMetadata) {
                      // not sure if this can happen, but let's be on the safe side
-                     throw OutdatedTopologyException.INSTANCE;
+                     throw OutdatedTopologyException.RETRY_NEXT_TOPOLOGY;
                   }
                   if (maxValues[i] == null) {
                      maxValues[i] = icv;

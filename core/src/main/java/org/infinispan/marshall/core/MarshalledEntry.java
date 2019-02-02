@@ -2,6 +2,7 @@ package org.infinispan.marshall.core;
 
 import org.infinispan.commons.io.ByteBuffer;
 import org.infinispan.metadata.InternalMetadata;
+import org.infinispan.persistence.spi.MarshallableEntry;
 
 /**
  * Defines an externally persisted entry. External stores that keep the data in serialised form should return an
@@ -12,36 +13,46 @@ import org.infinispan.metadata.InternalMetadata;
  *
  * @author Mircea Markus
  * @since 6.0
+ * @deprecated since 10.0, use {@link MarshallableEntry}
  */
-public interface MarshalledEntry<K, V> {
+@Deprecated
+public interface MarshalledEntry<K,V> extends MarshallableEntry<K,V> {
 
    /**
-    * Returns the key in serialized format.
+    * A simple wrapper to convert a {@link org.infinispan.persistence.spi.MarshallableEntry} to a {@link MarshalledEntry}
+    * for backwards compatibility.
     */
-   ByteBuffer getKeyBytes();
+   static <K,V> MarshalledEntry<K,V> wrap(MarshallableEntry<K,V> entry) {
+      return entry instanceof MarshalledEntry ? (MarshalledEntry<K,V>) entry : new MarshalledEntry<K, V>() {
+         @Override
+         public ByteBuffer getKeyBytes() {
+            return entry.getKeyBytes();
+         }
 
-   /**
-    * Returns the value in serialize format.
-    */
-   ByteBuffer getValueBytes();
+         @Override
+         public ByteBuffer getValueBytes() {
+            return entry.getValueBytes();
+         }
 
-   /**
-    * @return null if there's no metadata associated with the object (e.g. expiry info, version..)
-    */
-   ByteBuffer getMetadataBytes();
+         @Override
+         public ByteBuffer getMetadataBytes() {
+            return entry.getMetadataBytes();
+         }
 
-   /**
-    * Returns the same key as {@link #getKeyBytes()}, but unmarshalled.
-    */
-   K getKey();
+         @Override
+         public K getKey() {
+            return entry.getKey();
+         }
 
-   /**
-    * Returns the same value as {@link #getKeyBytes()}, but unmarshalled.
-    */
-   V getValue();
+         @Override
+         public V getValue() {
+            return entry.getValue();
+         }
 
-   /**
-    * @return might be null if there's no metadata associated with the object (e.g. expiry info, version..).
-    */
-   InternalMetadata getMetadata();
+         @Override
+         public InternalMetadata getMetadata() {
+            return entry.getMetadata();
+         }
+      };
+   }
 }

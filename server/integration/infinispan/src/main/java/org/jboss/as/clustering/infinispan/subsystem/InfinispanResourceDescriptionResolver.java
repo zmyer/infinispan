@@ -227,6 +227,13 @@ public class InfinispanResourceDescriptionResolver extends SubsystemResourceDesc
         sharedAttributeResolver.put(MetricKeys.REPLICATION_COUNT, "clustered-cache");
         sharedAttributeResolver.put(MetricKeys.REPLICATION_FAILURES, "clustered-cache");
         sharedAttributeResolver.put(MetricKeys.SUCCESS_RATIO, "clustered-cache");
+        sharedAttributeResolver.put(MetricKeys.AVG_XSITE_REPLICATION_TIME, "clustered-cache");
+        sharedAttributeResolver.put(MetricKeys.MIN_XSITE_REPLICATION_TIME, "clustered-cache");
+        sharedAttributeResolver.put(MetricKeys.MAX_XSITE_REPLICATION_TIME, "clustered-cache");
+        sharedAttributeResolver.put(MetricKeys.SYNC_XSITE_COUNT, "clustered-cache");
+        sharedAttributeResolver.put(MetricKeys.ASYNC_XSITE_COUNT, "clustered-cache");
+        sharedAttributeResolver.put(MetricKeys.ASYNC_XSITE_COUNT_RECEIVED, "clustered-cache");
+        sharedAttributeResolver.put(MetricKeys.SYNC_XSITE_COUNT_RECEIVED, "clustered-cache");
 
         // shared loader attributes
         sharedAttributeResolver.put(MetricKeys.ACTIVATIONS, "loader");
@@ -259,7 +266,9 @@ public class InfinispanResourceDescriptionResolver extends SubsystemResourceDesc
         sharedAttributeResolver.put(ModelKeys.WRITE_BEHIND, null);
         sharedAttributeResolver.put(ModelKeys.PROPERTY, null);
         sharedAttributeResolver.put(ModelKeys.ROCKSDB_STORE, null);
-        sharedAttributeResolver.put("thread-pool", null);
+        sharedAttributeResolver.put(ModelKeys.THREAD_POOL, null);
+        sharedAttributeResolver.put(ModelKeys.PERSISTENCE, null);
+        sharedAttributeResolver.put(ModelKeys.SOFT_INDEX_FILE_STORE, null);
 
         for (ClusteredCacheMetrics key : ClusteredCacheMetricsHandler.ClusteredCacheMetrics.values()) {
            sharedAttributeResolver.put(key.definition.getName(), "clustered-cache");

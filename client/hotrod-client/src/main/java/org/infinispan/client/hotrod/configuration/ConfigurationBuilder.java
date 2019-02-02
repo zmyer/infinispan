@@ -26,6 +26,7 @@ import org.infinispan.client.hotrod.impl.transport.TransportFactory;
 import org.infinispan.client.hotrod.impl.transport.tcp.RoundRobinBalancingStrategy;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
+import org.infinispan.client.hotrod.marshall.BytesOnlyMarshaller;
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
@@ -337,7 +338,10 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
          this.asyncExecutorFactory().factoryClass(typed.getProperty(ConfigurationProperties.ASYNC_EXECUTOR_FACTORY, null, true));
       }
       this.asyncExecutorFactory().withExecutorProperties(typed);
-      this.balancingStrategy(typed.getProperty(ConfigurationProperties.REQUEST_BALANCING_STRATEGY, balancingStrategyFactory.get().getClass().getName(), true));
+      String balancingStrategyClass = typed.getProperty(ConfigurationProperties.REQUEST_BALANCING_STRATEGY, null, true);
+      if (balancingStrategyClass != null) {
+         this.balancingStrategy(balancingStrategyClass);
+      }
       this.clientIntelligence(typed.getEnumProperty(ConfigurationProperties.CLIENT_INTELLIGENCE, ClientIntelligence.class, ClientIntelligence.getDefault(), true));
       this.connectionPool.withPoolProperties(typed);
       this.connectionTimeout(typed.getIntProperty(ConfigurationProperties.CONNECT_TIMEOUT, connectionTimeout, true));
@@ -347,9 +351,11 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
       for (int i = 0; i < consistentHashImpl.length; i++) {
          if (consistentHashImpl[i] != null) {
             int version = i + 1;
-            this.consistentHashImpl(version,
-                  typed.getProperty(ConfigurationProperties.HASH_FUNCTION_PREFIX + "." + version,
-                        consistentHashImpl[i].getName(), true));
+            String hashClassName = typed.getProperty(ConfigurationProperties.HASH_FUNCTION_PREFIX + "." + version,
+                  null, true);
+            if (hashClassName != null) {
+               this.consistentHashImpl(version, hashClassName);
+            }
          }
       }
       this.forceReturnValues(typed.getBooleanProperty(ConfigurationProperties.FORCE_RETURN_VALUES, forceReturnValues, true));
@@ -431,12 +437,26 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
       List<ClusterConfiguration> serverClusterConfigs = clusters.stream()
             .map(ClusterConfigurationBuilder::create).collect(Collectors.toList());
       if (marshaller == null && marshallerClass == null) {
-         marshallerClass = GenericJBossMarshaller.class;
+         handleNullMarshaller();
       }
 
       return new Configuration(asyncExecutorFactory.create(), balancingStrategyFactory, classLoader == null ? null : classLoader.get(), clientIntelligence, connectionPool.create(), connectionTimeout,
             consistentHashImpl, forceReturnValues, keySizeEstimate, marshaller, marshallerClass, protocolVersion, servers, socketTimeout, security.create(), tcpNoDelay, tcpKeepAlive,
             valueSizeEstimate, maxRetries, nearCache.create(), serverClusterConfigs, whiteListRegExs, batchSize, transaction.create(), statistics.create(), features);
+   }
+
+   // Method that handles default marshaller - needed as a placeholder
+   private void handleNullMarshaller() {
+      try {
+         // First see if marshalling is in the class path - if so we can use the generic marshaller
+         // We have to use the commons class loader, since marshalling is its dependency
+         Class.forName("org.jboss.marshalling.river.RiverMarshaller", false, Util.class.getClassLoader());
+         marshallerClass = GenericJBossMarshaller.class;
+      } catch (ClassNotFoundException e) {
+         log.tracef("JBoss Marshalling is not on the class path - Only byte[] instances can be marshalled");
+         // Otherwise we fall back to a byte[] only marshaller
+         marshaller = BytesOnlyMarshaller.INSTANCE;
+      }
    }
 
    @Override

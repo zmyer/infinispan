@@ -215,9 +215,8 @@ public class ComponentMetadataRepo {
                                         ReflectionUtil.getClassForName(parameter, classLoader);
                }
                methodMetadata.setParameterClasses(parameterClasses);
-
-               Method m = ReflectionUtil.findMethod(componentClass, methodMetadata.getMethodName(), parameterClasses);
-               methodMetadata.setMethod(m);
+               Method method = SecurityActions.getMethod(componentClass, methodMetadata, parameterClasses);
+               methodMetadata.setMethod(method);
             } catch (ClassNotFoundException e) {
                throw new CacheConfigurationException(e);
             }
@@ -235,8 +234,8 @@ public class ComponentMetadataRepo {
             while (!declarationClass.getName().equals(fieldMetadata.getFieldClassName())) {
                declarationClass = declarationClass.getSuperclass();
             }
-            Field f = ReflectionUtil.getField(fieldMetadata.getFieldName(), declarationClass);
-            fieldMetadata.setField(f);
+            Field field = SecurityActions.getField(fieldMetadata, declarationClass);
+            fieldMetadata.setField(field);
             fieldMetadata.setComponentClass(Util.loadClass(fieldMetadata.getComponentType(), classLoader));
          }
       }
@@ -246,7 +245,7 @@ public class ComponentMetadataRepo {
    private void initLifecycleMethods(ComponentMetadata.PrioritizedMethodMetadata[] prioritizedMethods,
          Class<?> componentClass) {
       for (ComponentMetadata.PrioritizedMethodMetadata prioritizedMethod : prioritizedMethods) {
-         Method method = ReflectionUtil.findMethod(componentClass, prioritizedMethod.getMethodName());
+         Method method = SecurityActions.getMethod(componentClass, prioritizedMethod);
          prioritizedMethod.setMethod(method);
       }
       if (prioritizedMethods.length > 1) {

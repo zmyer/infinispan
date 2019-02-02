@@ -181,7 +181,7 @@ public class CoordinatorStopTest extends MultipleCacheManagersTest {
       if (t3.getCacheTopology().getCurrentCH().locatePrimaryOwnerForSegment(0) == null) {
          ControlledRpcManager.BlockedRequest cancelStateTransfer = rpcManager2.expectCommand(StateRequestCommand.class,
                request -> assertEquals(StateRequestCommand.Type.CANCEL_STATE_TRANSFER, request.getType()));
-         cancelStateTransfer.sendWithoutResponses();
+         cancelStateTransfer.send();
       }
 
       // Wait until topology + 3 is installed
@@ -207,6 +207,8 @@ public class CoordinatorStopTest extends MultipleCacheManagersTest {
       oteBarrier.await(10, TimeUnit.SECONDS);
 
       assertEquals("value", future.get());
+      ((DelayedViewJGroupsTransport) transport1.getDelegate()).assertUnblocked();
+      ((DelayedViewJGroupsTransport) manager(2).getTransport()).assertUnblocked();
    }
 
    private void assertOwners(BlockedTopology t, boolean current, int segmentId, Address... address) {

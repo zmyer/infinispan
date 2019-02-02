@@ -5,10 +5,10 @@ import java.util.concurrent.ExecutorService;
 import org.infinispan.Cache;
 import org.infinispan.commons.io.ByteBufferFactory;
 import org.infinispan.commons.marshall.StreamingMarshaller;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.configuration.cache.StoreConfiguration;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.marshall.core.MarshalledEntryFactory;
-import org.infinispan.commons.time.TimeService;
 
 import net.jcip.annotations.ThreadSafe;
 
@@ -43,7 +43,9 @@ public interface InitializationContext {
 
    /**
     * To be used for building {@link org.infinispan.marshall.core.MarshalledEntry} objects.
+    * @deprecated since 10.0 please use {@link #getMarshallableEntryFactory()} instead
     */
+   @Deprecated
    MarshalledEntryFactory getMarshalledEntryFactory();
 
    /**
@@ -52,4 +54,9 @@ public interface InitializationContext {
     * @return the executor to be used with stores
     */
    ExecutorService getExecutor();
+
+   /**
+    * Should be used to build all {@link MarshallableEntry} objects.
+    */
+   MarshallableEntryFactory getMarshallableEntryFactory();
 }

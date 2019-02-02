@@ -167,7 +167,7 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
 
       XSiteStatePushCommand command = commandsFactory.buildXSiteStatePushCommand(privateBuffer, xSiteBackup.getTimeout());
       RetryOnFailureXSiteCommand remoteSite = RetryOnFailureXSiteCommand.newInstance(xSiteBackup, command, task.retryPolicy);
-      remoteSite.execute(rpcManager.getTransport(), task.waitTime, TimeUnit.MILLISECONDS);
+      remoteSite.execute(rpcManager, task.waitTime, TimeUnit.MILLISECONDS);
    }
 
    private class StatePushTask implements Runnable {
@@ -256,7 +256,7 @@ public class XSiteStateProviderImpl implements XSiteStateProvider {
                   log.debugf("[X-Site State Transfer - %s] start Persistence iteration", xSiteBackup.getSiteName());
                }
                try {
-                  Flowable.fromPublisher(stProvider.publishEntries(k -> shouldSendKey(k) && !dataContainer.containsKey(k), true, true))
+                  Flowable.fromPublisher(stProvider.entryPublisher(k -> shouldSendKey(k) && !dataContainer.containsKey(k), true, true))
                         .map(XSiteState::fromCacheLoader)
                         .takeUntil(l -> canceled)
                         .buffer(chunkSize <= 0 ? Integer.MAX_VALUE : chunkSize)

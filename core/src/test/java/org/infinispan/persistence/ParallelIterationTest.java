@@ -14,17 +14,13 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.metadata.InternalMetadata;
-import org.infinispan.persistence.manager.PersistenceManager;
-import org.infinispan.persistence.manager.PersistenceManagerImpl;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.persistence.spi.AdvancedCacheWriter;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
@@ -49,16 +45,12 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
    protected AdvancedCacheLoader<Object, Object> loader;
    protected AdvancedCacheWriter<Object, Object> writer;
    protected ExecutorService executor;
-   protected StreamingMarshaller sm;
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
       ConfigurationBuilder cb = getDefaultStandaloneCacheConfig(false);
       configurePersistence(cb);
       EmbeddedCacheManager manager = TestCacheManagerFactory.createCacheManager(cb);
-      ComponentRegistry componentRegistry = manager.getCache().getAdvancedCache().getComponentRegistry();
-      PersistenceManagerImpl pm = (PersistenceManagerImpl) componentRegistry.getComponent(PersistenceManager.class);
-      sm = pm.getMarshaller();
       loader = TestingUtil.getFirstLoader(manager.getCache());
       writer = TestingUtil.getFirstWriter(manager.getCache());
       executor = new ThreadPoolExecutor(NUM_THREADS, NUM_THREADS, 0L, TimeUnit.MILLISECONDS,
@@ -118,7 +110,7 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
       assertEquals(loader.size(), 0);
       insertData();
 
-      Flowable<MarshalledEntry<Object, Object>> flowable = Flowable.fromPublisher(loader.publishEntries(null, fetchValues, fetchMetadata));
+      Flowable<MarshallableEntry<Object, Object>> flowable = Flowable.fromPublisher(loader.entryPublisher(null, fetchValues, fetchMetadata));
       flowable = flowable.doOnNext(me -> {
          Integer key = unwrapKey(me.getKey());
          if (fetchValues) {
@@ -142,7 +134,7 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
          }
       });
 
-      TestSubscriber<MarshalledEntry<Object, Object>> subscriber = TestSubscriber.create(0);
+      TestSubscriber<MarshallableEntry<Object, Object>> subscriber = TestSubscriber.create(0);
       flowable.subscribe(subscriber);
 
       int batchsize = 10;
@@ -183,8 +175,8 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
 
    private void insertData() {
       for (int i = 0; i < NUM_ENTRIES; i++) {
-         MarshalledEntryImpl me = new MarshalledEntryImpl(wrapKey(i), wrapValue(i, i),
-               insertMetadata(i) ? TestingUtil.internalMetadata(lifespan(i), maxIdle(i)) : null, sm);
+         InternalMetadata im = insertMetadata(i) ? TestingUtil.internalMetadata(lifespan(i), maxIdle(i)) : null;
+         MarshallableEntry me = MarshalledEntryUtil.create(wrapKey(i), wrapValue(i, i), im, cache);
          writer.write(me);
       }
    }

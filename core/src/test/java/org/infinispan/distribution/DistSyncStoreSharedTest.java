@@ -1,6 +1,5 @@
 package org.infinispan.distribution;
 
-import static org.infinispan.test.TestingUtil.extractGlobalMarshaller;
 import static org.testng.AssertJUnit.assertEquals;
 
 import java.util.HashMap;
@@ -11,10 +10,10 @@ import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.CacheWriter;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.TestingUtil;
 import org.testng.annotations.AfterMethod;
@@ -141,7 +140,7 @@ public class DistSyncStoreSharedTest<D extends DistSyncStoreSharedTest> extends 
          CacheLoader store = TestingUtil.getFirstLoader(c);
          if (isFirstOwner(c, key)) {
             assertIsInContainerImmortal(c, key);
-            assert store.load(key).getValue().equals(value);
+            assert store.loadEntry(key).getValue().equals(value);
          }
       }
 
@@ -150,7 +149,7 @@ public class DistSyncStoreSharedTest<D extends DistSyncStoreSharedTest> extends 
       if (testRetVals) assert value.equals(retval);
       for (Cache<Object, String> c : caches) {
          CacheLoader store = TestingUtil.getFirstLoader(c);
-         MarshalledEntry me = store.load(key);
+         MarshallableEntry me = store.loadEntry(key);
          if (me == null) {
             assertNumberOfInvocations(store, "delete", 1);
             assertNumberOfInvocations(store, "write", 1);
@@ -168,7 +167,7 @@ public class DistSyncStoreSharedTest<D extends DistSyncStoreSharedTest> extends 
          CacheLoader store = TestingUtil.getFirstLoader(c);
          if (isFirstOwner(c, key)) {
             assertIsInContainerImmortal(c, key);
-            assert store.load(key).getValue().equals(value);
+            assert store.loadEntry(key).getValue().equals(value);
          }
       }
 
@@ -180,7 +179,7 @@ public class DistSyncStoreSharedTest<D extends DistSyncStoreSharedTest> extends 
          if (isFirstOwner(c, key)) {
             assertIsInContainerImmortal(c, key);
          }
-         assert store.load(key).getValue().equals(value2);
+         assert store.loadEntry(key).getValue().equals(value2);
          assertNumberOfInvocations(store, "write", 2);
       }
    }
@@ -225,7 +224,7 @@ public class DistSyncStoreSharedTest<D extends DistSyncStoreSharedTest> extends 
 
       // Simulate c3 was by itself and someone wrote a value that is now stale
       CacheWriter store = (CacheWriter) TestingUtil.getFirstLoader(c3);
-      store.write(new MarshalledEntryImpl(k, v2, null, extractGlobalMarshaller(c3.getCacheManager())));
+      store.write(MarshalledEntryUtil.create(k, v2, c3));
 
       c1.put(k, v1);
 

@@ -9,6 +9,8 @@ import java.util.Map;
 import java.util.PrimitiveIterator;
 import java.util.Properties;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
@@ -20,22 +22,25 @@ import org.infinispan.AdvancedCache;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.configuration.ConfiguredBy;
+import org.infinispan.commons.io.ByteBuffer;
+import org.infinispan.commons.io.ByteBufferImpl;
 import org.infinispan.commons.persistence.Store;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.AbstractIterator;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IntSets;
 import org.infinispan.commons.util.Util;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.ComponentRegistry;
-import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.metadata.InternalMetadata;
 import org.infinispan.persistence.internal.PersistenceUtil;
 import org.infinispan.persistence.rocksdb.configuration.RocksDBStoreConfiguration;
 import org.infinispan.persistence.rocksdb.logging.Log;
 import org.infinispan.persistence.spi.InitializationContext;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.spi.SegmentedAdvancedLoadWriteStore;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.util.KeyValuePair;
 import org.infinispan.util.logging.LogFactory;
 import org.reactivestreams.Publisher;
 import org.rocksdb.BuiltinComparator;
@@ -54,6 +59,7 @@ import org.rocksdb.WriteOptions;
 
 import io.reactivex.Flowable;
 import io.reactivex.Scheduler;
+import io.reactivex.internal.functions.Functions;
 import io.reactivex.schedulers.Schedulers;
 
 @Store
@@ -249,13 +255,13 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
     }
 
     @Override
-    public Publisher<MarshalledEntry<K, V>> publishEntries(Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata) {
+    public Publisher<MarshallableEntry<K, V>> entryPublisher(Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata) {
         return handler.publishEntries(null, filter, fetchValue, fetchMetadata);
     }
 
     @Override
-    public Publisher<MarshalledEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter,
-          boolean fetchValue, boolean fetchMetadata) {
+    public Publisher<MarshallableEntry<K, V>> entryPublisher(IntSet segments, Predicate<? super K> filter,
+                                                             boolean fetchValue, boolean fetchMetadata) {
         return handler.publishEntries(segments, filter, fetchValue, fetchMetadata);
     }
 
@@ -270,28 +276,28 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
     }
 
     @Override
-    public void write(MarshalledEntry entry) {
+    public void write(MarshallableEntry entry) {
         handler.write(-1, entry);
     }
 
     @Override
-    public void write(int segment, MarshalledEntry<? extends K, ? extends V> entry) {
+    public void write(int segment, MarshallableEntry<? extends K, ? extends V> entry) {
         handler.write(segment, entry);
     }
 
     @Override
-    public MarshalledEntry load(Object key) {
+    public MarshallableEntry loadEntry(Object key) {
         return handler.load(-1, key);
     }
 
     @Override
-    public MarshalledEntry<K, V> load(int segment, Object key) {
+    public MarshallableEntry<K, V> get(int segment, Object key) {
         return handler.load(segment, key);
     }
 
     @Override
-    public void writeBatch(Iterable<MarshalledEntry<? extends K, ? extends V>> marshalledEntries) {
-        handler.writeBatch(marshalledEntries);
+    public CompletionStage<Void> bulkUpdate(Publisher<MarshallableEntry<? extends K, ? extends V>> publisher) {
+        return handler.writeBatch(publisher);
     }
 
     @Override
@@ -367,10 +373,10 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
 
                         ColumnFamilyHandle handle = handler.getHandle(segment);
                         byte[] keyBytes = marshall(key);
-                        byte[] b = db.get(handle, keyBytes);
-                        if (b == null)
+                        byte[] valueBytes = db.get(handle, keyBytes);
+                        if (valueBytes == null)
                             continue;
-                        MarshalledEntry me = (MarshalledEntry) ctx.getMarshaller().objectFromByteBuffer(b);
+                        MarshallableEntry me = getMarshallableEntryFromValue(key, valueBytes);
                         // TODO race condition: the entry could be updated between the get and delete!
                         if (me.getMetadata() != null && me.getMetadata().isExpired(now)) {
                             // somewhat inefficient to FIND then REMOVE...
@@ -378,7 +384,6 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                             purgeListener.entryPurged(key);
                             count++;
                         }
-
                     }
                     if (count != 0)
                         log.debugf("purged %d entries", count);
@@ -416,7 +421,23 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         return ctx.getMarshaller().objectFromByteBuffer(bytes);
     }
 
-    private void addNewExpiry(MarshalledEntry entry) throws IOException {
+    private byte[] getMarshalledKeyValuePair(MarshallableEntry me) throws IOException, InterruptedException {
+        byte[] value = me.getValueBytes() != null ? me.getValueBytes().getBuf() : null;
+        byte[] meta = me.getMetadataBytes() != null ? me.getMetadataBytes().getBuf() : null;
+        KeyValuePair<byte[], byte[]> kvp = new KeyValuePair<>(value, meta);
+        return marshall(kvp);
+    }
+
+    private MarshallableEntry getMarshallableEntryFromValue(Object key, byte[] valueBytes) throws IOException, ClassNotFoundException {
+        KeyValuePair<byte[], byte[]> kvp = (KeyValuePair<byte[], byte[]>) unmarshall(valueBytes);
+        if (kvp == null) return null;
+
+        ByteBuffer value = kvp.getKey() != null ? new ByteBufferImpl(kvp.getKey()) : null;
+        ByteBuffer metadata = kvp.getValue() != null ? new ByteBufferImpl(kvp.getValue()) : null;
+        return ctx.getMarshallableEntryFactory().create(key, value, metadata);
+    }
+
+    private void addNewExpiry(MarshallableEntry entry) throws IOException {
         long expiry = entry.getMetadata().expiryTime();
         long maxIdle = entry.getMetadata().maxIdle();
         if (maxIdle > 0) {
@@ -497,7 +518,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         }
     }
 
-    private class RocksEntryIterator extends AbstractIterator<MarshalledEntry<K, V>> {
+    private class RocksEntryIterator extends AbstractIterator<MarshallableEntry<K, V>> {
         private final RocksIterator it;
         private final Predicate<? super K> filter;
         private final boolean fetchValue;
@@ -514,28 +535,27 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         }
 
         @Override
-        protected MarshalledEntry<K, V> getNext() {
-            MarshalledEntry<K, V> entry = null;
+        protected MarshallableEntry<K, V> getNext() {
+            MarshallableEntry<K, V> entry = null;
             try {
                 while (entry == null && it.isValid()) {
                     K key = (K) unmarshall(it.key());
                     if (filter == null || filter.test(key)) {
                         if (fetchValue || fetchMetadata) {
-                            MarshalledEntry<K, V> unmarshalledEntry = (MarshalledEntry<K, V>) unmarshall(
-                                  it.value());
+                            MarshallableEntry<K, V> unmarshalledEntry = getMarshallableEntryFromValue(key, it.value());
                             InternalMetadata metadata = unmarshalledEntry.getMetadata();
                             if (metadata == null || !metadata.isExpired(now)) {
                                 if (fetchMetadata && fetchValue) {
                                     entry = unmarshalledEntry;
                                 } else {
                                     // Sad that this has to make another entry!
-                                    entry = ctx.getMarshalledEntryFactory().newMarshalledEntry(key,
+                                    entry = ctx.getMarshallableEntryFactory().create(key,
                                           fetchValue ? unmarshalledEntry.getValue() : null,
                                           fetchMetadata ? unmarshalledEntry.getMetadata() : null);
                                 }
                             }
                         } else {
-                            entry = ctx.getMarshalledEntryFactory().newMarshalledEntry(key, (Object) null, null);
+                            entry = ctx.getMarshallableEntryFactory().create(key, (Object) null, null);
                         }
                     }
                     it.next();
@@ -583,25 +603,25 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             return load(segment, key) != null;
         }
 
-        MarshalledEntry<K, V> load(int segment, Object key) {
+        MarshallableEntry<K, V> load(int segment, Object key) {
             ColumnFamilyHandle handle = getHandle(segment, key);
             if (handle == null) {
                 log.trace("Ignoring load as handle is not currently configured");
                 return null;
             }
             try {
-                byte[] marshalledEntry;
+                byte[] kvpBytes;
                 semaphore.acquire();
                 try {
                     if (stopped) {
                         throw new PersistenceException("RocksDB is stopped");
                     }
 
-                    marshalledEntry = db.get(handle, marshall(key));
+                    kvpBytes = db.get(handle, marshall(key));
                 } finally {
                     semaphore.release();
                 }
-                MarshalledEntry me = (MarshalledEntry) unmarshall(marshalledEntry);
+                MarshallableEntry me = getMarshallableEntryFromValue(key, kvpBytes);
                 if (me == null) return null;
 
                 InternalMetadata meta = me.getMetadata();
@@ -614,7 +634,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             }
         }
 
-        void write(int segment, MarshalledEntry<? extends K, ? extends V> me) {
+        void write(int segment, MarshallableEntry<? extends K, ? extends V> me) {
             Object key = me.getKey();
             ColumnFamilyHandle handle = getHandle(segment, key);
             if (handle == null) {
@@ -623,14 +643,14 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             }
             try {
                 byte[] marshalledKey = marshall(key);
-                byte[] marshalledEntry = marshall(me);
+                byte[] marshalledValue = getMarshalledKeyValuePair(me);
                 semaphore.acquire();
                 try {
                     if (stopped) {
                         throw new PersistenceException("RocksDB is stopped");
                     }
 
-                    db.put(handle, marshalledKey, marshalledEntry);
+                    db.put(handle, marshalledKey, marshalledValue);
                 } finally {
                     semaphore.release();
                 }
@@ -664,34 +684,30 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             }
         }
 
-        void writeBatch(Iterable<MarshalledEntry<? extends K, ? extends V>> marshalledEntries) {
-            try {
-                int batchSize = 0;
-                WriteBatch batch = new WriteBatch();
-                for (MarshalledEntry entry : marshalledEntries) {
-                    Object key = entry.getKey();
-                    batch.put(getHandle(calculateSegment(key)), marshall(key), marshall(entry));
-                    batchSize++;
+        CompletableFuture<Void> writeBatch(Publisher<MarshallableEntry<? extends K, ? extends V>> publisher) {
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            Flowable.fromPublisher(publisher)
+                  .buffer(configuration.maxBatchSize())
+                  .doOnNext(entries -> {
+                      WriteBatch batch = new WriteBatch();
+                      for (MarshallableEntry<? extends K, ? extends V> entry : entries) {
+                          Object key = entry.getKey();
+                          batch.put(getHandle(calculateSegment(key)), marshall(key), getMarshalledKeyValuePair(entry));
+                      }
+                      writeBatch(batch);
 
-                    if (batchSize == configuration.maxBatchSize()) {
-                        batchSize = 0;
-                        writeBatch(batch);
-                        batch = new WriteBatch();
-                    }
-                }
-
-                if (batchSize != 0)
-                    writeBatch(batch);
-
-                // Add metadata only after batch has been written
-                for (MarshalledEntry entry : marshalledEntries) {
-                    InternalMetadata meta = entry.getMetadata();
-                    if (meta != null && meta.expiryTime() > -1)
-                        addNewExpiry(entry);
-                }
-            } catch (Exception e) {
-                throw new PersistenceException(e);
-            }
+                      // Add metadata only after batch has been written
+                      for (MarshallableEntry entry : entries) {
+                          InternalMetadata meta = entry.getMetadata();
+                          if (meta != null && meta.expiryTime() > -1)
+                              addNewExpiry(entry);
+                      }
+                  })
+                  .doOnError(e -> {
+                      throw new PersistenceException(e);
+                  })
+                  .subscribe(Functions.emptyConsumer(), future::completeExceptionally, () -> future.complete(null));
+            return future;
         }
 
         void deleteBatch(Iterable<Object> keys) {
@@ -720,8 +736,8 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
 
         abstract Publisher<K> publishKeys(IntSet segments, Predicate<? super K> filter);
 
-        abstract Publisher<MarshalledEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter,
-              boolean fetchValue, boolean fetchMetadata);
+        abstract Publisher<MarshallableEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter,
+                                                                   boolean fetchValue, boolean fetchMetadata);
 
         int size(IntSet segments) {
             long count = Flowable.fromPublisher(publishKeys(segments, null))
@@ -909,8 +925,8 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         }
 
         @Override
-        Publisher<MarshalledEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter, boolean fetchValue,
-              boolean fetchMetadata) {
+        Publisher<MarshallableEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter, boolean fetchValue,
+                                                          boolean fetchMetadata) {
             Predicate<? super K> combinedFilter = PersistenceUtil.combinePredicate(segments, keyPartitioner, filter);
             return publish(-1, it -> Flowable.fromIterable(() -> {
                 // Make sure this is taken when the iterator is created
@@ -1079,7 +1095,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         }
 
         @Override
-        Publisher<MarshalledEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata) {
+        Publisher<MarshallableEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata) {
             return PersistenceUtil.parallelizePublisher(segments == null ? IntSets.immutableRangeSet(handles.length()) : segments,
                   scheduler, i -> publish(i, it -> Flowable.fromIterable(() -> {
                       long now = timeService.wallClockTime();

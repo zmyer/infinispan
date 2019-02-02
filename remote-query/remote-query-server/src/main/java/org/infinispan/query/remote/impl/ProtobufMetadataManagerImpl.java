@@ -20,7 +20,7 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.interceptors.locking.PessimisticLockingInterceptor;
+import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
@@ -32,8 +32,8 @@ import org.infinispan.protostream.ProtobufUtil;
 import org.infinispan.protostream.SerializationContext;
 import org.infinispan.protostream.config.Configuration;
 import org.infinispan.query.remote.ProtobufMetadataManager;
-import org.infinispan.query.remote.client.MarshallerRegistration;
 import org.infinispan.query.remote.client.ProtobufMetadataManagerConstants;
+import org.infinispan.query.remote.client.impl.MarshallerRegistration;
 import org.infinispan.query.remote.impl.indexing.IndexingMetadata;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.registry.InternalCacheRegistry.Flag;
@@ -64,7 +64,7 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
       IndexingMetadata.configure(cfgBuilder);
       serCtx = ProtobufUtil.newSerializationContext(cfgBuilder.build());
       try {
-         MarshallerRegistration.registerMarshallers(serCtx);
+         MarshallerRegistration.init(serCtx);
       } catch (IOException | DescriptorParserException e) {
          throw new CacheException("Failed to initialise the Protobuf serialization context", e);
       }
@@ -82,12 +82,12 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
    }
 
    /**
-    * Starts the ___protobuf_metadata when needed. This method must be invoked for each cache that uses protobuf.
+    * Starts the ___protobuf_metadata cache when needed. This method must be invoked for each cache that uses protobuf.
     *
     * @param dependantCacheName the name of the cache depending on the protobuf metadata cache
     */
    protected void addCacheDependency(String dependantCacheName) {
-      protobufSchemaCache = (Cache<String, String>) SecurityActions.getCache(cacheManager, PROTOBUF_METADATA_CACHE_NAME).getAdvancedCache().withEncoding(IdentityEncoder.class);
+      protobufSchemaCache = (Cache<String, String>) SecurityActions.getUnwrappedCache(cacheManager, PROTOBUF_METADATA_CACHE_NAME).getAdvancedCache().withEncoding(IdentityEncoder.class);
       // add stop dependency
       cacheManager.addCacheDependency(dependantCacheName, ProtobufMetadataManagerImpl.PROTOBUF_METADATA_CACHE_NAME);
    }
@@ -111,12 +111,12 @@ public final class ProtobufMetadataManagerImpl implements ProtobufMetadataManage
             .transactionMode(TransactionMode.TRANSACTIONAL).invocationBatching().enable()
             .transaction().lockingMode(LockingMode.PESSIMISTIC)
             .locking().isolationLevel(IsolationLevel.READ_COMMITTED).useLockStriping(false)
-            .clustering().cacheMode(cacheMode).sync()
+            .clustering().cacheMode(cacheMode)
             .stateTransfer().fetchInMemoryState(true).awaitInitialTransfer(false)
             .encoding().key().mediaType(MediaType.APPLICATION_OBJECT_TYPE)
             .encoding().value().mediaType(MediaType.APPLICATION_OBJECT_TYPE)
             .customInterceptors().addInterceptor()
-            .interceptor(new ProtobufMetadataManagerInterceptor()).after(PessimisticLockingInterceptor.class);
+            .interceptor(new ProtobufMetadataManagerInterceptor()).after(EntryWrappingInterceptor.class);
       if (globalConfiguration.security().authorization().enabled()) {
          globalConfiguration.security().authorization().roles().put(SCHEMA_MANAGER_ROLE, new CacheRoleImpl(SCHEMA_MANAGER_ROLE, AuthorizationPermission.ALL));
          cfg.security().authorization().enable().role(SCHEMA_MANAGER_ROLE);

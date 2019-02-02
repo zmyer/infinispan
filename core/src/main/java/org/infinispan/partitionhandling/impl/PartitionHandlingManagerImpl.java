@@ -16,10 +16,12 @@ import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.EnumUtil;
+import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.container.versioning.EntryVersionsMap;
 import org.infinispan.context.impl.FlagBitSets;
+import org.infinispan.distribution.DistributionInfo;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.factories.KnownComponentNames;
@@ -52,7 +54,7 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
 
    @ComponentName(KnownComponentNames.CACHE_NAME)
    @Inject private String cacheName;
-   @Inject private DistributionManager distributionManager;
+   @Inject protected DistributionManager distributionManager;
    @Inject private LocalTopologyManager localTopologyManager;
    @Inject private CacheNotifier notifier;
    @Inject private CommandsFactory commandsFactory;
@@ -101,14 +103,14 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
 
    @Override
    public void checkClear() {
-      if (!isOperationAllowed(true, EMPTY_BIT_SET)) {
+      if (!isBulkOperationAllowed(true)) {
          throw log.clearDisallowedWhilePartitioned();
       }
    }
 
    @Override
    public void checkBulkRead() {
-      if (!isOperationAllowed(false, EMPTY_BIT_SET)) {
+      if (!isBulkOperationAllowed(false)) {
          throw log.partitionDegraded();
       }
    }
@@ -248,31 +250,90 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
          return;
 
       LocalizedCacheTopology cacheTopology = distributionManager.getCacheTopology();
-      Collection<Address> owners = cacheTopology.getDistribution(key).writeOwners();
-      List<Address> actualMembers = cacheTopology.getActualMembers();
-      boolean operationAllowed = isOperationAllowed(isWrite, flagBitSet);
-      if (!actualMembers.containsAll(owners) && !operationAllowed) {
+      boolean operationAllowed = isKeyOperationAllowed(isWrite, flagBitSet, cacheTopology, key);
+      if (!operationAllowed) {
          if (trace) log.tracef("Partition is in %s mode, PartitionHandling is set to to %s, access is not allowed for key %s", availabilityMode, partitionHandling, key);
-         throw log.degradedModeKeyUnavailable(key);
+         if (EnumUtil.containsAny(flagBitSet, FlagBitSets.FORCE_WRITE_LOCK)) {
+            throw log.degradedModeLockUnavailable(key);
+         } else {
+            throw log.degradedModeKeyUnavailable(key);
+         }
       } else {
          if (trace) log.tracef("Key %s is available.", key);
       }
    }
 
-   protected boolean isOperationAllowed(boolean isWrite, long flagBitSet) {
+   /**
+    * Check if a read/write operation is allowed with the actual members
+    *
+    * @param isWrite       {@code false} for reads, {@code true} for writes
+    * @param flagBitSet    reads with the {@link org.infinispan.context.Flag#FORCE_WRITE_LOCK} are treated as writes
+    * @param cacheTopology actual members, or {@code null} for bulk operations
+    * @param key           key owners, or {@code null} for bulk operations
+    * @return
+    */
+   protected boolean isKeyOperationAllowed(boolean isWrite, long flagBitSet,
+                                           LocalizedCacheTopology cacheTopology, Object key) {
       if (availabilityMode == AvailabilityMode.AVAILABLE)
          return true;
 
+      assert partitionHandling != PartitionHandling.ALLOW_READ_WRITES :
+         "ALLOW_READ_WRITES caches should always be AVAILABLE";
+
+      List<Address> actualMembers = cacheTopology.getActualMembers();
       switch (partitionHandling) {
-         case ALLOW_READ_WRITES:
-            return true;
          case ALLOW_READS:
-            if (EnumUtil.containsAny(flagBitSet, FlagBitSets.FORCE_WRITE_LOCK))
-               throw log.degradedModeLockUnavailable();
-            return !isWrite;
+            List<Address> owners = getOwners(cacheTopology, key, isWrite);
+            if (isWrite || EnumUtil.containsAny(flagBitSet, FlagBitSets.FORCE_WRITE_LOCK)) {
+               // Writes require all the owners to be in the local partition
+               return actualMembers.containsAll(owners);
+            } else {
+               // Reads only require one owner in the local partition
+               return InfinispanCollections.containsAny(actualMembers, owners);
+            }
+         case DENY_READ_WRITES:
+            // Both reads and writes require all the owners to be in the local partition
+            return actualMembers.containsAll(getOwners(cacheTopology, key, isWrite));
          default:
-            return false;
+            throw new IllegalStateException("Unsupported partition handling type: " + partitionHandling);
       }
+   }
+
+   protected boolean isBulkOperationAllowed(boolean isWrite) {
+      if (availabilityMode == AvailabilityMode.AVAILABLE)
+         return true;
+
+      assert partitionHandling != PartitionHandling.ALLOW_READ_WRITES :
+         "ALLOW_READ_WRITES caches should always be AVAILABLE";
+
+      // We reject bulk writes because some owners are always missing in degraded mode
+      if (isWrite)
+         return false;
+
+      switch (partitionHandling) {
+         case ALLOW_READS:
+            // Bulk reads require only one owner of each segment in the local partition
+            LocalizedCacheTopology cacheTopology = distributionManager.getCacheTopology();
+            for (int i = 0; i < cacheTopology.getReadConsistentHash().getNumSegments(); i++) {
+               List<Address> owners = cacheTopology.getSegmentDistribution(i).readOwners();
+               if (!InfinispanCollections.containsAny(owners, cacheTopology.getActualMembers()))
+                  return false;
+            }
+            return true;
+         case DENY_READ_WRITES:
+            return false;
+         default:
+            throw new IllegalStateException("Unsupported partition handling type: " + partitionHandling);
+      }
+   }
+
+   protected PartitionHandling getPartitionHandling() {
+      return partitionHandling;
+   }
+
+   private List<Address> getOwners(LocalizedCacheTopology cacheTopology, Object key, boolean isWrite) {
+      DistributionInfo distribution = cacheTopology.getDistribution(key);
+      return isWrite ? distribution.writeOwners() : distribution.readOwners();
    }
 
    private interface TransactionInfo {

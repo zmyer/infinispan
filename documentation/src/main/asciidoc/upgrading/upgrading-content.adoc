@@ -1,3 +1,33 @@
+== Upgrading from 9.4 to 10.0
+
+=== The JDBC PooledConnectionFactory now utilises Agroal
+Previously the JDBC PooledConnectionFactory provided c3p0 and HikariCP based connection pools.
+From 10.0 we only provide a PooledConnectionFactory based upon the link:https://agroal.github.io/[Agroal project].
+This means that it is no longer possible to utilise `c3p0.properties` and `hikari.properties` files to configure the pool,
+instead an agroal compatiblet properties file can be provided. See link:../user_guide/user_guide.html#jdbc_cache_store[Connection Management] for more details.
+
+=== RemoteCache Changes
+
+==== The getBulk methods have been removed
+The getBulk method is an expensive method as it requires holding all keys in memory at once and requires a possibly very single result
+to populate it. The new retrieveEntries, entrySet, keySet and values methods handle this in a much more efficient way. Therefore the
+getBulk methods have been removed in favor of them.
+
+=== Persistence changes
+
+* The CLI loader (`infinispan-persistence-cli`) has been removed.
+* The LevelDB store (`infinispan-cachestore-leveldb`) has been removed. Use the RocksDB store instead, as it is fully backwards compatible.
+
+=== Client/Server changes
+
+* The Hot Rod client and server only support protocol versions 2.0 and higher. Support for Hot Rod versions 1.0 to 1.3 has been dropped.
+
+=== Default JGroups stacks in the XML configuration
+
+With the introduction of inline XML JGroups stacks in the configuration, two default stacks are always enabled: `udp` and `tcp`.
+If you are declaring your own stacks with the same names, an exception reporting the conflict will be thrown. Simply rename
+your own configurations to avoid the conflict.
+
 == Upgrading from 9.3 to 9.4
 
 === Client/Server changes
@@ -235,8 +265,8 @@ into proper Stream operations that are able to be marshalled.
 Map reduce has been removed in favor of the new Streams feature which should provide more features and performance.
 There are no bridge classes to convert to the new streams and all references must be rewritten.
 
-=== Spring 3 support is now removed
-Spring 3 is no longer supported.
+=== Spring 4 support is now removed
+Spring 4 is no longer supported.
 
 === Function classes have moved packages
 The class `SerializableSupplier` has moved from the `org.infinispan.stream`
@@ -267,7 +297,7 @@ Here is an example:
    </dependency>
    <dependency>
       <groupId>org.infinispan</groupId>
-      <artifactId>infinispan-spring4-embedded</artifactId>
+      <artifactId>infinispan-spring5-embedded</artifactId>
    </dependency>
    <dependency>
       <groupId>org.springframework</groupId>
@@ -350,7 +380,7 @@ Map reduce is now deprecated and will be removed in Infinispan 9.  This is repla
 CDI module (GroupId:ArtifactId `org.infinispan:infinispan-cdi`) has been split into `org.infinispan:infinispan-cdi-embedded` and `org.infinispan:infinispan-cdi-remote`. Please make sure that you use proper artifact.
 
 ==== Spring module split
-Spring module (GroupId:ArtifactId `org.infinispan:infinispan-spring4`) has been split into `org.infinispan:infinispan-spring4-embedded` and `org.infinispan:infinispan-spring4-remote`. Please make sure that you use proper artifact.
+Spring module (GroupId:ArtifactId `org.infinispan:infinispan-spring5`) has been split into `org.infinispan:infinispan-spring5-embedded` and `org.infinispan:infinispan-spring5-remote`. Please make sure that you use proper artifact.
 
 === Spring 3 support is deprecated
 Spring 3 support (GroupId:ArtifactId `org.infinispan:infinispan-spring`) is deprecated. Please consider migrating into Spring 4 support.

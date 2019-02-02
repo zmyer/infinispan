@@ -21,7 +21,7 @@ import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.impl.BasicComponentRegistry;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.marshall.core.MarshalledEntryFactoryImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryFactoryImpl;
 import org.infinispan.persistence.InitializationContextImpl;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.test.AbstractInfinispanTest;
@@ -42,9 +42,10 @@ public class PersistenceMockUtil {
 
    public static InitializationContext createContext(String nodeName, Configuration configuration, StreamingMarshaller marshaller, TimeService timeService) {
       Cache mockCache = mockCache(nodeName, configuration, timeService);
+      MarshalledEntryFactoryImpl mef = new MarshalledEntryFactoryImpl(marshaller);
       return new InitializationContextImpl(configuration.persistence().stores().get(0), mockCache,
                                            SingleSegmentKeyPartitioner.getInstance(), marshaller,
-                                           timeService, new ByteBufferFactoryImpl(), new MarshalledEntryFactoryImpl(marshaller),
+                                           timeService, new ByteBufferFactoryImpl(), mef, mef,
                                            new WithinThreadExecutor());
    }
 

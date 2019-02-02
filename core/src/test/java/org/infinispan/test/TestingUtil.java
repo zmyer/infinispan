@@ -19,6 +19,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Proxy;
 import java.lang.reflect.Type;
 import java.security.Principal;
 import java.util.AbstractMap;
@@ -55,6 +56,7 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
 import javax.management.MBeanInfo;
 import javax.management.MBeanOperationInfo;
 import javax.management.MBeanParameterInfo;
@@ -64,7 +66,6 @@ import javax.security.auth.Subject;
 import javax.transaction.Status;
 import javax.transaction.TransactionManager;
 
-import io.reactivex.Flowable;
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.Version;
@@ -73,13 +74,13 @@ import org.infinispan.cache.impl.CacheImpl;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commons.api.Lifecycle;
+import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.util.ReflectionUtil;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
@@ -101,23 +102,21 @@ import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.base.CommandInterceptor;
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.manager.CacheContainer;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.GlobalMarshaller;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.metadata.impl.InternalMetadataImpl;
-import org.infinispan.persistence.PersistenceUtil;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.manager.PersistenceManagerImpl;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.CacheWriter;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
 import org.infinispan.remoting.transport.Address;
@@ -143,6 +142,8 @@ import org.jgroups.protocols.TP;
 import org.jgroups.protocols.pbcast.GMS;
 import org.jgroups.stack.ProtocolStack;
 import org.testng.AssertJUnit;
+
+import io.reactivex.Flowable;
 
 public class TestingUtil {
    private static final Log log = LogFactory.getLog(TestingUtil.class);
@@ -211,7 +212,14 @@ public class TestingUtil {
    }
 
    public static void installNewView(Stream<Address> members, EmbeddedCacheManager... where) {
-      installNewView(members, ecm -> ((JGroupsTransport) ecm.getTransport()).getChannel(), where);
+      installNewView(members, ecm -> {
+         Transport transport = ecm.getTransport();
+         while (Proxy.isProxyClass(transport.getClass())) {
+            // Unwrap proxies created by the StateSequencer
+            transport = extractField(extractField(transport, "h"), "wrappedInstance");
+         }
+         return ((JGroupsTransport) transport).getChannel();
+      }, where);
    }
 
    public static void installNewView(Stream<Address> members, Function<EmbeddedCacheManager, JChannel> channelRetriever, EmbeddedCacheManager... where) {
@@ -1199,6 +1207,11 @@ public class TestingUtil {
       return gcr.getComponent(componentType);
    }
 
+   public static <T> T extractGlobalComponent(CacheContainer cacheContainer, Class<T> componentType, String componentName) {
+      GlobalComponentRegistry gcr = extractGlobalComponentRegistry(cacheContainer);
+      return gcr.getComponent(componentType, componentName);
+   }
+
    public static TransactionManager getTransactionManager(Cache cache) {
       return cache == null ? null : cache.getAdvancedCache().getTransactionManager();
    }
@@ -1643,23 +1656,15 @@ public class TestingUtil {
       return (T) persistenceManager.getAllTxWriters().get(0);
    }
 
-   public static <K, V> Set<MarshalledEntry<K, V>> allEntries(AdvancedLoadWriteStore<K, V> cl, Predicate<K> filter) {
-      return Flowable.fromPublisher(cl.publishEntries(filter, true, true))
-            .collectInto(new HashSet<MarshalledEntry<K, V>>(), Set::add)
+   public static <K, V> Set<MarshallableEntry<K, V>> allEntries(AdvancedLoadWriteStore<K, V> cl, Predicate<K> filter) {
+      return Flowable.fromPublisher(cl.entryPublisher(filter, true, true))
+            .collectInto(new HashSet<MarshallableEntry<K, V>>(), Set::add)
             .blockingGet();
    }
 
-   public static <K, V> Set<MarshalledEntry<K, V>> allEntries(AdvancedLoadWriteStore<K, V> cl) {
+   public static <K, V> Set<MarshallableEntry<K, V>> allEntries(AdvancedLoadWriteStore<K, V> cl) {
       return allEntries(cl, null);
    }
-
-   public static <K, V> MarshalledEntry<K, V> marshalledEntry(InternalCacheEntry<K, V> ice, StreamingMarshaller marshaller) {
-      return new MarshalledEntryImpl<>(ice.getKey(), ice.getValue(), PersistenceUtil.internalMetadata(ice), marshaller);
-   }
-
-   /*public static MarshalledEntry marshalledEntry(InternalCacheValue icv, StreamingMarshaller marshaller) {
-      return marshalledEntry(icv, marshaller);
-   }*/
 
    public static void outputPropertiesToXML(String outputFile, Properties properties) throws IOException {
       Properties sorted = new Properties() {
@@ -1687,9 +1692,8 @@ public class TestingUtil {
    public static <K, V> void writeToAllStores(K key, V value, Cache<K, V> cache) {
       AdvancedCache<K, V> advCache = cache.getAdvancedCache();
       PersistenceManager pm = advCache.getComponentRegistry().getComponent(PersistenceManager.class);
-      StreamingMarshaller marshaller = extractGlobalMarshaller(advCache.getCacheManager());
       KeyPartitioner keyPartitioner = extractComponent(cache, KeyPartitioner.class);
-      pm.writeToAllNonTxStores(new MarshalledEntryImpl<>(key, value, null, marshaller), keyPartitioner.getSegment(key), BOTH);
+      pm.writeToAllNonTxStores(MarshalledEntryUtil.create(key, value, cache), keyPartitioner.getSegment(key), BOTH);
    }
 
    public static <K, V> boolean deleteFromAllStores(K key, Cache<K, V> cache) {
@@ -1973,5 +1977,4 @@ public class TestingUtil {
                 '}';
       }
    }
-
 }

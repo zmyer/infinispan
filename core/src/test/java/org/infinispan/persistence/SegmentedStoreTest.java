@@ -8,16 +8,12 @@ import java.util.function.Function;
 import java.util.function.ToIntFunction;
 
 import org.infinispan.Cache;
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IntSets;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.distribution.ch.KeyPartitioner;
-import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
-import org.infinispan.persistence.manager.PersistenceManager;
-import org.infinispan.persistence.manager.PersistenceManagerImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.persistence.spi.SegmentedAdvancedLoadWriteStore;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
@@ -39,7 +35,6 @@ public abstract class SegmentedStoreTest extends SingleCacheManagerTest {
 
    protected SegmentedAdvancedLoadWriteStore<Object, Object> store;
    protected Cache<Object, Object> cache;
-   protected StreamingMarshaller sm;
    protected Set<Integer>[] keys;
 
    @Override
@@ -48,9 +43,6 @@ public abstract class SegmentedStoreTest extends SingleCacheManagerTest {
       configurePersistence(cb);
       EmbeddedCacheManager manager = TestCacheManagerFactory.createCacheManager(cb);
       cache = manager.getCache();
-      ComponentRegistry componentRegistry = cache.getAdvancedCache().getComponentRegistry();
-      PersistenceManagerImpl pm = (PersistenceManagerImpl) componentRegistry.getComponent(PersistenceManager.class);
-      sm = pm.getMarshaller();
       store = TestingUtil.getFirstLoader(cache);
       keys = new Set[cache.getCacheConfiguration().clustering().hash().numSegments()];
       return manager;
@@ -67,19 +59,19 @@ public abstract class SegmentedStoreTest extends SingleCacheManagerTest {
    }
 
    public void testIterationWithValueAndMetadata() {
-      runTest(intSetFunctionFromIntSetPublisherFunction(is -> store.publishEntries(is, null, true, true)));
+      runTest(intSetFunctionFromIntSetPublisherFunction(is -> store.entryPublisher(is, null, true, true)));
    }
 
    public void testIterationWithValueWithoutMetadata() {
-      runTest(intSetFunctionFromIntSetPublisherFunction(is -> store.publishEntries(is, null, true, false)));
+      runTest(intSetFunctionFromIntSetPublisherFunction(is -> store.entryPublisher(is, null, true, false)));
    }
 
    public void testIterationWithoutValueWithMetadata() {
-      runTest(intSetFunctionFromIntSetPublisherFunction(is -> store.publishEntries(is, null, false, true)));
+      runTest(intSetFunctionFromIntSetPublisherFunction(is -> store.entryPublisher(is, null, false, true)));
    }
 
    public void testIterationWithoutValueOrMetadata() {
-      runTest(intSetFunctionFromIntSetPublisherFunction(is -> store.publishEntries(is, null, false, false)));
+      runTest(intSetFunctionFromIntSetPublisherFunction(is -> store.entryPublisher(is, null, false, false)));
    }
 
    // Provides a function that counts how many objects are in the returned publisher for the given IntSet
@@ -114,9 +106,7 @@ public abstract class SegmentedStoreTest extends SingleCacheManagerTest {
             keys[segment] = keysForSegment;
          }
          keysForSegment.add(i);
-
-         MarshalledEntryImpl me = new MarshalledEntryImpl<>(i, i, null, sm);
-         store.write(me);
+         store.write(MarshalledEntryUtil.create(i, i, cache));
       }
    }
 }

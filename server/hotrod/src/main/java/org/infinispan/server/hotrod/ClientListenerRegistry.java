@@ -28,6 +28,7 @@ import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.commons.util.Util;
 import org.infinispan.container.versioning.NumericVersion;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.threads.DefaultThreadFactory;
@@ -220,7 +221,7 @@ class ClientListenerRegistry {
    }
 
    private CacheEventConverter<byte[], byte[], byte[]> getConverter(DataConversion valueDataConversion, MediaType requestMedia, String name, Boolean useRawData, List<byte[]> binaryParams) {
-      CacheEventConverterFactory factory = findConverterFactory(name, cacheEventConverterFactories);
+      CacheEventConverterFactory factory = findFactory(name, cacheEventConverterFactories, "converter");
       List<?> params = unmarshallParams(valueDataConversion, requestMedia, binaryParams, useRawData);
       return factory.getConverter(params.toArray());
    }
@@ -229,13 +230,6 @@ class ClientListenerRegistry {
       CacheEventFilterConverterFactory factory = findFactory(name, cacheEventFilterConverterFactories, "converter");
       List<?> params = unmarshallParams(valueDataConversion, requestMedia, binaryParams, useRawData);
       return factory.getFilterConverter(params.toArray());
-   }
-
-   private CacheEventConverterFactory findConverterFactory(String name, ConcurrentMap<String, CacheEventConverterFactory> factories) {
-      if (name.equals("___eager-key-value-version-converter"))
-         return KeyValueVersionConverterFactory.SINGLETON;
-      else
-         return findFactory(name, factories, "converter");
    }
 
    private <T> T findFactory(String name, ConcurrentMap<String, T> factories, String factoryType) {
@@ -322,6 +316,15 @@ class ClientListenerRegistry {
          this.targetEventType = targetEventType;
       }
 
+      void init() {
+         ch.closeFuture().addListener(f ->
+               // Remove the listener, but do it on another thread pool to not exhaust the IO thread pool
+               addListenerExecutor.submit(() -> {
+                  log.debug("Channel disconnected, removing event sender listener for id: " + Util.printArray(listenerId));
+                  cache.removeListener(this);
+               }));
+      }
+
       boolean hasChannel(Channel channel) {
          return ch == channel;
       }
@@ -363,8 +366,7 @@ class ClientListenerRegistry {
 
       boolean isSendEvent(CacheEntryEvent<?, ?> event) {
          if (isChannelDisconnected()) {
-            log.debug("Channel disconnected, remove event sender listener");
-            event.getCache().removeListener(this);
+            log.debug("Channel disconnected, ignoring event");
             return false;
          } else {
             switch (event.getType()) {
@@ -479,11 +481,16 @@ class ClientListenerRegistry {
 
    private Object getClientEventSender(boolean includeState, Channel ch, VersionedEncoder encoder, byte version,
                                        Cache cache, byte[] listenerId, ClientEventType eventType, long messageId) {
+      BaseClientEventSender bces;
       if (includeState) {
-         return new StatefulClientEventSender(cache, ch, encoder, listenerId, version, eventType, messageId);
+         bces = new StatefulClientEventSender(cache, ch, encoder, listenerId, version, eventType, messageId);
       } else {
-         return new StatelessClientEventSender(cache, ch, encoder, listenerId, version, eventType);
+         bces = new StatelessClientEventSender(cache, ch, encoder, listenerId, version, eventType);
       }
+
+      bces.init();
+
+      return bces;
    }
 
 }

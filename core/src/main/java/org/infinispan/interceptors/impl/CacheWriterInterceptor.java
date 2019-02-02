@@ -36,7 +36,6 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.PersistenceConfiguration;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheValue;
@@ -55,9 +54,9 @@ import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
 import org.infinispan.persistence.manager.PersistenceManager;
+import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.persistence.spi.MarshallableEntryFactory;
 import org.infinispan.persistence.support.BatchModification;
 import org.infinispan.stream.StreamMarshalling;
 import org.infinispan.transaction.xa.GlobalTransaction;
@@ -83,8 +82,8 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
    @Inject protected PersistenceManager persistenceManager;
    @Inject private InternalEntryFactory entryFactory;
    @Inject private TransactionManager transactionManager;
-   @Inject private StreamingMarshaller marshaller;
    @Inject private KeyPartitioner keyPartitioner;
+   @Inject private MarshallableEntryFactory marshalledEntryFactory;
 
    PersistenceConfiguration loaderConfig = null;
    final AtomicLong cacheStores = new AtomicLong(0);
@@ -262,7 +261,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       if (getStatisticsEnabled())
          cacheStores.addAndGet(cmd.getMap().size());
 
-      Iterable<MarshalledEntry> iterable = () -> cmd.getMap().keySet().stream()
+      Iterable<MarshallableEntry> iterable = () -> cmd.getMap().keySet().stream()
             .filter(filter)
             .map(key -> marshalledEntry(ctx, key))
             .filter(StreamMarshalling.nonNullPredicate())
@@ -398,7 +397,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       if (trace) getLog().tracef("Cache loader modification list: %s", modifications);
 
 
-      TxBatchUpdater modsBuilder = TxBatchUpdater.createNonTxStoreUpdater(this, persistenceManager, entryFactory, marshaller);
+      TxBatchUpdater modsBuilder = TxBatchUpdater.createNonTxStoreUpdater(this, persistenceManager, entryFactory, marshalledEntryFactory);
       for (WriteCommand cacheCommand : modifications) {
          if (isStoreEnabled(cacheCommand)) {
             cacheCommand.acceptVisitor(ctx, modsBuilder);
@@ -407,13 +406,13 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       BatchModification sharedMods = modsBuilder.getModifications();
       BatchModification nonSharedMods = modsBuilder.getNonSharedModifications();
 
-      persistenceManager.writeBatchToAllNonTxStores(sharedMods.getMarshalledEntries(), BOTH, 0);
-      persistenceManager.writeBatchToAllNonTxStores(nonSharedMods.getMarshalledEntries(), PRIVATE, 0);
+      persistenceManager.writeBatchToAllNonTxStores(sharedMods.getMarshallableEntries(), BOTH, 0);
+      persistenceManager.writeBatchToAllNonTxStores(nonSharedMods.getMarshallableEntries(), PRIVATE, 0);
       persistenceManager.deleteBatchFromAllNonTxStores(sharedMods.getKeysToRemove(), BOTH, 0);
       persistenceManager.deleteBatchFromAllNonTxStores(nonSharedMods.getKeysToRemove(), PRIVATE, 0);
 
       if (trace) {
-         getLog().tracef("Writing shared batch with #entries=%d and non-shared batch with #entries=%d", sharedMods.getMarshalledEntries().size(), nonSharedMods.getMarshalledEntries().size());
+         getLog().tracef("Writing shared batch with #entries=%d and non-shared batch with #entries=%d", sharedMods.getMarshallableEntries().size(), nonSharedMods.getMarshallableEntries().size());
          getLog().tracef("Deleting shared batch with #entries=%d and non-shared batch with #entries=%d", sharedMods.getKeysToRemove().size(), nonSharedMods.getKeysToRemove().size());
       }
 
@@ -462,7 +461,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
    }
 
    void storeEntry(InvocationContext ctx, Object key, FlagAffectedCommand command) {
-      MarshalledEntry entry = marshalledEntry(ctx, key);
+      MarshallableEntry entry = marshalledEntry(ctx, key);
       if (entry != null) {
          persistenceManager.writeToAllNonTxStores(entry, SegmentSpecificCommand.extractSegment(command, key, keyPartitioner),
                skipSharedStores(ctx, key, command) ? PRIVATE : BOTH, command.getFlagsBitSet());
@@ -470,9 +469,9 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       }
    }
 
-   MarshalledEntry marshalledEntry(InvocationContext ctx, Object key) {
+   MarshallableEntry marshalledEntry(InvocationContext ctx, Object key) {
       InternalCacheValue sv = entryFactory.getValueFromCtx(key, ctx);
-      return sv != null ? new MarshalledEntryImpl(key, sv.getValue(), internalMetadata(sv), marshaller) : null;
+      return sv != null ? marshalledEntryFactory.create(key, sv.getValue(), internalMetadata(sv)) : null;
    }
 
    protected boolean skipSharedStores(InvocationContext ctx, Object key, FlagAffectedCommand command) {

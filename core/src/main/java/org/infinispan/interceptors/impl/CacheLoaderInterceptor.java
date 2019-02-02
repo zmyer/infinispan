@@ -33,6 +33,7 @@ import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.KeySetCommand;
+import org.infinispan.commands.read.SizeCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.write.ComputeCommand;
 import org.infinispan.commands.write.ComputeIfAbsentCommand;
@@ -43,6 +44,7 @@ import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CloseableSpliterator;
+import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.commons.util.IteratorMapper;
 import org.infinispan.commons.util.RemovableCloseableIterator;
 import org.infinispan.container.entries.CacheEntry;
@@ -65,7 +67,7 @@ import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
 import org.infinispan.jmx.annotations.Parameter;
-import org.infinispan.marshall.core.MarshalledEntry;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.persistence.internal.PersistenceUtil;
 import org.infinispan.persistence.manager.PersistenceManager;
@@ -84,6 +86,9 @@ import org.infinispan.util.logging.LogFactory;
 import org.reactivestreams.Publisher;
 
 import io.reactivex.Flowable;
+
+import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.SHARED;
+import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.NOT_ASYNC;
 
 /**
  * @since 9.0
@@ -202,7 +207,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
       final Predicate<? super K> keyFilter = new GroupFilter<>(command.getGroupName(), groupManager)
                                                 .and(k -> ctx.lookupEntry(k) == null);
 
-      Publisher<MarshalledEntry<K, V>> publisher = persistenceManager.publishEntries(keyFilter, true, false,
+      Publisher<MarshallableEntry<K, V>> publisher = persistenceManager.publishEntries(keyFilter, true, false,
             PersistenceManager.AccessMode.BOTH);
       Flowable.fromPublisher(publisher)
             .map(me -> PersistenceUtil.convert(me, iceFactory))
@@ -274,6 +279,23 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
    @Override
    public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) throws Throwable {
       return visitManyDataCommand(ctx, command, command.getAffectedKeys());
+   }
+
+   @Override
+   public Object visitSizeCommand(InvocationContext ctx, SizeCommand command) throws Throwable {
+      int size = trySizeOptimization(command.getFlagsBitSet());
+      if (size >= 0) {
+         return size;
+      }
+      return super.visitSizeCommand(ctx, command);
+   }
+
+   private int trySizeOptimization(long flagBitSet) {
+      if (EnumUtil.containsAny(flagBitSet, FlagBitSets.SKIP_CACHE_LOAD | FlagBitSets.SKIP_SIZE_OPTIMIZATION)) {
+         return -1;
+      }
+      // Get the size from any shared store that isn't async
+      return persistenceManager.size(SHARED.and(NOT_ASYNC));
    }
 
    protected final boolean isConditional(WriteCommand cmd) {
@@ -475,9 +497,11 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
 
    private abstract class AbstractLoaderSet<R> extends AbstractSet<R> implements CacheSet<R> {
       protected final CacheSet<R> cacheSet;
+      protected final long commandFlagBitSet;
 
-      AbstractLoaderSet(CacheSet<R> cacheSet) {
+      AbstractLoaderSet(CacheSet<R> cacheSet, long commandFlagBitSet) {
          this.cacheSet = cacheSet;
+         this.commandFlagBitSet = commandFlagBitSet;
       }
 
       protected abstract CloseableIterator<R> innerIterator();
@@ -495,11 +519,16 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
 
       @Override
       public int size() {
-         long size = stream().count();
-         if (size > Integer.MAX_VALUE) {
+         int size = trySizeOptimization(commandFlagBitSet);
+         if (size >= 0) {
+            return size;
+         }
+
+         long longSize = stream().count();
+         if (longSize > Integer.MAX_VALUE) {
             return Integer.MAX_VALUE;
          }
-         return (int) size;
+         return (int) longSize;
       }
 
       @Override
@@ -533,7 +562,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
       private final boolean isRemoteIteration;
 
       public WrappedEntrySet(EntrySetCommand command, boolean isRemoteIteration, CacheSet<CacheEntry<K, V>> entrySet) {
-         super(entrySet);
+         super(entrySet, command.getFlagsBitSet());
          this.cache = Caches.getCacheWithFlags(CacheLoaderInterceptor.this.cache.wired(), command);
          this.isRemoteIteration = isRemoteIteration;
       }
@@ -570,7 +599,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
             seenKeys.add(e.getKey());
             return e;
          });
-         Flowable<MarshalledEntry<K, V>> flowable = Flowable.fromPublisher(persistenceManager.publishEntries(
+         Flowable<MarshallableEntry<K, V>> flowable = Flowable.fromPublisher(persistenceManager.publishEntries(
                k -> !seenKeys.contains(k), true, true, PersistenceManager.AccessMode.BOTH));
          Publisher<CacheEntry<K, V>> publisher = flowable
                .map(me -> (CacheEntry<K, V>) PersistenceUtil.convert(me, iceFactory));
@@ -592,7 +621,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
             if (!contains) {
                Map.Entry<K, V> entry = toEntry(o);
                if (entry != null) {
-                  MarshalledEntry<K, V> me = persistenceManager.loadFromAllStores(entry.getKey(), true, true);
+                  MarshallableEntry<K, V> me = persistenceManager.loadFromAllStores(entry.getKey(), true, true);
                   if (me != null) {
                      contains = entry.getValue().equals(me.getValue());
                   }
@@ -615,7 +644,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
       private final boolean isRemoteIteration;
 
       public WrappedKeySet(KeySetCommand command, boolean isRemoteIteration, CacheSet<K> keySet) {
-         super(keySet);
+         super(keySet, command.getFlagsBitSet());
          this.cache = Caches.getCacheWithFlags(CacheLoaderInterceptor.this.cache.wired(), command);
          this.isRemoteIteration = isRemoteIteration;
       }
@@ -661,7 +690,7 @@ public class CacheLoaderInterceptor<K, V> extends JmxStatsCommandInterceptor {
          if (o != null) {
             contains = cacheSet.contains(o);
             if (!contains) {
-               MarshalledEntry<K, V> me = persistenceManager.loadFromAllStores(o, true, true);
+               MarshallableEntry<K, V> me = persistenceManager.loadFromAllStores(o, true, true);
                contains = me != null;
             }
          }

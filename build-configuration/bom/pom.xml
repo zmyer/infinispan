@@ -76,7 +76,7 @@
         <!-- Java source/target version -->
         <version.java>1.8</version.java>
 
-        <versionx.org.infinispan.infinispan-management-console>9.4.0.Final</versionx.org.infinispan.infinispan-management-console>
+        <versionx.org.infinispan.infinispan-management-console>${version.component.console}</versionx.org.infinispan.infinispan-management-console>
         <versionx.org.jboss.spec.javax.transaction.jboss-transaction-api_1.2_spec>1.1.1.Final</versionx.org.jboss.spec.javax.transaction.jboss-transaction-api_1.2_spec>
         <versionx.javax.cache.cache-api>${version.javax.cache}</versionx.javax.cache.cache-api>
     </properties>
@@ -96,11 +96,6 @@
             <dependency>
                 <groupId>org.infinispan</groupId>
                 <artifactId>infinispan-cachestore-jpa</artifactId>
-                <version>${version.infinispan}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.infinispan</groupId>
-                <artifactId>infinispan-cachestore-leveldb</artifactId>
                 <version>${version.infinispan}</version>
             </dependency>
             <dependency>
@@ -285,11 +280,6 @@
             </dependency>
             <dependency>
                 <groupId>org.infinispan</groupId>
-                <artifactId>infinispan-license</artifactId>
-                <version>${version.infinispan}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.infinispan</groupId>
                 <artifactId>infinispan-lucene-directory</artifactId>
                 <version>${version.infinispan}</version>
             </dependency>
@@ -408,12 +398,12 @@
             </dependency>
             <dependency>
                 <groupId>org.infinispan</groupId>
-                <artifactId>infinispan-spring4-embedded</artifactId>
+                <artifactId>infinispan-spring5-embedded</artifactId>
                 <version>${version.infinispan}</version>
             </dependency>
             <dependency>
                 <groupId>org.infinispan</groupId>
-                <artifactId>infinispan-spring4-remote</artifactId>
+                <artifactId>infinispan-spring5-remote</artifactId>
                 <version>${version.infinispan}</version>
             </dependency>
             <dependency>

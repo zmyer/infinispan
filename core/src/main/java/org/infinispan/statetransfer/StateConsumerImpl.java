@@ -65,8 +65,10 @@ import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.interceptors.AsyncInterceptorChain;
+import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.persistence.manager.PersistenceManager;
+import org.infinispan.reactive.publisher.impl.LocalPublisherManager;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
 import org.infinispan.remoting.responses.Response;
@@ -131,6 +133,7 @@ public class StateConsumerImpl implements StateConsumer {
    @Inject protected DistributionManager distributionManager;
    @Inject protected KeyPartitioner keyPartitioner;
    @Inject private InternalConflictManager conflictManager;
+   @Inject private LocalPublisherManager<Object, Object> localPublisherManager;
 
    protected String cacheName;
    protected long timeout;
@@ -641,8 +644,10 @@ public class StateConsumerImpl implements StateConsumer {
                ctx = icf.createSingleKeyNonTxInvocationContext();
             }
 
+            // CallInterceptor will preserve the timestamps if the metadata is an InternalMetadataImpl instance
+            InternalMetadataImpl metadata = new InternalMetadataImpl(e);
             PutKeyValueCommand put = commandsFactory.buildPutKeyValueCommand(e.getKey(), e.getValue(), segmentId,
-                  e.getMetadata(), STATE_TRANSFER_FLAGS);
+                                                                             metadata, STATE_TRANSFER_FLAGS);
             ctx.setLockOwner(put.getKeyLockOwner());
             interceptorChain.invoke(ctx, put);
 
@@ -704,7 +709,7 @@ public class StateConsumerImpl implements StateConsumer {
    // Must run after the PersistenceManager
    @Start(priority = 20)
    public void start() {
-      cacheName = cache.getName();
+      cacheName = cache.wired().getName();
       isInvalidationMode = configuration.clustering().cacheMode().isInvalidation();
       isTransactional = configuration.transaction().transactionMode().isTransactional();
       isTotalOrder = configuration.transaction().transactionProtocol().isTotalOrder();
@@ -965,6 +970,9 @@ public class StateConsumerImpl implements StateConsumer {
 
       // Keys that we used to own, and need to be removed from the data container AND the cache stores
       final ConcurrentHashSet<Object> keysToRemove = new ConcurrentHashSet<>();
+
+      // This has to be invoked before removing the segments on the data container
+      localPublisherManager.segmentsLost(removedSegments);
 
       dataContainer.removeSegments(removedSegments);
 

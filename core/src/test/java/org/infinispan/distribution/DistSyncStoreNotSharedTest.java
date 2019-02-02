@@ -1,6 +1,5 @@
 package org.infinispan.distribution;
 
-import static org.infinispan.test.TestingUtil.extractGlobalMarshaller;
 import static org.infinispan.test.TestingUtil.k;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
@@ -16,10 +15,10 @@ import java.util.concurrent.Future;
 import org.infinispan.Cache;
 import org.infinispan.container.DataContainer;
 import org.infinispan.context.Flag;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.CacheWriter;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
@@ -73,9 +72,9 @@ public class DistSyncStoreNotSharedTest<D extends DistSyncStoreNotSharedTest> ex
       Cache<Object, String> owner = getFirstOwner(key);
       CacheLoader ownerLoader = TestingUtil.getFirstLoader(owner);
       owner.put(key, value);
-      assertEquals(value, ownerLoader.load(key).getValue());
+      assertEquals(value, ownerLoader.loadEntry(key).getValue());
       owner.getAdvancedCache().withFlags(Flag.SKIP_CACHE_STORE).clear();
-      assertEquals(value, ownerLoader.load(key).getValue());
+      assertEquals(value, ownerLoader.loadEntry(key).getValue());
       assertNull(owner.getAdvancedCache().withFlags(Flag.SKIP_CACHE_LOAD).get(key));
       assertNull(nonOwner.getAdvancedCache().withFlags(Flag.SKIP_CACHE_LOAD).get(key));
       assertEquals(value, nonOwner.get(key));
@@ -129,7 +128,7 @@ public class DistSyncStoreNotSharedTest<D extends DistSyncStoreNotSharedTest> ex
          CacheLoader store = TestingUtil.getFirstLoader(c);
          if (isOwner(c, key)) {
             assertIsInContainerImmortal(c, key);
-            assertEquals(value, store.load(key).getValue());
+            assertEquals(value, store.loadEntry(key).getValue());
          } else {
             if (!allowL1) {
                assertIsNotInL1(c, key);
@@ -145,10 +144,10 @@ public class DistSyncStoreNotSharedTest<D extends DistSyncStoreNotSharedTest> ex
 
       c2.put(k1, v1);
       assertTrue(store2.contains(k1));
-      assertEquals(v1, store2.load(k1).getValue());
+      assertEquals(v1, store2.loadEntry(k1).getValue());
 
       c2.getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL).put(k1, v2);
-      assertEquals(v2, store2.load(k1).getValue());
+      assertEquals(v2, store2.loadEntry(k1).getValue());
    }
 
    public void testPutAll() throws Exception {
@@ -189,7 +188,7 @@ public class DistSyncStoreNotSharedTest<D extends DistSyncStoreNotSharedTest> ex
    protected void assertRemovedFromStores(String key) {
       for (Cache<Object, String> c : caches) {
          CacheLoader store = TestingUtil.getFirstLoader(c);
-         MarshalledEntry me = store.load(key);
+         MarshallableEntry me = store.loadEntry(key);
          // handle possible tombstones
          assert me == null || me.getValue() == null;
       }
@@ -240,7 +239,7 @@ public class DistSyncStoreNotSharedTest<D extends DistSyncStoreNotSharedTest> ex
          if (isOwner(c, key)) {
             CacheLoader store = TestingUtil.getFirstLoader(c);
             assertTrue(store.contains(key));
-            assertEquals(value2, store.load(key).getValue());
+            assertEquals(value2, store.loadEntry(key).getValue());
          }
       }
    }
@@ -257,7 +256,7 @@ public class DistSyncStoreNotSharedTest<D extends DistSyncStoreNotSharedTest> ex
          if (isOwner(c, key)) {
             CacheLoader store = TestingUtil.getFirstLoader(c);
             assertTrue(store.contains(key));
-            assertEquals(value, store.load(key).getValue());
+            assertEquals(value, store.loadEntry(key).getValue());
          }
       }
    }
@@ -273,7 +272,7 @@ public class DistSyncStoreNotSharedTest<D extends DistSyncStoreNotSharedTest> ex
          if (isOwner(c, key)) {
             CacheLoader store = TestingUtil.getFirstLoader(c);
             assertTrue(store.contains(key));
-            assertEquals(value, store.load(key).getValue());
+            assertEquals(value, store.loadEntry(key).getValue());
          }
       }
    }
@@ -326,8 +325,8 @@ public class DistSyncStoreNotSharedTest<D extends DistSyncStoreNotSharedTest> ex
       final String v2 = "stale-data";
 
       // Simulate c3 was by itself and someone wrote a value that is now stale
-      CacheWriter store = (CacheWriter) TestingUtil.getFirstLoader(c3);
-      store.write(new MarshalledEntryImpl(k, v2, null, extractGlobalMarshaller(c3.getCacheManager())));
+      CacheWriter store = TestingUtil.getFirstLoader(c3);
+      store.write(MarshalledEntryUtil.create(k, v2, c3));
 
       c1.put(k, v1);
 

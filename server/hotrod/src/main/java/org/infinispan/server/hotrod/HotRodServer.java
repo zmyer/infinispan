@@ -21,10 +21,6 @@ import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.ThreadPoolExecutor.AbortPolicy;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
@@ -34,7 +30,6 @@ import javax.security.sasl.SaslServerFactory;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
-import org.infinispan.IllegalLifecycleStateException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.logging.LogFactory;
@@ -106,7 +101,6 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOutboundHandler;
-import io.netty.util.concurrent.DefaultThreadFactory;
 
 /**
  * Hot Rod server, in charge of defining its encoder/decoder and, if clustered, update the topology information on
@@ -148,7 +142,6 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
    private DefaultExecutorService distributedExecutorService;
    private CrashedMemberDetectorListener viewChangeListener;
    private ReAddMyAddressListener topologyChangeListener;
-   private ExecutorService executor;
    private IterationManager iterationManager;
    private RemoveCacheListener removeCacheListener;
    private ClientCounterManagerNotificationManager clientCounterNotificationManager;
@@ -182,7 +175,7 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
 
    @Override
    public HotRodDecoder getDecoder() {
-      return new HotRodDecoder(cacheManager, getExecutor(getQualifiedName()), this);
+      return new HotRodDecoder(cacheManager, getExecutor(), this);
    }
 
    /**
@@ -255,6 +248,7 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
       addKeyValueFilterConverterFactory(ToEmptyBytesKeyValueFilterConverter.class.getName(), new ToEmptyBytesFactory());
 
       addCacheEventConverterFactory("key-value-with-previous-converter-factory", new KeyValueWithPreviousEventConverterFactory());
+      addCacheEventConverterFactory("___eager-key-value-version-converter", KeyValueVersionConverterFactory.SINGLETON);
       loadFilterConverterFactories(ParamKeyValueFilterConverterFactory.class, this::addKeyValueFilterConverterFactory);
       loadFilterConverterFactories(CacheEventFilterConverterFactory.class, this::addCacheEventFilterConverterFactory);
       loadFilterConverterFactories(CacheEventConverterFactory.class, this::addCacheEventConverterFactory);
@@ -276,31 +270,6 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
 
          addSelfToTopologyView(cacheManager);
       }
-   }
-
-   private AbortPolicy abortPolicy = new AbortPolicy() {
-      @Override
-      public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
-         if (executor.isShutdown())
-            throw new IllegalLifecycleStateException("Server has been stopped");
-         else
-            super.rejectedExecution(r, e);
-      }
-   };
-
-   protected ExecutorService getExecutor(String threadPrefix) {
-      if (this.executor == null || this.executor.isShutdown()) {
-         DefaultThreadFactory factory = new DefaultThreadFactory(threadPrefix + "-ServerHandler");
-         int workerThreads = getWorkerThreads();
-         this.executor = new ThreadPoolExecutor(
-               workerThreads,
-               workerThreads,
-               0L, TimeUnit.MILLISECONDS,
-               new LinkedBlockingQueue<>(),
-               factory,
-               abortPolicy);
-      }
-      return executor;
    }
 
    @Override
@@ -512,14 +481,16 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
    }
 
    private void setupSasl() {
-      Iterator<SaslServerFactory> saslFactories = SaslUtils.getSaslServerFactories(this.getClass().getClassLoader(), true);
-      while (saslFactories.hasNext()) {
-         SaslServerFactory saslFactory = saslFactories.next();
-         String[] saslFactoryMechs = saslFactory.getMechanismNames(configuration.authentication().mechProperties());
-         for (String supportedMech : saslFactoryMechs) {
-            for (String mech : configuration.authentication().allowedMechs()) {
-               if (supportedMech.equals(mech)) {
-                  saslMechFactories.putIfAbsent(mech, saslFactory);
+      if (configuration.authentication().enabled()) {
+         Iterator<SaslServerFactory> saslFactories = SaslUtils.getSaslServerFactories(this.getClass().getClassLoader(), true);
+         while (saslFactories.hasNext()) {
+            SaslServerFactory saslFactory = saslFactories.next();
+            String[] saslFactoryMechs = saslFactory.getMechanismNames(configuration.authentication().mechProperties());
+            for (String supportedMech : saslFactoryMechs) {
+               for (String mech : configuration.authentication().allowedMechs()) {
+                  if (supportedMech.equals(mech)) {
+                     saslMechFactories.putIfAbsent(mech, saslFactory);
+                  }
                }
             }
          }
@@ -622,7 +593,6 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
 
       if (clientListenerRegistry != null) clientListenerRegistry.stop();
       if (clientCounterNotificationManager != null) clientCounterNotificationManager.stop();
-      if (executor != null) executor.shutdownNow();
       super.stop();
    }
 
@@ -693,6 +663,12 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
    @Override
    public int getWorkerThreads() {
       return Integer.getInteger("infinispan.server.hotrod.workerThreads", configuration.workerThreads());
+   }
+
+   public String toString() {
+      return "HotRodServer[" +
+            "configuration=" + configuration +
+            ']';
    }
 
    public static class CacheInfo {

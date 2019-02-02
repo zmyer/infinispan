@@ -37,9 +37,8 @@ import org.infinispan.client.hotrod.impl.MarshallerRegistry;
 import org.infinispan.client.hotrod.impl.RemoteCacheImpl;
 import org.infinispan.client.hotrod.impl.RemoteCacheManagerAdminImpl;
 import org.infinispan.client.hotrod.impl.operations.OperationsFactory;
-import org.infinispan.client.hotrod.impl.operations.PingOperation;
+import org.infinispan.client.hotrod.impl.operations.PingResponse;
 import org.infinispan.client.hotrod.impl.protocol.Codec;
-import org.infinispan.client.hotrod.impl.protocol.CodecFactory;
 import org.infinispan.client.hotrod.impl.protocol.HotRodConstants;
 import org.infinispan.client.hotrod.impl.transaction.SyncModeTransactionTable;
 import org.infinispan.client.hotrod.impl.transaction.TransactionTable;
@@ -49,13 +48,15 @@ import org.infinispan.client.hotrod.impl.transport.netty.ChannelFactory;
 import org.infinispan.client.hotrod.jmx.RemoteCacheManagerMXBean;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
+import org.infinispan.client.hotrod.marshall.BytesOnlyJBossLikeMarshaller;
+import org.infinispan.client.hotrod.marshall.BytesOnlyMarshaller;
 import org.infinispan.client.hotrod.near.NearCacheService;
 import org.infinispan.commons.api.CacheContainerAdmin;
+import org.infinispan.commons.configuration.ClassWhiteList;
 import org.infinispan.commons.executors.ExecutorFactory;
 import org.infinispan.commons.jmx.JmxUtil;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.UTF8StringMarshaller;
-import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
 import org.infinispan.commons.time.DefaultTimeService;
 import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.FileLookupFactory;
@@ -172,7 +173,7 @@ public class RemoteCacheManager implements RemoteCacheContainer, Closeable, Remo
       this.syncTransactionTable = new SyncModeTransactionTable(configuration.transaction().timeout());
       this.xaTransactionTable = new XaModeTransactionTable(configuration.transaction().timeout());
       registerMBean();
-      if (start) start();
+      if (start) actualStart();
    }
 
    /**
@@ -200,7 +201,7 @@ public class RemoteCacheManager implements RemoteCacheContainer, Closeable, Remo
    private void unregisterMBean() {
       try {
          StatisticsConfiguration configuration = this.configuration.statistics();
-         if (configuration.jmxEnabled()) {
+         if (configuration.jmxEnabled() && mbeanObjectName != null) {
             MBeanServer mbeanServer = configuration.mbeanServerLookup().getMBeanServer();
             JmxUtil.unregisterMBean(mbeanObjectName, mbeanServer);
          }
@@ -270,22 +271,35 @@ public class RemoteCacheManager implements RemoteCacheContainer, Closeable, Remo
 
    @Override
    public void start() {
+      if (!started) {
+         actualStart();
+      }
+   }
+
+   private void actualStart() {
       channelFactory = new ChannelFactory();
 
       if (marshaller == null) {
          marshaller = configuration.marshaller();
          if (marshaller == null) {
             Class<? extends Marshaller> clazz = configuration.marshallerClass();
-            if (clazz == GenericJBossMarshaller.class && !configuration.serialWhitelist().isEmpty())
-               marshaller = new GenericJBossMarshaller(configuration.getClassWhiteList());
-            else
+            if (!configuration.serialWhitelist().isEmpty()) {
+               // First try to instantiate the instance with the white list if possible
+               marshaller = Util.newInstanceOrNull(clazz, new Class[] {ClassWhiteList.class},
+                     configuration.getClassWhiteList());
+            }
+            if (marshaller == null) {
                marshaller = Util.getInstance(clazz);
+            }
          }
       }
-      marshallerRegistry.registerMarshaller(marshaller);
+      marshallerRegistry.registerMarshaller(BytesOnlyJBossLikeMarshaller.INSTANCE);
+      marshallerRegistry.registerMarshaller(BytesOnlyMarshaller.INSTANCE);
       marshallerRegistry.registerMarshaller(new UTF8StringMarshaller());
+      // Register this one last, so it will replace any that may support the same media type
+      marshallerRegistry.registerMarshaller(marshaller);
 
-      codec = CodecFactory.getCodec(configuration.version());
+      codec = configuration.version().getCodec();
 
       listenerNotifier = new ClientListenerNotifier(codec, marshaller, channelFactory, configuration.getClassWhiteList());
       ExecutorFactory executorFactory = configuration.asyncExecutorFactory().factory();
@@ -388,7 +402,7 @@ public class RemoteCacheManager implements RemoteCacheContainer, Closeable, Remo
             RemoteCacheHolder rcc = new RemoteCacheHolder(result, forceReturnValueOverride);
             startRemoteCache(rcc);
 
-            PingOperation.PingResponse pingResponse = result.resolveStorage();
+            PingResponse pingResponse = result.resolveStorage();
             // If ping not successful assume that the cache does not exist
             // Default cache is always started, so don't do for it
             if (!cacheName.equals(RemoteCacheManager.DEFAULT_CACHE_NAME) && pingResponse.isCacheNotFound()) {
@@ -435,9 +449,19 @@ public class RemoteCacheManager implements RemoteCacheContainer, Closeable, Remo
       OperationsFactory operationsFactory = new OperationsFactory(
             channelFactory, remoteCache.getName(), remoteCacheHolder.forceReturnValue, codec, listenerNotifier,
             configuration, remoteCache.getClientStatistics());
-      remoteCache.init(marshaller, operationsFactory,
-            configuration.keySizeEstimate(), configuration.valueSizeEstimate(), configuration.batchSize(), mbeanObjectName);
+      initRemoteCache(remoteCache, operationsFactory);
       remoteCache.start();
+   }
+
+   // Method that handles cache initialization - needed as a placeholder
+   private void initRemoteCache(RemoteCacheImpl remoteCache, OperationsFactory operationsFactory) {
+      if (configuration.statistics().jmxEnabled()) {
+         remoteCache.init(marshaller, operationsFactory, configuration.keySizeEstimate(),
+               configuration.valueSizeEstimate(), configuration.batchSize(), mbeanObjectName);
+      } else {
+         remoteCache.init(marshaller, operationsFactory, configuration.keySizeEstimate(),
+               configuration.valueSizeEstimate(), configuration.batchSize());
+      }
    }
 
    @Override

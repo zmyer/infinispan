@@ -1,11 +1,10 @@
 package org.infinispan.persistence.remote.configuration;
 
-import static org.infinispan.commons.util.StringPropertyReplacer.replaceProperties;
-
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 
 import org.infinispan.client.hotrod.ProtocolVersion;
+import org.infinispan.commons.configuration.ConfigurationBuilderInfo;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
@@ -108,7 +107,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
       authentication.enable();
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case SERVER_NAME: {
@@ -174,7 +173,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
       ssl.enable();
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case PROTOCOL: {
@@ -217,7 +216,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
 
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case FILENAME:
@@ -253,7 +252,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
 
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case FILENAME:
@@ -261,7 +260,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
                // already processed
                break;
             case TYPE: {
-               ssl.keyStoreType(value);
+               ssl.trustStoreType(value);
                break;
             }
             default: {
@@ -276,7 +275,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
          final ExecutorFactoryConfigurationBuilder builder, ClassLoader classLoader) throws XMLStreamException {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case FACTORY: {
@@ -295,7 +294,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
    private void parseConnectionPool(XMLExtendedStreamReader reader, ConnectionPoolConfigurationBuilder builder) throws XMLStreamException {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case EXHAUSTED_ACTION: {
@@ -342,7 +341,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
          throws XMLStreamException {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
          switch (attribute) {
             case HOST:
@@ -365,7 +364,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
          throws XMLStreamException {
       for (int i = 0; i < reader.getAttributeCount(); i++) {
          ParseUtils.requireNoNamespaceAttribute(reader, i);
-         String value = replaceProperties(reader.getAttributeValue(i));
+         String value = reader.getAttributeValue(i);
          String attrName = reader.getAttributeLocalName(i);
          Attribute attribute = Attribute.forName(attrName);
          switch (attribute) {
@@ -440,5 +439,11 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
    @Override
    public Namespace[] getNamespaces() {
       return ParseUtils.getNamespaceAnnotations(getClass());
+   }
+
+   @Override
+   public Class<? extends ConfigurationBuilderInfo> getConfigurationBuilderInfo() {
+      return RemoteStoreConfigurationBuilder.class;
+
    }
 }

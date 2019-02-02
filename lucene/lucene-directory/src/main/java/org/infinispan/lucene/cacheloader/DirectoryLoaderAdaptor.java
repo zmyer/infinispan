@@ -9,7 +9,6 @@ import java.util.Set;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.lucene.ChunkCacheKey;
 import org.infinispan.lucene.FileCacheKey;
 import org.infinispan.lucene.FileListCacheKey;
@@ -19,8 +18,8 @@ import org.infinispan.lucene.IndexScopedKey;
 import org.infinispan.lucene.KeyVisitor;
 import org.infinispan.lucene.impl.FileListCacheValue;
 import org.infinispan.lucene.logging.Log;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.persistence.spi.MarshallableEntryFactory;
 import org.infinispan.util.logging.LogFactory;
 
 /**
@@ -63,7 +62,7 @@ final class DirectoryLoaderAdaptor {
     * @param entriesCollector loaded entries are collected in this set
     * @param maxEntries to limit amount of entries loaded
     */
-   protected <K, V> void loadAllEntries(final Set<MarshalledEntry<K, V>> entriesCollector, final int maxEntries, StreamingMarshaller marshaller) {
+   protected <K, V> void loadAllEntries(final Set<MarshallableEntry<K, V>> entriesCollector, final int maxEntries, MarshallableEntryFactory entryFactory) {
       int existingElements = entriesCollector.size();
       int toLoadElements = maxEntries - existingElements;
       if (toLoadElements <= 0) {
@@ -74,7 +73,7 @@ final class DirectoryLoaderAdaptor {
       for (IndexScopedKey key : keysCollector) {
          Object value = load(key);
          if (value != null) {
-            MarshalledEntry cacheEntry = new MarshalledEntryImpl(key, value, null, marshaller);
+            MarshallableEntry cacheEntry = entryFactory.create(key, value, null);
             entriesCollector.add(cacheEntry);
          }
       }

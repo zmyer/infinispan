@@ -18,6 +18,7 @@ import org.infinispan.Version;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.equivalence.AnyEquivalence;
 import org.infinispan.commons.executors.BlockingThreadPoolExecutorFactory;
+import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
 import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
 import org.infinispan.configuration.cache.AbstractStoreConfiguration;
@@ -37,10 +38,9 @@ import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.factories.threads.DefaultThreadFactory;
 import org.infinispan.interceptors.FooInterceptor;
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.marshall.AdvancedExternalizerTest;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
-import org.infinispan.marshall.core.MarshalledEntry;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfiguration;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.InitializationContext;
@@ -66,7 +66,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
    }
 
    public void testNamedCacheFile() throws IOException {
-      ParserRegistry parserRegistry = new ParserRegistry(Thread.currentThread().getContextClassLoader(), true);
+      ParserRegistry parserRegistry = new ParserRegistry(Thread.currentThread().getContextClassLoader(), true, System.getProperties());
       ConfigurationBuilderHolder holder = parserRegistry.parseFile("configs/named-cache-test.xml");
       assertNamedCacheFile(holder, false);
    }
@@ -285,7 +285,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       public void init(InitializationContext ctx) { }
 
       @Override
-      public MarshalledEntry load(Object key) { return null; }
+      public MarshallableEntry loadEntry(Object key) { return null; }
 
       @Override
       public boolean contains(Object key) { return false; }

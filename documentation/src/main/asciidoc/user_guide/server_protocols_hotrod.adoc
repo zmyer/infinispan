@@ -7,10 +7,9 @@ To connect to {brandname} over this highly efficient Hot Rod protocol you can
 either use one of the clients described in this chapter, or use higher level
 tools such as link:#integrations_hibernate_ogm[Hibernate OGM].
 
-include::server_protocols_hotrod_wire.adoc[]
-
 [[hotrod_java_client]]
 ===  Java Hot Rod client
+
 Hot Rod is a binary, language neutral protocol. This article explains how a Java client can interact with a server via the Hot Rod protocol. A reference implementation of the protocol written in Java can be found in all {brandname} distributions, and this article focuses on the capabilities of this java client.
 
 TIP: Looking for more clients?  Visit link:http://infinispan.org/hotrod-clients[this website] for clients written in a variety of different languages.
@@ -1078,7 +1077,7 @@ Note that the Marshaller could be deployed in either a separate jar, or in the
 same jar as the `CacheEventConverter` and/or `CacheEventFilter` instances.
 
 [[protostream_deployment]]
-===== Protostream marshallers deployment
+===== Deploying Protostream Marshallers
 
 If a cache stores protobuf content, as it happens when using protostream marshaller in the Hot Rod client,
 it's not necessary to deploy a custom marshaller since the format is already support by the server: there are
@@ -1494,5 +1493,8 @@ image::images/server_modules_10.png[align="center", title="Replace if versions m
 ==== Javadocs
 It is highly recommended to read the following Javadocs (this is pretty much all the public API of the client):
 
-*  link:{javadocroot}/org/infinispan/client/hotrod/RemoteCacheManager.html[RemoteCacheManager]
-*  link:{javadocroot}/org/infinispan/client/hotrod/RemoteCache.html[RemoteCache]
+* link:{javadocroot}/org/infinispan/client/hotrod/RemoteCacheManager.html[RemoteCacheManager]
+* link:{javadocroot}/org/infinispan/client/hotrod/RemoteCache.html[RemoteCache]
+//////////////////////
+//terminate list
+//////////////////////

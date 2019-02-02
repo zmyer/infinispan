@@ -17,6 +17,7 @@ import org.infinispan.functional.FunctionalMap;
 import org.infinispan.functional.impl.FunctionalMapImpl;
 import org.infinispan.functional.impl.ReadWriteMapImpl;
 import org.infinispan.interceptors.locking.PessimisticLockingInterceptor;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.query.remote.client.ProtobufMetadataManagerConstants;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -42,7 +43,7 @@ public class ProtobufMetadataManagerInterceptorTest extends MultipleCacheManager
       cfg.transaction()
             .transactionMode(TransactionMode.TRANSACTIONAL).invocationBatching().enable()
             .clustering().cacheMode(CacheMode.REPL_SYNC)
-            .clustering().sync()
+            .clustering()
             .stateTransfer().fetchInMemoryState(true)
             .transaction().lockingMode(LockingMode.PESSIMISTIC)
             .locking().isolationLevel(IsolationLevel.READ_COMMITTED).useLockStriping(false)
@@ -302,6 +303,23 @@ public class ProtobufMetadataManagerInterceptorTest extends MultipleCacheManager
       assertTrue(cache0.isEmpty());
 
       assertNoTransactionsAndLocks();
+   }
+
+   /**
+    * State transfer is interesting because StateConsumerImpl uses PutKeyValueCommand with InternalCacheEntry values,
+    * in order to preserve timestamps.
+    */
+   public void testStateTransfer() {
+      cache(0).put("state.proto", "import \"test.proto\";");
+
+      EmbeddedCacheManager manager = addClusterEnabledCacheManager(makeCfg());
+      try {
+         Cache<Object, Object> cache = manager.getCache();
+         assertEquals("import \"test.proto\";", cache.get("state.proto"));
+         cache(0).remove("state.proto");
+      } finally {
+         killMember(2);
+      }
    }
 
    private void assertNoTransactionsAndLocks() {

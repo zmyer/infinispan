@@ -1,7 +1,6 @@
 package org.infinispan.persistence.support;
 
 import static org.infinispan.test.TestingUtil.k;
-import static org.infinispan.test.TestingUtil.marshalledEntry;
 import static org.infinispan.test.TestingUtil.v;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
@@ -31,8 +30,7 @@ import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
 import org.infinispan.configuration.cache.SingletonStoreConfiguration;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
-import org.infinispan.marshall.core.MarshalledEntry;
-import org.infinispan.marshall.core.MarshalledEntryImpl;
+import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.persistence.async.AdvancedAsyncCacheLoader;
 import org.infinispan.persistence.async.AdvancedAsyncCacheWriter;
 import org.infinispan.persistence.async.State;
@@ -44,6 +42,7 @@ import org.infinispan.persistence.modifications.Remove;
 import org.infinispan.persistence.modifications.Store;
 import org.infinispan.persistence.spi.CacheWriter;
 import org.infinispan.persistence.spi.InitializationContext;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.CacheManagerCallable;
@@ -117,7 +116,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
    }
 
    @BeforeMethod
-   public void createMarshaller() {
+   public void createMarshalledEntryFactory() {
       marshaller = new TestObjectStreamMarshaller();
    }
 
@@ -228,7 +227,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
       // stop the cache store
       writer.stop();
       try {
-         writer.write(new MarshalledEntryImpl("k", (Object) null, null, marshaller()));
+         writer.write(MarshalledEntryUtil.create("k", marshaller));
          fail("Should have restricted this entry from being made");
       }
       catch (CacheException expected) {
@@ -237,10 +236,6 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
       // clean up
       writer.start();
       doTestRemove(number, key);
-   }
-
-   private TestObjectStreamMarshaller marshaller() {
-      return marshaller;
    }
 
    public void testThreadSafetyWritingDiffValuesForKey(Method m) throws Exception {
@@ -263,14 +258,14 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
          underlying.init(ctx);
          underlying.start();
 
-         writer.write(new MarshalledEntryImpl(key, "v1", null, marshaller()));
+         writer.write(MarshalledEntryUtil.create(key, "v1", marshaller));
          v2Latch.await();
-         writer.write(new MarshalledEntryImpl(key, "v2", null, marshaller()));
+         writer.write(MarshalledEntryUtil.create(key, "v2", marshaller));
          if (!endLatch.await(30000l, TimeUnit.MILLISECONDS))
             fail();
 
          loader = new AdvancedAsyncCacheLoader(underlying, writer.getState());
-         assertEquals("v2", loader.load(key).getValue());
+         assertEquals("v2", loader.loadEntry(key).getValue());
       } finally {
          writer.clear();
          writer.stop();
@@ -292,7 +287,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
             try {
                for (;;) {
                   int v = lastValue[0] + 1;
-                  writer.write(new MarshalledEntryImpl(key, key + v, null, marshaller()));
+                  writer.write(MarshalledEntryUtil.create(key, key + v, marshaller));
                   lastValue[0] = v;
                }
             } catch (CacheException expected) {
@@ -306,7 +301,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
       writer.stop();
 
       // check that the last value successfully written to the AsyncStore has also been written to the underlying store
-      MarshalledEntry me = loader.undelegate().load(key);
+      MarshallableEntry me = loader.undelegate().loadEntry(key);
       assertNotNull(me);
       assertEquals(me.getValue(), key + lastValue[0]);
    }
@@ -341,11 +336,11 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
    private void doTestPut(int number, String key, String value) throws Exception {
       for (int i = 0; i < number; i++) {
          InternalCacheEntry cacheEntry = TestInternalCacheEntryFactory.create(key + i, value + i);
-         writer.write(marshalledEntry(cacheEntry, marshaller()));
+         writer.write(MarshalledEntryUtil.create(cacheEntry, marshaller));
       }
 
       for (int i = 0; i < number; i++) {
-         MarshalledEntry me = loader.load(key + i);
+         MarshallableEntry me = loader.loadEntry(key + i);
          assertNotNull(me);
          assertEquals(value + i, me.getValue());
       }
@@ -353,28 +348,28 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
 
    private void doTestSameKeyPut(int number, String key, String value) throws Exception {
       for (int i = 0; i < number; i++) {
-         writer.write(new MarshalledEntryImpl(key, value + i, null, marshaller()));
+         writer.write(MarshalledEntryUtil.create(key, value + i, marshaller));
       }
-      MarshalledEntry me = loader.load(key);
+      MarshallableEntry me = loader.loadEntry(key);
       assertNotNull(me);
       assertEquals(value + (number - 1), me.getValue());
    }
 
    private void doTestRemove(final int number, final String key) throws Exception {
       for (int i = 0; i < number; i++) writer.delete(key + i);
-      for (int i = 0; i < number; i++) assertNull(loader.load(key + i));
+      for (int i = 0; i < number; i++) assertNull(loader.loadEntry(key + i));
    }
 
    private void doTestSameKeyRemove(String key) throws Exception {
       writer.delete(key);
-      assertNull(loader.load(key));
+      assertNull(loader.loadEntry(key));
    }
 
    private void doTestClear(int number, String key) throws Exception {
       writer.clear();
 
       for (int i = 0; i < number; i++) {
-         assertNull(loader.load(key + i));
+         assertNull(loader.loadEntry(key + i));
       }
    }
 
@@ -478,7 +473,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
       }
 
       @Override
-      public void write(MarshalledEntry entry) {
+      public void write(MarshallableEntry entry) {
          lock.lock();
          try {
             threads.add(Thread.currentThread());
@@ -530,7 +525,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
                public void run() {
                   try {
                      for (int i = 0; i < 100; i++)
-                        writer.write(new MarshalledEntryImpl(k(m, i), v(m, i), null, marshaller()));
+                        writer.write(MarshalledEntryUtil.create(k(m, i), v(m, i), marshaller));
                   } catch (Exception e) {
                      log.error("Error storing entry", e);
                   }
@@ -582,7 +577,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
             cache.put("Y", "1"); // force eviction of "X"
 
             // wait for X == 1 to appear in store
-            while (store.load("X") == null)
+            while (store.loadEntry("X") == null)
                TestingUtil.sleepThread(10);
 
             // simulate slow back end store
@@ -615,7 +610,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
             cache.put("Y", "1"); // force eviction of "X"
 
             // wait for "X" to appear in store
-            while (store.load("X") == null)
+            while (store.loadEntry("X") == null)
                TestingUtil.sleepThread(10);
 
             // simulate slow back end store

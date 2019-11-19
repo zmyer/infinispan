@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-integrationtests-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -52,7 +52,7 @@
                <excludedGroups>${defaultExcludedTestGroup}</excludedGroups>
                <parallel>none</parallel>
                <systemPropertyVariables>
-                  <infinispan.test.jgroups.protocol>${infinispan.test.jgroups.protocol}</infinispan.test.jgroups.protocol>
+                  <infinispan.cluster.stack>${infinispan.cluster.stack}</infinispan.cluster.stack>
                   <jgroups.bind_addr>127.0.0.1</jgroups.bind_addr>
                   <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
                   <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
@@ -64,6 +64,10 @@
                   <listener>${testNGListeners}</listener>
                </properties>
                <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
+               <dependenciesToScan>
+                  <!-- TestNGSuiteChecksTest -->
+                  <dependency>org.infinispan:infinispan-commons-test</dependency>
+               </dependenciesToScan>
             </configuration>
          </plugin>
       </plugins>

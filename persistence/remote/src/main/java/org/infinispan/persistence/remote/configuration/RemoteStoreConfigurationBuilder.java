@@ -13,8 +13,8 @@ import static org.infinispan.persistence.remote.configuration.RemoteStoreConfigu
 import static org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration.SERVERS;
 import static org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration.SOCKET_TIMEOUT;
 import static org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration.TCP_NO_DELAY;
-import static org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration.TRANSPORT_FACTORY;
 import static org.infinispan.persistence.remote.configuration.RemoteStoreConfiguration.VALUE_SIZE_ESTIMATE;
+import static org.infinispan.persistence.remote.logging.Log.CONFIG;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,8 +30,6 @@ import org.infinispan.commons.configuration.elements.ElementDefinition;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.configuration.cache.AbstractStoreConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
-import org.infinispan.persistence.remote.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * RemoteStoreConfigurationBuilder. Configures a
@@ -42,7 +40,6 @@ import org.infinispan.util.logging.LogFactory;
  */
 public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationBuilder<RemoteStoreConfiguration, RemoteStoreConfigurationBuilder> implements
       RemoteStoreConfigurationChildBuilder<RemoteStoreConfigurationBuilder>, ConfigurationBuilderInfo {
-   private static final Log log = LogFactory.getLog(RemoteStoreConfigurationBuilder.class, Log.class);
    private final ExecutorFactoryConfigurationBuilder asyncExecutorFactory;
    private final ConnectionPoolConfigurationBuilder connectionPool;
    private final SecurityConfigurationBuilder security;
@@ -70,7 +67,7 @@ public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationB
 
    @Override
    public ElementDefinition getElementDefinition() {
-      return RemoteStoreConfiguration.ELELEMENT_DEFINITION;
+      return RemoteStoreConfiguration.ELEMENT_DEFINITION;
    }
 
    @Override
@@ -137,13 +134,6 @@ public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationB
       return this;
    }
 
-   @Deprecated
-   @Override
-   public RemoteStoreConfigurationBuilder protocolVersion(String protocolVersion) {
-      attributes.attribute(PROTOCOL_VERSION).set(ProtocolVersion.parseVersion(protocolVersion));
-      return this;
-   }
-
    @Override
    public RemoteStoreConfigurationBuilder protocolVersion(ProtocolVersion protocolVersion) {
       attributes.attribute(PROTOCOL_VERSION).set(protocolVersion);
@@ -181,7 +171,6 @@ public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationB
 
    @Override
    public RemoteStoreConfigurationBuilder transportFactory(String transportFactory) {
-      attributes.attribute(TRANSPORT_FACTORY).set(transportFactory);
       return this;
    }
 
@@ -211,7 +200,7 @@ public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationB
          remoteServers.add(server.create());
       }
       attributes.attribute(SERVERS).set(remoteServers);
-      return new RemoteStoreConfiguration(attributes.protect(), async.create(), singletonStore.create(),
+      return new RemoteStoreConfiguration(attributes.protect(), async.create(),
             asyncExecutorFactory.create(), connectionPool.create(), security.create());
    }
 
@@ -247,13 +236,13 @@ public class RemoteStoreConfigurationBuilder extends AbstractStoreConfigurationB
       }
 
       if (attributes.attribute(HOTROD_WRAPPING).get() && attributes.attribute(MARSHALLER).get() != null) {
-         throw log.cannotEnableHotRodWrapping();
+         throw CONFIG.cannotEnableHotRodWrapping();
       }
 
       ProtocolVersion version = attributes.attribute(PROTOCOL_VERSION).get();
       ProtocolVersion minimumVersion = ProtocolVersion.PROTOCOL_VERSION_23;
       if (attributes.attribute(SEGMENTED).get() && version.compareTo(minimumVersion) < 0) {
-         throw log.segmentationNotSupportedInThisVersion(minimumVersion);
+         throw CONFIG.segmentationNotSupportedInThisVersion(minimumVersion);
       }
    }
 }

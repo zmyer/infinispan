@@ -6,7 +6,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-server-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -26,10 +26,52 @@
 
       <dependency>
          <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-clustered-counter</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote-query-server</artifactId>
       </dependency>
 
+      <dependency>
+         <groupId>org.kohsuke.metainf-services</groupId>
+         <artifactId>metainf-services</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-tasks</artifactId>
+         <optional>true</optional>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-scripting</artifactId>
+         <optional>true</optional>
+      </dependency>
+
        <!-- and now for unit and integration tests -->
+       <dependency>
+           <groupId>org.infinispan.protostream</groupId>
+           <artifactId>protostream</artifactId>
+           <scope>test</scope>
+       </dependency>
+
+       <dependency>
+           <groupId>org.infinispan.protostream</groupId>
+           <artifactId>protostream-processor</artifactId>
+           <scope>test</scope>
+       </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-tasks</artifactId>
+         <version>${project.version}</version>
+         <type>test-jar</type>
+         <scope>test</scope>
+      </dependency>
+
        <dependency>
          <groupId>org.testng</groupId>
          <artifactId>testng</artifactId>
@@ -38,6 +80,11 @@
       <dependency>
          <groupId>org.eclipse.jetty</groupId>
          <artifactId>jetty-client</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.antlr</groupId>
+         <artifactId>antlr-runtime</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -78,6 +125,16 @@
          <artifactId>jmh-generator-annprocess</artifactId>
          <scope>test</scope>
       </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-client-rest</artifactId>
+         <scope>test</scope>
+      </dependency>
+       <dependency>
+           <groupId>org.apache.httpcomponents</groupId>
+           <artifactId>httpcore</artifactId>
+           <scope>test</scope>
+       </dependency>
    </dependencies>
 
    <build>
@@ -106,13 +163,7 @@
                                   <attribute name="command"/>
                                   <element name="args"/>
                                   <sequential>
-                                      <condition property="keytool.classname" value="com.ibm.crypto.tools.KeyTool">
-                                          <available classname="com.ibm.crypto.tools.KeyTool"/>
-                                      </condition>
-                                      <condition property="keytool.classname" value="sun.security.tools.keytool.Main">
-                                          <available classname="sun.security.tools.keytool.Main"/>
-                                      </condition>
-                                      <java classname="${keytool.classname}" failonerror="true">
+                                      <exec executable="${server.jvm}/bin/keytool">
                                           <arg value="@{command}"/>
                                           <!-- common arguments -->
                                           <arg value="-validity"/>
@@ -130,7 +181,7 @@
                                           <arg value="pkcs12"/>
                                           <!-- additional arguments -->
                                           <args/>
-                                      </java>
+                                      </exec>
                                   </sequential>
                               </macrodef>
                               <delete quiet="true">
@@ -168,6 +219,16 @@
                   </execution>
               </executions>
           </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+               <dependenciesToScan>
+                  <!-- TestNGSuiteChecksTest -->
+                  <dependency>org.infinispan:infinispan-commons-test</dependency>
+               </dependenciesToScan>
+            </configuration>
+         </plugin>
       </plugins>
    </build>
 </project>

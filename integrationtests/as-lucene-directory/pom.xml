@@ -5,13 +5,13 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-integrationtests-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-as-lucene-integration</artifactId>
-   <name>Integration tests - AS Lucene Directory</name>
-   <description>Integration tests - Wildfly Lucene directory integration</description>
+   <name>Integration tests - WildFly Lucene Directory</name>
+   <description>Integration tests - WildFly Lucene directory integration</description>
 
    <dependencies>
       <dependency>
@@ -154,7 +154,6 @@
                           <version.hibernate.search>${version.hibernate.search}</version.hibernate.search>
                           <version.hibernate.core>${version.hibernate.core}</version.hibernate.core>
                       </systemPropertyVariables>
-                     <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
                   </configuration>
                </execution>
             </executions>
@@ -267,5 +266,4 @@
          </build>
       </profile>
    </profiles>
-
 </project>

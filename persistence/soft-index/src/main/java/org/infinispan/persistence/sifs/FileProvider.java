@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
@@ -21,7 +22,6 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.infinispan.commons.util.CloseableIterator;
-import org.infinispan.commons.util.concurrent.ConcurrentHashSet;
 import org.infinispan.util.logging.LogFactory;
 
 /**
@@ -37,18 +37,18 @@ public class FileProvider {
    private final File dataDir;
    private final int openFileLimit;
    private final ArrayBlockingQueue<Record> recordQueue;
-   private final ConcurrentMap<Integer, Record> openFiles = new ConcurrentHashMap<Integer, Record>();
+   private final ConcurrentMap<Integer, Record> openFiles = new ConcurrentHashMap<>();
    private final AtomicInteger currentOpenFiles = new AtomicInteger(0);
    private final ReadWriteLock lock = new ReentrantReadWriteLock();
    private final Set<Integer> logFiles = new HashSet<Integer>();
-   private final Set<FileIterator> iterators = new ConcurrentHashSet<>();
+   private final Set<FileIterator> iterators = ConcurrentHashMap.newKeySet();
 
    private int nextFileId = 0;
 
-   public FileProvider(String dataDir, int openFileLimit) {
+   public FileProvider(Path dataDir, int openFileLimit) {
       this.openFileLimit = openFileLimit;
-      this.recordQueue = new ArrayBlockingQueue<Record>(openFileLimit);
-      this.dataDir = new File(dataDir);
+      this.recordQueue = new ArrayBlockingQueue<>(openFileLimit);
+      this.dataDir = dataDir.toFile();
       this.dataDir.mkdirs();
    }
 

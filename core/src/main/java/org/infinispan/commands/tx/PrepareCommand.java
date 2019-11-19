@@ -12,7 +12,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
+import org.infinispan.commands.InitializableCommand;
+import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.Visitor;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
@@ -25,6 +28,7 @@ import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
 import org.infinispan.commands.write.ComputeCommand;
 import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.DataWriteCommand;
+import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -36,12 +40,14 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.RemoteTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.transaction.impl.RemoteTransaction;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.transaction.xa.recovery.RecoveryManager;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.concurrent.locks.TransactionalRemoteLockCommand;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -53,7 +59,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author Mircea.Markus@jboss.com
  * @since 4.0
  */
-public class PrepareCommand extends AbstractTransactionBoundaryCommand implements TransactionalRemoteLockCommand {
+public class PrepareCommand extends AbstractTransactionBoundaryCommand implements InitializableCommand, TransactionalRemoteLockCommand {
 
    private static final Log log = LogFactory.getLog(PrepareCommand.class);
    private static boolean trace = log.isTraceEnabled();
@@ -69,9 +75,14 @@ public class PrepareCommand extends AbstractTransactionBoundaryCommand implement
 
    private static final WriteCommand[] EMPTY_WRITE_COMMAND_ARRAY = new WriteCommand[0];
 
-   public void initialize(CacheNotifier notifier, RecoveryManager recoveryManager) {
-      this.notifier = notifier;
-      this.recoveryManager = recoveryManager;
+   @Override
+   public void init(ComponentRegistry componentRegistry, boolean isRemote) {
+      super.init(componentRegistry, isRemote);
+      this.notifier = componentRegistry.getCacheNotifier().running();
+      this.recoveryManager = componentRegistry.getRecoveryManager().running();
+
+      for (ReplicableCommand nested : getModifications())
+         componentRegistry.getCommandsFactory().initializeReplicableCommand(nested, false);
    }
 
    private PrepareCommand() {
@@ -105,8 +116,13 @@ public class PrepareCommand extends AbstractTransactionBoundaryCommand implement
 
       if (trace)
          log.tracef("Invoking remotely originated prepare: %s with invocation context: %s", this, ctx);
-      notifier.notifyTransactionRegistered(ctx.getGlobalTransaction(), false);
-      return invoker.invokeAsync(ctx, this);
+      CompletionStage<Void> stage = notifier.notifyTransactionRegistered(ctx.getGlobalTransaction(), false);
+
+      if (CompletionStages.isCompletedSuccessfully(stage)) {
+         return invoker.invokeAsync(ctx, this);
+      } else {
+         return stage.thenCompose(v -> invoker.invokeAsync(ctx, this)).toCompletableFuture();
+      }
    }
 
    @Override
@@ -152,6 +168,7 @@ public class PrepareCommand extends AbstractTransactionBoundaryCommand implement
                set.add(((DataWriteCommand) writeCommand).getKey());
                break;
             case PutMapCommand.COMMAND_ID:
+            case InvalidateCommand.COMMAND_ID:
             case ReadWriteManyCommand.COMMAND_ID:
             case ReadWriteManyEntriesCommand.COMMAND_ID:
             case WriteOnlyManyCommand.COMMAND_ID:

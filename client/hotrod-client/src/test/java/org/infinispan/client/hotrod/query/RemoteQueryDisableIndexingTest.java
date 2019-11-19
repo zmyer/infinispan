@@ -15,11 +15,12 @@ import org.infinispan.Cache;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.Search;
-import org.infinispan.client.hotrod.marshall.ProtoStreamMarshaller;
+import org.infinispan.client.hotrod.marshall.MarshallerUtil;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.ModelFactoryPB;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.MarshallerRegistration;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.NotIndexedMarshaller;
 import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
 import org.infinispan.protostream.FileDescriptorSource;
@@ -38,8 +39,7 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 /**
- * Test the disabling of indexing for message types that are annotated {@code @Indexed(false)}. Non-indexed querying
- * should still work.
+ * Test query for message types that are not annotated with {@code @Indexed}. Non-indexed querying must always work.
  *
  * @author anistor@redhat.com
  * @since 9.3
@@ -48,7 +48,6 @@ import org.testng.annotations.Test;
 public class RemoteQueryDisableIndexingTest extends AbstractQueryDslTest {
 
    private static final String NOT_INDEXED_PROTO_SCHEMA = "package sample_bank_account;\n" +
-         "/** @Indexed(false) */\n" +
          "message NotIndexed {\n" +
          "\toptional string notIndexedField = 1;\n" +
          "}\n";
@@ -106,7 +105,7 @@ public class RemoteQueryDisableIndexingTest extends AbstractQueryDslTest {
 
       hotRodServer = HotRodClientTestingUtil.startHotRodServer(manager(0));
 
-      org.infinispan.client.hotrod.configuration.ConfigurationBuilder clientBuilder = new org.infinispan.client.hotrod.configuration.ConfigurationBuilder();
+      org.infinispan.client.hotrod.configuration.ConfigurationBuilder clientBuilder = HotRodClientTestingUtil.newRemoteConfigurationBuilder();
       clientBuilder.addServer().host("127.0.0.1").port(hotRodServer.getPort());
       clientBuilder.marshaller(new ProtoStreamMarshaller());
       remoteCacheManager = new RemoteCacheManager(clientBuilder.build());
@@ -121,7 +120,7 @@ public class RemoteQueryDisableIndexingTest extends AbstractQueryDslTest {
       RemoteQueryTestUtils.checkSchemaErrors(metadataCache);
 
       //initialize client-side serialization context
-      SerializationContext serCtx = ProtoStreamMarshaller.getSerializationContext(remoteCacheManager);
+      SerializationContext serCtx = MarshallerUtil.getSerializationContext(remoteCacheManager);
       MarshallerRegistration.registerMarshallers(serCtx);
       serCtx.registerProtoFiles(FileDescriptorSource.fromString("not_indexed.proto", notIndexedProtoSchemaFile));
       serCtx.registerMarshaller(new NotIndexedMarshaller());

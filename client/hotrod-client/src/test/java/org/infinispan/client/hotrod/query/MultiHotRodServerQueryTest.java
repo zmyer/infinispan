@@ -15,11 +15,11 @@ import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.Search;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
-import org.infinispan.client.hotrod.marshall.ProtoStreamMarshaller;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.AddressPB;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.UserPB;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.MarshallerRegistration;
 import org.infinispan.client.hotrod.test.MultiHotRodServersTest;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -30,6 +30,7 @@ import org.infinispan.query.dsl.QueryFactory;
 import org.infinispan.query.dsl.embedded.testdomain.Address;
 import org.infinispan.query.dsl.embedded.testdomain.User;
 import org.infinispan.query.remote.ProtobufMetadataManager;
+import org.infinispan.test.TestingUtil;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
@@ -52,7 +53,6 @@ public class MultiHotRodServerQueryTest extends MultiHotRodServersTest {
    @Override
    protected void modifyGlobalConfiguration(GlobalConfigurationBuilder builder) {
       super.modifyGlobalConfiguration(builder);
-      builder.globalJmxStatistics().enable();
    }
 
    @Override
@@ -79,14 +79,14 @@ public class MultiHotRodServerQueryTest extends MultiHotRodServersTest {
    @BeforeClass(alwaysRun = true)
    protected void populateCache() throws Exception {
       //initialize server-side serialization context
-      ProtobufMetadataManager protobufMetadataManager = manager(0).getGlobalComponentRegistry().getComponent(ProtobufMetadataManager.class);
+      ProtobufMetadataManager protobufMetadataManager = TestingUtil.extractGlobalComponent(manager(0), ProtobufMetadataManager.class);
       protobufMetadataManager.registerProtofile("sample_bank_account/bank.proto", Util.getResourceAsString("/sample_bank_account/bank.proto", getClass().getClassLoader()));
       assertNull(protobufMetadataManager.getFileErrors("sample_bank_account/bank.proto"));
       assertNull(protobufMetadataManager.getFilesWithErrors());
 
       //initialize client-side serialization context
       for (RemoteCacheManager rcm : clients) {
-         MarshallerRegistration.registerMarshallers(ProtoStreamMarshaller.getSerializationContext(rcm));
+         MarshallerRegistration.registerMarshallers(rcm);
       }
 
       User user1 = new UserPB();

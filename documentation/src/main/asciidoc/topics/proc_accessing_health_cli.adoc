@@ -1,0 +1,10 @@
+= Accessing Health API using CLI
+//dnaro: needs to be updated for 10
+You can access the Health API from the Command Line Interface (CLI), as in the following examples:
+
+The following is a sample result for the CLI invocation:
+
+[source,options="nowrap",subs=attributes+]
+----
+include::cli_examples/server_health.adoc[]
+----

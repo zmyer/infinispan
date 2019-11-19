@@ -49,8 +49,10 @@ import org.infinispan.query.spi.SearchManagerImplementor;
 import org.infinispan.query.test.CustomKey3;
 import org.infinispan.query.test.CustomKey3Transformer;
 import org.infinispan.query.test.Person;
+import org.infinispan.query.test.QueryTestSCI;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
+import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
 /**
@@ -96,6 +98,14 @@ public class ClusteredCacheTest extends MultipleCacheManagersTest {
       };
    }
 
+   @AfterMethod(alwaysRun = true)
+   @Override
+   protected void clearContent() throws Throwable {
+      // Update the indexes as well -- see ISPN-9890
+      cache(0).clear();
+      super.clearContent();
+   }
+
    ClusteredCacheTest storageType(StorageType storageType) {
       this.storageType = storageType;
       return this;
@@ -117,7 +127,7 @@ public class ClusteredCacheTest extends MultipleCacheManagersTest {
       cacheCfg.memory()
             .storageType(storageType);
       enhanceConfig(cacheCfg);
-      List<Cache<Object, Person>> caches = createClusteredCaches(2, cacheCfg);
+      List<Cache<Object, Person>> caches = createClusteredCaches(2, QueryTestSCI.INSTANCE, cacheCfg);
       cache1 = caches.get(0);
       cache2 = caches.get(1);
    }
@@ -650,7 +660,7 @@ public class ClusteredCacheTest extends MultipleCacheManagersTest {
 
    public void testSearchKeyTransformer() throws Exception {
       caches().forEach(cache -> {
-         SearchManagerImplementor manager = (SearchManagerImplementor) Search.getSearchManager(cache);
+         SearchManagerImplementor manager = Search.getSearchManager(cache).unwrap(SearchManagerImplementor.class);
          manager.registerKeyTransformer(CustomKey3.class, CustomKey3Transformer.class);
       });
 

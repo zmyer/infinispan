@@ -9,14 +9,14 @@ import org.hibernate.search.annotations.Field;
 import org.hibernate.search.annotations.FieldBridge;
 import org.hibernate.search.annotations.Store;
 import org.hibernate.search.bridge.builtin.impl.BuiltinArrayBridge;
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.annotations.ProtoField;
 import org.infinispan.query.dsl.embedded.testdomain.Limits;
 
 /**
  * @author anistor@redhat.com
  * @since 9.4.1
  */
-public class LimitsHS implements Limits, Serializable, ExternalPojo {
+public class LimitsHS implements Limits, Serializable {
 
    @Field(store = Store.YES, analyze = Analyze.NO)
    private Double maxDailyLimit;
@@ -29,6 +29,7 @@ public class LimitsHS implements Limits, Serializable, ExternalPojo {
    private String[] payees = new String[0];
 
    @Override
+   @ProtoField(number = 1)
    public Double getMaxDailyLimit() {
       return maxDailyLimit;
    }
@@ -39,6 +40,7 @@ public class LimitsHS implements Limits, Serializable, ExternalPojo {
    }
 
    @Override
+   @ProtoField(number = 2)
    public Double getMaxTransactionLimit() {
       return maxTransactionLimit;
    }
@@ -49,6 +51,7 @@ public class LimitsHS implements Limits, Serializable, ExternalPojo {
    }
 
    @Override
+   @ProtoField(number = 3)
    public String[] getPayees() {
       return payees;
    }

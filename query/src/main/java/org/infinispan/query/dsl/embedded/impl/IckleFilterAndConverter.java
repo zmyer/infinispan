@@ -9,12 +9,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
-import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.io.UnsignedNumeric;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.filter.AbstractKeyValueFilterConverter;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.objectfilter.Matcher;
@@ -29,6 +30,7 @@ import org.infinispan.query.impl.externalizers.ExternalizerIds;
  * @author anistor@redhat.com
  * @since 7.0
  */
+@Scope(Scopes.NONE)
 public class IckleFilterAndConverter<K, V> extends AbstractKeyValueFilterConverter<K, V, ObjectFilter.FilterResult> implements Function<Map.Entry<K, V>, ObjectFilter.FilterResult> {
 
    /**
@@ -71,9 +73,8 @@ public class IckleFilterAndConverter<K, V> extends AbstractKeyValueFilterConvert
     * Acquires a Matcher instance from the ComponentRegistry of the given Cache object.
     */
    @Inject
-   protected void injectDependencies(Cache cache) {
-      this.queryCache = cache.getCacheManager().getGlobalComponentRegistry().getComponent(QueryCache.class);
-      ComponentRegistry componentRegistry = cache.getAdvancedCache().getComponentRegistry();
+   protected void injectDependencies(ComponentRegistry componentRegistry, QueryCache queryCache) {
+      this.queryCache = queryCache;
       matcher = componentRegistry.getComponent(matcherImplClass);
       if (matcher == null) {
          throw new CacheException("Expected component not found in registry: " + matcherImplClass.getName());

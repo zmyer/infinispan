@@ -3,8 +3,9 @@ package org.infinispan.interceptors.impl;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.PRIVATE;
 
+import java.util.concurrent.CompletionStage;
+
 import org.infinispan.commands.FlagAffectedCommand;
-import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.write.ComputeCommand;
 import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -15,7 +16,8 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.factories.annotations.Start;
+import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -39,7 +41,7 @@ public class DistCacheWriterInterceptor extends CacheWriterInterceptor {
    private static final Log log = LogFactory.getLog(DistCacheWriterInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private DistributionManager dm;
+   @Inject DistributionManager dm;
 
    private boolean isUsingLockDelegation;
 
@@ -48,8 +50,6 @@ public class DistCacheWriterInterceptor extends CacheWriterInterceptor {
       return log;
    }
 
-   @Start(priority = 25) // after the distribution manager!
-   @SuppressWarnings("unused")
    protected void start() {
       super.start();
       this.isUsingLockDelegation = !cacheConfiguration.transaction().transactionMode().isTransactional();
@@ -59,18 +59,14 @@ public class DistCacheWriterInterceptor extends CacheWriterInterceptor {
 
    @Override
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         PutKeyValueCommand putKeyValueCommand = (PutKeyValueCommand) rCommand;
+      return invokeNextThenApply(ctx, command, (rCtx, putKeyValueCommand, rv) -> {
          Object key = putKeyValueCommand.getKey();
          if (!putKeyValueCommand.hasAnyFlag(FlagBitSets.ROLLING_UPGRADE) && (!isStoreEnabled(putKeyValueCommand) || rCtx.isInTxScope() || !putKeyValueCommand.isSuccessful()))
             return rv;
          if (!isProperWriter(rCtx, putKeyValueCommand, putKeyValueCommand.getKey()))
             return rv;
 
-         storeEntry(rCtx, key, putKeyValueCommand);
-         if (getStatisticsEnabled())
-            cacheStores.incrementAndGet();
-         return rv;
+         return delayedValue(storeEntry(rCtx, key, putKeyValueCommand), rv);
       });
    }
 
@@ -79,21 +75,17 @@ public class DistCacheWriterInterceptor extends CacheWriterInterceptor {
       if (!isStoreEnabled(command) || ctx.isInTxScope())
          return invokeNext(ctx, command);
 
-      return invokeNextThenAccept(ctx, command, handlePutMapCommandReturn);
+      return invokeNextThenApply(ctx, command, handlePutMapCommandReturn);
    }
 
    @Override
-   protected void handlePutMapCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Object rv) {
-      PutMapCommand cmd = (PutMapCommand) rCommand;
-      processIterableBatch(rCtx, cmd, BOTH,
-            key -> !skipNonPrimary(rCtx, key, cmd) &&
-                  isProperWriter(rCtx, cmd, key) &&
-                  !skipSharedStores(rCtx, key, cmd));
-
-      processIterableBatch(rCtx, cmd, PRIVATE,
-            key -> !skipNonPrimary(rCtx, key, cmd) &&
-                  isProperWriter(rCtx, cmd, key) &&
-                  skipSharedStores(rCtx, key, cmd));
+   protected Object handlePutMapCommandReturn(InvocationContext rCtx, PutMapCommand cmd, Object rv) {
+      CompletionStage<Void> writeStage = CompletionStages.allOf(
+            processIterableBatch(rCtx, cmd, BOTH, key -> !skipNonPrimary(rCtx, key, cmd) && isProperWriter(rCtx, cmd, key) &&
+                  !skipSharedStores(rCtx, key, cmd)),
+            processIterableBatch(rCtx, cmd, PRIVATE, key -> !skipNonPrimary(rCtx, key, cmd) && isProperWriter(rCtx, cmd, key) &&
+                  skipSharedStores(rCtx, key, cmd)));
+      return delayedValue(writeStage, rv);
    }
 
    private boolean skipNonPrimary(InvocationContext rCtx, Object key, PutMapCommand command) {
@@ -104,81 +96,72 @@ public class DistCacheWriterInterceptor extends CacheWriterInterceptor {
 
    @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         RemoveCommand removeCommand = (RemoveCommand) rCommand;
+      return invokeNextThenApply(ctx, command, (rCtx, removeCommand, rv) -> {
          Object key = removeCommand.getKey();
          if (!isStoreEnabled(removeCommand) || rCtx.isInTxScope() || !removeCommand.isSuccessful())
             return rv;
          if (!isProperWriter(rCtx, removeCommand, key))
             return rv;
 
-         boolean resp = persistenceManager
-               .deleteFromAllStores(key, command.getSegment(), skipSharedStores(rCtx, key, removeCommand) ? PRIVATE : BOTH);
-         if (trace)
-            log.tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
-
-         return rv;
+         CompletionStage<?> stage = persistenceManager.deleteFromAllStores(key, removeCommand.getSegment(),
+               skipSharedStores(rCtx, key, removeCommand) ? PRIVATE : BOTH);
+         if (trace) {
+            stage = stage.thenAccept(removed ->
+                  getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, removed));
+         }
+         return delayedValue(stage, rv);
       });
    }
 
    @Override
-   public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command)
-         throws Throwable {
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         ReplaceCommand replaceCommand = (ReplaceCommand) rCommand;
+   public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return invokeNextThenApply(ctx, command, (rCtx, replaceCommand, rv) -> {
          Object key = replaceCommand.getKey();
          if (!isStoreEnabled(replaceCommand) || rCtx.isInTxScope() || !replaceCommand.isSuccessful())
             return rv;
          if (!isProperWriter(rCtx, replaceCommand, replaceCommand.getKey()))
             return rv;
 
-         storeEntry(rCtx, key, replaceCommand);
-         if (getStatisticsEnabled())
-            cacheStores.incrementAndGet();
-
-         return rv;
+         return delayedValue(storeEntry(rCtx, key, replaceCommand), rv);
       });
    }
 
    @Override
    public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         ComputeCommand computeCommand = (ComputeCommand) rCommand;
+      return invokeNextThenApply(ctx, command, (rCtx, computeCommand, rv) -> {
          Object key = computeCommand.getKey();
          if (!isStoreEnabled(computeCommand) || rCtx.isInTxScope() || !computeCommand.isSuccessful())
             return rv;
          if (!isProperWriter(rCtx, computeCommand, computeCommand.getKey()))
             return rv;
 
-         if (command.isSuccessful() && rv == null) {
-            boolean resp = persistenceManager
-                  .deleteFromAllStores(key, command.getSegment(), skipSharedStores(rCtx, key, command) ? PRIVATE : BOTH);
-            if (trace)
-               log.tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
-         } else if (command.isSuccessful()) {
-            storeEntry(rCtx, key, computeCommand);
-            if (getStatisticsEnabled())
-               cacheStores.incrementAndGet();
+         CompletionStage<?> stage;
+         if (computeCommand.isSuccessful() && rv == null) {
+             stage = persistenceManager.deleteFromAllStores(key, computeCommand.getSegment(),
+                  skipSharedStores(rCtx, key, computeCommand) ? PRIVATE : BOTH);
+            if (trace) {
+               stage = stage.thenAccept(removed ->
+                     getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, removed));
+            }
+         } else if (computeCommand.isSuccessful()) {
+            stage = storeEntry(rCtx, key, computeCommand);
+         } else {
+            stage = CompletableFutures.completedNull();
          }
-         return rv;
+         return delayedValue(stage, rv);
       });
    }
 
    @Override
    public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         ComputeIfAbsentCommand computeIfAbsentCommand = (ComputeIfAbsentCommand) rCommand;
+      return invokeNextThenApply(ctx, command, (rCtx, computeIfAbsentCommand, rv) -> {
          Object key = computeIfAbsentCommand.getKey();
          if (!isStoreEnabled(computeIfAbsentCommand) || rCtx.isInTxScope() || !computeIfAbsentCommand.isSuccessful())
             return rv;
          if (!isProperWriter(rCtx, computeIfAbsentCommand, computeIfAbsentCommand.getKey()))
             return rv;
 
-         storeEntry(rCtx, key, computeIfAbsentCommand);
-         if (getStatisticsEnabled())
-            cacheStores.incrementAndGet();
-
-         return rv;
+         return delayedValue(storeEntry(rCtx, key, computeIfAbsentCommand), rv);
       });
    }
 

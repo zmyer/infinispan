@@ -2,17 +2,12 @@ package org.infinispan.metadata.impl;
 
 import static java.lang.Math.min;
 
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
-import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
-import org.infinispan.commons.marshall.AbstractExternalizer;
-import org.infinispan.commons.util.Util;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.InternalCacheValue;
 import org.infinispan.container.versioning.EntryVersion;
-import org.infinispan.marshall.core.Ids;
+import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.InternalMetadata;
 import org.infinispan.metadata.Metadata;
 
@@ -20,6 +15,7 @@ import org.infinispan.metadata.Metadata;
  * @author Mircea Markus
  * @since 6.0
  */
+@Deprecated
 public class InternalMetadataImpl implements InternalMetadata {
    private final Metadata actual;
    private final long created;
@@ -61,7 +57,7 @@ public class InternalMetadataImpl implements InternalMetadata {
 
    @Override
    public Builder builder() {
-      return actual.builder();
+      return new InternalBuilder(actual, created, lastUsed);
    }
 
    @Override
@@ -76,6 +72,59 @@ public class InternalMetadataImpl implements InternalMetadata {
 
    public Metadata actual() {
       return actual;
+   }
+
+   static class InternalBuilder implements Builder {
+      private Builder actualBuilder;
+      private final long created;
+      private final long lastUsed;
+
+      InternalBuilder(Metadata actual, long created, long lastUsed) {
+         actualBuilder = actual != null ? actual.builder() : new EmbeddedMetadata.Builder();
+         this.created = created;
+         this.lastUsed = lastUsed;
+      }
+
+      @Override
+      public Builder lifespan(long time, TimeUnit unit) {
+         actualBuilder = actualBuilder.lifespan(time, unit);
+         return this;
+      }
+
+      @Override
+      public Builder lifespan(long time) {
+         actualBuilder = actualBuilder.lifespan(time);
+         return this;
+      }
+
+      @Override
+      public Builder maxIdle(long time, TimeUnit unit) {
+         actualBuilder = actualBuilder.maxIdle(time, unit);
+         return this;
+      }
+
+      @Override
+      public Builder maxIdle(long time) {
+         actualBuilder = actualBuilder.maxIdle(time);
+         return this;
+      }
+
+      @Override
+      public Builder version(EntryVersion version) {
+         actualBuilder = actualBuilder.version(version);
+         return this;
+      }
+
+      @Override
+      public Builder merge(Metadata metadata) {
+         actualBuilder = actualBuilder.merge(metadata);
+         return this;
+      }
+
+      @Override
+      public Metadata build() {
+         return new InternalMetadataImpl(actualBuilder.build(), created, lastUsed);
+      }
    }
 
    @Override
@@ -126,7 +175,7 @@ public class InternalMetadataImpl implements InternalMetadata {
             '}';
    }
 
-   private static Metadata extractMetadata(Metadata metadata) {
+   public static Metadata extractMetadata(Metadata metadata) {
       Metadata toCheck = metadata;
       while (toCheck != null) {
          if (toCheck instanceof InternalMetadataImpl) {
@@ -136,39 +185,5 @@ public class InternalMetadataImpl implements InternalMetadata {
          }
       }
       return toCheck;
-   }
-
-   public static class Externalizer extends AbstractExternalizer<InternalMetadataImpl> {
-
-      private static final long serialVersionUID = -5291318076267612501L;
-
-      public Externalizer() {
-      }
-
-      @Override
-      public void writeObject(ObjectOutput output, InternalMetadataImpl b) throws IOException {
-         output.writeLong(b.created);
-         output.writeLong(b.lastUsed);
-         output.writeObject(b.actual);
-      }
-
-      @Override
-      public InternalMetadataImpl readObject(ObjectInput input) throws IOException, ClassNotFoundException {
-         long created = input.readLong();
-         long lastUsed = input.readLong();
-         Metadata actual = (Metadata) input.readObject();
-         return new InternalMetadataImpl(actual, created, lastUsed);
-      }
-
-      @Override
-      public Integer getId() {
-         return Ids.INTERNAL_METADATA_ID;
-      }
-
-      @Override
-      @SuppressWarnings("unchecked")
-      public Set<Class<? extends InternalMetadataImpl>> getTypeClasses() {
-         return Util.<Class<? extends InternalMetadataImpl>>asSet(InternalMetadataImpl.class);
-      }
    }
 }

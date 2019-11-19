@@ -1,6 +1,7 @@
 package org.infinispan.interceptors.impl;
 
 import static org.infinispan.commons.util.Util.toStr;
+import static org.infinispan.util.logging.Log.CONTAINER;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -26,7 +27,6 @@ import org.infinispan.factories.annotations.Stop;
 import org.infinispan.interceptors.BaseAsyncInterceptor;
 import org.infinispan.interceptors.InvocationExceptionFunction;
 import org.infinispan.lifecycle.ComponentStatus;
-import org.infinispan.manager.CacheContainer;
 import org.infinispan.statetransfer.OutdatedTopologyException;
 import org.infinispan.transaction.WriteSkewException;
 import org.infinispan.transaction.impl.AbstractCacheTransaction;
@@ -44,12 +44,12 @@ public class InvocationContextInterceptor extends BaseAsyncInterceptor {
    private static final Log log = LogFactory.getLog(InvocationContextInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private ComponentRegistry componentRegistry;
-   @Inject private TransactionTable txTable;
+   @Inject ComponentRegistry componentRegistry;
+   @Inject TransactionTable txTable;
 
    private volatile boolean shuttingDown = false;
 
-   private final InvocationExceptionFunction suppressExceptionsHandler = (rCtx, rCommand, throwable) -> {
+   private final InvocationExceptionFunction<VisitableCommand> suppressExceptionsHandler = (rCtx, rCommand, throwable) -> {
       if (throwable instanceof InvalidCacheUsageException || throwable instanceof InterruptedException) {
          throw throwable;
       } if (throwable instanceof UserRaisedFunctionalException) {
@@ -66,12 +66,12 @@ public class InvocationContextInterceptor extends BaseAsyncInterceptor {
    };
 
    @Start(priority = 1)
-   private void setStartStatus() {
+   void setStartStatus() {
       shuttingDown = false;
    }
 
    @Stop(priority = 1)
-   private void setStopStatus() {
+   void setStopStatus() {
       shuttingDown = true;
    }
 
@@ -95,10 +95,10 @@ public class InvocationContextInterceptor extends BaseAsyncInterceptor {
       switch (status) {
          case FAILED:
          case TERMINATED:
-            throw log.cacheIsTerminated(getCacheNamePrefix(), status.toString());
+            throw CONTAINER.cacheIsTerminated(getCacheNamePrefix(), status.toString());
          case STOPPING:
             if (stoppingAndNotAllowed(status, ctx)) {
-               throw log.cacheIsStopping(getCacheNamePrefix());
+               throw CONTAINER.cacheIsStopping(getCacheNamePrefix());
             }
          default:
             // Allow the command to run
@@ -124,7 +124,7 @@ public class InvocationContextInterceptor extends BaseAsyncInterceptor {
             if (trace) log.tracef("Topology changed, retrying command: %s", th);
          } else {
             Collection<?> affectedKeys = extractWrittenKeys(ctx, command);
-            log.executionError(command.getClass().getSimpleName(), toStr(affectedKeys), th);
+            log.executionError(command.getClass().getSimpleName(), getCacheNamePrefix(), toStr(affectedKeys), th);
          }
          if (ctx.isInTxScope() && ctx.isOriginLocal()) {
             if (trace) log.trace("Transaction marked for rollback as exception was received.");
@@ -150,10 +150,7 @@ public class InvocationContextInterceptor extends BaseAsyncInterceptor {
 
    private String getCacheNamePrefix() {
       String cacheName = componentRegistry.getCacheName();
-      String prefix = "Cache '" + cacheName + "'";
-      if (cacheName.equals(CacheContainer.DEFAULT_CACHE_NAME))
-         prefix = "Default cache";
-      return prefix;
+      return  "Cache '" + cacheName + "'";
    }
 
    /**

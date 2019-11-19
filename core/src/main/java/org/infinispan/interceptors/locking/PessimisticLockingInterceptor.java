@@ -14,12 +14,11 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.interceptors.InvocationSuccessAction;
 import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.transaction.impl.LocalTransaction;
-import org.infinispan.util.concurrent.locks.KeyAwareLockPromise;
-import org.infinispan.util.concurrent.locks.LockPromise;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -42,12 +41,12 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
    private static final Log log = LogFactory.getLog(PessimisticLockingInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   private final InvocationSuccessFunction localLockCommandWork =
-         (rCtx, rCommand, rv) -> localLockCommandWork(rCtx, (LockControlCommand) rCommand);
-   private final InvocationSuccessAction releaseLockOnCompletion =
+   private final InvocationSuccessFunction<LockControlCommand> localLockCommandWork =
+         (rCtx, rCommand, rv) -> localLockCommandWork((TxInvocationContext) rCtx, rCommand);
+   private final InvocationSuccessAction<PrepareCommand> releaseLockOnCompletion =
          (rCtx, rCommand, rv) -> releaseLockOnTxCompletion((TxInvocationContext) rCtx);
 
-   @Inject private CommandsFactory cf;
+   @Inject CommandsFactory cf;
 
    @Override
    protected Log getLog() {
@@ -74,6 +73,8 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
       LockControlCommand lcc = cf.buildLockControlCommand(key, command.getFlagsBitSet(),
             txContext.getGlobalTransaction());
       lcc.setTopologyId(command.getTopologyId());
+      // This invokes the chain down using the lock control command and then after it is acquired invokes
+      // the chain again with the actual command
       return invokeNextThenApply(ctx, lcc, (rCtx, rCommand, rv) -> acquireLocalLockAndInvokeNext(rCtx, command));
    }
 
@@ -81,18 +82,18 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
       return ctx.isInTxScope() && command.hasAnyFlag(FlagBitSets.FORCE_WRITE_LOCK) && !hasSkipLocking(command);
    }
 
-   private KeyAwareLockPromise acquireLocalLock(InvocationContext ctx, DataCommand command) throws InterruptedException {
-      if (trace)
-         log.tracef("acquireLocalLock");
+   private InvocationStage acquireLocalLock(InvocationContext ctx, DataCommand command) {
       final TxInvocationContext txContext = (TxInvocationContext) ctx;
       Object key = command.getKey();
       txContext.addAffectedKey(key);
+      // Don't keep backup locks if the local node is the primary owner in the current topology
+      // The lock/prepare command is being retried, so it's not a "pending" transaction
       txContext.getCacheTransaction().removeBackupLock(key);
-      return lockOrRegisterBackupLock(txContext, key, getLockTimeoutMillis(command));
+      return lockOrRegisterBackupLock(txContext, command, key, getLockTimeoutMillis(command));
    }
 
    @Override
-   protected Object handleReadManyCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys) throws Throwable {
+   protected Object handleReadManyCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys) {
       Object maybeStage;
       if (!readNeedsLock(ctx, command)) {
          maybeStage = invokeNext(ctx, command);
@@ -102,12 +103,13 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
       return maybeStage;
    }
 
-   private KeyAwareLockPromise acquireLocalLocks(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys)
-         throws InterruptedException {
+   private InvocationStage acquireLocalLocks(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys) {
       final TxInvocationContext<?> txContext = (TxInvocationContext) ctx;
       txContext.addAllAffectedKeys(keys);
+      // Don't keep backup locks if the local node is the primary owner in the current topology
+      // The read/write many command is being retried, so it's not a "pending" transaction
       txContext.getCacheTransaction().removeBackupLocks(keys);
-      return lockAllOrRegisterBackupLock(txContext, keys, getLockTimeoutMillis(command));
+      return lockAllOrRegisterBackupLock(txContext, command, keys, getLockTimeoutMillis(command));
    }
 
    @Override
@@ -121,7 +123,7 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
    }
 
    @Override
-   protected <K> Object handleWriteManyCommand(InvocationContext ctx, WriteCommand command, Collection<K> keys, boolean forwarded) throws Throwable {
+   protected <K> Object handleWriteManyCommand(InvocationContext ctx, WriteCommand command, Collection<K> keys, boolean forwarded) {
       Object maybeStage;
       if (hasSkipLocking(command)) {
          maybeStage = invokeNext(ctx, command);
@@ -151,6 +153,8 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
             LockControlCommand lcc = cf.buildLockControlCommand(key, command.getFlagsBitSet(),
                   txContext.getGlobalTransaction());
             lcc.setTopologyId(command.getTopologyId());
+            // This invokes the chain down using the lock control command and then after it is acquired invokes
+            // the chain again with the actual command
             return invokeNextThenApply(ctx, lcc, (rCtx, rCommand, rv) -> acquireLocalLockAndInvokeNext(rCtx, command));
          }
       }
@@ -158,8 +162,7 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
    }
 
    @Override
-   public Object visitLockControlCommand(TxInvocationContext ctx, LockControlCommand command)
-         throws Throwable {
+   public Object visitLockControlCommand(TxInvocationContext ctx, LockControlCommand command) {
       if (!ctx.isInTxScope())
          throw new IllegalStateException("Locks should only be acquired within the scope of a transaction!");
 
@@ -191,11 +194,9 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
       return invokeNextThenApply(ctx, command, localLockCommandWork);
    }
 
-   private boolean localLockCommandWork(InvocationContext ctx, LockControlCommand command)
-         throws InterruptedException {
-      TxInvocationContext<?> txInvocationContext = (TxInvocationContext<?>) ctx;
+   private Object localLockCommandWork(TxInvocationContext<?> ctx, LockControlCommand command) {
       if (ctx.isOriginLocal()) {
-         txInvocationContext.addAllAffectedKeys(command.getKeys());
+         ctx.addAllAffectedKeys(command.getKeys());
       }
 
       if (command.isUnlock()) {
@@ -203,10 +204,13 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
                "There's no advancedCache.unlock so this must have originated remotely.");
          return false;
       }
-      ((TxInvocationContext<?>) ctx).getCacheTransaction().removeBackupLocks(command.getKeys());
 
-      lockAllOrRegisterBackupLock(txInvocationContext, command.getKeys(), getLockTimeoutMillis(command)).lock();
-      return true;
+      // Don't keep backup locks if the local node is the primary owner in the current topology
+      // The lock/prepare command is being retried, so it's not a "pending" transaction
+      ctx.getCacheTransaction().removeBackupLocks(command.getKeys());
+
+      return lockAllOrRegisterBackupLock(ctx, command, command.getKeys(), getLockTimeoutMillis(command))
+                .thenApply(ctx, command, (rCtx, rCommand, rv) -> true);
    }
 
    private boolean needRemoteLocks(InvocationContext ctx, Collection<?> keys,
@@ -237,7 +241,7 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
          }
       } else {
          if (trace)
-            log.tracef("Don't need backup locks %s", needBackupLocks);
+            log.tracef("Don't need backup locks for key %s", key);
       }
       return needRemoteLock;
    }
@@ -255,8 +259,7 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
       return cdl.getCacheTopology().getPhase() == CacheTopology.Phase.READ_OLD_WRITE_ALL;
    }
 
-   private Object lockAndRecordForManyKeysCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys)
-         throws InterruptedException {
+   private Object lockAndRecordForManyKeysCommand(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys) {
       if (!needRemoteLocks(ctx, keys, command)) {
          return acquireLocalLocksAndInvokeNext(ctx, command, keys);
       } else {
@@ -266,20 +269,20 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
          if (command instanceof TopologyAffectedCommand) {
             lcc.setTopologyId(((TopologyAffectedCommand) command).getTopologyId());
          }
+         // This invokes the chain down using the lock control command and then after it is acquired invokes
+         // the chain again with the actual command
          return invokeNextThenApply(ctx, lcc,
                (rCtx, rCommand, rv) -> acquireLocalLocksAndInvokeNext(rCtx, command, keys));
       }
    }
 
-   private Object acquireLocalLocksAndInvokeNext(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys)
-         throws InterruptedException {
-      LockPromise lockPromise = acquireLocalLocks(ctx, command, keys);
-      return lockPromise.toInvocationStage().thenApply(ctx, command, invokeNextFunction);
+   private Object acquireLocalLocksAndInvokeNext(InvocationContext ctx, FlagAffectedCommand command, Collection<?> keys) {
+      InvocationStage lockStage = acquireLocalLocks(ctx, command, keys);
+      return asyncInvokeNext(ctx, command, lockStage);
    }
 
-   private Object acquireLocalLockAndInvokeNext(InvocationContext ctx, DataCommand command)
-         throws InterruptedException {
-      LockPromise lockPromise = acquireLocalLock(ctx, command);
-      return lockPromise.toInvocationStage().thenApply(ctx, command, invokeNextFunction);
+   private Object acquireLocalLockAndInvokeNext(InvocationContext ctx, DataCommand command) {
+      InvocationStage lockStage = acquireLocalLock(ctx, command);
+      return asyncInvokeNext(ctx, command, lockStage);
    }
 }

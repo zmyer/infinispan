@@ -14,7 +14,6 @@ import java.util.stream.Stream;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.Closeables;
 import org.infinispan.commons.util.Util;
-import org.infinispan.commons.util.concurrent.ConcurrentHashSet;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
@@ -43,7 +42,7 @@ public class IteratorHandler {
    private final Map<Object, CloseableIterator<?>> currentRequests = new ConcurrentHashMap<>();
    private final Map<Address, Set<Object>> ownerRequests = new ConcurrentHashMap<>();
 
-   @Inject private EmbeddedCacheManager manager;
+   @Inject EmbeddedCacheManager manager;
 
    /**
     * A {@link CloseableIterator} that also allows callers to attach {@link Runnable} instances to it, so that when
@@ -115,7 +114,7 @@ public class IteratorHandler {
       // This will be null if there have been no iterators for this node.
       // If the originating node died before we start this iterator this could be null as well. In this case the
       // iterator will be closed on the next view change.
-      Set<Object> ids = ownerRequests.computeIfAbsent(origin, k -> new ConcurrentHashSet<>());
+      Set<Object> ids = ownerRequests.computeIfAbsent(origin, k -> ConcurrentHashMap.newKeySet());
       ids.add(requestId);
       return iter;
    }
@@ -146,7 +145,7 @@ public class IteratorHandler {
     * returns false, that invocation will also close resources related to the iterator.
     * @param requestId the id of the iterator
     */
-   public void closeIterator(Address origin, Object requestId) {
+   void closeIterator(Address origin, Object requestId) {
       Set<Object> ids = ownerRequests.get(origin);
       if (ids != null) {
          ids.remove(requestId);

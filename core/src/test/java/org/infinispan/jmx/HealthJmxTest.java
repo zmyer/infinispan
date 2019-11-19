@@ -1,12 +1,14 @@
 package org.infinispan.jmx;
 
+import static org.infinispan.test.fwk.TestCacheManagerFactory.configureGlobalJmx;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
@@ -15,10 +17,13 @@ import org.infinispan.health.jmx.HealthJMXExposer;
 import org.infinispan.partitionhandling.PartitionHandling;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.fwk.TestResourceTracker;
 import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "jmx.HealthJmxTest")
 public class HealthJmxTest extends MultipleCacheManagersTest {
+
+    private final MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
 
     @Override
     protected void createCacheManagers() throws Throwable {
@@ -36,10 +41,8 @@ public class HealthJmxTest extends MultipleCacheManagersTest {
 
     private GlobalConfigurationBuilder getGlobalConfigurationBuilder(String rackId) {
         GlobalConfigurationBuilder gcb = GlobalConfigurationBuilder.defaultClusteredBuilder();
-        gcb.globalJmxStatistics()
-                .enable()
-                .mBeanServerLookup(new PerThreadMBeanServerLookup())
-                .transport().rackId(rackId);
+        configureGlobalJmx(gcb, getClass().getSimpleName(), mBeanServerLookup);
+        gcb.transport().rackId(rackId);
         return gcb;
     }
 
@@ -48,7 +51,7 @@ public class HealthJmxTest extends MultipleCacheManagersTest {
         //we need this to start a cache with a custom name
         cacheManagers.get(0).getCache("test").put("1", "1");
 
-        final MBeanServer mBeanServer = PerThreadMBeanServerLookup.getThreadMBeanServer();
+        MBeanServer mBeanServer = mBeanServerLookup.getMBeanServer();
 
         //when
         String domain0 = manager(0).getCacheManagerConfiguration().globalJmxStatistics().domain();
@@ -67,7 +70,7 @@ public class HealthJmxTest extends MultipleCacheManagersTest {
         assertTrue((long) totalMemoryKb > 0);
         assertTrue((long) freeMemoryKb > 0);
         assertEquals((String) clusterHealth, HealthStatus.HEALTHY.toString());
-        assertEquals((String) clusterName, "ISPN");
+        assertEquals((String) clusterName, TestResourceTracker.getCurrentTestName());
         assertEquals((int) numberOfNodes, 1);
         assertEquals(((String[]) cacheHealth)[0], "test");
         assertEquals(((String[]) cacheHealth)[1], HealthStatus.HEALTHY.toString());

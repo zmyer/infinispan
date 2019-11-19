@@ -1,8 +1,9 @@
 package org.infinispan.persistence.factory;
 
-import java.util.ArrayList;
-import java.util.Collections;
+import static org.infinispan.util.logging.Log.PERSISTENCE;
+
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.infinispan.configuration.cache.StoreConfiguration;
 import org.infinispan.factories.scopes.Scope;
@@ -21,7 +22,7 @@ public class CacheStoreFactoryRegistry {
 
    private static final Log log = LogFactory.getLog(CacheStoreFactoryRegistry.class);
 
-   private List<CacheStoreFactory> factories = Collections.synchronizedList(new ArrayList<CacheStoreFactory>());
+   private List<CacheStoreFactory> factories = new CopyOnWriteArrayList<>();
 
    public CacheStoreFactoryRegistry() {
       factories.add(new LocalClassLoaderCacheStoreFactory());
@@ -41,7 +42,7 @@ public class CacheStoreFactoryRegistry {
             return instance;
          }
       }
-      throw log.unableToInstantiateClass(storeConfiguration.getClass());
+      throw PERSISTENCE.unableToInstantiateClass(storeConfiguration.getClass());
    }
 
    public StoreConfiguration processStoreConfiguration(StoreConfiguration storeConfiguration) {
@@ -61,7 +62,7 @@ public class CacheStoreFactoryRegistry {
     */
    public void addCacheStoreFactory(CacheStoreFactory cacheStoreFactory) {
       if(cacheStoreFactory == null) {
-         throw log.unableToAddNullCustomStore();
+         throw PERSISTENCE.unableToAddNullCustomStore();
       }
       factories.add(0, cacheStoreFactory);
    }

@@ -1,12 +1,16 @@
 package org.infinispan.lucene.cacheloader.configuration;
 
+import static org.infinispan.configuration.cache.AbstractStoreConfiguration.SEGMENTED;
 import static org.infinispan.lucene.cacheloader.configuration.LuceneLoaderConfiguration.AFFINITY_SEGMENT_ID;
 import static org.infinispan.lucene.cacheloader.configuration.LuceneLoaderConfiguration.AUTO_CHUNK_SIZE;
 import static org.infinispan.lucene.cacheloader.configuration.LuceneLoaderConfiguration.LOCATION;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.configuration.cache.AbstractStoreConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
+import org.infinispan.lucene.cacheloader.LuceneCacheLoader;
+
 /**
  * {@link org.infinispan.configuration.cache.ConfigurationBuilder} bean for the {@link LuceneLoaderConfiguration}
  *
@@ -59,12 +63,15 @@ public class LuceneLoaderConfigurationBuilder extends
 
    @Override
    public void validate() {
-      // No op.
+      Boolean segmented = attributes.attribute(SEGMENTED).get();
+      if (segmented == null || segmented) {
+         throw CONFIG.storeDoesNotSupportBeingSegmented(LuceneCacheLoader.class.getSimpleName());
+      }
    }
 
    @Override
    public LuceneLoaderConfiguration create() {
-      return new LuceneLoaderConfiguration(attributes.protect(), async.create(), singletonStore.create());
+      return new LuceneLoaderConfiguration(attributes.protect(), async.create());
    }
 
    @Override
@@ -80,6 +87,6 @@ public class LuceneLoaderConfigurationBuilder extends
 
    @Override
    public String toString() {
-      return "LuceneLoaderConfigurationBuilder [attributes=" + attributes + ", async=" + async + ", singletonStore=" + singletonStore + "]";
+      return "LuceneLoaderConfigurationBuilder [attributes=" + attributes + ", async=" + async + "]";
    }
 }

@@ -3,6 +3,7 @@ package org.infinispan.jmx;
 import static org.infinispan.remoting.inboundhandler.BasePerCacheInboundInvocationHandler.MBEAN_COMPONENT_NAME;
 import static org.infinispan.test.TestingUtil.checkMBeanOperationParameterNaming;
 import static org.infinispan.test.TestingUtil.getCacheObjectName;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.testng.AssertJUnit.assertEquals;
@@ -12,12 +13,12 @@ import javax.management.Attribute;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.InboundInvocationHandler;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
 import org.infinispan.remoting.inboundhandler.Reply;
 import org.infinispan.util.ByteString;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.xsite.BackupReceiver;
 import org.infinispan.xsite.XSiteReplicateCommand;
 import org.mockito.ArgumentMatchers;
@@ -32,17 +33,16 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "jmx.PerCacheInboundHandlerMBeanTest")
 public class PerCacheInboundHandlerMBeanTest extends AbstractClusterMBeanTest {
 
-
    public PerCacheInboundHandlerMBeanTest() {
       super(PerCacheInboundHandlerMBeanTest.class.getSimpleName());
    }
 
    public void testJmxOperationMetadata() throws Exception {
-      checkMBeanOperationParameterNaming(getObjectName());
+      checkMBeanOperationParameterNaming(mBeanServerLookup.getMBeanServer(), getObjectName());
    }
 
    public void testEnableJmxStats() throws Exception {
-      MBeanServer mBeanServer = PerThreadMBeanServerLookup.getThreadMBeanServer();
+      MBeanServer mBeanServer = mBeanServerLookup.getMBeanServer();
       PerCacheInboundInvocationHandler handler = getHandler();
 
       ObjectName objName = getObjectName();
@@ -75,7 +75,7 @@ public class PerCacheInboundHandlerMBeanTest extends AbstractClusterMBeanTest {
    }
 
    public void testStats() throws Throwable {
-      MBeanServer mBeanServer = PerThreadMBeanServerLookup.getThreadMBeanServer();
+      MBeanServer mBeanServer = mBeanServerLookup.getMBeanServer();
       InboundInvocationHandler handler = manager(0).getGlobalComponentRegistry()
             .getComponent(InboundInvocationHandler.class);
 
@@ -85,8 +85,9 @@ public class PerCacheInboundHandlerMBeanTest extends AbstractClusterMBeanTest {
       assertEquals(Boolean.TRUE, mBeanServer.getAttribute(objName, "StatisticsEnabled"));
 
       XSiteReplicateCommand command = mock(XSiteReplicateCommand.class);
-      when(command.performInLocalSite(ArgumentMatchers.any(BackupReceiver.class))).thenReturn(null);
-      when(command.getCacheName()).thenReturn(ByteString.fromString(cachename));
+      when(command.performInLocalSite(ArgumentMatchers.any(BackupReceiver.class), anyBoolean()))
+            .thenReturn(CompletableFutures.completedNull());
+      when(command.getCacheName()).thenReturn(ByteString.fromString(getDefaultCacheName()));
 
       //check if it is collected
       Reply reply = response -> {
@@ -125,13 +126,11 @@ public class PerCacheInboundHandlerMBeanTest extends AbstractClusterMBeanTest {
       assertEquals(0, (long) mBeanServer.getAttribute(objName, "AsyncXSiteRequestsReceived"));
    }
 
-
    private ObjectName getObjectName() {
-      return getCacheObjectName(jmxDomain, cachename + "(repl_sync)", MBEAN_COMPONENT_NAME);
+      return getCacheObjectName(jmxDomain1, getDefaultCacheName() + "(repl_sync)", MBEAN_COMPONENT_NAME);
    }
 
    private PerCacheInboundInvocationHandler getHandler() {
-      return cache(0, cachename).getAdvancedCache().getComponentRegistry().getPerCacheInboundInvocationHandler();
+      return cache(0).getAdvancedCache().getComponentRegistry().getPerCacheInboundInvocationHandler();
    }
-
 }

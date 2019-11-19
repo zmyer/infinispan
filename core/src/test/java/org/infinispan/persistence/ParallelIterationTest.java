@@ -15,13 +15,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
-import org.infinispan.metadata.InternalMetadata;
+import org.infinispan.metadata.Metadata;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.persistence.spi.AdvancedCacheWriter;
 import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.infinispan.test.SingleCacheManagerTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.concurrent.WithinThreadExecutor;
@@ -50,7 +53,10 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
    protected EmbeddedCacheManager createCacheManager() throws Exception {
       ConfigurationBuilder cb = getDefaultStandaloneCacheConfig(false);
       configurePersistence(cb);
-      EmbeddedCacheManager manager = TestCacheManagerFactory.createCacheManager(cb);
+      GlobalConfigurationBuilder global = new GlobalConfigurationBuilder();
+      global.globalState().persistentLocation(TestingUtil.tmpDirectory(this.getClass()));
+      global.serialization().addContextInitializer(getSerializationContextInitializer());
+      EmbeddedCacheManager manager = TestCacheManagerFactory.createCacheManager(global, cb);
       loader = TestingUtil.getFirstLoader(manager.getCache());
       writer = TestingUtil.getFirstWriter(manager.getCache());
       executor = new ThreadPoolExecutor(NUM_THREADS, NUM_THREADS, 0L, TimeUnit.MILLISECONDS,
@@ -68,6 +74,10 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
    }
 
    protected abstract void configurePersistence(ConfigurationBuilder cb);
+
+   protected SerializationContextInitializer getSerializationContextInitializer() {
+      return TestDataSCI.INSTANCE;
+   }
 
    public void testParallelIterationWithValueAndMetadata() {
       runIterationTest(executor, true, true);
@@ -104,7 +114,7 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
    private void runIterationTest(Executor executor, final boolean fetchValues,
          boolean fetchMetadata) {
       final ConcurrentMap<Integer, Integer> entries = new ConcurrentHashMap<>();
-      final ConcurrentMap<Integer, InternalMetadata> metadata = new ConcurrentHashMap<>();
+      final ConcurrentMap<Integer, Metadata> metadata = new ConcurrentHashMap<>();
       final AtomicBoolean sameKeyMultipleTimes = new AtomicBoolean();
 
       assertEquals(loader.size(), 0);
@@ -124,7 +134,7 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
          }
          if (me.getMetadata() != null) {
             log.tracef("For key %d found metadata %s", key, me.getMetadata());
-            InternalMetadata prevMetadata = metadata.put(key, me.getMetadata());
+            Metadata prevMetadata = metadata.put(key, me.getMetadata());
             if (prevMetadata != null) {
                log.warnf("Already a metadata present for key %s: %s", key, prevMetadata);
                sameKeyMultipleTimes.set(true);
@@ -175,13 +185,14 @@ public abstract class ParallelIterationTest extends SingleCacheManagerTest {
 
    private void insertData() {
       for (int i = 0; i < NUM_ENTRIES; i++) {
-         InternalMetadata im = insertMetadata(i) ? TestingUtil.internalMetadata(lifespan(i), maxIdle(i)) : null;
-         MarshallableEntry me = MarshalledEntryUtil.create(wrapKey(i), wrapValue(i, i), im, cache);
+         long now = System.currentTimeMillis();
+         Metadata metadata = insertMetadata(i) ? TestingUtil.metadata(lifespan(i), maxIdle(i)) : null;
+         MarshallableEntry me = MarshalledEntryUtil.create(wrapKey(i), wrapValue(i, i), metadata, now, now, cache);
          writer.write(me);
       }
    }
 
-   protected void assertMetadataEmpty(InternalMetadata metadata) {
+   protected void assertMetadataEmpty(Metadata metadata) {
       assertNull(metadata);
    }
 

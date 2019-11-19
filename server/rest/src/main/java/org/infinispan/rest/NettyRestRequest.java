@@ -1,14 +1,24 @@
 package org.infinispan.rest;
 
-import java.security.Principal;
+import static java.net.URLDecoder.decode;
+
+import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
+import javax.security.auth.Subject;
+
+import org.infinispan.commons.api.CacheContainerAdmin;
 import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.context.Flag;
 import org.infinispan.rest.framework.ContentSource;
 import org.infinispan.rest.framework.Method;
 import org.infinispan.rest.framework.RestRequest;
 import org.infinispan.rest.logging.Log;
+import org.infinispan.rest.operations.exceptions.InvalidFlagException;
 import org.infinispan.util.logging.LogFactory;
 
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -24,32 +34,47 @@ public class NettyRestRequest implements RestRequest {
 
    private final static Log logger = LogFactory.getLog(NettyRestRequest.class, Log.class);
 
-   private static final MediaType DEFAULT_KEY_CONTENT_TYPE = MediaType.parse("application/x-java-object;type=java.lang.String");
+   private static final MediaType DEFAULT_KEY_CONTENT_TYPE = MediaType.fromString("application/x-java-object;type=java.lang.String");
 
    public static final String EXTENDED_HEADER = "extended";
    private static final String MAX_TIME_IDLE_HEADER = "maxIdleTimeSeconds";
+   private static final String CREATED_HEADER = "created";
+   private static final String LAST_USED_HEADER = "lastUsed";
    private static final String TTL_SECONDS_HEADER = "timeToLiveSeconds";
-   private static final String PERFORM_ASYNC_HEADER = "performAsync";
    private static final String KEY_CONTENT_TYPE_HEADER = "key-content-type";
+   private static final String FLAGS_HEADER = "flags";
 
    private final FullHttpRequest request;
    private final Map<String, List<String>> parameters;
    private final String path;
    private final ContentSource contentSource;
+   private final String context;
    private String action;
-   private Principal principal;
+   private Subject subject;
    private Map<String, String> variables;
 
-   NettyRestRequest(FullHttpRequest request) {
+   NettyRestRequest(FullHttpRequest request) throws UnsupportedEncodingException, IllegalArgumentException {
       this.request = request;
-      QueryStringDecoder queryStringDecoder = new QueryStringDecoder(request.uri());
+      String uri = decode(request.uri(), StandardCharsets.UTF_8.name());
+      QueryStringDecoder queryStringDecoder = new QueryStringDecoder(uri);
       this.parameters = queryStringDecoder.parameters();
       this.path = queryStringDecoder.path();
+      this.context = getContext(path);
       List<String> action = queryStringDecoder.parameters().get("action");
       if (action != null) {
          this.action = action.iterator().next();
       }
       this.contentSource = new ByteBufContentSource(request.content());
+   }
+
+   private String getContext(String path) {
+      if (path == null || path.isEmpty() || !path.startsWith("/") || path.length() == 1) return "";
+      int endIndex = path.indexOf("/", 1);
+      return path.substring(1, endIndex == -1 ? path.length() : endIndex);
+   }
+
+   public String getContext() {
+      return context;
    }
 
    @Override
@@ -60,6 +85,21 @@ public class NettyRestRequest implements RestRequest {
    @Override
    public String path() {
       return path;
+   }
+
+   @Override
+   public String uri() {
+      return request.uri();
+   }
+
+   @Override
+   public String header(String name) {
+      return request.headers().get(name);
+   }
+
+   @Override
+   public List<String> headers(String name) {
+      return request.headers().getAll(name);
    }
 
    @Override
@@ -86,19 +126,20 @@ public class NettyRestRequest implements RestRequest {
    public MediaType contentType() {
       String contentTypeHeader = getContentTypeHeader();
       if (contentTypeHeader == null) return MediaType.MATCH_ALL;
-      return MediaType.parse(contentTypeHeader);
+      return MediaType.fromString(contentTypeHeader);
    }
 
    @Override
    public MediaType keyContentType() {
       String header = request.headers().get(KEY_CONTENT_TYPE_HEADER);
       if (header == null) return DEFAULT_KEY_CONTENT_TYPE;
-      return MediaType.parse(header);
+      return MediaType.fromString(header);
    }
 
    @Override
    public String getAcceptHeader() {
-      return request.headers().get(HttpHeaderNames.ACCEPT);
+      String accept = request.headers().get(HttpHeaderNames.ACCEPT);
+      return accept == null ? MediaType.MATCH_ALL_TYPE : accept;
    }
 
    @Override
@@ -124,7 +165,7 @@ public class NettyRestRequest implements RestRequest {
    }
 
    @Override
-   public String getEtagIfModifiedSinceHeader() {
+   public String getIfModifiedSinceHeader() {
       return request.headers().get(HttpHeaderNames.IF_MODIFIED_SINCE);
    }
 
@@ -134,7 +175,7 @@ public class NettyRestRequest implements RestRequest {
    }
 
    @Override
-   public String getEtagIfUnmodifiedSinceHeader() {
+   public String getIfUnmodifiedSinceHeader() {
       return request.headers().get(HttpHeaderNames.IF_UNMODIFIED_SINCE);
    }
 
@@ -143,10 +184,6 @@ public class NettyRestRequest implements RestRequest {
       return getHeaderAsLong(MAX_TIME_IDLE_HEADER);
    }
 
-   @Override
-   public boolean getPerformAsyncHeader() {
-      return getHeaderAsBoolean(PERFORM_ASYNC_HEADER);
-   }
 
    @Override
    public Long getTimeToLiveSecondsHeader() {
@@ -154,13 +191,45 @@ public class NettyRestRequest implements RestRequest {
    }
 
    @Override
-   public Principal getPrincipal() {
-      return principal;
+   public EnumSet<CacheContainerAdmin.AdminFlag> getAdminFlags() {
+      String requestFlags = request.headers().get(FLAGS_HEADER);
+      if (requestFlags == null || requestFlags.isEmpty()) return null;
+      try {
+         return CacheContainerAdmin.AdminFlag.fromString(requestFlags);
+      } catch (IllegalArgumentException e) {
+         throw new InvalidFlagException(e);
+      }
    }
 
    @Override
-   public void setPrincipal(Principal principal) {
-      this.principal = principal;
+   public Flag[] getFlags() {
+      try {
+         String flags = request.headers().get(FLAGS_HEADER);
+         if (flags == null || flags.isEmpty()) {
+            return null;
+         }
+         return Arrays.stream(flags.split(",")).filter(s -> !s.isEmpty()).map(Flag::valueOf).toArray(Flag[]::new);
+      } catch (IllegalArgumentException e) {
+         throw new InvalidFlagException(e);
+      }
+   }
+
+   @Override
+   public Long getCreatedHeader() {
+      return getHeaderAsLong(CREATED_HEADER);
+   }
+
+   @Override
+   public Long getLastUsedHeader() {
+      return getHeaderAsLong(LAST_USED_HEADER);
+   }
+
+   public Subject getSubject() {
+      return subject;
+   }
+
+   public void setSubject(Subject subject) {
+      this.subject = subject;
    }
 
    @Override
@@ -189,4 +258,18 @@ public class NettyRestRequest implements RestRequest {
          return null;
       }
    }
+
+   public FullHttpRequest getFullHttpRequest() {
+      return request;
+   }
+
+   @Override
+   public String toString() {
+      return "NettyRestRequest{" +
+            request.method().name() +
+            " " + request.uri() +
+            ", subject=" + subject +
+            '}';
+   }
+
 }

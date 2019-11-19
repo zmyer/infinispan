@@ -1,5 +1,7 @@
 package org.infinispan.persistence.async;
 
+import static org.infinispan.util.logging.Log.PERSISTENCE;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -7,6 +9,7 @@ import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -22,7 +25,6 @@ import java.util.stream.StreamSupport;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.configuration.cache.AsyncStoreConfiguration;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.PersistenceConfiguration;
@@ -159,9 +161,9 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
             executor.shutdown();
          }
          if (!executor.awaitTermination(1, TimeUnit.SECONDS))
-            log.errorAsyncStoreNotStopped();
+            PERSISTENCE.errorAsyncStoreNotStopped();
       } catch (InterruptedException e) {
-         log.interruptedWaitingAsyncStorePush(e);
+         PERSISTENCE.interruptedWaitingAsyncStorePush(e);
          Thread.currentThread().interrupt();
       }
    }
@@ -249,7 +251,7 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
    }
 
    protected State newState(boolean clear, State next) {
-      ConcurrentMap<Object, Modification> map = CollectionFactory.makeConcurrentMap(64, concurrencyLevel);
+      ConcurrentMap<Object, Modification> map = new ConcurrentHashMap<>(64, 0.75f, concurrencyLevel);
       return new State(clear, map, next);
    }
 
@@ -384,7 +386,7 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
                      return;
                   }
                } catch (Exception e) {
-                  log.unexpectedErrorInAsyncStoreCoordinator(e);
+                  PERSISTENCE.unexpectedErrorInAsyncStoreCoordinator(e);
                }
             }
          } finally {
@@ -486,7 +488,7 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
                }
             }
          }
-         log.unableToProcessAsyncModifications(maxRetries);
+         PERSISTENCE.unableToProcessAsyncModifications(maxRetries);
       }
    }
 }

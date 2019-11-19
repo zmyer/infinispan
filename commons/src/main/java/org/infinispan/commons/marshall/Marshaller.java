@@ -2,6 +2,7 @@ package org.infinispan.commons.marshall;
 
 import java.io.IOException;
 
+import org.infinispan.commons.configuration.ClassWhiteList;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.io.ByteBuffer;
 
@@ -11,7 +12,7 @@ import net.jcip.annotations.ThreadSafe;
  * A marshaller is a class that is able to marshall and unmarshall objects efficiently.
  * <p/>
  * This interface is used to marshall {@link org.infinispan.commands.ReplicableCommand}s, their parameters and their
- * response values, as well as any other arbitraty Object <--> byte[] conversions, such as those used in client/server
+ * response values, as well as any other arbitrary Object &harr; byte[] conversions, such as those used in client/server
  * communications.
  * <p/>
  * A single instance of any implementation is shared by multiple threads, so implementations <i>need</i> to be threadsafe,
@@ -22,6 +23,14 @@ import net.jcip.annotations.ThreadSafe;
  */
 @ThreadSafe
 public interface Marshaller {
+
+   /**
+    * An optional method which allows an implementation to respect the {@link ClassWhiteList} associated with the
+    * context, for example the EmbeddedCacheManager or RemoteCacheManager.
+    */
+   default void initialize(ClassWhiteList classWhiteList) {
+      // no-op
+   }
 
    /**
     * Marshalls an object to a byte array.  The estimatedSize parameter is a hint that can be passed in to allow for
@@ -106,4 +115,19 @@ public interface Marshaller {
     */
    MediaType mediaType();
 
+   /**
+    * Perform any initialization required before the marshaller is used.
+    */
+   default void start() {
+      // no-op
+   }
+
+   /**
+    * Stop the marshaller. Implementations of this method should clear up
+    * any cached data, or close any resources while marshalling/unmarshalling
+    * that have not been already closed.
+    */
+   default void stop() {
+      // no-op
+   }
 }

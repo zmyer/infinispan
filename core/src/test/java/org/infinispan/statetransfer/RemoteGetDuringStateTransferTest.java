@@ -34,6 +34,9 @@ import org.infinispan.globalstate.NoOpGlobalConfigurationManager;
 import org.infinispan.interceptors.BaseCustomAsyncInterceptor;
 import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.protostream.SerializationContextInitializer;
+import org.infinispan.protostream.annotations.AutoProtoSchemaBuilder;
+import org.infinispan.protostream.annotations.ProtoName;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.UnsureResponse;
 import org.infinispan.remoting.transport.Address;
@@ -738,7 +741,7 @@ public class RemoteGetDuringStateTransferTest extends MultipleCacheManagersTest 
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      createClusteredCaches(2, configuration());
+      createClusteredCaches(2, RemoteGetDuringStateTransferSCI.INSTANCE, configuration());
    }
 
    @Override
@@ -772,7 +775,7 @@ public class RemoteGetDuringStateTransferTest extends MultipleCacheManagersTest 
       if (modifyConfiguration != null) {
          modifyConfiguration.accept(configurationBuilder);
       }
-      EmbeddedCacheManager embeddedCacheManager = addClusterEnabledCacheManager(configurationBuilder);
+      EmbeddedCacheManager embeddedCacheManager = addClusterEnabledCacheManager(RemoteGetDuringStateTransferSCI.INSTANCE, configurationBuilder);
       newNode.topologyManager = replaceTopologyManager(embeddedCacheManager);
       newNode.joinerFuture = fork(() -> {
          waitForClusterToForm();
@@ -817,10 +820,10 @@ public class RemoteGetDuringStateTransferTest extends MultipleCacheManagersTest 
       return controlledRpcManager;
    }
 
-   @SuppressWarnings("unchecked")
+   @ProtoName("RemoteGetSingleKeyConsistentHashFactory")
    public static class SingleKeyConsistentHashFactory extends BaseControlledConsistentHashFactory.Default {
 
-      public SingleKeyConsistentHashFactory() {
+      SingleKeyConsistentHashFactory() {
          super(1);
       }
 
@@ -831,7 +834,7 @@ public class RemoteGetDuringStateTransferTest extends MultipleCacheManagersTest 
       }
    }
 
-   private static class WaitForTopologyInterceptor extends DDAsyncInterceptor {
+   static class WaitForTopologyInterceptor extends DDAsyncInterceptor {
       private static final Log log = LogFactory.getLog(RemoteGetDuringStateTransferTest.class);
 
       protected final int expectedTopologyId;
@@ -862,7 +865,7 @@ public class RemoteGetDuringStateTransferTest extends MultipleCacheManagersTest 
       }
    }
 
-   private static class FailReadsInterceptor extends BaseCustomAsyncInterceptor {
+   static class FailReadsInterceptor extends BaseCustomAsyncInterceptor {
       private final AtomicBoolean hit = new AtomicBoolean();
 
       @Override
@@ -876,7 +879,7 @@ public class RemoteGetDuringStateTransferTest extends MultipleCacheManagersTest 
       }
    }
 
-   private static class AssertNoRetryInterceptor extends DDAsyncInterceptor {
+   static class AssertNoRetryInterceptor extends DDAsyncInterceptor {
       @Override
       public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) {
          assertFalse(command.hasAnyFlag(FlagBitSets.COMMAND_RETRY));
@@ -892,4 +895,12 @@ public class RemoteGetDuringStateTransferTest extends MultipleCacheManagersTest 
       BlockingLocalTopologyManager topologyManager;
    }
 
+   @AutoProtoSchemaBuilder(
+         includeClasses = SingleKeyConsistentHashFactory.class,
+         schemaFileName = "test.core.RemoteGetDuringStateTransferTest.proto",
+         schemaFilePath = "proto/generated",
+         schemaPackageName = "org.infinispan.test.core.RemoteGetDuringStateTransferTest")
+   interface RemoteGetDuringStateTransferSCI extends SerializationContextInitializer {
+      RemoteGetDuringStateTransferSCI INSTANCE = new RemoteGetDuringStateTransferSCIImpl();
+   }
 }

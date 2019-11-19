@@ -1,0 +1,40 @@
+CONNECT(1)
+==========
+:doctype: manpage
+
+
+NAME
+----
+connect - connects to running ${infinispan.brand.name} servers.
+
+
+DESCRIPTION
+-----------
+Defaults to `http://localhost:11222` and prompts for credentials if
+authentication is required.
+
+
+SYNOPSIS
+--------
+*connect* ['OPTIONS'] ['SERVER_LOCATION']
+
+
+OPTIONS
+-------
+*-u, --username*='USERNAME'::
+Specifies a username to authenticate with ${infinispan.brand.name} servers.
+
+*-p, --password*='PASSWORD'::
+Specifies passwords.
+
+
+EXAMPLE
+-------
+`connect 127.0.0.1:11322 -u test -p changeme` +
+Connects to a locally running server using a port offset of `100` and example
+credentials.
+
+
+SEE ALSO
+--------
+disconnect(1)

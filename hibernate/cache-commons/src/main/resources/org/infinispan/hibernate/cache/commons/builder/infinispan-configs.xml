@@ -7,7 +7,7 @@
   -->
 <infinispan
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} http://www.infinispan.org/schemas/infinispan-config-${infinispan.core.schema.version}.xsd"
+        xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} https://infinispan.org/schemas/infinispan-config-${infinispan.core.schema.version}.xsd"
         xmlns="urn:infinispan:config:${infinispan.core.schema.version}">
 
    <jgroups>
@@ -16,7 +16,6 @@
 
    <cache-container name="SampleCacheManager" statistics="false" default-cache="the-default-cache" shutdown-hook="DEFAULT">
       <transport stack="hibernate-jgroups" cluster="infinispan-hibernate-cluster"/>
-      <jmx duplicate-domains="true"/>
 
       <local-cache-configuration name="the-default-cache" statistics="false" />
 

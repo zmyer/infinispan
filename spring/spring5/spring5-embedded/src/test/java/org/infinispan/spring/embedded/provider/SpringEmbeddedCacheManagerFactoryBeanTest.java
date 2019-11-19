@@ -4,6 +4,8 @@ import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertTrue;
 
+import java.util.Optional;
+
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
@@ -11,8 +13,9 @@ import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.spring.embedded.builders.SpringEmbeddedCacheManagerFactoryBeanBuilder;
 import org.infinispan.spring.common.provider.SpringCache;
+import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.transaction.TransactionMode;
-import org.testng.annotations.AfterClass;
+import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
 /**
@@ -25,7 +28,7 @@ import org.testng.annotations.Test;
  *
  */
 @Test(testName = "spring.embedded.provider.SpringEmbeddedCacheManagerFactoryBeanTest", groups = "unit")
-public class SpringEmbeddedCacheManagerFactoryBeanTest {
+public class SpringEmbeddedCacheManagerFactoryBeanTest extends AbstractInfinispanTest {
 
    private static final String CACHE_NAME_FROM_CONFIGURATION_FILE = "asyncCache";
 
@@ -33,7 +36,7 @@ public class SpringEmbeddedCacheManagerFactoryBeanTest {
 
    private SpringEmbeddedCacheManagerFactoryBean objectUnderTest;
 
-   @AfterClass(alwaysRun = true)
+   @AfterMethod(alwaysRun = true)
    public void closeCacheManager() throws Exception {
       if(objectUnderTest != null) {
          objectUnderTest.destroy();
@@ -108,7 +111,7 @@ public class SpringEmbeddedCacheManagerFactoryBeanTest {
       GlobalConfigurationBuilder builder = new GlobalConfigurationBuilder();
       builder.defaultCacheName("default");
       objectUnderTest = SpringEmbeddedCacheManagerFactoryBeanBuilder
-            .defaultBuilder().withGlobalConfiguration(builder).build();
+            .defaultBuilder().withGlobalConfiguration(builder).withConfigurationBuilder(new ConfigurationBuilder()).build();
 
       final SpringEmbeddedCacheManager springEmbeddedCacheManager = objectUnderTest.getObject();
       springEmbeddedCacheManager.getCache("default"); // Implicitly starts
@@ -166,11 +169,10 @@ public class SpringEmbeddedCacheManagerFactoryBeanTest {
    @Test
    public void testIfSpringEmbeddedCacheManagerFactoryBeanAllowesOverridingConfigurationWithEmptyInputStream()
          throws Exception {
-      objectUnderTest = SpringEmbeddedCacheManagerFactoryBeanBuilder
-            .defaultBuilder().build();
+      objectUnderTest = new SpringEmbeddedCacheManagerFactoryBean();
 
       GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder();
-
+      gcb.defaultCacheName("default");
       // Now prepare a cache configuration.
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.transaction().transactionMode(TransactionMode.NON_TRANSACTIONAL);
@@ -182,9 +184,9 @@ public class SpringEmbeddedCacheManagerFactoryBeanTest {
 
       // Get the cache manager and make assertions.
       final EmbeddedCacheManager infinispanEmbeddedCacheManager = objectUnderTest.getObject().getNativeCacheManager();
-      assertEquals(infinispanEmbeddedCacheManager.getCacheManagerConfiguration().globalJmxStatistics()
-                         .allowDuplicateDomains(), true);
-      assertEquals(infinispanEmbeddedCacheManager.getDefaultCacheConfiguration().transaction().transactionMode().isTransactional(),
-                   false);
+      assertEquals(Optional.of("default"),
+                   infinispanEmbeddedCacheManager.getCacheManagerConfiguration().defaultCacheName());
+      assertEquals(TransactionMode.NON_TRANSACTIONAL,
+                   infinispanEmbeddedCacheManager.getDefaultCacheConfiguration().transaction().transactionMode());
    }
 }

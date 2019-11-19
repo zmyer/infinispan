@@ -8,6 +8,8 @@ import java.util.function.Function;
 
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.manager.EmbeddedCacheManager;
 
 /**
@@ -16,12 +18,13 @@ import org.infinispan.manager.EmbeddedCacheManager;
  * @author wburns
  * @since 8.2
  */
+@Scope(Scopes.NONE)
 public class ReplicableManagerFunctionCommand implements ReplicableCommand {
 
    public static final byte COMMAND_ID = 60;
 
    private Function<? super EmbeddedCacheManager, ?> function;
-   @Inject private EmbeddedCacheManager manager;
+   @Inject EmbeddedCacheManager manager;
 
    public ReplicableManagerFunctionCommand() {
 
@@ -33,7 +36,7 @@ public class ReplicableManagerFunctionCommand implements ReplicableCommand {
 
    @Override
    public CompletableFuture<Object> invokeAsync() throws Throwable {
-      return CompletableFuture.completedFuture(function.apply(manager));
+      return CompletableFuture.completedFuture(function.apply(new UnwrappingEmbeddedCacheManager(manager)));
    }
 
    @Override

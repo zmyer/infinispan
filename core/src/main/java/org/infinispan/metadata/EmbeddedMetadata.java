@@ -3,14 +3,22 @@ package org.infinispan.metadata;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commons.marshall.AbstractExternalizer;
+import org.infinispan.commons.marshall.Ids;
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
 import org.infinispan.commons.util.Util;
 import org.infinispan.container.versioning.EntryVersion;
-import org.infinispan.marshall.core.Ids;
-import org.jboss.marshalling.util.IdentityIntMap;
+import org.infinispan.container.versioning.NumericVersion;
+import org.infinispan.container.versioning.SimpleClusteredVersion;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
 
 /**
  * Metadata class for embedded caches.
@@ -18,13 +26,19 @@ import org.jboss.marshalling.util.IdentityIntMap;
  * @author Galder Zamarreño
  * @since 5.3
  */
+@ProtoTypeId(ProtoStreamTypeIds.EMBEDDED_METADATA)
 public class EmbeddedMetadata implements Metadata {
-   public static final EmbeddedMetadata EMPTY = new EmbeddedMetadata(null);
+   public static final EmbeddedMetadata EMPTY = new EmbeddedMetadata(null, null);
 
-   final EntryVersion version;
+   protected final EntryVersion version;
 
    private EmbeddedMetadata(EntryVersion version) {
       this.version = version;
+   }
+
+   @ProtoFactory
+   EmbeddedMetadata(NumericVersion numericVersion, SimpleClusteredVersion clusteredVersion) {
+      version = numericVersion != null ? numericVersion : clusteredVersion;
    }
 
    @Override
@@ -42,6 +56,16 @@ public class EmbeddedMetadata implements Metadata {
       return version;
    }
 
+   @ProtoField(number = 1)
+   public NumericVersion getNumericVersion() {
+      return version instanceof NumericVersion ? (NumericVersion) version : null;
+   }
+
+   @ProtoField(number = 2)
+   public SimpleClusteredVersion getClusteredVersion() {
+      return version instanceof SimpleClusteredVersion ? (SimpleClusteredVersion) version : null;
+   }
+
    @Override
    public Metadata.Builder builder() {
       return new Builder().version(version);
@@ -53,11 +77,7 @@ public class EmbeddedMetadata implements Metadata {
       if (o == null || getClass() != o.getClass()) return false;
 
       EmbeddedMetadata that = (EmbeddedMetadata) o;
-
-      if (version != null ? !version.equals(that.version) : that.version != null)
-         return false;
-
-      return true;
+      return version != null ? version.equals(that.version) : that.version == null;
    }
 
    @Override
@@ -67,9 +87,7 @@ public class EmbeddedMetadata implements Metadata {
 
    @Override
    public String toString() {
-      return "EmbeddedMetadata{" +
-            "version=" + version +
-            '}';
+      return "EmbeddedMetadata{version=" + version + '}';
    }
 
    public static class Builder implements Metadata.Builder {
@@ -115,12 +133,11 @@ public class EmbeddedMetadata implements Metadata {
          boolean hasLifespan = hasLifespan();
          boolean hasMaxIdle = hasMaxIdle();
          if (hasLifespan && hasMaxIdle)
-            return new EmbeddedExpirableMetadata(
-                  lifespan, lifespanUnit, maxIdle, maxIdleUnit, version);
+            return new EmbeddedExpirableMetadata(toMillis(lifespan, lifespanUnit), toMillis(maxIdle, maxIdleUnit), version);
          else if (hasLifespan)
-            return new EmbeddedLifespanExpirableMetadata(lifespan, lifespanUnit, version);
+            return new EmbeddedLifespanExpirableMetadata(toMillis(lifespan, lifespanUnit), version);
          else if (hasMaxIdle)
-            return new EmbeddedMaxIdleExpirableMetadata(maxIdle, maxIdleUnit, version);
+            return new EmbeddedMaxIdleExpirableMetadata(toMillis(maxIdle, lifespanUnit), version);
          else
             return new EmbeddedMetadata(version);
       }
@@ -152,24 +169,32 @@ public class EmbeddedMetadata implements Metadata {
       }
    }
 
-   private static class EmbeddedExpirableMetadata extends EmbeddedMetadata {
+   @ProtoTypeId(ProtoStreamTypeIds.EMBEDDED_EXPIRABLE_METADATA)
+   public static class EmbeddedExpirableMetadata extends EmbeddedMetadata {
 
       private final long lifespan;
+
       private final long maxIdle;
 
-      private EmbeddedExpirableMetadata(
-            long lifespan, TimeUnit lifespanUnit,
-            long maxIdle, TimeUnit maxIdleUnit, EntryVersion version) {
-         super(version);
-         this.lifespan = lifespan < 0 ? -1 : lifespanUnit.toMillis(lifespan);
-         this.maxIdle = maxIdle < 0 ? -1 : maxIdleUnit.toMillis(maxIdle);
+      @ProtoFactory
+      EmbeddedExpirableMetadata(long lifespan, long maxIdle, NumericVersion numericVersion,
+                                SimpleClusteredVersion clusteredVersion) {
+         this(lifespan, maxIdle, numericVersion != null ? numericVersion : clusteredVersion);
       }
 
+      private EmbeddedExpirableMetadata(long lifespan, long maxIdle, EntryVersion version) {
+         super(version);
+         this.lifespan = lifespan;
+         this.maxIdle = maxIdle;
+      }
+
+      @ProtoField(number = 3, defaultValue = "-1")
       @Override
       public long lifespan() {
          return lifespan;
       }
 
+      @ProtoField(number = 4, defaultValue = "-1")
       @Override
       public long maxIdle() {
          return maxIdle;
@@ -177,8 +202,7 @@ public class EmbeddedMetadata implements Metadata {
 
       @Override
       public Metadata.Builder builder() {
-         return new EmbeddedMetadata.Builder()
-               .lifespan(lifespan).maxIdle(maxIdle).version(version);
+         return super.builder().lifespan(lifespan).maxIdle(maxIdle);
       }
 
       @Override
@@ -186,42 +210,50 @@ public class EmbeddedMetadata implements Metadata {
          if (this == o) return true;
          if (o == null || getClass() != o.getClass()) return false;
          if (!super.equals(o)) return false;
-
          EmbeddedExpirableMetadata that = (EmbeddedExpirableMetadata) o;
-
-         if (lifespan != that.lifespan) return false;
-         if (maxIdle != that.maxIdle) return false;
-
-         return true;
+         return lifespan == that.lifespan &&
+               maxIdle == that.maxIdle;
       }
 
       @Override
       public int hashCode() {
-         int result = super.hashCode();
-         result = 31 * result + (int) (lifespan ^ (lifespan >>> 32));
-         result = 31 * result + (int) (maxIdle ^ (maxIdle >>> 32));
-         return result;
+         return Objects.hash(super.hashCode(), lifespan, maxIdle);
       }
 
       @Override
       public String toString() {
          return "EmbeddedExpirableMetadata{" +
-               "lifespan=" + lifespan +
+               "version=" + version +
+               ", lifespan=" + lifespan +
                ", maxIdle=" + maxIdle +
-               ", version=" + version +
                '}';
       }
    }
 
-   private static abstract class AbstractEmbeddedTimeoutMetadata extends EmbeddedMetadata {
+   @ProtoTypeId(ProtoStreamTypeIds.EMBEDDED_LIFESPAN_METADATA)
+   public static class EmbeddedLifespanExpirableMetadata extends EmbeddedMetadata {
 
-      protected final long timeout;
+      private final long lifespan;
 
-      private AbstractEmbeddedTimeoutMetadata(
-            long timeout, TimeUnit timeoutUnit,
-            EntryVersion version) {
+      protected EmbeddedLifespanExpirableMetadata(long lifespan, EntryVersion version) {
          super(version);
-         this.timeout = timeout < 0 ? -1 : timeoutUnit.toMillis(timeout);
+         this.lifespan = lifespan;
+      }
+
+      @ProtoFactory
+      protected EmbeddedLifespanExpirableMetadata(long lifespan, NumericVersion numericVersion, SimpleClusteredVersion clusteredVersion) {
+         this(lifespan, numericVersion != null ? numericVersion : clusteredVersion);
+      }
+
+      @ProtoField(number = 3, defaultValue = "-1")
+      @Override
+      public long lifespan() {
+         return lifespan;
+      }
+
+      @Override
+      public Metadata.Builder builder() {
+         return super.builder().lifespan(lifespan);
       }
 
       @Override
@@ -229,74 +261,71 @@ public class EmbeddedMetadata implements Metadata {
          if (this == o) return true;
          if (o == null || getClass() != o.getClass()) return false;
          if (!super.equals(o)) return false;
-
-         AbstractEmbeddedTimeoutMetadata that = (AbstractEmbeddedTimeoutMetadata) o;
-
-         if (timeout != that.timeout) return false;
-
-         return true;
+         EmbeddedLifespanExpirableMetadata that = (EmbeddedLifespanExpirableMetadata) o;
+         return lifespan == that.lifespan;
       }
 
       @Override
       public int hashCode() {
-         int result = super.hashCode();
-         result = 31 * result + (int) (timeout ^ (timeout >>> 32));
-         return result;
-      }
-   }
-
-   private static class EmbeddedLifespanExpirableMetadata extends AbstractEmbeddedTimeoutMetadata {
-
-      private EmbeddedLifespanExpirableMetadata(long lifespan, TimeUnit lifespanUnit, EntryVersion version) {
-         super(lifespan, lifespanUnit, version);
-      }
-
-      @Override
-      public long lifespan() {
-         return timeout;
-      }
-
-      @Override
-      public Metadata.Builder builder() {
-         return new EmbeddedMetadata.Builder()
-               .lifespan(timeout).version(version);
+         return Objects.hash(super.hashCode(), lifespan);
       }
 
       @Override
       public String toString() {
          return "EmbeddedLifespanExpirableMetadata{" +
-               "lifespan=" + timeout +
+               "lifespan=" + lifespan +
                ", version=" + version +
                '}';
       }
-
    }
 
-   private static class EmbeddedMaxIdleExpirableMetadata extends AbstractEmbeddedTimeoutMetadata {
+   @ProtoTypeId(ProtoStreamTypeIds.EMBEDDED_MAX_IDLE_METADATA)
+   public static class EmbeddedMaxIdleExpirableMetadata extends EmbeddedMetadata {
 
-      private EmbeddedMaxIdleExpirableMetadata(long maxIdle, TimeUnit maxIdleUnit, EntryVersion version) {
-         super(maxIdle, maxIdleUnit, version);
+      private final long maxIdle;
+
+      @ProtoFactory
+      EmbeddedMaxIdleExpirableMetadata(long maxIdle, NumericVersion numericVersion, SimpleClusteredVersion clusteredVersion) {
+         this(maxIdle, numericVersion != null ? numericVersion : clusteredVersion);
       }
 
+      private EmbeddedMaxIdleExpirableMetadata(long maxIdle, EntryVersion entryVersion) {
+         super(entryVersion);
+         this.maxIdle = maxIdle;
+      }
+
+      @ProtoField(number = 3, defaultValue = "-1")
       @Override
       public long maxIdle() {
-         return timeout;
+         return maxIdle;
       }
 
       @Override
       public Metadata.Builder builder() {
-         return new EmbeddedMetadata.Builder()
-               .maxIdle(timeout).version(version);
+         return super.builder().maxIdle(maxIdle);
+      }
+
+      @Override
+      public boolean equals(Object o) {
+         if (this == o) return true;
+         if (o == null || getClass() != o.getClass()) return false;
+         if (!super.equals(o)) return false;
+         EmbeddedMaxIdleExpirableMetadata that = (EmbeddedMaxIdleExpirableMetadata) o;
+         return maxIdle == that.maxIdle;
+      }
+
+      @Override
+      public int hashCode() {
+         return Objects.hash(super.hashCode(), maxIdle);
       }
 
       @Override
       public String toString() {
          return "EmbeddedMaxIdleExpirableMetadata{" +
-               "maxIdle=" + timeout +
-               ", version=" + version +
+               "version=" + version +
+               ", maxIdle=" + maxIdle +
                '}';
       }
-
    }
 
    public static class Externalizer extends AbstractExternalizer<EmbeddedMetadata> {
@@ -305,7 +334,7 @@ public class EmbeddedMetadata implements Metadata {
       private static final int EXPIRABLE = 1;
       private static final int LIFESPAN_EXPIRABLE = 2;
       private static final int MAXIDLE_EXPIRABLE = 3;
-      private final IdentityIntMap<Class<?>> numbers = new IdentityIntMap<Class<?>>(2);
+      private final Map<Class<?>, Integer> numbers = new HashMap<>(2);
 
       public Externalizer() {
          numbers.put(EmbeddedMetadata.class, IMMORTAL);
@@ -315,7 +344,6 @@ public class EmbeddedMetadata implements Metadata {
       }
 
       @Override
-      @SuppressWarnings("unchecked")
       public Set<Class<? extends EmbeddedMetadata>> getTypeClasses() {
          return Util.asSet(EmbeddedMetadata.class, EmbeddedExpirableMetadata.class,
                EmbeddedLifespanExpirableMetadata.class, EmbeddedMaxIdleExpirableMetadata.class);
@@ -328,7 +356,7 @@ public class EmbeddedMetadata implements Metadata {
 
       @Override
       public void writeObject(ObjectOutput output, EmbeddedMetadata object) throws IOException {
-         int number = numbers.get(object.getClass(), -1);
+         int number = numbers.getOrDefault(object.getClass(), -1);
          output.write(number);
          switch (number) {
             case EXPIRABLE:
@@ -342,37 +370,34 @@ public class EmbeddedMetadata implements Metadata {
                output.writeLong(object.maxIdle());
                break;
          }
-
          output.writeObject(object.version());
       }
 
       @Override
       public EmbeddedMetadata readObject(ObjectInput input) throws IOException, ClassNotFoundException {
-         int number = input.readUnsignedByte();
+         int number = input.readByte();
+         long lifespan;
+         long maxIdle;
          switch (number) {
             case IMMORTAL:
-               return new EmbeddedMetadata(
-                     (EntryVersion) input.readObject());
+               return new EmbeddedMetadata((EntryVersion) input.readObject());
             case EXPIRABLE:
-               long lifespan = input.readLong();
-               long maxIdle = input.readLong();
-               EntryVersion version = (EntryVersion) input.readObject();
-               return new EmbeddedExpirableMetadata(
-                     lifespan, TimeUnit.MILLISECONDS,
-                     maxIdle, TimeUnit.MILLISECONDS, version);
+               lifespan = toMillis(input.readLong(), TimeUnit.MILLISECONDS);
+               maxIdle = toMillis(input.readLong(), TimeUnit.MILLISECONDS);
+               return new EmbeddedExpirableMetadata(lifespan, maxIdle, (EntryVersion) input.readObject());
             case LIFESPAN_EXPIRABLE:
-               return new EmbeddedLifespanExpirableMetadata(
-                     input.readLong(), TimeUnit.MILLISECONDS,
-                     (EntryVersion) input.readObject());
+               lifespan = toMillis(input.readLong(), TimeUnit.MILLISECONDS);
+               return new EmbeddedLifespanExpirableMetadata(lifespan, (EntryVersion) input.readObject());
             case MAXIDLE_EXPIRABLE:
-               return new EmbeddedMaxIdleExpirableMetadata(
-                     input.readLong(), TimeUnit.MILLISECONDS,
-                     (EntryVersion) input.readObject());
+               maxIdle = toMillis(input.readLong(), TimeUnit.MILLISECONDS);
+               return new EmbeddedMaxIdleExpirableMetadata(maxIdle, (EntryVersion) input.readObject());
             default:
                throw new IllegalStateException("Unknown metadata type " + number);
          }
       }
-
    }
 
+   private static long toMillis(long duration, TimeUnit timeUnit) {
+      return duration < 0 ? -1 : timeUnit.toMillis(duration);
+   }
 }

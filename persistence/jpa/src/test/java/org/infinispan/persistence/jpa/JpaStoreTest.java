@@ -10,6 +10,7 @@ import org.infinispan.persistence.jpa.impl.EntityManagerFactoryRegistry;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.persistence.spi.PersistenceException;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
 
@@ -27,10 +28,11 @@ public class JpaStoreTest extends BaseStoreTest {
                      .persistenceUnitName(getPersistenceUnitName())
                      .entityClass(KeyValueEntity.class)
                      .storeMetadata(storeMetadata())
+                     .segmented(false)
                      .create();
       InitializationContext context = createContext(builder.build());
       context.getCache().getAdvancedCache().getComponentRegistry().getGlobalComponentRegistry()
-            .registerComponent(new EntityManagerFactoryRegistry(), EntityManagerFactoryRegistry.class);
+             .registerComponent(new EntityManagerFactoryRegistry(), EntityManagerFactoryRegistry.class);
       JpaStore store = new JpaStore();
       store.init(context);
       return store;
@@ -58,5 +60,10 @@ public class JpaStoreTest extends BaseStoreTest {
    @Override
    public void testLoadAndStoreBytesValues() throws PersistenceException, IOException, InterruptedException {
       // byte values make no sense for this store
+   }
+
+   @Override
+   protected SerializationContextInitializer getSerializationContextInitializer() {
+      return JpaSCI.INSTANCE;
    }
 }

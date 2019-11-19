@@ -3,14 +3,16 @@ package org.infinispan.distribution.ch;
 import static org.infinispan.configuration.cache.CacheMode.DIST_SYNC;
 import static org.testng.AssertJUnit.assertEquals;
 
-import java.io.Serializable;
 import java.util.stream.IntStream;
 
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.ch.impl.AffinityPartitioner;
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.SerializationContextInitializer;
+import org.infinispan.protostream.annotations.AutoProtoSchemaBuilder;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.testng.annotations.Test;
 
@@ -23,8 +25,12 @@ public class AffinityPartitionerTest extends MultipleCacheManagersTest {
 
    @Override
    protected void createCacheManagers() throws Throwable {
+      addNodes(2);
+   }
+
+   private void addNodes(int count) {
       final ConfigurationBuilder conf = getConfigurationBuilder();
-      createCluster(conf, 2);
+      createCluster(new DistributionSerializationContextImpl(), conf, count);
       waitForClusterToForm();
    }
 
@@ -32,13 +38,12 @@ public class AffinityPartitionerTest extends MultipleCacheManagersTest {
    public void testAffinityPartitioner() throws Exception {
       Cache<AffinityKey, String> cache = cacheManagers.get(0).getCache();
       IntStream.range(0, 10).boxed().forEach(num -> cache.put(new AffinityKey(num), "value"));
-
-      addClusterEnabledCacheManager(getConfigurationBuilder());
-      waitForClusterToForm();
+      addNodes(1);
 
       cacheManagers.stream().map(cm -> cm.getCache().getAdvancedCache()).forEach(advancedCache -> {
          LocalizedCacheTopology cacheTopology = advancedCache.getDistributionManager().getCacheTopology();
-         advancedCache.getDataContainer().keySet().forEach(key -> {
+         advancedCache.getDataContainer().forEach(ice -> {
+            Object key = ice.getKey();
             int keySegmentId = ((AffinityKey) key).segmentId;
             assertEquals(cacheTopology.getSegment(key), keySegmentId);
          });
@@ -51,10 +56,13 @@ public class AffinityPartitionerTest extends MultipleCacheManagersTest {
       return conf;
    }
 
-   static class AffinityKey implements AffinityTaggedKey, Serializable, ExternalPojo {
+   public static class AffinityKey implements AffinityTaggedKey {
+
+      @ProtoField(number = 1, defaultValue = "0")
       final int segmentId;
 
-      public AffinityKey(int segmentId) {
+      @ProtoFactory
+      AffinityKey(int segmentId) {
          this.segmentId = segmentId;
       }
 
@@ -62,5 +70,13 @@ public class AffinityPartitionerTest extends MultipleCacheManagersTest {
       public int getAffinitySegmentId() {
          return segmentId;
       }
+   }
+
+   @AutoProtoSchemaBuilder(
+         includeClasses = AffinityKey.class,
+         schemaFileName = "core.distribution.proto",
+         schemaFilePath = "proto/generated",
+         schemaPackageName = "org.infinispan.test.core.distribution")
+   interface DistributionSerializationContext extends SerializationContextInitializer {
    }
 }

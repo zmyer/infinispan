@@ -2,12 +2,14 @@ package org.infinispan.cache.impl;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
+import java.lang.annotation.Annotation;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -22,9 +24,10 @@ import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.filter.KeyFilter;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
+import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
 import org.infinispan.stream.StreamMarshalling;
 import org.infinispan.stream.impl.local.ValueCacheCollection;
 
@@ -45,41 +48,16 @@ import org.infinispan.stream.impl.local.ValueCacheCollection;
  * @since 5.1
  */
 public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
-
-   private static final Flag[] EMPTY_FLAGS = new Flag[0];
    private final long flags;
    private final Object lockOwner;
    private final CacheImpl<K, V> cacheImplementation;
    private final CacheImpl.ContextBuilder contextBuilder = this::writeContext;
 
-   public DecoratedCache(AdvancedCache<K, V> delegate) {
-      this(delegate, EMPTY_FLAGS);
+   public DecoratedCache(CacheImpl<K, V> delegate, long flagsBitSet) {
+      this(delegate, null, flagsBitSet);
    }
 
-   public DecoratedCache(AdvancedCache<K, V> delegate, Flag... flags) {
-      this(delegate, null, flags);
-   }
-
-   public DecoratedCache(AdvancedCache<K, V> delegate, Collection<Flag> flags) {
-      this((CacheImpl<K, V>) delegate, null, EnumUtil.bitSetOf(flags));
-   }
-
-   public DecoratedCache(AdvancedCache<K, V> delegate, Object lockOwner, Flag... flags) {
-      super(delegate);
-      if (flags.length == 0)
-         this.flags = EnumUtil.EMPTY_BIT_SET;
-      else {
-         this.flags = EnumUtil.bitSetOf(flags);
-      }
-
-      this.lockOwner = lockOwner;
-
-      // Yuk
-      cacheImplementation = (CacheImpl<K, V>) delegate;
-   }
-
-   private DecoratedCache(CacheImpl<K, V> delegate, Object lockOwner, long newFlags) {
-      //this constructor is private so we already checked for argument validity
+   public DecoratedCache(CacheImpl<K, V> delegate, Object lockOwner, long newFlags) {
       super(delegate);
       this.flags = newFlags;
       this.lockOwner = lockOwner;
@@ -94,20 +72,17 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
 
    @Override
    public AdvancedCache<K, V> withFlags(final Flag... flags) {
-      if (flags == null || flags.length == 0)
-         return this;
-      else {
-         return withFlags(EnumUtil.bitSetOf(flags));
-      }
+      return withFlags(EnumUtil.bitSetOf(flags));
    }
 
    @Override
    public AdvancedCache<K, V> withFlags(Collection<Flag> flags) {
-      if (flags == null || flags.isEmpty()) {
-         return this;
-      } else {
-         return withFlags(EnumUtil.bitSetOf(flags));
-      }
+      return withFlags(EnumUtil.bitSetOf(flags));
+   }
+
+   @Override
+   public AdvancedCache<K, V> withFlags(Flag flag) {
+      return withFlags(EnumUtil.bitSetOf(flag));
    }
 
    private AdvancedCache<K, V> withFlags(long newFlags) {
@@ -519,6 +494,11 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
+   public CompletableFuture<Long> sizeAsync() {
+      return cacheImplementation.sizeAsync(flags);
+   }
+
+   @Override
    public boolean isEmpty() {
       return cacheImplementation.isEmpty(flags);
    }
@@ -671,13 +651,23 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
-   public void addListener(Object listener) {
-      cacheImplementation.notifier.addListener(listener, (ClassLoader) null);
+   public CompletionStage<Void> addListenerAsync(Object listener) {
+      return cacheImplementation.notifier.addListenerAsync(listener, (ClassLoader) null);
    }
 
    @Override
-   public void addListener(Object listener, KeyFilter<? super K> filter) {
-      cacheImplementation.notifier.addListener(listener, filter, null);
+   public <C> CompletionStage<Void> addListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter) {
+      return cacheImplementation.notifier.addListenerAsync(listener, filter, converter);
+   }
+
+   @Override
+   public <C> CompletionStage<Void> addFilteredListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+      return cacheImplementation.notifier.addFilteredListenerAsync(listener, filter, converter, filterAnnotations);
+   }
+
+   @Override
+   public <C> CompletionStage<Void> addStorageFormatFilteredListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+      return cacheImplementation.notifier.addStorageFormatFilteredListenerAsync(listener, filter, converter, filterAnnotations);
    }
 
    @Override
@@ -726,7 +716,7 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
-   public CacheEntry getCacheEntry(Object key) {
+   public CacheEntry<K, V> getCacheEntry(Object key) {
       return cacheImplementation.getCacheEntry(key, flags, readContext(1));
    }
 

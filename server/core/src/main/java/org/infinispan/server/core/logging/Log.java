@@ -1,6 +1,7 @@
 package org.infinispan.server.core.logging;
 
 import static org.jboss.logging.Logger.Level.DEBUG;
+import static org.jboss.logging.Logger.Level.INFO;
 import static org.jboss.logging.Logger.Level.WARN;
 
 import java.net.SocketAddress;
@@ -10,7 +11,6 @@ import org.infinispan.commons.CacheException;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.server.core.dataconversion.TranscodingException;
 import org.jboss.logging.BasicLogger;
-import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageLogger;
@@ -77,7 +77,7 @@ public interface Log extends BasicLogger {
    @Message(value = "SSL Enabled but no SNI domain configured", id = 5027)
    CacheConfigurationException noSniDomainConfigured();
 
-   @LogMessage(level = WARN)
+   @LogMessage(level = INFO)
    @Message(value = "Native Epoll transport not available, using NIO instead: %s", id = 5028)
    void epollNotAvailable(String message);
 
@@ -90,8 +90,8 @@ public interface Log extends BasicLogger {
    @Message(value = "The supplied configuration for cache '%s' is missing a named configuration for it: %s", id = 5031)
    CacheConfigurationException missingCacheConfiguration(String name, String configuration);
 
-   @Message(value = "Error during transcoding", id = 5032)
-   TranscodingException errorDuringTranscoding(@Cause Throwable e);
+//   @Message(value = "Error during transcoding", id = 5032)
+//   TranscodingException errorDuringTranscoding(@Cause Throwable e);
 
    @Message(value = "Data format '%s' not supported", id = 5033)
    TranscodingException unsupportedDataFormat(MediaType contentFormat);
@@ -104,4 +104,10 @@ public interface Log extends BasicLogger {
 
    @Message(value = "Illegal number of ioThreads: %d", id = 5036)
    IllegalArgumentException illegalIOThreads(int ioThreads);
+
+//   @Message(value = "No provider for authorization realm", id = 5037)
+//   XMLStreamException noProviderForAuthorizationRealm();
+
+   @Message(value = "Illegal type for parameter '%s': %s", id = 5038)
+   IllegalArgumentException illegalParameterType(String parameter, Class<?> type);
 }

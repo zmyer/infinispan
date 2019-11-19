@@ -43,8 +43,10 @@ import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.statetransfer.StateTransferInterceptor;
 import org.infinispan.test.Exceptions;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
+import org.infinispan.test.fwk.TransportFlags;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.jgroups.JChannel;
@@ -61,10 +63,9 @@ public class RemoteGetFailureTest extends MultipleCacheManagersTest {
    @Override
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC);
-      // cache stop takes quite long when the view splits
       builder.clustering().stateTransfer().timeout(10, TimeUnit.SECONDS);
       builder.clustering().remoteTimeout(5, TimeUnit.SECONDS);
-      createCluster(builder, 3);
+      createClusteredCaches(3, TestDataSCI.INSTANCE, builder, new TransportFlags().withFD(true));
       waitForClusterToForm();
       key = getKeyForCache(cache(1), cache(2));
    }
@@ -72,11 +73,11 @@ public class RemoteGetFailureTest extends MultipleCacheManagersTest {
    @AfterMethod(alwaysRun = true)
    @Override
    protected void clearContent() throws Throwable {
-      // When we send a ClearCommand from node that does not have a newer view installed to node that has already
-      // installed a view without the sender, the message is dropped and the ClearCommand has to time out.
-      // Therefore, don't issue the clear command at all.
-      TestingUtil.killCacheManagers(cacheManagers);
-      cacheManagers.clear();
+      // Merge the cluster back so that the leave requests don't have to time out
+      for (Cache<Object, Object> cache : caches()) {
+         installNewView(cache, caches().toArray(new Cache[0]));
+      }
+      super.clearContent();
    }
 
    public void testDelayed(Method m) {
@@ -260,14 +261,14 @@ public class RemoteGetFailureTest extends MultipleCacheManagersTest {
       ((GMS) channel.getProtocolStack().findProtocol(GMS.class)).installView(view);
    }
 
-   private static class FailingInterceptor extends DDAsyncInterceptor {
+   static class FailingInterceptor extends DDAsyncInterceptor {
       @Override
       public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
          throw new CacheException("Injected");
       }
    }
 
-   private static class DelayingInterceptor extends DDAsyncInterceptor {
+   static class DelayingInterceptor extends DDAsyncInterceptor {
       private final CountDownLatch arrival;
       private final CountDownLatch release;
 
@@ -285,7 +286,7 @@ public class RemoteGetFailureTest extends MultipleCacheManagersTest {
       }
    }
 
-   private class CheckOTEInterceptor extends DDAsyncInterceptor {
+   class CheckOTEInterceptor extends DDAsyncInterceptor {
       private final AtomicInteger thrown;
       private final AtomicInteger retried;
 

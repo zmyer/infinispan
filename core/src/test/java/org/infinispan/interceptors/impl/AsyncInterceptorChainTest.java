@@ -1,7 +1,6 @@
 package org.infinispan.interceptors.impl;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
@@ -11,10 +10,11 @@ import java.util.concurrent.Future;
 
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.factories.components.ComponentMetadataRepo;
+import org.infinispan.factories.impl.BasicComponentRegistryImpl;
 import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.BaseAsyncInterceptor;
+import org.infinispan.manager.TestModuleRepository;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -34,9 +34,9 @@ public class AsyncInterceptorChainTest extends AbstractInfinispanTest {
    private static final Log log = LogFactory.getLog(AsyncInterceptorChainTest.class);
 
    public void testConcurrentAddRemove() throws Exception {
-      ComponentMetadataRepo componentMetadataRepo = new ComponentMetadataRepo();
-      componentMetadataRepo.initialize(Collections.emptyList(), AsyncInterceptorChainTest.class.getClassLoader());
-      AsyncInterceptorChainImpl ic = new AsyncInterceptorChainImpl(componentMetadataRepo);
+      BasicComponentRegistryImpl basicComponentRegistry =
+         new BasicComponentRegistryImpl(TestModuleRepository.defaultModuleRepository(), false, null);
+      AsyncInterceptorChainImpl ic = new AsyncInterceptorChainImpl(basicComponentRegistry);
       ic.addInterceptor(new DummyCallInterceptor(), 0);
       ic.addInterceptor(new DummyActivationInterceptor(), 1);
       CyclicBarrier barrier = new CyclicBarrier(4);
@@ -97,7 +97,7 @@ public class AsyncInterceptorChainTest extends AbstractInfinispanTest {
       }
    }
 
-   private static class DummyCallInterceptor extends BaseAsyncInterceptor {
+   static class DummyCallInterceptor extends BaseAsyncInterceptor {
       @Override
       public Object visitCommand(InvocationContext ctx, VisitableCommand command)
             throws Throwable {
@@ -105,16 +105,16 @@ public class AsyncInterceptorChainTest extends AbstractInfinispanTest {
       }
    }
 
-   private static class DummyActivationInterceptor extends DummyCallInterceptor {
+   static class DummyActivationInterceptor extends DummyCallInterceptor {
    }
 
-   private static class DummyCacheMgmtInterceptor extends DummyCallInterceptor {
+   static class DummyCacheMgmtInterceptor extends DummyCallInterceptor {
    }
 
-   private static class DummyDistCacheWriterInterceptor extends DummyCallInterceptor {
+   static class DummyDistCacheWriterInterceptor extends DummyCallInterceptor {
    }
 
-   private static class DummyInvalidationInterceptor extends DummyCallInterceptor {
+   static class DummyInvalidationInterceptor extends DummyCallInterceptor {
    }
 
 }

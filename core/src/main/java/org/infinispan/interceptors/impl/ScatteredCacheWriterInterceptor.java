@@ -1,8 +1,17 @@
 package org.infinispan.interceptors.impl;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+
 import org.infinispan.commands.DataCommand;
 import org.infinispan.commands.FlagAffectedCommand;
-import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
 import org.infinispan.commands.functional.ReadWriteManyCommand;
@@ -22,6 +31,7 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.Util;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.versioning.EntryVersion;
@@ -35,18 +45,10 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.persistence.manager.OrderedUpdatesManager;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.util.concurrent.AggregateCompletionStage;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.function.BiConsumer;
 
 /**
  * Similar to {@link DistCacheWriterInterceptor} but as commands are not forwarded from primary owner
@@ -77,16 +79,16 @@ public class ScatteredCacheWriterInterceptor extends CacheWriterInterceptor {
 
    private static final Log log = LogFactory.getLog(ScatteredCacheWriterInterceptor.class);
 
-   @Inject private DistributionManager dm;
-   @Inject private TimeService timeService;
+   @Inject DistributionManager dm;
+   @Inject TimeService timeService;
    @Inject @ComponentName(KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR)
-   private ScheduledExecutorService timeoutExecutor;
-   @Inject private OrderedUpdatesManager orderedUpdatesManager;
+   ScheduledExecutorService timeoutExecutor;
+   @Inject OrderedUpdatesManager orderedUpdatesManager;
 
    private long lockTimeout;
 
-   private final InvocationSuccessFunction handleDataWriteReturn = this::handleDataWriteReturn;
-   private final InvocationSuccessFunction handleManyWriteReturn = this::handleManyWriteReturn;
+   private final InvocationSuccessFunction<DataWriteCommand> handleDataWriteReturn = this::handleDataWriteReturn;
+   private final InvocationSuccessFunction<WriteCommand> handleManyWriteReturn = this::handleManyWriteReturn;
 
    @Override
    protected Log getLog() {
@@ -131,8 +133,7 @@ public class ScatteredCacheWriterInterceptor extends CacheWriterInterceptor {
       return asyncInvokeNext(ctx, command, wfs);
    }
 
-   private Object handleDataWriteReturn(InvocationContext ctx, VisitableCommand command, Object rv) {
-      DataWriteCommand dataWriteCommand = (DataWriteCommand) command;
+   private Object handleDataWriteReturn(InvocationContext ctx, DataWriteCommand dataWriteCommand, Object rv) {
       Object key = dataWriteCommand.getKey();
       if (!isStoreEnabled(dataWriteCommand) || !dataWriteCommand.isSuccessful())
          return rv;
@@ -146,7 +147,7 @@ public class ScatteredCacheWriterInterceptor extends CacheWriterInterceptor {
       // version is null only with some nasty flags, we don't care about ordering then
       if (version != null) {
          long deadline = timeService.expectedEndTime(lockTimeout, TimeUnit.NANOSECONDS);
-         CompletableFuture<?> future = orderedUpdatesManager.checkLockAndStore(key, version,
+         CompletionStage<Void> future = orderedUpdatesManager.checkLockAndStore(key, version,
                wf -> scheduleTimeout(wf, deadline, key),
                k -> storeAndUpdateStats(ctx, k, dataWriteCommand));
          if (future == null) {
@@ -155,15 +156,12 @@ public class ScatteredCacheWriterInterceptor extends CacheWriterInterceptor {
             return asyncValue(future.thenApply(nil -> rv));
          }
       } else {
-         storeAndUpdateStats(ctx, key, dataWriteCommand);
-         return rv;
+         return delayedValue(storeAndUpdateStats(ctx, key, dataWriteCommand), rv);
       }
    }
 
-   private void storeAndUpdateStats(InvocationContext ctx, Object key, WriteCommand command) {
-      storeEntry(ctx, key, command);
-      if (getStatisticsEnabled())
-         cacheStores.incrementAndGet();
+   private CompletionStage<Void> storeAndUpdateStats(InvocationContext ctx, Object key, WriteCommand command) {
+      return storeEntry(ctx, key, command);
    }
 
    @Override
@@ -192,8 +190,7 @@ public class ScatteredCacheWriterInterceptor extends CacheWriterInterceptor {
       return invokeNextThenApply(ctx, command, handleDataWriteReturn);
    }
 
-   private Object handleManyWriteReturn(InvocationContext ctx, VisitableCommand rcommand, Object rv) {
-      WriteCommand command = (WriteCommand) rcommand;
+   private Object handleManyWriteReturn(InvocationContext ctx, WriteCommand command, Object rv) {
       if (!isStoreEnabled(command))
          return rv;
 
@@ -202,37 +199,37 @@ public class ScatteredCacheWriterInterceptor extends CacheWriterInterceptor {
       long deadline = timeService.expectedEndTime(lockTimeout, TimeUnit.NANOSECONDS);
       WaitFutures waitFutures = new WaitFutures(lockTimeout, keys);
 
-      List<CompletableFuture<?>> futures = null;
+      AggregateCompletionStage<Void> aggregateCompletionStage = null;
       for (Object key : keys) {
          CacheEntry cacheEntry = ctx.lookupEntry(key);
          Metadata metadata = cacheEntry.getMetadata();
          EntryVersion version = metadata == null ? null : metadata.version();
          // version is null only with some nasty flags, we don't care about ordering then
          if (version != null) {
-            CompletableFuture<?> future = orderedUpdatesManager.checkLockAndStore(key, version,
+            CompletionStage<Void> future = orderedUpdatesManager.checkLockAndStore(key, version,
                   wf -> {
                      CompletableFuture<?> cf = wf.thenAccept(nil -> {});
                      waitFutures.add(cf);
                      return cf;
                   },
-                  k -> storeEntry(ctx, k, command));
-            if (future != null && !future.isDone()) {
-               if (futures == null) {
-                  futures = new ArrayList<>(); // let's assume little contention
+                  k -> storeEntry(ctx, k, command, false));
+            if (!CompletionStages.isCompletedSuccessfully(future)) {
+               if (aggregateCompletionStage == null) {
+                  aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
                }
-               futures.add(future);
+               aggregateCompletionStage.dependsOn(future);
             }
          } else {
-            storeEntry(ctx, cacheEntry.getKey(), command);
+            storeEntry(ctx, cacheEntry.getKey(), command, false);
          }
       }
-      if (futures == null) {
+      if (aggregateCompletionStage == null) {
          if (getStatisticsEnabled())
             cacheStores.getAndAdd(keys.size());
          return rv;
       } else {
+         CompletionStage<Void> allFuture = aggregateCompletionStage.freeze();
          ScheduledFuture<?> schedule = timeoutExecutor.schedule(waitFutures::cancel, timeService.remainingTime(deadline, TimeUnit.NANOSECONDS), TimeUnit.NANOSECONDS);
-         CompletableFuture<Void> allFuture = CompletableFuture.allOf(futures.toArray(new CompletableFuture[futures.size()]));
          return asyncValue(allFuture.thenApply(nil -> {
             schedule.cancel(false);
             if (getStatisticsEnabled())

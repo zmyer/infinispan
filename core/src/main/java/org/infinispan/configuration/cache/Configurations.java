@@ -95,8 +95,25 @@ public class Configurations {
       return globalConfiguration.transport().transport() != null;
    }
 
+   public static boolean isStateTransferStore(StoreConfiguration storeConfiguration) {
+      return !storeConfiguration.shared() && storeConfiguration.fetchPersistentState();
+   }
+
+   public static boolean needSegments(Configuration configuration) {
+      CacheMode cacheMode = configuration.clustering().cacheMode();
+      boolean transactional = configuration.transaction().transactionMode().isTransactional();
+      boolean usingSegmentedStore = configuration.persistence().usingSegmentedStore();
+      return (cacheMode.isReplicated() ||
+              cacheMode.isDistributed() ||
+              cacheMode.isScattered() ||
+              (cacheMode.isInvalidation() && transactional) ||
+              usingSegmentedStore);
+   }
+
    static Set<Class<? extends StoreConfigurationBuilder<?, ?>>> lookupPersistenceBuilders() {
-      Collection<ConfigurationParser> parsers = ServiceFinder.load(ConfigurationParser.class, Configurations.class.getClassLoader(), ParserRegistry.class.getClassLoader());
+      Collection<ConfigurationParser> parsers = ServiceFinder.load(ConfigurationParser.class,
+                                                                   Configurations.class.getClassLoader(),
+                                                                   ParserRegistry.class.getClassLoader());
       Set<Class<? extends StoreConfigurationBuilder<?, ?>>> builders = new HashSet<>();
       for (ConfigurationParser parser : parsers) {
          Class<? extends ConfigurationBuilderInfo> builderClass = parser.getConfigurationBuilderInfo();

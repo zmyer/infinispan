@@ -3,7 +3,6 @@ package org.infinispan.server.router.router.impl.rest;
 import java.lang.invoke.MethodHandles;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.util.concurrent.CompletableFuture;
 
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.server.router.RoutingTable;
@@ -64,15 +63,21 @@ public class RestEndpointRouter implements EndpointRouter {
 
    @Override
    public void stop() {
-      CompletableFuture<?> masterGroupShutdown = wrapShutdownFuture(masterGroup.shutdownGracefully());
-      CompletableFuture<?> workerGroupShutdown = wrapShutdownFuture(workerGroup.shutdownGracefully());
+      Future<?> masterGroupShutdown = masterGroup.shutdownGracefully();
+      Future<?> workerGroupShutdown = workerGroup.shutdownGracefully();
       try {
-         CompletableFuture.allOf(masterGroupShutdown, workerGroupShutdown).get();
+         masterGroupShutdown.get();
+         workerGroupShutdown.get();
       } catch (Exception e) {
          logger.errorWhileShuttingDown(e);
       }
       port = null;
       ip = null;
+   }
+
+   @Override
+   public String getHost() {
+      return ip.getHostAddress();
    }
 
    @Override
@@ -83,18 +88,6 @@ public class RestEndpointRouter implements EndpointRouter {
    @Override
    public Integer getPort() {
       return port;
-   }
-
-
-
-   private <U> CompletableFuture<U> wrapShutdownFuture(Future<U> shutdownFuture) {
-      return CompletableFuture.supplyAsync(() -> {
-         try {
-            return shutdownFuture.get();
-         } catch (Exception e) {
-            throw new IllegalStateException(e);
-         }
-      });
    }
 
    @Override

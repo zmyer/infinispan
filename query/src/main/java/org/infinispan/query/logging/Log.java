@@ -12,13 +12,13 @@ import java.util.List;
 import javax.transaction.Transaction;
 
 import org.hibernate.search.backend.LuceneWork;
-import org.hibernate.search.exception.SearchException;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.objectfilter.ParsingException;
 import org.infinispan.partitionhandling.AvailabilityException;
 import org.infinispan.remoting.transport.Address;
 import org.jboss.logging.BasicLogger;
+import org.jboss.logging.Logger;
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
@@ -34,6 +34,8 @@ import org.jboss.logging.annotations.MessageLogger;
  */
 @MessageLogger(projectCode = "ISPN")
 public interface Log extends BasicLogger {
+   String LOG_ROOT = "org.infinispan.";
+   Log CONTAINER = Logger.getMessageLogger(Log.class, LOG_ROOT + "CONTAINER");
 
    @Message(value = "The configured entity class %s is not indexable. Please remove it from the indexing configuration.", id = 404)
    CacheConfigurationException classNotIndexable(String className);
@@ -105,8 +107,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Flushing index '%s'", id = 14017)
    void flushingIndex(String entityType);
 
-   @Message(value = "Error executing MassIndexer", id = 14018)
-   CacheException errorExecutingMassIndexer(@Cause Throwable cause);
+//   @Message(value = "Error executing MassIndexer", id = 14018)
+//   CacheException errorExecutingMassIndexer(@Cause Throwable cause);
 
    @Message(value = "Cannot run Lucene queries on a cache '%s' that does not have indexing enabled", id = 14019)
    IllegalStateException cannotRunLuceneQueriesIfNotIndexed(String cacheName);
@@ -142,7 +144,7 @@ public interface Log extends BasicLogger {
    void detectedUnknownIndexedEntities(String cacheName, String classNames);
 
    @Message(value = "The type %s is not an indexed entity.", id = 14030)
-   IllegalArgumentException getNoIndexedEntityException(String typeName);
+   IllegalArgumentException notAnIndexedEntityException(String typeName);
 
    @Message(value = "Unable to resume suspended transaction %s", id = 14033)
    CacheException unableToResumeSuspendedTx(Transaction transaction, @Cause Throwable cause);
@@ -160,13 +162,13 @@ public interface Log extends BasicLogger {
    CacheException queryModuleNotInitialised();
 
    @Message(value = "Queries containing groups or aggregations cannot be converted to an indexed query", id = 14039)
-   SearchException groupAggregationsNotSupported();
+   CacheException groupAggregationsNotSupported();
 
    @Message(value = "Unable to define filters, please use filters in the query string instead.", id = 14040)
-   SearchException filterNotSupportedWithQueryString();
+   CacheException filterNotSupportedWithQueryString();
 
    @Message(value = "Unable to define sort, please use sorting in the query string instead.", id = 14041)
-   SearchException sortNotSupportedWithQueryString();
+   CacheException sortNotSupportedWithQueryString();
 
    @Message(value = "Cannot execute query: cluster is operating in degraded mode and partition handling configuration doesn't allow reads and writes.", id = 14042)
    AvailabilityException partitionDegraded();
@@ -192,4 +194,10 @@ public interface Log extends BasicLogger {
    @LogMessage(level = WARN)
    @Message(value = "Ignoring system property %s because the value %d is smaller than the current value (%d) of org.apache.lucene.search.BooleanQuery.getMaxClauseCount()", id = 14047)
    void ignoringBooleanQueryMaxClauseCount(String sysPropName, int maxClauseCount, int currentMaxClauseCount);
+
+   @Message(value = "Error acquiring MassIndexer Lock", id = 14048)
+   CacheException errorAcquiringMassIndexerLock(@Cause Throwable e);
+
+   @Message(value = "Error releasing MassIndexer Lock", id = 14049)
+   CacheException errorReleasingMassIndexerLock(@Cause Throwable e);
 }

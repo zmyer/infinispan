@@ -29,6 +29,7 @@ import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.NotInd
 import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
 import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Index;
@@ -67,7 +68,6 @@ import org.testng.annotations.Test;
 public class EmbeddedRemoteInteropQueryTest extends SingleCacheManagerTest {
 
    private static final String NOT_INDEXED_PROTO_SCHEMA = "package sample_bank_account;\n" +
-         "/* @Indexed(false) */\n" +
          "message NotIndexed {\n" +
          "\toptional string notIndexedField = 1;\n" +
          "}\n";
@@ -88,7 +88,7 @@ public class EmbeddedRemoteInteropQueryTest extends SingleCacheManagerTest {
 
       hotRodServer = HotRodClientTestingUtil.startHotRodServer(cacheManager);
 
-      ConfigurationBuilder clientBuilder = new ConfigurationBuilder();
+      ConfigurationBuilder clientBuilder = HotRodClientTestingUtil.newRemoteConfigurationBuilder();
       clientBuilder.addServer().host("127.0.0.1").port(hotRodServer.getPort());
       clientBuilder.marshaller(new ProtoStreamMarshaller());
       remoteCacheManager = new RemoteCacheManager(clientBuilder.build());
@@ -96,7 +96,7 @@ public class EmbeddedRemoteInteropQueryTest extends SingleCacheManagerTest {
       remoteCache = remoteCacheManager.getCache();
 
       //initialize client-side serialization context
-      SerializationContext clientSerCtx = ProtoStreamMarshaller.getSerializationContext(remoteCacheManager);
+      SerializationContext clientSerCtx = MarshallerUtil.getSerializationContext(remoteCacheManager);
       MarshallerRegistration.registerMarshallers(clientSerCtx);
       clientSerCtx.registerProtoFiles(FileDescriptorSource.fromString("not_indexed.proto", NOT_INDEXED_PROTO_SCHEMA));
       clientSerCtx.registerMarshaller(new NotIndexedMarshaller());

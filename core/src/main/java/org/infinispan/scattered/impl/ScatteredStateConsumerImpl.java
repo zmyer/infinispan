@@ -1,6 +1,7 @@
 package org.infinispan.scattered.impl;
 
 import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
+import static org.infinispan.util.logging.Log.CONTAINER;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -13,6 +14,7 @@ import java.util.PrimitiveIterator;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
@@ -25,6 +27,7 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IntSets;
+import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.InternalCacheValue;
 import org.infinispan.container.entries.RemoteMetadata;
@@ -35,11 +38,11 @@ import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.filter.CollectionKeyFilter;
 import org.infinispan.lifecycle.ComponentStatus;
-import org.infinispan.metadata.InternalMetadata;
+import org.infinispan.metadata.Metadata;
 import org.infinispan.metadata.impl.InternalMetadataImpl;
-import org.infinispan.persistence.spi.AdvancedCacheLoader;
+import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.reactive.RxJavaInterop;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.SuccessfulResponse;
 import org.infinispan.remoting.transport.Address;
@@ -51,9 +54,10 @@ import org.infinispan.statetransfer.InboundTransferTask;
 import org.infinispan.statetransfer.StateConsumerImpl;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.topology.CacheTopology;
-import org.infinispan.util.ReadOnlyDataContainerBackedKeySet;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+import org.reactivestreams.Publisher;
 
 import io.reactivex.Flowable;
 import net.jcip.annotations.GuardedBy;
@@ -260,9 +264,8 @@ public class ScatteredStateConsumerImpl extends StateConsumerImpl {
       if (completedSegments.isEmpty()) {
          log.tracef("Not requesting any values yet because no segments have been completed.");
       } else if (inboundTransfer.isCompletedSuccessfully()) {
-         IntSet finalCompletedSegments = completedSegments;
-         log.tracef("Requesting values from segments %s, for in-memory keys", finalCompletedSegments);
-         dataContainer.forEach(finalCompletedSegments, ice -> {
+         log.tracef("Requesting values from segments %s, for in-memory keys", completedSegments);
+         dataContainer.forEach(completedSegments, ice -> {
             // TODO: could the version be null in here?
             if (ice.getMetadata() instanceof RemoteMetadata) {
                Address backup = ((RemoteMetadata) ice.getMetadata()).getAddress();
@@ -282,38 +285,35 @@ public class ScatteredStateConsumerImpl extends StateConsumerImpl {
 
          // With passivation, some key could be activated here and we could miss it,
          // but then it should be broadcast-loaded in PrefetchInvalidationInterceptor
-         AdvancedCacheLoader<Object, Object> stProvider = persistenceManager.getStateTransferProvider();
-         if (stProvider != null) {
-            try {
-               CollectionKeyFilter filter = new CollectionKeyFilter(new ReadOnlyDataContainerBackedKeySet(dataContainer));
-               Flowable.fromPublisher(stProvider.entryPublisher(filter::accept, true, true))
-                     .blockingForEach(me -> {
-                        int segmentId = keyPartitioner.getSegment(me.getKey());
-                        if (finalCompletedSegments.contains(segmentId)) {
-                           try {
-                              InternalMetadata metadata = me.getMetadata();
-                              if (metadata instanceof RemoteMetadata) {
-                                 Address backup = ((RemoteMetadata) metadata).getAddress();
-                                 retrieveEntry(me.getKey(), backup);
-                                 for (Address member : cacheTopology.getActualMembers()) {
-                                    if (!member.equals(backup)) {
-                                       invalidate(me.getKey(), metadata.version(), member);
-                                    }
-                                 }
-                              } else {
-                                 backupEntry(entryFactory.create(me.getKey(), me.getValue(), me.getMetadata()));
-                                 for (Address member : nonBackupAddresses) {
-                                    invalidate(me.getKey(), metadata.version(), member);
-                                 }
+         Publisher<MarshallableEntry<Object, Object>> persistencePublisher =
+            persistenceManager.publishEntries(completedSegments, k -> !dataContainer.containsKey(k), true, true,
+                                              Configurations::isStateTransferStore);
+         try {
+            CompletionStage<Void> stage = Flowable.fromPublisher(persistencePublisher)
+                  .doOnNext(me -> {
+                     try {
+                        Metadata metadata = me.getMetadata();
+                        if (metadata instanceof RemoteMetadata) {
+                           Address backup = ((RemoteMetadata) metadata).getAddress();
+                           retrieveEntry(me.getKey(), backup);
+                           for (Address member : cacheTopology.getActualMembers()) {
+                              if (!member.equals(backup)) {
+                                 invalidate(me.getKey(), metadata.version(), member);
                               }
-                           } catch (CacheException e) {
-                              log.failedLoadingValueFromCacheStore(me.getKey(), e);
+                           }
+                        } else {
+                           backupEntry(entryFactory.create(me.getKey(), me.getValue(), me.getMetadata()));
+                           for (Address member : nonBackupAddresses) {
+                              invalidate(me.getKey(), metadata.version(), member);
                            }
                         }
-                     });
-            } catch (CacheException e) {
-               log.failedLoadingKeysFromCacheStore(e);
-            }
+                     } catch (CacheException e) {
+                        log.failedLoadingValueFromCacheStore(me.getKey(), e);
+                     }
+                  }).to(RxJavaInterop.flowableToCompletionStage());
+            CompletionStages.join(stage);
+         } catch (CacheException e) {
+            log.failedLoadingKeysFromCacheStore(e);
          }
       }
 
@@ -391,8 +391,8 @@ public class ScatteredStateConsumerImpl extends StateConsumerImpl {
       for (KeyAndVersion pair : list) {
          keys[i] = pair.key;
          SimpleClusteredVersion version = (SimpleClusteredVersion) pair.version;
-         topologyIds[i] = version.topologyId;
-         versions[i] = version.version;
+         topologyIds[i] = version.getTopologyId();
+         versions[i] = version.getVersion();
          ++i;
       }
       // Theoretically we can just send these invalidations asynchronously, but we'd prefer to have old copies
@@ -471,7 +471,7 @@ public class ScatteredStateConsumerImpl extends StateConsumerImpl {
          .whenComplete((response, throwable) -> {
             try {
                if (throwable != null) {
-                  throw log.exceptionProcessingEntryRetrievalValues(throwable);
+                  throw CONTAINER.exceptionProcessingEntryRetrievalValues(throwable);
                } else {
                   applyValues(address, keys, response);
                }
@@ -533,7 +533,7 @@ public class ScatteredStateConsumerImpl extends StateConsumerImpl {
    }
 
    @Override
-   protected void removeStaleData(IntSet removedSegments) throws InterruptedException {
+   protected void removeStaleData(IntSet removedSegments) {
       // Noop - scattered cache cannot remove data even if it is not an owner
    }
 

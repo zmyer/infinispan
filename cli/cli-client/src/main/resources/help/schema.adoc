@@ -1,0 +1,30 @@
+SCHEMA(1)
+=========
+:doctype: manpage
+
+
+NAME
+----
+schema - uploads and registers protobuf schemas.
+
+
+SYNOPSIS
+--------
+*schema* ['OPTIONS'] `SCHEMA_NAME`
+
+
+OPTIONS
+-------
+*-u, --upload*='FILE'::
+Uploads a file as a protobuf schema with the given name.
+
+
+EXAMPLE
+--------
+`schema --upload=person.proto person.proto` +
+Registers a `person.proto` Protobuf schema.
+
+
+SEE ALSO
+--------
+query(1)

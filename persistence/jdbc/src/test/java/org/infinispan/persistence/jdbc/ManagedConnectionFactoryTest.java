@@ -12,10 +12,9 @@ import javax.sql.DataSource;
 
 import org.infinispan.persistence.BaseStoreTest;
 import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfigurationBuilder;
-import org.infinispan.persistence.jdbc.connectionfactory.SimpleConnectionFactory;
+import org.infinispan.persistence.jdbc.impl.connectionfactory.SimpleConnectionFactory;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
-import org.infinispan.test.fwk.UnitTestDatabaseManager;
 import org.infinispan.test.jndi.DummyContextFactory;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -24,7 +23,7 @@ import org.testng.annotations.Test;
 /**
  * @author Mircea.Markus@jboss.com
  */
-@Test(groups = "functional", testName = "persistence.jdbc.ManagedConnectionFactoryTest")
+@Test(groups = "functional")
 public abstract class ManagedConnectionFactoryTest extends BaseStoreTest {
 
    private DummyDataSource ds;
@@ -41,7 +40,7 @@ public abstract class ManagedConnectionFactoryTest extends BaseStoreTest {
 
    public abstract String getDatasourceLocation();
 
-   @AfterClass
+   @AfterClass(alwaysRun = true)
    public void destroyDatasourceAndUnbind() throws NamingException {
       InitialContext ic = new InitialContext();
       ic.unbind(getDatasourceLocation());

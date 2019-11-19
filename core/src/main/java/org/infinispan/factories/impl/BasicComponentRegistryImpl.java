@@ -1,10 +1,5 @@
 package org.infinispan.factories.impl;
 
-import static org.infinispan.commons.util.ReflectionUtil.invokeAccessibly;
-import static org.infinispan.commons.util.ReflectionUtil.setAccessibly;
-
-import java.security.AccessController;
-import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -17,19 +12,16 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import net.jcip.annotations.GuardedBy;
-import org.infinispan.IllegalLifecycleStateException;
+import org.infinispan.commons.IllegalLifecycleStateException;
 import org.infinispan.commons.CacheConfigurationException;
-import org.infinispan.commons.util.ReflectionUtil;
-import org.infinispan.commons.util.Util;
-import org.infinispan.factories.AutoInstantiableFactory;
+import org.infinispan.commons.CacheException;
 import org.infinispan.factories.ComponentFactory;
-import org.infinispan.factories.components.ComponentMetadata;
-import org.infinispan.factories.components.ComponentMetadataRepo;
-import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.lifecycle.ComponentStatus;
+import org.infinispan.manager.ModuleRepository;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+
+import net.jcip.annotations.GuardedBy;
 
 /**
  * @author Dan Berindei
@@ -39,8 +31,7 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
    private static final Log log = LogFactory.getLog(BasicComponentRegistryImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   private final ClassLoader classLoader;
-   private final ComponentMetadataRepo metadataRepo;
+   private final ModuleRepository moduleRepository;
    private final Scopes scope;
    private final BasicComponentRegistry next;
 
@@ -55,11 +46,12 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
    // Needs to lock for updates but not for reads
    private volatile ComponentStatus status;
 
-   public BasicComponentRegistryImpl(ClassLoader classLoader, ComponentMetadataRepo metadataRepo,
-                                     Scopes scope, BasicComponentRegistry next) {
-      this.classLoader = classLoader;
-      this.metadataRepo = metadataRepo;
-      this.scope = scope;
+   private final WireContext lookup = new WireContext(this);
+
+   public BasicComponentRegistryImpl(ModuleRepository moduleRepository,
+                                     boolean isGlobal, BasicComponentRegistry next) {
+      this.moduleRepository = moduleRepository;
+      this.scope = isGlobal ? Scopes.GLOBAL : Scopes.NAMED_CACHE;
       this.next = next;
       this.status = ComponentStatus.RUNNING;
       this.mutatorThreads = new HashMap<>();
@@ -69,11 +61,52 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
    }
 
    @Override
-   public <T> ComponentRef<T> getComponent(String name, Class<T> componentType) {
+   public <T, U extends T> ComponentRef<T> getComponent(String name, Class<U> componentType) {
       return getComponent0(name, componentType, true);
    }
 
-   public <T> ComponentRef<T> getComponent0(String name, Class<T> componentType, boolean needInstance) {
+   @Override
+   public MBeanMetadata getMBeanMetadata(String className) {
+      MBeanMetadata metadata = moduleRepository.getMBeanMetadata(className);
+      if (metadata == null) {
+         return null;
+      }
+
+      // collect attributes and operations from supers (in reverse order to ensure proper overriding)
+      Map<String, MBeanMetadata.AttributeMetadata> attributes = new HashMap<>();
+      Map<String, MBeanMetadata.OperationMetadata> operations = new HashMap<>();
+
+      MBeanMetadata currentMetadata = metadata;
+      for (;;) {
+         for (MBeanMetadata.AttributeMetadata attribute : currentMetadata.getAttributes()) {
+            MBeanMetadata.AttributeMetadata existingAttr = attributes.put(attribute.getName(), attribute);
+            if (existingAttr != null) {
+               throw new IllegalStateException("Overriding of JMX attributes is not allowed. Attribute "
+                     + attribute.getName() + " is overridden in a subclass of " + className);
+            }
+         }
+         for (MBeanMetadata.OperationMetadata operation : currentMetadata.getOperations()) {
+            MBeanMetadata.OperationMetadata existingOp = operations.put(operation.getSignature(), operation);
+            if (existingOp != null) {
+               throw new IllegalStateException("Overriding of JMX operations is not allowed. Operation "
+                     + operation.getSignature() + " is overridden in a subclass of " + className);
+            }
+         }
+         className = currentMetadata.getSuperMBeanClassName();
+         if (className == null) {
+            break;
+         }
+         currentMetadata = moduleRepository.getMBeanMetadata(className);
+         if (currentMetadata == null) {
+            throw new IllegalStateException("Missing MBean metadata for class " + className);
+         }
+      }
+
+      return new MBeanMetadata(metadata.getJmxObjectName(), metadata.getDescription(), null,
+            attributes.values(), operations.values());
+   }
+
+   <T, U extends T> ComponentRef<T> getComponent0(String name, Class<U> componentType, boolean needInstance) {
       ComponentWrapper wrapper = components.get(name);
       if (wrapper != null && (wrapper.isAtLeast(WrapperState.WIRED) || !needInstance)) {
          // The wrapper already exists, return it even if the instance was not wired or even created yet
@@ -84,7 +117,7 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
          // The wrapper doesn't yet exist in the current scope
          // Try to find/construct the component in the next scope
          if (next != null) {
-            ComponentRef nextScopeRef = next.getComponent(name, componentType);
+            ComponentRef<T> nextScopeRef = next.getComponent(name, componentType);
             if (nextScopeRef != null) {
                return nextScopeRef;
             }
@@ -94,7 +127,7 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       ComponentFactory factory = findFactory(name);
       if (wrapper == null) {
          if (factory == null) {
-            // Return null so the previous scope can have a go
+            // Return null without registering a wrapper so the previous scope can have a go
             // It's ok to return null if another thread is registering the component concurrently
             return null;
          }
@@ -104,7 +137,13 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       }
 
       if (needInstance) {
-         instantiateWrapper(wrapper, factory);
+         if (factory != null) {
+            instantiateWrapper(wrapper, factory);
+         } else {
+            // If the wrapper exists but the factory is null, another thread must be registering the component,
+            // either manually or from tryAutoInstantiation
+            awaitWrapperState(wrapper, WrapperState.INSTANTIATED);
+         }
          wireWrapper(wrapper);
       }
       return wrapper;
@@ -124,7 +163,7 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       }
    }
 
-   void instantiateWrapper(ComponentWrapper wrapper, ComponentFactory factory) {
+   private void instantiateWrapper(ComponentWrapper wrapper, ComponentFactory factory) {
       String name = wrapper.name;
       if (!prepareWrapperChange(wrapper, WrapperState.EMPTY, WrapperState.INSTANTIATING)) {
          // Someone else has started instantiating and wiring the component, wait for them to finish
@@ -132,35 +171,52 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
          return;
       }
 
+      try {
+         // Also changes the status when successful
+         doInstantiateWrapper(wrapper, factory, name);
+      } catch (Throwable t) {
+         commitWrapperStateChange(wrapper, WrapperState.INSTANTIATING, WrapperState.FAILED);
+         throw t;
+      }
+   }
+
+   private void doInstantiateWrapper(ComponentWrapper wrapper, ComponentFactory factory, String name) {
       Object instance;
       try {
          instance = factory.construct(name);
       } catch (Throwable t) {
-         commitWrapperStateChange(wrapper, WrapperState.INSTANTIATING, WrapperState.FAILED);
          throw new CacheConfigurationException(
             "Failed to construct component " + name + ", path " + getCurrentComponentPath(), t);
       }
+
       if (instance instanceof ComponentAlias) {
          // Create the target component and point this wrapper to it
          ComponentAlias alias = (ComponentAlias) instance;
          commitWrapperAliasChange(wrapper, alias, null, WrapperState.INSTANTIATING, WrapperState.INSTANTIATED);
-         return;
+      } else {
+         ComponentAccessor<Object> accessor = getMetadataForComponent(instance);
+         commitWrapperInstanceChange(wrapper, instance, accessor, WrapperState.INSTANTIATING,
+                                     WrapperState.INSTANTIATED);
       }
-      ComponentMetadata metadata = getMetadataForComponent(instance);
-      if (metadata != null && metadata.getScope() != null && metadata.getScope() != scope) {
-         throw new CacheConfigurationException(
-            "Component " + wrapper.name + " has scope " + metadata.getScope() + " but its factory is " + scope);
-      }
-      commitWrapperInstanceChange(wrapper, instance, metadata, WrapperState.INSTANTIATING, WrapperState.INSTANTIATED);
    }
 
-   void wireWrapper(ComponentWrapper wrapper) {
+   private void wireWrapper(ComponentWrapper wrapper) {
       if (!prepareWrapperChange(wrapper, WrapperState.INSTANTIATED, WrapperState.WIRING)) {
          // Someone else has started wiring the component, wait for them to finish
          awaitWrapperState(wrapper, WrapperState.WIRED);
          return;
       }
 
+      try {
+         // Also changes the status when successful
+         doWireWrapper(wrapper);
+      } catch (Throwable t) {
+         commitWrapperStateChange(wrapper, WrapperState.WIRING, WrapperState.FAILED);
+         throw t;
+      }
+   }
+
+   private void doWireWrapper(ComponentWrapper wrapper) {
       if (wrapper.instance instanceof ComponentAlias) {
          ComponentAlias alias = (ComponentAlias) wrapper.instance;
          String aliasTargetName = alias.getComponentName();
@@ -172,26 +228,22 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
          targetRef.wired();
          commitWrapperAliasChange(wrapper, alias, targetRef, WrapperState.WIRING, WrapperState.WIRED);
       } else {
-         try {
-            performInjection(wrapper.instance, wrapper.metadata, false);
-         } catch (Throwable t) {
-            commitWrapperStateChange(wrapper, WrapperState.WIRING, WrapperState.FAILED);
-            throw t;
-         }
+         invokeInjection(wrapper.instance, wrapper.accessor, false);
 
-         WrapperState wiredState = wrapper.metadata != null ? WrapperState.WIRED : WrapperState.STARTED;
+         WrapperState wiredState = wrapper.accessor != null ? WrapperState.WIRED : WrapperState.STARTED;
          commitWrapperStateChange(wrapper, WrapperState.WIRING, wiredState);
       }
    }
 
    @Override
    public void wireDependencies(Object target, boolean startDependencies) {
-      ComponentMetadata metadata = metadataRepo.getComponentMetadata(target.getClass());
-      performInjection(target, metadata, startDependencies);
+      String componentClassName = target.getClass().getName();
+      ComponentAccessor<Object> accessor = moduleRepository.getComponentAccessor(componentClassName);
+      invokeInjection(target, accessor, startDependencies);
    }
 
-   private <T> ComponentFactory findFactory(String name) {
-      String factoryName = metadataRepo.findFactoryForComponent(name);
+   private ComponentFactory findFactory(String name) {
+      String factoryName = moduleRepository.getFactoryName(name);
       if (factoryName == null) {
          // Cannot find factory in this scope, getComponent will return null
          return null;
@@ -201,16 +253,19 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       if (factoryRef == null) {
          factoryRef = tryAutoInstantiation(factoryName);
       }
+      // Start the factory (and it's dependencies!) because some factories
+      // are responsible for stopping the components they create (e.g. NamedExecutorsFactory)
       return factoryRef != null ? factoryRef.running() : null;
    }
 
    private void commitWrapperStateChange(ComponentWrapper wrapper, WrapperState expectedState, WrapperState newState) {
-      commitWrapperChange(wrapper, wrapper.instance, wrapper.metadata, wrapper.aliasTarget, expectedState, newState);
+      commitWrapperChange(wrapper, wrapper.instance, wrapper.accessor, wrapper.aliasTarget, expectedState, newState);
    }
 
-   private void commitWrapperInstanceChange(ComponentWrapper wrapper, Object instance, ComponentMetadata metadata,
+   private void commitWrapperInstanceChange(ComponentWrapper wrapper, Object instance,
+                                            ComponentAccessor<Object> accessor,
                                             WrapperState expectedState, WrapperState newState) {
-      commitWrapperChange(wrapper, instance, metadata, null, expectedState, newState);
+      commitWrapperChange(wrapper, instance, accessor, null, expectedState, newState);
    }
 
    private void commitWrapperAliasChange(ComponentWrapper wrapper, ComponentAlias alias, ComponentRef<?> targetRef,
@@ -218,7 +273,7 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       commitWrapperChange(wrapper, alias, null, targetRef, expectedState, newState);
    }
 
-   private void commitWrapperChange(ComponentWrapper wrapper, Object instance, ComponentMetadata metadata,
+   private void commitWrapperChange(ComponentWrapper wrapper, Object instance, ComponentAccessor<Object> accessor,
                                     ComponentRef<?> aliasTargetRef,
                                     WrapperState expectedState, WrapperState newState) {
       lock.lock();
@@ -228,7 +283,7 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
                "Component " + wrapper.name + " has wrong status: " + wrapper.state + ", expected: " + expectedState);
          }
          wrapper.instance = instance;
-         wrapper.metadata = metadata;
+         wrapper.accessor = accessor;
          wrapper.aliasTarget = aliasTargetRef;
          wrapper.state = newState;
          ComponentPath currentPath = mutatorThreads.get(Thread.currentThread());
@@ -246,37 +301,45 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
    }
 
    private ComponentRef<ComponentFactory> tryAutoInstantiation(String factoryName) {
-      Class<? extends ComponentFactory> factoryClass = Util.loadClass(factoryName, classLoader);
-
-      ComponentMetadata metadata = metadataRepo.getComponentMetadata(factoryClass);
-      if (metadata != null && metadata.getScope() != null && metadata.getScope() != this.scope) {
+      ComponentAccessor<Object> accessor = moduleRepository.getComponentAccessor(factoryName);
+      if (accessor == null) {
+         return null;
+      }
+      if (accessor.getScopeOrdinal() != null && !accessor.getScopeOrdinal().equals(scope.ordinal())) {
          // Allow the factory to be auto-instantiated in the proper scope
+         // Null means any scope
          return null;
       }
 
-      if (!(AutoInstantiableFactory.class.isAssignableFrom(factoryClass))) {
+      Object autoInstance = accessor.newInstance();
+      if (autoInstance == null) {
+         // It would be nice to throw an exception here if the factory is not auto-instantiable
+         // but when trying to instantiate a cache component we first try to instantiate it in global scope
+         // and so we try to auto-instantiate its factory in global scope
          return null;
       }
-
-      ComponentFactory factoryFactory = new DefaultFactoryFactory(factoryClass);
 
       // Register, instantiate, and wire the factory (skipping steps already performed by other threads)
       ComponentWrapper wrapper = registerWrapper(factoryName, true);
-      instantiateWrapper(wrapper, factoryFactory);
+      instantiateWrapper(wrapper, new ConstComponentFactory(autoInstance));
       wireWrapper(wrapper);
       return wrapper;
    }
 
-   private void performInjection(Object target, ComponentMetadata metadata, boolean startDependencies) {
+   private void invokeInjection(Object target, ComponentAccessor<Object> accessor, boolean startDependencies) {
       try {
-         if (metadata == null)
+         if (accessor == null)
             return;
 
-         for (ComponentMetadata.InjectFieldMetadata injectFieldMetadata : metadata.getInjectFields()) {
-            setInjectionField(target, injectFieldMetadata, startDependencies);
-         }
-         for (ComponentMetadata.InjectMethodMetadata injectMethodMetadata : metadata.getInjectMethods()) {
-            invokeInjectionMethod(target, injectMethodMetadata, startDependencies);
+         accessor.wire(target, lookup, startDependencies);
+         String superComponentClassName = accessor.getSuperAccessorName();
+         if (superComponentClassName != null) {
+            ComponentAccessor<Object> superAccessor = moduleRepository.getComponentAccessor(superComponentClassName);
+            if (superAccessor == null) {
+               throw new CacheConfigurationException("Component metadata not found for super class " +
+                                                     superComponentClassName);
+            }
+            invokeInjection(target, superAccessor, startDependencies);
          }
       } catch (IllegalLifecycleStateException | CacheConfigurationException e) {
          throw e;
@@ -287,67 +350,15 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       }
    }
 
-   private void invokeInjectionMethod(Object target, ComponentMetadata.InjectMethodMetadata injectMethodMetadata,
-                                      boolean startDependencies) {
-      Class<?>[] parameterComponentTypes = injectMethodMetadata.getParameterClasses();
-      Object[] params = new Object[parameterComponentTypes.length];
-      if (trace)
-         log.tracef("Injecting dependencies for method %s.%s", target.getClass().getName(), injectMethodMetadata);
-      for (int i = 0; i < parameterComponentTypes.length; i++) {
-         String name = injectMethodMetadata.getDependencyName(i);
-         boolean parameterLazy = injectMethodMetadata.getParameterLazy(i);
-         Object value = getDependency(name, parameterComponentTypes[i], parameterLazy, startDependencies);
-         params[i] = value;
-      }
-      if (System.getSecurityManager() == null) {
-         invokeAccessibly(target, injectMethodMetadata.getMethod(), params);
-      } else {
-         AccessController.doPrivileged(
-            (PrivilegedAction<Object>) () -> invokeAccessibly(target, injectMethodMetadata.getMethod(), params));
-      }
-   }
-
-   private void setInjectionField(Object target, ComponentMetadata.InjectFieldMetadata injectFieldMetadata,
-                                  boolean startDependencies) {
-      String name = injectFieldMetadata.getDependencyName();
-      boolean lazy = injectFieldMetadata.isLazy();
-      Class<?> componentType = injectFieldMetadata.getComponentClass();
-      Object value = getDependency(name, componentType, lazy, startDependencies);
-      if (System.getSecurityManager() == null) {
-         setAccessibly(target, injectFieldMetadata.getField(), value);
-      } else {
-         AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
-            setAccessibly(target, injectFieldMetadata.getField(), value);
-            return null;
-         });
-      }
-   }
-
-   private Object getDependency(String name, Class<?> componentType, boolean lazy, boolean startDependencies) {
-      ComponentRef<?> componentRef = getComponent0(name, componentType, !lazy);
-      if (componentRef == null) {
-         throw new CacheConfigurationException(
-            "Unable to construct dependency " + name + " in scope " + scope + " for " + getCurrentComponentPath());
-      }
-      Object value;
-      if (lazy) {
-         // Never start the target component for ComponentRef<T> fields
-         value = componentRef;
-      } else {
-         value = startDependencies ? componentRef.running() : componentRef.wired();
-      }
-      return value;
+   <T> T throwDependencyNotFound(String componentName) {
+      throw new CacheConfigurationException(
+         "Unable to construct dependency " + componentName + " in scope " + scope + " for " +
+         getCurrentComponentPath());
    }
 
    @Override
    public <T> ComponentRef<T> registerComponent(String componentName, T instance, boolean manageLifecycle) {
-      ComponentMetadata metadata = getMetadataForComponent(instance);
-      Class<?> componentClass = instance != null ? instance.getClass() : null;
-      // A missing scope declaration is interpreted as any scope
-      if (metadata != null && metadata.getScope() != null && metadata.getScope() != scope) {
-         throw new CacheConfigurationException(
-            "Wrong registration scope " + scope + " for component class " + componentClass);
-      }
+      ComponentAccessor<Object> accessor = getMetadataForComponent(instance);
 
       // Try to register the wrapper, but it may have been created as a lazy dependency of another component already
       ComponentWrapper wrapper = registerWrapper(componentName, manageLifecycle);
@@ -355,14 +366,40 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
          throw new CacheConfigurationException("Component " + componentName + " is already registered");
       }
 
-      commitWrapperInstanceChange(wrapper, instance, metadata, WrapperState.INSTANTIATING, WrapperState.INSTANTIATED);
+      commitWrapperInstanceChange(wrapper, instance, accessor, WrapperState.INSTANTIATING, WrapperState.INSTANTIATED);
 
       wireWrapper(wrapper);
       return wrapper;
    }
 
-   private ComponentMetadata getMetadataForComponent(Object component) {
-      return component != null ? metadataRepo.getComponentMetadata(component.getClass()) : null;
+   private ComponentAccessor<Object> validateAccessor(ComponentAccessor<Object> accessor, Class<?> componentClass) {
+      // A missing scope declaration is interpreted as any scope
+      String className = componentClass.getName();
+      if (accessor != null && !accessor.getScopeOrdinal().equals(Scopes.NONE.ordinal()) &&
+          !accessor.getScopeOrdinal().equals(scope.ordinal())) {
+         throw new CacheConfigurationException(
+            "Wrong registration scope " + scope + " for component class " + className);
+      }
+
+      // Special case for classes generated by Mockito
+      if (accessor == null && className.contains("$MockitoMock$")) {
+         Class<?> mockedClass = componentClass.getSuperclass();
+         return validateAccessor(moduleRepository.getComponentAccessor(mockedClass.getName()), mockedClass);
+      }
+
+      // TODO It would be nice to log an exception if the component is annotated yet doesn't have an accessor
+      // but that would require a runtime dependency on the component-annotations module.
+      return accessor;
+   }
+
+   private ComponentAccessor<Object> getMetadataForComponent(Object component) {
+      if (component == null)
+         return null;
+
+      Class<?> componentClass = component.getClass();
+      ComponentAccessor<Object> accessor = moduleRepository.getComponentAccessor(componentClass.getName());
+
+      return validateAccessor(accessor, componentClass);
    }
 
    @Override
@@ -418,7 +455,7 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
             status = ComponentStatus.RUNNING;
          }
          for (ComponentWrapper wrapper : components.values()) {
-            performInjection(wrapper.instance, wrapper.metadata, false);
+            invokeInjection(wrapper.instance, wrapper.accessor, false);
          }
       } finally {
          lock.unlock();
@@ -458,7 +495,9 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
 
       for (int i = componentsToStop.size() - 1; i >= 0; i--) {
          ComponentWrapper wrapper = components.get(componentsToStop.get(i));
-         stopWrapper(wrapper);
+         if (wrapper != null) {
+            stopWrapper(wrapper);
+         }
       }
 
       lock.lock();
@@ -473,11 +512,16 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       }
    }
 
+   @Override
+   public boolean hasComponentAccessor(String componentClassName) {
+      return moduleRepository.getComponentAccessor(componentClassName) != null;
+   }
+
    @GuardedBy("lock")
    private void removeVolatileComponents() {
       for (Iterator<ComponentWrapper> it = components.values().iterator(); it.hasNext(); ) {
          ComponentWrapper wrapper = it.next();
-         boolean survivesRestarts = wrapper.metadata != null && wrapper.metadata.isSurvivesRestarts();
+         boolean survivesRestarts = wrapper.accessor != null && wrapper.accessor.getSurvivesRestarts();
          if (wrapper.manageLifecycle && !survivesRestarts) {
             if (trace)
                log.tracef("Removing component %s in state %s", wrapper.name, wrapper.state);
@@ -492,51 +536,55 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       }
    }
 
-   void startWrapper(ComponentWrapper wrapper) {
+   private void startWrapper(ComponentWrapper wrapper) {
       if (!prepareWrapperChange(wrapper, WrapperState.WIRED, WrapperState.STARTING)) {
          // Someone else is starting the wrapper, wait for it to finish
          awaitWrapperState(wrapper, WrapperState.STARTED);
          return;
       }
 
+      try {
+         doStartWrapper(wrapper);
+
+         commitWrapperStateChange(wrapper, WrapperState.STARTING, WrapperState.STARTED);
+      } catch (CacheException e) {
+         commitWrapperStateChange(wrapper, WrapperState.STARTING, WrapperState.FAILED);
+         throw e;
+      } catch (Throwable t) {
+         commitWrapperStateChange(wrapper, WrapperState.STARTING, WrapperState.FAILED);
+         throw new CacheConfigurationException("Error starting component " + wrapper.name, t);
+      }
+   }
+
+   private void doStartWrapper(ComponentWrapper wrapper) throws Exception {
       if (wrapper.aliasTarget != null) {
          wrapper.aliasTarget.running();
-         commitWrapperStateChange(wrapper, WrapperState.STARTING, WrapperState.STARTED);
          return;
       }
 
-      if (wrapper.metadata == null) {
-         commitWrapperStateChange(wrapper, WrapperState.STARTING, WrapperState.FAILED);
+      if (wrapper.accessor == null) {
          throw new IllegalStateException("Components without metadata should go directly to RUNNING state");
       }
 
       startDependencies(wrapper);
 
       if (!wrapper.manageLifecycle) {
-         commitWrapperStateChange(wrapper, WrapperState.STARTING, WrapperState.STARTED);
          return;
       }
 
-      if (wrapper.metadata.getPostStartMethods().length > 0) {
-         log.warnf("Running post-start methods on class %s as start methods, in the future the @PostStart " +
-                   "annotation will be ignored", wrapper.metadata.getName());
+      // Try to stop the component even if it failed, otherwise each component would have to catch exceptions
+      logStartedComponent(wrapper);
+
+      invokeStart(wrapper.instance, wrapper.accessor);
+   }
+
+   private void invokeStart(Object instance, ComponentAccessor<Object> accessor) throws Exception {
+      // Invoke super first
+      if (accessor.getSuperAccessorName() != null) {
+         invokeStart(instance, moduleRepository.getComponentAccessor(accessor.getSuperAccessorName()));
       }
 
-      try {
-         for (ComponentMetadata.PrioritizedMethodMetadata method : wrapper.metadata.getStartMethods()) {
-            ReflectionUtil.invokeAccessibly(wrapper.instance, method.getMethod(), null);
-         }
-         for (ComponentMetadata.PrioritizedMethodMetadata method : wrapper.metadata.getPostStartMethods()) {
-            ReflectionUtil.invokeAccessibly(wrapper.instance, method.getMethod(), null);
-         }
-
-         logStartedComponent(wrapper);
-
-         commitWrapperStateChange(wrapper, WrapperState.STARTING, WrapperState.STARTED);
-      } catch (Throwable t) {
-         commitWrapperStateChange(wrapper, WrapperState.STARTING, WrapperState.FAILED);
-         throw t;
-      }
+      accessor.start(instance);
    }
 
    private void logStartedComponent(ComponentWrapper wrapper) {
@@ -549,27 +597,21 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
    }
 
    private void startDependencies(ComponentWrapper wrapper) {
-      for (ComponentMetadata.InjectFieldMetadata injectField : wrapper.metadata.getInjectFields()) {
-         String name = injectField.getDependencyName();
-         if (!injectField.isLazy()) {
-            ComponentRef<?> dependency = getComponent(name, injectField.getComponentClass());
+      ComponentAccessor<Object> accessor = wrapper.accessor;
+      while (true) {
+         for (String dependencyName : accessor.getEagerDependencies()) {
+            ComponentRef<Object> dependency = getComponent(dependencyName, Object.class);
             if (dependency != null) {
                dependency.running();
             }
          }
+
+         if (accessor.getSuperAccessorName() == null)
+            break;
+
+         accessor = moduleRepository.getComponentAccessor(accessor.getSuperAccessorName());
       }
-      for (ComponentMetadata.InjectMethodMetadata injectMethod : wrapper.metadata.getInjectMethods()) {
-         Class<?>[] componentTypes = injectMethod.getParameterClasses();
-         for (int i = 0; i < componentTypes.length; i++) {
-            String name = injectMethod.getDependencyName(i);
-            if (!injectMethod.getParameterLazy(i)) {
-               ComponentRef<?> dependency = getComponent(name, componentTypes[i]);
-               if (dependency != null) {
-                  dependency.running();
-               }
-            }
-         }
-      }
+
       ComponentPath remainingDependencies = wrapper.dynamicDependencies;
       while (remainingDependencies != null) {
          String componentName = remainingDependencies.name;
@@ -582,24 +624,33 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
    }
 
    private void stopWrapper(ComponentWrapper wrapper) {
-      if (!prepareWrapperChange(wrapper, WrapperState.STARTED, WrapperState.STOPPING))
-         return;
-
-      performStop(wrapper);
-
-      commitWrapperStateChange(wrapper, WrapperState.STOPPING, WrapperState.STOPPED);
-   }
-
-   private void performStop(ComponentWrapper wrapper) {
-      if (!wrapper.manageLifecycle || wrapper.metadata == null)
+      if (!prepareWrapperChange(wrapper, WrapperState.STARTED, WrapperState.STOPPING)
+          && !prepareWrapperChange(wrapper, WrapperState.FAILED, WrapperState.STOPPING))
          return;
 
       try {
-         for (ComponentMetadata.PrioritizedMethodMetadata method : wrapper.metadata.getStopMethods()) {
-            ReflectionUtil.invokeAccessibly(wrapper.instance, method.getMethod(), null);
-         }
-      } catch (Exception e) {
-         log.error("Error stopping component " + wrapper.name, e);
+         doStopWrapper(wrapper);
+      } catch (Throwable t) {
+         log.errorf(t, "Error stopping component %s", wrapper.name);
+      } finally {
+         commitWrapperStateChange(wrapper, WrapperState.STOPPING, WrapperState.STOPPED);
+      }
+   }
+
+   private void doStopWrapper(ComponentWrapper wrapper) throws Exception {
+      if (!wrapper.manageLifecycle || wrapper.accessor == null)
+         return;
+
+      invokeStop(wrapper.instance, wrapper.accessor);
+   }
+
+   private void invokeStop(Object instance, ComponentAccessor<Object> accessor) throws Exception {
+      accessor.stop(instance);
+
+      // Invoke super last
+      String superComponentClassName = accessor.getSuperAccessorName();
+      if (superComponentClassName != null) {
+         invokeStop(instance, moduleRepository.getComponentAccessor(superComponentClassName));
       }
    }
 
@@ -669,6 +720,11 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       }
    }
 
+   @Override
+   public String toString() {
+      return "BasicComponentRegistryImpl{scope=" + scope + ", size=" + components.size() + "}";
+   }
+
    enum WrapperState {
       // Most components go through all the states.
       // Aliases and components without metadata (i.e. no dependencies and no start methods)
@@ -695,7 +751,7 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       private volatile ComponentPath dynamicDependencies;
       // Valid from INSTANTIATED state
       private volatile Object instance;
-      private volatile ComponentMetadata metadata;
+      private volatile ComponentAccessor<Object> accessor;
       private volatile ComponentRef<?> aliasTarget;
 
       ComponentWrapper(BasicComponentRegistryImpl registry, String name, boolean manageLifecycle) {
@@ -744,6 +800,11 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       @Override
       public boolean isWired() {
          return isAtLeast(WrapperState.WIRED) && isBefore(WrapperState.STOPPING);
+      }
+
+      @Override
+      public boolean isAlias() {
+         return instance instanceof ComponentAlias;
       }
 
       @Override
@@ -833,21 +894,16 @@ public class BasicComponentRegistryImpl implements BasicComponentRegistry {
       }
    }
 
-   private static class DefaultFactoryFactory implements ComponentFactory {
-      private final Class<? extends ComponentFactory> factoryClass;
+   private static class ConstComponentFactory implements ComponentFactory {
+      private final Object autoInstance;
 
-      DefaultFactoryFactory(Class<? extends ComponentFactory> factoryClass) {
-         this.factoryClass = factoryClass;
+      public ConstComponentFactory(Object autoInstance) {
+         this.autoInstance = autoInstance;
       }
 
       @Override
       public Object construct(String componentName) {
-         assert factoryClass.getName().equals(componentName);
-         try {
-            return factoryClass.newInstance();
-         } catch (InstantiationException | IllegalAccessException e) {
-            throw new CacheConfigurationException("Unable to instantiate factory " + factoryClass.getName(), e);
-         }
+         return autoInstance;
       }
    }
 }

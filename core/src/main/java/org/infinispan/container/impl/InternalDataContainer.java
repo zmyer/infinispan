@@ -2,8 +2,8 @@ package org.infinispan.container.impl;
 
 import java.util.Iterator;
 import java.util.Spliterator;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
-import java.util.function.ObjIntConsumer;
 
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IntSets;
@@ -89,7 +89,7 @@ public interface InternalDataContainer<K, V> extends DataContainer<K, V> {
     * @param segment segment for the key
     * @param key The key to evict.
     */
-   void evict(int segment, K key);
+   CompletionStage<Void> evict(int segment, K key);
 
    /**
     * Same as {@link DataContainer#compute(Object, ComputeAction)}  except that the segment of the key can provided to
@@ -203,14 +203,6 @@ public interface InternalDataContainer<K, V> extends DataContainer<K, V> {
    }
 
    /**
-    * Performs the given action for each element of the container, even if expired. This method should be preferred when
-    * user wants to perform an operation across all entries that depends on the segment it maps to.
-    * @param action The action to be performed for each element
-    * @throws NullPointerException if the specified action is null
-    */
-   void forEachIncludingExpired(ObjIntConsumer<? super InternalCacheEntry<K, V>> action);
-
-   /**
     * Sets what segments this data container should be using. Already associated segments are unaffected by this and
     * takes a union of existing and new segments.
     * @param segments segments to associate with this container
@@ -242,4 +234,11 @@ public interface InternalDataContainer<K, V> extends DataContainer<K, V> {
     * @param listener the listener to remove
     */
    void removeRemovalListener(Object listener);
+
+   /**
+    * Method used to cleanup any pending data, such as evictions
+    */
+   default void cleanUp() {
+      // Default is to do nothing
+   }
 }

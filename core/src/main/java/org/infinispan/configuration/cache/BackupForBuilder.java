@@ -2,23 +2,18 @@ package org.infinispan.configuration.cache;
 
 import static org.infinispan.configuration.cache.BackupForConfiguration.REMOTE_CACHE;
 import static org.infinispan.configuration.cache.BackupForConfiguration.REMOTE_SITE;
+import static org.infinispan.util.logging.Log.CONFIG;
 
-import java.lang.invoke.MethodHandles;
-
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.configuration.ConfigurationBuilderInfo;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
 import org.infinispan.configuration.global.GlobalConfiguration;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 /**
  * @author Mircea Markus
  * @since 5.2
  */
 public class BackupForBuilder extends AbstractConfigurationChildBuilder implements Builder<BackupForConfiguration>, ConfigurationBuilderInfo {
-   private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass(), Log.class);
    private final AttributeSet attributes;
 
    public BackupForBuilder(ConfigurationBuilder builder) {
@@ -49,7 +44,7 @@ public class BackupForBuilder extends AbstractConfigurationChildBuilder implemen
     */
    public BackupForBuilder remoteCache(String name) {
       if (name == null) {
-         throw log.backupForNullCache();
+         throw CONFIG.backupForNullCache();
       }
       attributes.attribute(REMOTE_CACHE).set(name);
       return this;
@@ -57,9 +52,11 @@ public class BackupForBuilder extends AbstractConfigurationChildBuilder implemen
 
    /**
     * Use this method if the remote cache that backups in this cache is the default cache.
+    * @deprecated Use a named cache with {@link #remoteCache(String)} instead.
     */
+   @Deprecated
    public BackupForBuilder defaultRemoteCache() {
-      attributes.attribute(REMOTE_CACHE).set(BasicCacheContainer.DEFAULT_CACHE_NAME);
+      attributes.attribute(REMOTE_CACHE).set("");
       return this;
    }
 
@@ -69,7 +66,7 @@ public class BackupForBuilder extends AbstractConfigurationChildBuilder implemen
       if (attributes.attribute(REMOTE_CACHE).get() == null && attributes.attribute(REMOTE_SITE).get() == null)
          return;
       if (attributes.attribute(REMOTE_SITE).get() == null || attributes.attribute(REMOTE_CACHE).get() == null) {
-         throw log.backupForMissingParameters();
+         throw CONFIG.backupForMissingParameters();
       }
    }
 

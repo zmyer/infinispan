@@ -1,20 +1,14 @@
 package org.infinispan.container.impl;
 
 import java.lang.invoke.MethodHandles;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.Spliterator;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.function.BiConsumer;
-import java.util.function.ObjIntConsumer;
 
 import org.infinispan.commons.logging.Log;
 import org.infinispan.commons.logging.LogFactory;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.EntrySizeCalculator;
 import org.infinispan.commons.util.FilterIterator;
 import org.infinispan.commons.util.FilterSpliterator;
@@ -23,8 +17,7 @@ import org.infinispan.container.entries.CacheEntrySizeCalculator;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.PrimitiveEntrySizeCalculator;
 import org.infinispan.eviction.EvictionType;
-import org.infinispan.filter.KeyFilter;
-import org.infinispan.filter.KeyValueFilter;
+import org.infinispan.factories.annotations.Stop;
 import org.infinispan.marshall.core.WrappedByteArraySizeCalculator;
 
 import com.github.benmanes.caffeine.cache.Cache;
@@ -54,7 +47,7 @@ public class DefaultDataContainer<K, V> extends AbstractInternalDataContainer<K,
 
    public DefaultDataContainer(int concurrencyLevel) {
       // If no comparing implementations passed, could fallback on JDK CHM
-      entries = CollectionFactory.makeConcurrentParallelMap(128, concurrencyLevel);
+      entries = new ConcurrentHashMap<>(128);
       evictionCache = null;
    }
 
@@ -167,15 +160,11 @@ public class DefaultDataContainer<K, V> extends AbstractInternalDataContainer<K,
       }
    }
 
+   @Stop
    @Override
    public void clear() {
       log.tracef("Clearing data container");
       entries.clear();
-   }
-
-   @Override
-   public Set<K> keySet() {
-      return Collections.unmodifiableSet(entries.keySet());
    }
 
    @Override
@@ -223,11 +212,6 @@ public class DefaultDataContainer<K, V> extends AbstractInternalDataContainer<K,
    }
 
    @Override
-   public void forEachIncludingExpired(ObjIntConsumer<? super InternalCacheEntry<K, V>> action) {
-      iteratorIncludingExpired().forEachRemaining(ice -> action.accept(ice, keyPartitioner.getSegment(ice.getKey())));
-   }
-
-   @Override
    public long evictionSize() {
       Policy.Eviction<K, InternalCacheEntry<K, V>> evict = eviction();
       return evict.weightedSize().orElse(entries.size());
@@ -235,70 +219,19 @@ public class DefaultDataContainer<K, V> extends AbstractInternalDataContainer<K,
 
    @Override
    public void addSegments(IntSet segments) {
-      // Don't have to do anything here
+      throw new UnsupportedOperationException();
    }
 
    @Override
    public void removeSegments(IntSet segments) {
-      if (!segments.isEmpty()) {
-         List<InternalCacheEntry<K, V>> removedEntries;
-         if (!listeners.isEmpty()) {
-            removedEntries = new ArrayList<>(entries.size());
-         } else {
-            removedEntries = null;
-         }
-         Iterator<InternalCacheEntry<K, V>> iter = iteratorIncludingExpired(segments);
-         while (iter.hasNext()) {
-            InternalCacheEntry<K, V> ice = iter.next();
-            if (removedEntries != null) {
-               removedEntries.add(ice);
-            }
-            iter.remove();
-         }
-         if (removedEntries != null) {
-            List<InternalCacheEntry<K, V>> unmod = Collections.unmodifiableList(removedEntries);
-            listeners.forEach(c -> c.accept(unmod));
-         }
-      }
+      throw new UnsupportedOperationException();
    }
 
    @Override
-   public void executeTask(final KeyFilter<? super K> filter, final BiConsumer<? super K, InternalCacheEntry<K, V>> action)
-         throws InterruptedException {
-      if (filter == null)
-         throw new IllegalArgumentException("No filter specified");
-      if (action == null)
-         throw new IllegalArgumentException("No action specified");
-
-      long now = timeService.wallClockTime();
-      entries.forEach((K key, InternalCacheEntry<K, V> value) -> {
-         if (filter.accept(key) && !value.isExpired(now)) {
-            action.accept(key, value);
-         }
-      });
-      //TODO figure out the way how to do interruption better (during iteration)
-      if(Thread.currentThread().isInterrupted()){
-         throw new InterruptedException();
-      }
-   }
-
-   @Override
-   public void executeTask(final KeyValueFilter<? super K, ? super V> filter, final BiConsumer<? super K, InternalCacheEntry<K, V>> action)
-         throws InterruptedException {
-      if (filter == null)
-         throw new IllegalArgumentException("No filter specified");
-      if (action == null)
-         throw new IllegalArgumentException("No action specified");
-
-      long now = timeService.wallClockTime();
-      entries.forEach((K key, InternalCacheEntry<K, V> value) -> {
-         if (filter.accept(key, value.getValue(), value.getMetadata()) && !value.isExpired(now)) {
-            action.accept(key, value);
-         }
-      });
-      //TODO figure out the way how to do interruption better (during iteration)
-      if(Thread.currentThread().isInterrupted()){
-         throw new InterruptedException();
+   public void cleanUp() {
+      // Caffeine may not evict an entry right away if concurrent threads are writing, so this forces a cleanUp
+      if (evictionCache != null) {
+         evictionCache.cleanUp();
       }
    }
 }

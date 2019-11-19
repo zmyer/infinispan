@@ -1,5 +1,7 @@
 package org.infinispan.counter.impl.listener;
 
+import static org.infinispan.counter.logging.Log.CONTAINER;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -126,10 +128,9 @@ public class CounterManagerNotificationManager {
       if (topologyListener.registered) {
          topologyListener.unregister(cache);
       }
-      if (listenersRegistered) {
-         cache.removeListener(valueListener);
-         listenersRegistered = false;
-      }
+      // Too late to remove the listener now, because internal caches are already stopped
+      // But because clustered listeners are removed automatically when the originator leaves,
+      // it's not really necessary.
       counters.clear();
       this.cache = null;
    }
@@ -269,11 +270,11 @@ public class CounterManagerNotificationManager {
          topologyReceived = new CountDownLatch(1);
          cache.addListener(this);
          if (!cache.getCacheConfiguration().clustering().cacheMode().isClustered() ||
-               cache.getAdvancedCache().getComponentRegistry().getStateTransferManager().isJoinComplete()) {
+               SecurityActions.getComponentRegistry(cache).getStateTransferManager().isJoinComplete()) {
             topologyReceived.countDown();
          }
          if (!topologyReceived.await(cache.getCacheConfiguration().clustering().stateTransfer().timeout(), TimeUnit.MILLISECONDS)) {
-            throw log.unableToFetchCaches();
+            throw CONTAINER.unableToFetchCaches();
          }
          registered = true;
       }

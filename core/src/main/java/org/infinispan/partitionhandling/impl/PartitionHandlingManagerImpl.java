@@ -1,6 +1,7 @@
 package org.infinispan.partitionhandling.impl;
 
 import static org.infinispan.commons.util.EnumUtil.EMPTY_BIT_SET;
+import static org.infinispan.util.logging.Log.CONTAINER;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -8,13 +9,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
 import org.infinispan.commands.tx.TransactionBoundaryCommand;
 import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.configuration.cache.Configuration;
@@ -28,6 +29,8 @@ import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.partitionhandling.PartitionHandling;
@@ -42,10 +45,12 @@ import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.topology.LocalTopologyManager;
 import org.infinispan.transaction.xa.GlobalTransaction;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
+@Scope(Scopes.NAMED_CACHE)
 public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
    private static final Log log = LogFactory.getLog(PartitionHandlingManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
@@ -53,21 +58,21 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
    private volatile AvailabilityMode availabilityMode = AvailabilityMode.AVAILABLE;
 
    @ComponentName(KnownComponentNames.CACHE_NAME)
-   @Inject private String cacheName;
+   @Inject String cacheName;
    @Inject protected DistributionManager distributionManager;
-   @Inject private LocalTopologyManager localTopologyManager;
-   @Inject private CacheNotifier notifier;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private Configuration configuration;
-   @Inject private RpcManager rpcManager;
-   @Inject private LockManager lockManager;
-   @Inject private Transport transport;
+   @Inject LocalTopologyManager localTopologyManager;
+   @Inject CacheNotifier<Object, Object> notifier;
+   @Inject CommandsFactory commandsFactory;
+   @Inject Configuration configuration;
+   @Inject RpcManager rpcManager;
+   @Inject LockManager lockManager;
+   @Inject Transport transport;
 
    private boolean isVersioned;
    private PartitionHandling partitionHandling;
 
    public PartitionHandlingManagerImpl() {
-      partialTransactions = CollectionFactory.makeConcurrentMap();
+      partialTransactions = new ConcurrentHashMap<>();
    }
 
    @Start
@@ -81,13 +86,22 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
       return availabilityMode;
    }
 
+   private CompletionStage<Void> updateAvailabilityMode(AvailabilityMode mode) {
+      log.debugf("Updating availability for cache %s: %s -> %s", cacheName, this.availabilityMode, mode);
+      this.availabilityMode = mode;
+      return CompletableFutures.completedNull();
+   }
+
    @Override
-   public void setAvailabilityMode(AvailabilityMode availabilityMode) {
+   public CompletionStage<Void> setAvailabilityMode(AvailabilityMode availabilityMode) {
       if (availabilityMode != this.availabilityMode) {
-         log.debugf("Updating availability for cache %s: %s -> %s", cacheName, this.availabilityMode, availabilityMode);
-         notifier.notifyPartitionStatusChanged(availabilityMode, true);
-         this.availabilityMode = availabilityMode;
-         notifier.notifyPartitionStatusChanged(availabilityMode, false);
+         return notifier.notifyPartitionStatusChanged(availabilityMode, true)
+               .thenCompose(ignore -> {
+                  updateAvailabilityMode(availabilityMode);
+                  return notifier.notifyPartitionStatusChanged(availabilityMode, false);
+               });
+      } else {
+         return CompletableFutures.completedNull();
       }
    }
 
@@ -104,14 +118,14 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
    @Override
    public void checkClear() {
       if (!isBulkOperationAllowed(true)) {
-         throw log.clearDisallowedWhilePartitioned();
+         throw CONTAINER.clearDisallowedWhilePartitioned();
       }
    }
 
    @Override
    public void checkBulkRead() {
       if (!isBulkOperationAllowed(false)) {
-         throw log.partitionDegraded();
+         throw CONTAINER.partitionDegraded();
       }
    }
 
@@ -254,9 +268,9 @@ public class PartitionHandlingManagerImpl implements PartitionHandlingManager {
       if (!operationAllowed) {
          if (trace) log.tracef("Partition is in %s mode, PartitionHandling is set to to %s, access is not allowed for key %s", availabilityMode, partitionHandling, key);
          if (EnumUtil.containsAny(flagBitSet, FlagBitSets.FORCE_WRITE_LOCK)) {
-            throw log.degradedModeLockUnavailable(key);
+            throw CONTAINER.degradedModeLockUnavailable(key);
          } else {
-            throw log.degradedModeKeyUnavailable(key);
+            throw CONTAINER.degradedModeKeyUnavailable(key);
          }
       } else {
          if (trace) log.tracef("Key %s is available.", key);

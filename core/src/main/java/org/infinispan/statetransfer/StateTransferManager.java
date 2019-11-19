@@ -4,15 +4,10 @@ import java.util.Map;
 import java.util.Set;
 
 import org.infinispan.commands.TopologyAffectedCommand;
-import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
-import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.MBean;
-import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.topology.CacheTopology;
 
 /**
  * A component that manages the state transfer when the topology of the cluster changes.
@@ -23,17 +18,14 @@ import org.infinispan.topology.CacheTopology;
  * @since 5.1
  */
 @Scope(Scopes.NAMED_CACHE)
-@MBean(objectName = "StateTransferManager", description = "Component that handles state transfer")
 public interface StateTransferManager {
 
    //todo [anistor] this is inaccurate. this node does not hold state yet in current implementation
-   @ManagedAttribute(description = "If true, the node has successfully joined the grid and is considered to hold state.  If false, the join process is still in progress.", displayName = "Is join completed?", dataType = DataType.TRAIT)
    boolean isJoinComplete();
 
    /**
     * Checks if an inbound state transfer is in progress.
     */
-   @ManagedAttribute(description = "Checks whether there is a pending inbound state transfer on this cluster member.", displayName = "Is state transfer in progress?", dataType = DataType.TRAIT)
    boolean isStateTransferInProgress();
 
    /**
@@ -41,14 +33,12 @@ public interface StateTransferManager {
     *
     * @param key
     * @return
-    */
-   boolean isStateTransferInProgressForKey(Object key);
-
-   /**
-    * @deprecated Since 9.3, please use {@link DistributionManager#getCacheTopology()} instead.
+    * @deprecated since 10.0; to be removed in next major version
     */
    @Deprecated
-   CacheTopology getCacheTopology();
+   default boolean isStateTransferInProgressForKey(Object key) {
+      return getStateConsumer().isStateTransferInProgressForKey(key);
+   }
 
    void start() throws Exception;
 
@@ -62,22 +52,9 @@ public interface StateTransferManager {
     */
    Map<Address, Response> forwardCommandIfNeeded(TopologyAffectedCommand command, Set<Object> affectedKeys, Address origin);
 
-   /**
-    * @return  true if this node has already received the first rebalance start
-    * @deprecated Since 9.4, will be removed.
-    */
-   @Deprecated
-   boolean ownsData();
-
-   /**
-    * @return The id of the first cache topology in which the local node was a member
-    *    (even if it didn't own any data).
-    *
-    * @deprecated Since 9.4, will be removed.
-    */
-   @Deprecated
-   int getFirstTopologyAsMember();
-
-   @ManagedAttribute(description = "Retrieves the rebalancing status for this cache. Possible values are PENDING, SUSPENDED, IN_PROGRESS, BALANCED", displayName = "Rebalancing progress", dataType = DataType.TRAIT)
    String getRebalancingStatus() throws Exception;
+
+   StateConsumer getStateConsumer();
+
+   StateProvider getStateProvider();
 }

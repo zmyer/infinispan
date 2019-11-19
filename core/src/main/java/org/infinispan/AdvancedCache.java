@@ -2,37 +2,31 @@ package org.infinispan;
 
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-
 import javax.security.auth.Subject;
 import javax.transaction.xa.XAResource;
 
-import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
 import org.infinispan.cache.impl.DecoratedCache;
 import org.infinispan.commons.api.TransactionalCache;
 import org.infinispan.commons.dataconversion.Encoder;
 import org.infinispan.commons.dataconversion.Wrapper;
-import org.infinispan.commons.util.Experimental;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PartitionHandlingConfiguration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
-import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.eviction.EvictionManager;
 import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
@@ -65,10 +59,10 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
     * <b>Note</b> that for the flag to take effect, the cache operation <b>must</b> be invoked on the instance returned
     * by this method.
     * <p/>
-    * As an alternative to setting this on every invocation, users could also consider using the {@link DecoratedCache}
-    * wrapper, as this allows for more readable code.  E.g.:
+    * As an alternative to setting this on every invocation, users should also consider saving the decorated
+    * cache, as this allows for more readable code.  E.g.:
     * <pre>
-    *    Cache forceWriteLockCache = new DecoratedCache(cache, Flag.FORCE_WRITE_LOCK);
+    *    AdvancedCache&lt;?, ?&gt; forceWriteLockCache = cache.withFlags(Flag.FORCE_WRITE_LOCK);
     *    forceWriteLockCache.get(key1);
     *    forceWriteLockCache.get(key2);
     *    forceWriteLockCache.get(key3);
@@ -82,14 +76,23 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
 
    /**
     * An alternative to {@link #withFlags(Flag...)} not requiring array allocation.
-    * @param flags
-    * @return
+    *
+    * @since 9.2
     */
    default AdvancedCache<K, V> withFlags(Collection<Flag> flags) {
       if (flags == null) return this;
       int numFlags = flags.size();
       if (numFlags == 0) return this;
       return withFlags(flags.toArray(new Flag[numFlags]));
+   }
+
+   /**
+    * An alternative to {@link #withFlags(Flag...)} optimized for a single flag.
+    *
+    * @since 10.0
+    */
+   default AdvancedCache<K, V> withFlags(Flag flag) {
+      return withFlags(new Flag[]{flag});
    }
 
    /**
@@ -122,73 +125,11 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
    AdvancedCache<K, V> withSubject(Subject subject);
 
    /**
-    * Adds a custom interceptor to the interceptor chain, at specified position, where the first interceptor in the
-    * chain is at position 0 and the last one at NUM_INTERCEPTORS - 1.
-    *
-    * @param i        the interceptor to add
-    * @param position the position to add the interceptor
-    * @deprecated Since 9.0, use {@link #getAsyncInterceptorChain()} instead.
-    */
-   @Deprecated
-   void addInterceptor(CommandInterceptor i, int position);
-
-   /**
-    * Adds a custom interceptor to the interceptor chain, after an instance of the specified interceptor type. Throws a
-    * cache exception if it cannot find an interceptor of the specified type.
-    *
-    * @param i                interceptor to add
-    * @param afterInterceptor interceptor type after which to place custom interceptor
-    * @return true if successful, false otherwise.
-    * @deprecated Since 9.0, use {@link #getAsyncInterceptorChain()} instead.
-    */
-   @Deprecated
-   boolean addInterceptorAfter(CommandInterceptor i, Class<? extends CommandInterceptor> afterInterceptor);
-
-   /**
-    * Adds a custom interceptor to the interceptor chain, before an instance of the specified interceptor type. Throws a
-    * cache exception if it cannot find an interceptor of the specified type.
-    *
-    * @param i                 interceptor to add
-    * @param beforeInterceptor interceptor type before which to place custom interceptor
-    * @return true if successful, false otherwise.
-    * @deprecated Since 9.0, use {@link #getAsyncInterceptorChain()} instead.
-    */
-   @Deprecated
-   boolean addInterceptorBefore(CommandInterceptor i, Class<? extends CommandInterceptor> beforeInterceptor);
-
-   /**
-    * Removes the interceptor at a specified position, where the first interceptor in the chain is at position 0 and the
-    * last one at getInterceptorChain().size() - 1.
-    *
-    * @param position the position at which to remove an interceptor
-    * @deprecated Since 9.0, use {@link #getAsyncInterceptorChain()} instead.
-    */
-   @Deprecated
-   void removeInterceptor(int position);
-
-   /**
-    * Removes the interceptor of specified type.
-    *
-    * @param interceptorType type of interceptor to remove
-    * @deprecated Since 9.0, use {@link #getAsyncInterceptorChain()} instead.
-    */
-   @Deprecated
-   void removeInterceptor(Class<? extends CommandInterceptor> interceptorType);
-
-   /**
-    * @deprecated Since 9.0, use {@link #getAsyncInterceptorChain()} instead.
-    */
-   @Deprecated
-   List<CommandInterceptor> getInterceptorChain();
-
-   /**
     * Allows the modification of the interceptor chain.
-    * <p>
-    * Experimental: The ability to modify the interceptors at runtime may be removed in future versions.
     *
-    * @since 9.0
+    * @deprecated Since 10.0, will be removed without a replacement
     */
-   @Experimental
+   @Deprecated
    AsyncInterceptorChain getAsyncInterceptorChain();
 
    /**
@@ -203,7 +144,9 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
 
    /**
     * @return the component registry for this cache instance
+    * @deprecated Since 10.0, with no public API replacement
     */
+   @Deprecated
    ComponentRegistry getComponentRegistry();
 
    /**
@@ -263,19 +206,6 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
 
 
    /**
-    * Applies the given Delta to the DeltaAware object stored under deltaAwareValueKey if and only if all locksToAcquire
-    * locks are successfully obtained
-    *
-    * @param deltaAwareValueKey the key for DeltaAware object
-    * @param delta              the delta to be applied to DeltaAware object
-    * @param locksToAcquire     keys to be locked in DeltaAware scope. Must contain only single key equal to
-    *                           <code>deltaAwareValueKey</code>
-    * @deprecated since 9.1
-    */
-   @Deprecated
-   void applyDelta(K deltaAwareValueKey, Delta delta, Object... locksToAcquire);
-
-   /**
     * Returns the component in charge of communication with other caches in the cluster.  If the cache's {@link
     * org.infinispan.configuration.cache.ClusteringConfiguration#cacheMode()} is {@link
     * org.infinispan.configuration.cache.CacheMode#LOCAL}, this method will return null.
@@ -290,16 +220,6 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
     * @return the batching component associated with this cache instance
     */
    BatchContainer getBatchContainer();
-
-   /**
-    * Returns the component in charge of managing the interactions between the cache operations and the context
-    * information associated with them.
-    *
-    * @return the invocation context container component
-    * @deprecated No longer in use, implementations might return null.
-    */
-   @Deprecated
-   InvocationContextContainer getInvocationContextContainer();
 
    /**
     * Returns the container where data is stored in the cache. Users should interact with this component with care
@@ -340,33 +260,7 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
    ClassLoader getClassLoader();
 
    /**
-    * Using this operation, users can call any {@link AdvancedCache} operation with a given {@link ClassLoader}. This
-    * means that any {@link ClassLoader} happening as a result of the cache operation will be done using the {@link
-    * ClassLoader} given. For example:
-    * <p/>
-    * When users store POJO instances in caches configured with {@link org.infinispan.configuration.cache.StoreAsBinaryConfiguration},
-    * these instances are transformed into byte arrays. When these entries are read from the cache, a lazy unmarshalling
-    * process happens where these byte arrays are transformed back into POJO instances. Using {@link
-    * AdvancedCache#with(ClassLoader)} when reading that enables users to provide the class loader that should be used
-    * when trying to locate the classes that are constructed as a result of the unmarshalling process.
-    * <pre>
-    *    cache.with(classLoader).get(key);
-    * </pre>
-    * <b>Note</b> that for the flag to take effect, the cache operation <b>must</b> be invoked on the instance returned
-    * by this method.
-    * <p/>
-    * As an alternative to setting this on every invocation, users could also consider using the {@link DecoratedCache}
-    * wrapper, as this allows for more readable code.  E.g.:
-    * <pre>
-    *    Cache classLoaderSpecificCache = new DecoratedCache(cache, classLoader);
-    *    classLoaderSpecificCache.get(key1);
-    *    classLoaderSpecificCache.get(key2);
-    *    classLoaderSpecificCache.get(key3);
-    * </pre>
-    *
-    * @return an {@link AdvancedCache} instance upon which operations can be called with a particular {@link
-    * ClassLoader}.
-    * @deprecated Since 9.4, the classloader is ignored.
+    * @deprecated Since 9.4, unmarshalling always uses the classloader from the global configuration.
     */
    @Deprecated
    AdvancedCache<K, V> with(ClassLoader classLoader);
@@ -655,35 +549,6 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
    }
 
    /**
-    * Overloaded {@link #mergeAsync(Object, Object, BiFunction)} which takes in lifespan parameters.
-    *
-    * @param key                key to use
-    * @param value              new value to merge with existing value
-    * @param remappingFunction  function to use to merge new and existing values into a merged value to store under key
-    * @param lifespan           lifespan of the entry.  Negative values are interpreted as unlimited lifespan.
-    * @param lifespanUnit       time unit for lifespan
-    * @return the merged value that was stored under key
-    * @since 9.4
-    */
-   CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit);
-
-   /**
-    * Overloaded {@link #mergeAsync(Object, Object, BiFunction)} which takes in lifespan parameters.
-    *
-    * @param key                key to use
-    * @param value              new value to merge with existing value
-    * @param remappingFunction  function to use to merge new and existing values into a merged value to store under key
-    * @param lifespan           lifespan of the entry.  Negative values are interpreted as unlimited lifespan.
-    * @param lifespanUnit       time unit for lifespan
-    * @param maxIdleTime        the maximum amount of time this key is allowed to be idle for before it is considered as
-    *                           expired
-    * @param maxIdleTimeUnit    time unit for max idle time
-    * @return the merged value that was stored under key
-    * @since 9.4
-    */
-   CompletableFuture<V> mergeAsync(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit);
-
-   /**
     * Overloaded {@link #mergeAsync(Object, Object, BiFunction)}, which takes in an instance of {@link Metadata}
     * which can be used to provide metadata information for the entry being stored, such as lifespan, version of
     * value...etc. The {@link Metadata} is only stored if the call is successful.
@@ -832,8 +697,7 @@ public interface AdvancedCache<K, V> extends Cache<K, V>, TransactionalCache {
 
    /**
     * Manually change the availability of the cache. Doesn't change anything if the cache is not clustered or {@link
-    * PartitionHandlingConfiguration#whenSplit() is set to {@link org.infinispan.partitionhandling.PartitionHandling#ALLOW_READ_WRITES
-    * }
+    * PartitionHandlingConfiguration#whenSplit()} is set to {@link org.infinispan.partitionhandling.PartitionHandling#ALLOW_READ_WRITES}.
     */
    void setAvailability(AvailabilityMode availabilityMode);
 

@@ -105,7 +105,7 @@ public class EmbeddedClusteredLockManager implements ClusteredLockManager {
    private ClusteredLockImpl createLock(String lockName) {
       ClusteredLockConfiguration configuration = getConfiguration(lockName);
       if (configuration == null) {
-         throw new ClusteredLockException(String.format("Lock does %s not exist", lockName));
+         throw new ClusteredLockException(String.format("Lock %s does not exist", lockName));
       }
       ClusteredLockKey key = new ClusteredLockKey(ByteString.fromString(lockName));
       cache.putIfAbsent(key, ClusteredLockValue.INITIAL_STATE);
@@ -189,7 +189,8 @@ public class EmbeddedClusteredLockManager implements ClusteredLockManager {
       if (trace) {
          log.tracef("LOCK[%s] forceRelease has been called", name);
       }
-      return CompletableFuture.supplyAsync(() -> forceReleaseSync(name));
+      CompletableFuture<ClusteredLockValue> future = cache.computeIfPresentAsync(new ClusteredLockKey(ByteString.fromString(name)), (k, v) -> ClusteredLockValue.INITIAL_STATE);
+      return future.thenApply(clusteredLockValue -> clusteredLockValue != null && clusteredLockValue.getState() == ClusteredLockState.RELEASED);
    }
 
    @ManagedOperation(
@@ -201,8 +202,7 @@ public class EmbeddedClusteredLockManager implements ClusteredLockManager {
       if (trace) {
          log.tracef("LOCK[%s] forceRelease sync has been called", name);
       }
-      ClusteredLockValue clusteredLockValue = cache.computeIfPresent(new ClusteredLockKey(ByteString.fromString(name)), (k, v) -> ClusteredLockValue.INITIAL_STATE);
-      return clusteredLockValue != null && clusteredLockValue.getState() == ClusteredLockState.RELEASED;
+      return forceRelease(name).join();
    }
 
    @ManagedOperation(

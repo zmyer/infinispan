@@ -47,7 +47,6 @@ import org.infinispan.commands.read.KeySetCommand;
 import org.infinispan.commands.remote.ClusteredGetAllCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ComputeCommand;
 import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.DataWriteCommand;
@@ -196,8 +195,10 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
       if (blockedSegments != null) {
          CompletableFuture<Void> blockingFuture = CompletableFuture.allOf(blockedSegments.stream()
                .mapToObj(svm::getBlockingFuture).toArray(CompletableFuture[]::new));
-         return asyncValue(blockingFuture.thenCompose(
-               nil -> makeStage(prefetchKeysIfNeededAndInvokeNext(ctx, command, keys, true)).toCompletableFuture()));
+         return asyncValue(blockingFuture).thenApply(ctx, command,
+               // Make sure command is passed to prefetchKeys - it is already a capturing lambda by referencing
+               // keys. This confuses graal otherwise
+               (rCtx, rCommand, rv) -> prefetchKeysIfNeededAndInvokeNext(rCtx, rCommand, keys, true));
       }
       if (transferedKeys != null) {
          return asyncInvokeNext(ctx, command, retrieveRemoteValues(ctx, command, transferedKeys));
@@ -240,7 +241,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
                                      rpcManager.getSyncRpcOptions()) :
             rpcManager.invokeCommandOnAll(command, MapResponseCollector.ignoreLeavers(),
                                           rpcManager.getSyncRpcOptions());
-      return makeStage(asyncValue(remoteInvocation).thenApply(ctx, dataCommand, handleRemotelyPrefetchedEntry));
+      return asyncValue(remoteInvocation).thenApplyMakeStage(ctx, dataCommand, handleRemotelyPrefetchedEntry);
    }
 
    private Object handleRemotelyPrefetchedEntry(InvocationContext ctx, VisitableCommand command, Object rv) {
@@ -289,15 +290,14 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
    }
 
    // TODO: this is not completely aligned with single-entry prefetch
-   private <C extends TopologyAffectedCommand & VisitableCommand> InvocationStage retrieveRemoteValues(InvocationContext ctx, C originCommand, List<?> keys) {
+   private <C extends VisitableCommand & TopologyAffectedCommand> InvocationStage retrieveRemoteValues(InvocationContext ctx, C originCommand, List<?> keys) {
       if (trace) {
          log.tracef("Prefetching entries for keys %s using broadcast", keys);
       }
       ClusteredGetAllCommand command = commandsFactory.buildClusteredGetAllCommand(keys, FlagBitSets.SKIP_OWNERSHIP_CHECK, null);
       command.setTopologyId(originCommand.getTopologyId());
       CompletionStage<Map<Address, Response>> rpcFuture = rpcManager.invokeCommandOnAll(command, MapResponseCollector.ignoreLeavers(), rpcManager.getSyncRpcOptions());
-      return makeStage(asyncValue(rpcFuture).thenApply(ctx, originCommand, (rCtx, rCommand, rv) -> {
-         TopologyAffectedCommand topologyAffectedCommand = (TopologyAffectedCommand) rCommand;
+      return asyncValue(rpcFuture).thenApplyMakeStage(ctx, originCommand, (rCtx, topologyAffectedCommand, rv) -> {
          Map<Address, Response> responseMap = (Map<Address, Response>) rv;
          InternalCacheValue[] maxValues = new InternalCacheValue[keys.size()];
          for (Response response : responseMap.values()) {
@@ -347,7 +347,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
          PutMapCommand putMapCommand = commandsFactory.buildPutMapCommand(map, null, STATE_TRANSFER_FLAGS);
          putMapCommand.setTopologyId(topologyAffectedCommand.getTopologyId());
          return invokeNext(rCtx, putMapCommand);
-      }));
+      });
    }
 
    protected Object handleReadManyCommand(InvocationContext ctx, AbstractTopologyAffectedCommand command, Collection<?> keys) throws Throwable {
@@ -486,7 +486,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
    @Override
    public Object visitKeySetCommand(InvocationContext ctx, KeySetCommand command) throws Throwable {
       return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         boolean ignoreOwnership = command.hasAnyFlag(FlagBitSets.SKIP_OWNERSHIP_CHECK);
+         boolean ignoreOwnership = rCommand.hasAnyFlag(FlagBitSets.SKIP_OWNERSHIP_CHECK);
          return new BackingKeySet(ignoreOwnership, (CacheSet<K>) rv);
       });
    }
@@ -494,7 +494,7 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
    @Override
    public Object visitEntrySetCommand(InvocationContext ctx, EntrySetCommand command) throws Throwable {
       return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-         boolean ignoreOwnership = command.hasAnyFlag(FlagBitSets.SKIP_OWNERSHIP_CHECK);
+         boolean ignoreOwnership = rCommand.hasAnyFlag(FlagBitSets.SKIP_OWNERSHIP_CHECK);
          return new BackingEntrySet(ignoreOwnership, (CacheSet<CacheEntry<K, V>>) rv);
       });
    }
@@ -518,11 +518,6 @@ public class PrefetchInterceptor<K, V> extends DDAsyncInterceptor {
          }
       }
       return invokeNext(ctx, command);
-   }
-
-   @Override
-   public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable {
-      return handleWriteCommand(ctx, command);
    }
 
    private class BackingEntrySet extends AbstractDelegatingEntryCacheSet<K, V> implements CacheSet<CacheEntry<K, V>> {

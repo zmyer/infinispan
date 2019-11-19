@@ -122,7 +122,9 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
 
    @AfterMethod(alwaysRun = true)
    public void tearDown() throws PersistenceException {
-      writer.clear();
+      if (writer != null) {
+         writer.clear();
+      }
       TestingUtil.killCacheManagers(cm);
       cache = null;
       cm = null;

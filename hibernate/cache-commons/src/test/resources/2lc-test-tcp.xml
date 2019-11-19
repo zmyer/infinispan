@@ -6,7 +6,7 @@
   -->
 <config xmlns="urn:org:jgroups"
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="urn:org:jgroups http://www.jgroups.org/schema/JGroups-4.0.xsd">
+        xsi:schemaLocation="urn:org:jgroups http://www.jgroups.org/schema/jgroups-4.1.xsd">
    <TCP bind_port="7800"
         enable_diagnostics="false"
         thread_naming_pattern="pl"
@@ -19,7 +19,7 @@
          thread_pool.keep_alive_time="60000"
    />
 
-   <org.infinispan.test.fwk.TEST_PING ergonomics="false" testName=""/>
+   <LOCAL_PING/>
 
    <MERGE3 max_interval="10000"
            min_interval="3000"/>
@@ -47,14 +47,19 @@
                   max_bytes="1M"
    />
    <pbcast.GMS print_local_addr="false"
-               join_timeout="15000"
+               join_timeout="${jgroups.join_timeout:2000}"
+               max_join_attempts="1"
+               max_leave_attempts="1"
    />
 
     <!-- At this place we can react on DISCONNECTs immediatelly -->
     <!-- It deadlocks with JGroups 4.0.6, enable only after making sure it works -->
     <!--<org.infinispan.test.hibernate.cache.util.TestDisconnectHandler />-->
 
-   <MFC max_credits="2M"
+   <UFC_NB max_credits="3m"
+        min_threshold="0.40"
+   />
+   <MFC_NB max_credits="3m"
         min_threshold="0.40"
     />
    <FRAG2 frag_size="60000" />

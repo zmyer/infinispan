@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../../pom.xml</relativePath>
    </parent>
 
@@ -34,13 +34,49 @@
       </dependency>
 
       <dependency>
-         <groupId>org.jboss.marshalling</groupId>
-         <artifactId>jboss-marshalling-osgi</artifactId>
+         <groupId>org.wildfly.security</groupId>
+         <artifactId>wildfly-elytron-sasl-plain</artifactId>
+         <version>${version.org.wildfly.elytron}</version>
+      </dependency>
+
+      <dependency>
+         <groupId>org.wildfly.security</groupId>
+         <artifactId>wildfly-elytron-sasl-digest</artifactId>
+         <version>${version.org.wildfly.elytron}</version>
+      </dependency>
+
+      <dependency>
+         <groupId>org.wildfly.security</groupId>
+         <artifactId>wildfly-elytron-sasl-external</artifactId>
+         <version>${version.org.wildfly.elytron}</version>
+      </dependency>
+
+      <dependency>
+         <groupId>org.wildfly.security</groupId>
+         <artifactId>wildfly-elytron-sasl-oauth2</artifactId>
+         <version>${version.org.wildfly.elytron}</version>
+      </dependency>
+
+      <dependency>
+         <groupId>org.wildfly.security</groupId>
+         <artifactId>wildfly-elytron-sasl-scram</artifactId>
+         <version>${version.org.wildfly.elytron}</version>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-component-processor</artifactId>
+         <scope>test</scope>
       </dependency>
 
       <dependency>
          <groupId>io.netty</groupId>
          <artifactId>netty-handler</artifactId>
+      </dependency>
+
+      <dependency>
+         <groupId>io.reactivex.rxjava2</groupId>
+         <artifactId>rxjava</artifactId>
       </dependency>
 
       <dependency>
@@ -128,13 +164,30 @@
       </dependency>
 
       <dependency>
+         <groupId>com.google.code.gson</groupId>
+         <artifactId>gson</artifactId>
+      </dependency>
+
+      <dependency>
          <groupId>org.jboss.spec.javax.transaction</groupId>
          <artifactId>jboss-transaction-api_1.2_spec</artifactId>
       </dependency>
 
       <dependency>
          <groupId>org.infinispan.protostream</groupId>
+         <artifactId>protostream-processor</artifactId>
+         <scope>test</scope>
+      </dependency>
+
+      <dependency>
+         <groupId>org.infinispan.protostream</groupId>
          <artifactId>sample-domain-definition</artifactId>
+         <scope>test</scope>
+      </dependency>
+
+      <dependency>
+         <groupId>org.antlr</groupId>
+         <artifactId>antlr-runtime</artifactId>
          <scope>test</scope>
       </dependency>
 
@@ -180,7 +233,6 @@
           </exclusion>
         </exclusions>
       </dependency>
-
    </dependencies>
 
    <build>
@@ -201,6 +253,10 @@
                <systemPropertyVariables combine.self="append">
                   <infinispan.server.hotrod.workerThreads>3</infinispan.server.hotrod.workerThreads>
                </systemPropertyVariables>
+               <dependenciesToScan>
+                  <!-- TestNGSuiteChecksTest -->
+                  <dependency>org.infinispan:infinispan-commons-test</dependency>
+               </dependenciesToScan>
             </configuration>
          </plugin>
          <plugin>
@@ -219,13 +275,7 @@
                            <attribute name="command"/>
                            <element name="args"/>
                            <sequential>
-                              <condition property="keytool.classname" value="com.ibm.crypto.tools.KeyTool">
-                                 <available classname="com.ibm.crypto.tools.KeyTool"/>
-                              </condition>
-                              <condition property="keytool.classname" value="sun.security.tools.keytool.Main">
-                                 <available classname="sun.security.tools.keytool.Main"/>
-                              </condition>
-                              <java classname="${keytool.classname}" failonerror="true">
+                              <exec executable="${server.jvm}/bin/keytool">
                                  <arg value="@{command}"/>
                                  <!-- common arguments -->
                                  <arg value="-validity"/>
@@ -241,7 +291,7 @@
                                  <arg value="pkcs12"/>
                                  <!-- additional arguments -->
                                  <args/>
-                              </java>
+                              </exec>
                            </sequential>
                         </macrodef>
                         <delete quiet="true">
@@ -559,7 +609,8 @@
             <artifactId>karaf-maven-plugin</artifactId>
             <configuration>
                <features>
-                  <feature>infinispan-client-hotrod,infinispan-client-hotrod-with-query,hotrod-client,hotrod-client-with-query</feature>
+                  <feature>infinispan-client-hotrod</feature>
+                  <feature>infinispan-client-hotrod-with-query</feature>
                </features>
             </configuration>
          </plugin>

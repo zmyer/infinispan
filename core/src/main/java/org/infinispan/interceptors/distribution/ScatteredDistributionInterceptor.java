@@ -7,16 +7,20 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.MetadataAwareCommand;
+import org.infinispan.commands.SegmentSpecificCommand;
 import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.functional.ReadOnlyKeyCommand;
@@ -51,7 +55,9 @@ import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.ArrayCollector;
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.InternalCacheValue;
@@ -69,16 +75,20 @@ import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.group.impl.GroupManager;
+import org.infinispan.eviction.ActivationManager;
+import org.infinispan.eviction.EvictionManager;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.functional.impl.FunctionalNotifier;
 import org.infinispan.interceptors.InvocationFinallyAction;
-import org.infinispan.interceptors.InvocationSuccessAction;
 import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.interceptors.impl.ClusteringInterceptor;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.NotifyHelper;
+import org.infinispan.notifications.cachelistener.annotation.CacheEntryRemoved;
+import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
 import org.infinispan.remoting.responses.ExceptionResponse;
@@ -99,9 +109,12 @@ import org.infinispan.scattered.ScatteredVersionManager;
 import org.infinispan.statetransfer.AllOwnersLostException;
 import org.infinispan.statetransfer.OutdatedTopologyException;
 import org.infinispan.topology.CacheTopology;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.util.concurrent.AggregateCompletionStage;
 import org.infinispan.util.concurrent.CommandAckCollector.MultiTargetCollector;
 import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
+import org.infinispan.util.concurrent.DataOperationOrderer;
+import org.infinispan.util.concurrent.DataOperationOrderer.Operation;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -127,22 +140,35 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
    @Inject protected CacheNotifier cacheNotifier;
    @Inject protected FunctionalNotifier functionalNotifier;
    @Inject protected KeyPartitioner keyPartitioner;
+   @Inject PersistenceManager persistenceManager;
+   @Inject Configuration configuration;
+   @Inject DataOperationOrderer orderer;
+   @Inject EvictionManager evictionManager;
+   @Inject ActivationManager activationManager;
+
+   private boolean hasPassivation;
 
    private volatile Address cachedNextMember;
    private volatile int cachedNextMemberTopology = -1;
 
-   private final InvocationSuccessAction putMapCommandHandler = (rCtx, rCommand, rv) -> {
-      PutMapCommand putMapCommand = (PutMapCommand) rCommand;
+   @Start
+   public void start() {
+      hasPassivation = configuration.persistence().passivation();
+   }
+
+   private final InvocationSuccessFunction<PutMapCommand> putMapCommandHandler = (rCtx, putMapCommand, rv) -> {
+      AggregateCompletionStage<Void> aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
       for (Object key : putMapCommand.getAffectedKeys()) {
-         commitSingleEntryIfNewer((RepeatableReadEntry) rCtx.lookupEntry(key), rCtx, rCommand);
+         aggregateCompletionStage.dependsOn(commitSingleEntryIfNewer((RepeatableReadEntry) rCtx.lookupEntry(key), rCtx, putMapCommand));
          // this handler is called only for ST or when isOriginLocal() == false so we don't have to invalidate
       }
+      return delayedValue(aggregateCompletionStage.freeze(), rv);
    };
 
-   private final InvocationSuccessAction clearHandler = this::handleClear;
+   private final InvocationSuccessFunction<ClearCommand> clearHandler = this::handleClear;
 
-   private final InvocationSuccessFunction handleWritePrimaryResponse = this::handleWritePrimaryResponse;
-   private final InvocationSuccessFunction handleWriteManyOnPrimary = this::handleWriteManyOnPrimary;
+   private final InvocationSuccessFunction<DataWriteCommand> handleWritePrimaryResponse = this::handleWritePrimaryResponse;
+   private final InvocationSuccessFunction<WriteCommand> handleWriteManyOnPrimary = this::handleWriteManyOnPrimary;
 
    private PutMapHelper putMapHelper = new PutMapHelper(helper -> null);
    private ReadWriteManyHelper readWriteManyHelper = new ReadWriteManyHelper(helper -> null);
@@ -186,7 +212,7 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
          if (info.isPrimary()) {
             Object seenValue = cacheEntry.getValue();
             return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) ->
-               handleWriteOnOriginPrimary(rCtx, (DataWriteCommand) rCommand, rv, cacheEntry, seenValue, seenVersion, cacheTopology, info));
+               handleWriteOnOriginPrimary(rCtx, rCommand, rv, cacheEntry, seenValue, seenVersion, cacheTopology, info));
          } else { // not primary owner
             CompletionStage<ValidResponse> rpcFuture = singleWriteOnRemotePrimary(info.primary(), command);
             return asyncValue(rpcFuture).thenApply(ctx, command, handleWritePrimaryResponse);
@@ -194,8 +220,7 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
       } else { // remote origin
          if (info.isPrimary()) {
             // TODO [ISPN-3918]: the previous value is unreliable as this could be second invocation
-            return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-               DataWriteCommand cmd = (DataWriteCommand) rCommand;
+            return invokeNextThenApply(ctx, command, (rCtx, cmd, rv) -> {
                if (!cmd.isSuccessful()) {
                   if (trace) log.tracef("Skipping the replication of the command as it did not succeed on primary owner (%s).", cmd);
                   return singleWriteResponse(rCtx, cmd, rv);
@@ -205,14 +230,15 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
                Metadata metadata = addVersion(cacheEntry.getMetadata(), nextVersion);
                cacheEntry.setMetadata(metadata);
 
+               CompletionStage<Void> stage;
                if (cmd.loadType() != DONT_LOAD) {
-                  commitSingleEntryIfNoChange(cacheEntry, rCtx, cmd);
+                  stage = commitSingleEntryIfNoChange(cacheEntry, rCtx, cmd);
                } else {
-                  commitSingleEntryIfNewer(cacheEntry, rCtx, cmd);
+                  stage = commitSingleEntryIfNewer(cacheEntry, rCtx, cmd);
                }
 
                Object returnValue = cmd.acceptVisitor(ctx, new PrimaryResponseGenerator(cacheEntry, rv));
-               return singleWriteResponse(rCtx, cmd, returnValue);
+               return asyncValue(stage).thenApply(rCtx, cmd, (rCtx2, rCommand2, rv2) -> singleWriteResponse(rCtx, rCommand2, returnValue));
             });
          } else {
             // The origin is primary and we're merely backup saving the data
@@ -224,10 +250,8 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             } else {
                contextEntry = cacheEntry;
             }
-            return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
-               commitSingleEntryIfNewer(contextEntry, rCtx, rCommand);
-               return null;
-            });
+            return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) ->
+                  delayedNull(commitSingleEntryIfNewer(contextEntry, rCtx, rCommand)));
          }
       }
    }
@@ -272,10 +296,11 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
       Metadata metadata = addVersion(cacheEntry.getMetadata(), nextVersion);
       cacheEntry.setMetadata(metadata);
 
+      CompletionStage<Void> stage;
       if (command.loadType() != DONT_LOAD) {
-         commitSingleEntryIfNoChange(cacheEntry, ctx, command);
+         stage = commitSingleEntryIfNoChange(cacheEntry, ctx, command);
       } else {
-         commitSingleEntryIfNewer(cacheEntry, ctx, command);
+         stage = commitSingleEntryIfNewer(cacheEntry, ctx, command);
       }
 
       // When replicating to backup, we'll add skip ownership check since we're now on primary owner
@@ -303,16 +328,16 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
          });
          rpcFuture = completeSingleWriteOnPrimaryOriginator(command, backup, rpcFuture);
          // Exception responses are thrown anyway and we don't expect any return values
-         return asyncValue(rpcFuture.thenApply(ignore -> rv));
+         return delayedValue(CompletionStages.allOf(stage.toCompletableFuture(), rpcFuture.toCompletableFuture()), rv);
       } else {
-         return rv;
+         return delayedValue(stage, rv);
       }
    }
 
-   private Object handleWritePrimaryResponse(InvocationContext ctx, VisitableCommand command, Object rv) {
+   private Object handleWritePrimaryResponse(InvocationContext ctx, DataWriteCommand command, Object rv) {
       Response response = (Response) rv;
       if (!response.isSuccessful()) {
-         ((DataWriteCommand) command).fail();
+         command.fail();
          if (response instanceof UnsuccessfulResponse) {
             return ((UnsuccessfulResponse) response).getResponseValue();
          } else {
@@ -345,19 +370,22 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
 
    private Object commitSingleEntryOnReturn(InvocationContext ctx, DataWriteCommand command, RepeatableReadEntry cacheEntry,
                                             EntryVersion nextVersion) {
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
+      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
          DataWriteCommand dataWriteCommand = (DataWriteCommand) rCommand;
          if (nextVersion != null) {
             cacheEntry.setMetadata(addVersion(cacheEntry.getMetadata(), nextVersion));
          }
+         CompletionStage<Void> stage;
          if (command.loadType() != DONT_LOAD) {
-            commitSingleEntryIfNoChange(cacheEntry, rCtx, rCommand);
+            stage = commitSingleEntryIfNoChange(cacheEntry, rCtx, rCommand);
          } else {
-            commitSingleEntryIfNewer(cacheEntry, rCtx, dataWriteCommand);
+            stage = commitSingleEntryIfNewer(cacheEntry, rCtx, dataWriteCommand);
          }
          if (cacheEntry.isCommitted() && rCtx.isOriginLocal() && nextVersion != null) {
             scheduleKeyInvalidation(dataWriteCommand.getKey(), nextVersion, cacheEntry.isRemoved());
          }
+
+         return delayedValue(stage, rv);
       });
    }
 
@@ -365,13 +393,55 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
       svm.scheduleKeyInvalidation(key, nextVersion, removed);
    }
 
-   private void commitSingleEntryIfNewer(RepeatableReadEntry entry, InvocationContext ctx, VisitableCommand command) {
+   private CompletionStage<Void> commitOperation(RepeatableReadEntry entry, Predicate<RepeatableReadEntry> wasCommitted,
+                                                 InvocationContext ctx, VisitableCommand command) {
       if (!entry.isChanged()) {
          if (trace) {
             log.tracef("Entry has not changed, not committing");
          }
+      } else if (entry.isRemoved()) {
+         // RemoveCommand does not null the entry value
+         entry.setValue(null);
       }
 
+      if (!hasPassivation) {
+         if (wasCommitted.test(entry)) {
+            return NotifyHelper.entryCommitted(cacheNotifier, functionalNotifier, entry.isCreated(), entry.isRemoved(), entry.isExpired(),
+                  entry, ctx, (FlagAffectedCommand) command, entry.getOldValue(), entry.getOldMetadata(), evictionManager);
+         }
+      }
+      // Our update cannot use entry.commit and instead uses data container directly - thus we must do the passivation
+      // ourselves
+      Object key = entry.getKey();
+      CompletableFuture<Operation> orderingStage = new CompletableFuture<>();
+      CompletionStage<Operation> waitStage = orderer.orderOn(key, orderingStage);
+      CompletionStage<Boolean> committedStage;
+      if (waitStage == null) {
+         committedStage = CompletableFutures.booleanStage(wasCommitted.test(entry));
+      } else {
+         committedStage = waitStage.thenCompose(ignore -> CompletableFutures.booleanStage(wasCommitted.test(entry)));
+      }
+      CompletionStage<Void> lastStage = committedStage.thenCompose(committed -> {
+         if (committed) {
+            CompletionStage<Void> notificationStage = NotifyHelper.entryCommitted(cacheNotifier, functionalNotifier,
+                  entry.isCreated(), entry.isRemoved(), entry.isExpired(), entry, ctx, (FlagAffectedCommand) command,
+                  entry.getOldValue(), entry.getOldMetadata(), evictionManager);
+            return notificationStage.thenCompose(ignore ->
+               activationManager.activateAsync(key, SegmentSpecificCommand.extractSegment(command, key, keyPartitioner))
+            );
+         } else {
+            return CompletableFutures.completedNull();
+         }
+      });
+      return lastStage.whenComplete((ignore, ignoreT) -> orderer.completeOperation(key, orderingStage,
+            entry.isRemoved() ? Operation.REMOVE : Operation.WRITE));
+   }
+
+   private CompletionStage<Void> commitSingleEntryIfNewer(RepeatableReadEntry entry, InvocationContext ctx, VisitableCommand command) {
+      return commitOperation(entry, this::updateEntryIfNewer, ctx, command);
+   }
+
+   private boolean updateEntryIfNewer(RepeatableReadEntry entry) {
       // We cannot delegate the dataContainer.compute() to entry.commit() as we need to reliably
       // retrieve previous value and metadata, but the entry API does not provide these.
       dataContainer.compute(entry.getKey(), (key, oldEntry, factory) -> {
@@ -394,8 +464,8 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
          Metadata oldMetadata = oldEntry.getMetadata();
          InequalVersionComparisonResult comparisonResult;
          if (oldMetadata == null || oldMetadata.version() == null || newMetadata == null || newMetadata.version() == null
-            || (comparisonResult = oldMetadata.version().compareTo(newMetadata.version())) == InequalVersionComparisonResult.BEFORE
-            || (oldMetadata instanceof RemoteMetadata && comparisonResult == InequalVersionComparisonResult.EQUAL)) {
+               || (comparisonResult = oldMetadata.version().compareTo(newMetadata.version())) == InequalVersionComparisonResult.BEFORE
+               || (oldMetadata instanceof RemoteMetadata && comparisonResult == InequalVersionComparisonResult.EQUAL)) {
             if (trace) {
                log.tracef("Committing entry %s, replaced %s", entry, oldEntry);
             }
@@ -412,24 +482,14 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             return oldEntry;
          }
       });
-
-      if (entry.isCommitted()) {
-         NotifyHelper.entryCommitted(cacheNotifier, functionalNotifier, entry.isCreated(), entry.isRemoved(), entry.isExpired(),
-               entry, ctx, (FlagAffectedCommand) command, entry.getOldValue(), entry.getOldMetadata());
-      } // else we skip the notification, and the already executed notification skipped this (intermediate) update
+      return entry.isCommitted();
    }
 
-   private void commitSingleEntryIfNoChange(RepeatableReadEntry entry, InvocationContext ctx, VisitableCommand command) {
-      if (!entry.isChanged()) {
-         if (trace) {
-            log.tracef("Entry has not changed, not committing");
-         }
-      }
-      // RemoveCommand does not null the entry value
-      if (entry.isRemoved()) {
-         entry.setValue(null);
-      }
+   private CompletionStage<Void> commitSingleEntryIfNoChange(RepeatableReadEntry entry, InvocationContext ctx, VisitableCommand command) {
+      return commitOperation(entry, this::updateEntryIfNoChange, ctx, command);
+   }
 
+   private boolean updateEntryIfNoChange(RepeatableReadEntry entry) {
       // We cannot delegate the dataContainer.compute() to entry.commit() as we need to reliably
       // retrieve previous value and metadata, but the entry API does not provide these.
       dataContainer.compute(entry.getKey(), (key, oldEntry, factory) -> {
@@ -485,8 +545,8 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
          }
          InequalVersionComparisonResult comparisonResult;
          if (oldVersion == null || newMetadata == null || newMetadata.version() == null
-            || (comparisonResult = oldMetadata.version().compareTo(newMetadata.version())) == InequalVersionComparisonResult.BEFORE
-            || (oldMetadata instanceof RemoteMetadata && comparisonResult == InequalVersionComparisonResult.EQUAL)) {
+               || (comparisonResult = oldMetadata.version().compareTo(newMetadata.version())) == InequalVersionComparisonResult.BEFORE
+               || (oldMetadata instanceof RemoteMetadata && comparisonResult == InequalVersionComparisonResult.EQUAL)) {
             if (trace) {
                log.tracef("Committing entry %s, replaced %s", entry, oldEntry);
             }
@@ -503,11 +563,7 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             return oldEntry;
          }
       });
-
-      if (entry.isCommitted()) {
-         NotifyHelper.entryCommitted(cacheNotifier, functionalNotifier, entry.isCreated(), entry.isRemoved(), entry.isExpired(),
-               entry, ctx, (FlagAffectedCommand) command, entry.getOldValue(), entry.getOldMetadata());
-      } // else we skip the notification, and the already executed notification skipped this (intermediate) update
+      return entry.isCommitted();
    }
 
    private EntryVersion getVersionOrNull(CacheEntry cacheEntry) {
@@ -659,21 +715,20 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
                // isn't the primary owner
                RepeatableReadEntry contextEntry = cacheEntry;
                if (cacheEntry == null) {
-                  entryFactory.wrapExternalEntry(ctx, key, null, false, true);
-                  contextEntry = (RepeatableReadEntry) ctx.lookupEntry(key);
+                  entryFactory.wrapExternalEntry(rCtx, key, null, false, true);
+                  contextEntry = (RepeatableReadEntry) rCtx.lookupEntry(key);
                }
                // If it responded with a time we assume it wasn't expired
                if (access != null) {
-                  UpdateLastAccessCommand ulac = cf.buildUpdateLastAccessCommand(key, command.getSegment(), (long) access);
-                  ulac.inject(dataContainer);
+                  UpdateLastAccessCommand ulac = cf.buildUpdateLastAccessCommand(key, rCommand.getSegment(), (long) access);
                   // Update local access time to what primary had
                   ulac.invokeAsync();
                   // Make sure to notify other interceptors the command failed
-                  command.fail();
+                  rCommand.fail();
                   return Boolean.FALSE;
                } else {
                   // Go ahead with removal now
-                  return makeStage(commitSingleEntryOnReturn(ctx, command, contextEntry, null)).thenApply(ctx, command,
+                  return makeStage(commitSingleEntryOnReturn(ctx, command, contextEntry, null)).thenApply(rCtx, rCommand,
                         (rCtx2, rCommand2, ignore) -> Boolean.TRUE);
                }
             });
@@ -723,7 +778,7 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             valueMap.put(key, value.getValue());
          }
          command.setMap(valueMap);
-         return invokeNextThenAccept(ctx, command, putMapCommandHandler);
+         return invokeNextThenApply(ctx, command, putMapCommandHandler);
       } else {
          return handleWriteManyCommand(ctx, command, putMapHelper);
       }
@@ -837,21 +892,32 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             MapResponseCollector collector = MapResponseCollector.ignoreLeavers();
             return makeStage(
                asyncInvokeNext(ctx, command, rpcManager.invokeCommandOnAll(command, collector, rpcOptions)))
-                  .thenAccept(ctx, command, clearHandler);
+                  .thenApply(ctx, command, clearHandler);
          } else {
             rpcManager.sendToAll(command, DeliverOrder.PER_SENDER);
-            return invokeNextThenAccept(ctx, command, clearHandler);
+            return invokeNextThenApply(ctx, command, clearHandler);
          }
       } else {
-         return invokeNextThenAccept(ctx, command, clearHandler);
+         return invokeNextThenApply(ctx, command, clearHandler);
       }
    }
 
-   protected void handleClear(InvocationContext ctx, VisitableCommand command, Object ignored) {
-      List<InternalCacheEntry<Object, Object>> copyEntries = new ArrayList<>(dataContainer.entrySet());
-      dataContainer.clear();
-      for (InternalCacheEntry entry : copyEntries) {
-         cacheNotifier.notifyCacheEntryRemoved(entry.getKey(), entry.getValue(), entry.getMetadata(), false, ctx, (ClearCommand) command);
+   protected Object handleClear(InvocationContext ctx, ClearCommand command, Object ignored) {
+      if (cacheNotifier.hasListener(CacheEntryRemoved.class)) {
+         Iterator<InternalCacheEntry<Object, Object>> iterator = dataContainer.iteratorIncludingExpired();
+
+         AggregateCompletionStage<Void> aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
+         while (iterator.hasNext()) {
+            InternalCacheEntry entry = iterator.next();
+            // Iterator doesn't support remove
+            dataContainer.remove(entry.getKey());
+            aggregateCompletionStage.dependsOn(cacheNotifier.notifyCacheEntryRemoved(entry.getKey(), entry.getValue(),
+                  entry.getMetadata(), false, ctx, command));
+         }
+         return aggregateCompletionStage.freeze();
+      } else {
+         dataContainer.clear();
+         return CompletableFutures.completedNull();
       }
    }
 
@@ -995,7 +1061,7 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
       return invokeNext(ctx, command);
    }
 
-   private <C extends TopologyAffectedCommand & VisitableCommand> Object handleRemoteReadManyCommand(
+   private <C extends VisitableCommand & TopologyAffectedCommand> Object handleRemoteReadManyCommand(
          InvocationContext ctx, C command, Collection<?> keys) {
       for (Object key : keys) {
          if (ctx.lookupEntry(key) == null) {
@@ -1101,6 +1167,7 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
                   values = (InternalCacheValue[]) ((Object[]) responseValue)[0];
                   MergingCompletableFuture.moveListItemsToFuture(((Object[]) responseValue)[1], allFuture, myOffset);
                }
+               AggregateCompletionStage<Void> aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
                synchronized (allFuture) {
                   if (allFuture.isDone()) {
                      return;
@@ -1113,14 +1180,14 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
                      RepeatableReadEntry entry = (RepeatableReadEntry) ctx.lookupEntry(key);
                      // we don't care about setCreated() since backup owner should not fire listeners
                      entry.setChanged(true);
-                     commitSingleEntryIfNewer(entry, ctx, command);
+                     aggregateCompletionStage.dependsOn(commitSingleEntryIfNewer(entry, ctx, command));
                      if (entry.isCommitted() && !command.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER)) {
                         scheduleKeyInvalidation(entry.getKey(), entry.getMetadata().version(), entry.isRemoved());
                      }
                   }
                   assert i == values.length;
                }
-               allFuture.countDown();
+               aggregateCompletionStage.freeze().thenRun(allFuture::countDown);
             } catch (Throwable t2) {
                allFuture.completeExceptionally(t2);
             }
@@ -1134,31 +1201,34 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
       return null;
    }
 
-   private Object handleWriteManyOnPrimary(InvocationContext ctx, VisitableCommand command, Object rv) {
-      WriteCommand cmd = (WriteCommand) command;
+   private Object handleWriteManyOnPrimary(InvocationContext ctx, WriteCommand cmd, Object rv) {
       int numKeys = cmd.getAffectedKeys().size();
       InternalCacheValue[] values = new InternalCacheValue[numKeys];
       // keys are always iterated in order
       int i = 0;
+      AggregateCompletionStage<Void> aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
       for (Object key : cmd.getAffectedKeys()) {
          RepeatableReadEntry entry = (RepeatableReadEntry) ctx.lookupEntry(key);
          EntryVersion nextVersion = svm.incrementVersion(keyPartitioner.getSegment(key));
          entry.setMetadata(addVersion(entry.getMetadata(), nextVersion));
          if (cmd.loadType() == DONT_LOAD) {
-            commitSingleEntryIfNewer(entry, ctx, command);
+            aggregateCompletionStage.dependsOn(commitSingleEntryIfNewer(entry, ctx, cmd));
          } else {
-            commitSingleEntryIfNoChange(entry, ctx, command);
+            aggregateCompletionStage.dependsOn(commitSingleEntryIfNoChange(entry, ctx, cmd));
          }
          values[i++] = new MetadataImmortalCacheValue(entry.getValue(), entry.getMetadata());
       }
+      CompletionStage<Void> aggregatedStage = aggregateCompletionStage.freeze();
+      Object returnValue;
       if (cmd.loadType() == DONT_LOAD) {
          // Disable ignoring return value in response
          cmd.setFlagsBitSet(cmd.getFlagsBitSet() & ~FlagBitSets.IGNORE_RETURN_VALUES);
-         return manyWriteResponse(ctx, cmd, values);
+         returnValue = values;
       } else {
-         Object[] returnValue = {values, ((List) rv).toArray()};
-         return manyWriteResponse(ctx, cmd, returnValue);
+         returnValue = new Object[]{values, ((List) rv).toArray()};
       }
+      return asyncValue(aggregatedStage).thenApply(ctx, cmd,
+            ((rCtx, rCommand, rv1) -> manyWriteResponse(rCtx, cmd, returnValue)));
    }
 
    @Override
@@ -1380,11 +1450,11 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
          cacheEntry.setChanged(true);
 
          // We don't care about the local value, as we use MATCH_ALWAYS on backup
-         commitSingleEntryIfNewer(cacheEntry, rCtx, cmd);
+         CompletionStage<Void> stage = commitSingleEntryIfNewer(cacheEntry, rCtx, cmd);
          if (cacheEntry.isCommitted() && !cmd.hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER)) {
             scheduleKeyInvalidation(cmd.getKey(), cacheEntry.getMetadata().version(), cacheEntry.isRemoved());
          }
-         return returnValue;
+         return delayedValue(stage, returnValue);
       }
 
       @Override
@@ -1463,7 +1533,7 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
       }
    }
 
-   private class LocalWriteManyHandler implements InvocationFinallyAction {
+   private class LocalWriteManyHandler implements InvocationFinallyAction<VisitableCommand> {
       private final MergingCompletableFuture allFuture;
       private final Collection<?> keys;
       private final LocalizedCacheTopology cacheTopology;
@@ -1484,10 +1554,12 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             }
             WriteCommand writeCommand = (WriteCommand) command;
             Map<Object, InternalCacheValue> backupMap = new HashMap<>();
+            CompletionStage<Void> aggregatedStage;
             synchronized (allFuture) {
                if (allFuture.isDone()) {
                   return;
                }
+               AggregateCompletionStage<Void> aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
                for (Object key : keys) {
                   DistributionInfo info = cacheTopology.getDistribution(key);
                   EntryVersion version = svm.incrementVersion(info.segmentId());
@@ -1499,11 +1571,12 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
                   entry.setMetadata(metadata);
                   backupMap.put(key, new MetadataImmortalCacheValue(entry.getValue(), metadata));
                   if (writeCommand.loadType() == DONT_LOAD) {
-                     commitSingleEntryIfNewer(entry, ctx, command);
+                     aggregateCompletionStage.dependsOn(commitSingleEntryIfNewer(entry, ctx, command));
                   } else {
-                     commitSingleEntryIfNoChange(entry, ctx, command);
+                     aggregateCompletionStage.dependsOn(commitSingleEntryIfNoChange(entry, ctx, command));
                   }
                }
+               aggregatedStage = aggregateCompletionStage.freeze();
             }
             Address backup = getNextMember(cacheTopology);
             completeManyWriteOnPrimaryOriginator(writeCommand, backup, allFuture);
@@ -1513,7 +1586,14 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             ResponseCollector<Map<Address, Response>> collector = SingletonMapResponseCollector.ignoreLeavers();
             CompletionStage<Map<Address, Response>> rpcFuture =
                   rpcManager.invokeCommand(backup, backupCommand, collector, rpcManager.getSyncRpcOptions());
-            rpcFuture.whenComplete((responseMap, throwable1) -> {
+
+            CompletionStage<Map<Address, Response>> combinedResponse;
+            if (CompletionStages.isCompletedSuccessfully(aggregatedStage)) {
+               combinedResponse = rpcFuture;
+            } else {
+               combinedResponse = aggregatedStage.thenCombine(rpcFuture, (v, map) -> map);
+            }
+            combinedResponse.whenComplete((responseMap, throwable1) -> {
                      if (throwable1 != null) {
                         allFuture.completeExceptionally(throwable1);
                      } else {

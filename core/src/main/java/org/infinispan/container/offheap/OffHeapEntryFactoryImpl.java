@@ -3,20 +3,24 @@ package org.infinispan.container.offheap;
 import java.io.IOException;
 
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.marshall.Marshaller;
+import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.marshall.WrappedBytes;
 import org.infinispan.commons.util.Util;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.container.entries.ExpiryHelper;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.container.versioning.EntryVersion;
+import org.infinispan.factories.KnownComponentNames;
+import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
-import org.infinispan.commons.time.TimeService;
 
 /**
  * Factory that can create CacheEntry instances from off-heap memory.
@@ -24,14 +28,16 @@ import org.infinispan.commons.time.TimeService;
  * @author wburns
  * @since 9.0
  */
+@Scope(Scopes.NAMED_CACHE)
 public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
    private static final OffHeapMemory MEMORY = OffHeapMemory.INSTANCE;
 
-   @Inject private Marshaller marshaller;
-   @Inject private OffHeapMemoryAllocator allocator;
-   @Inject private TimeService timeService;
-   @Inject private InternalEntryFactory internalEntryFactory;
-   @Inject private Configuration configuration;
+   @Inject @ComponentName(KnownComponentNames.INTERNAL_MARSHALLER)
+   StreamingMarshaller marshaller;
+   @Inject OffHeapMemoryAllocator allocator;
+   @Inject TimeService timeService;
+   @Inject InternalEntryFactory internalEntryFactory;
+   @Inject Configuration configuration;
 
    private boolean evictionEnabled;
 
@@ -56,15 +62,8 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
       this.evictionEnabled = configuration.memory().isEvictionEnabled();
    }
 
-   /**
-    * Create an entry off-heap.  The first 8 bytes will always be 0, reserved for a future reference to another entry
-    * @param key the key to use
-    * @param value the value to use
-    * @param metadata the metadata to use
-    * @return the address of the entry created off heap
-    */
    @Override
-   public long create(WrappedBytes key, WrappedBytes value, Metadata metadata) {
+   public long create(WrappedBytes key, int hashCode, WrappedBytes value, Metadata metadata) {
       byte type;
       boolean shouldWriteMetadataSize = false;
       byte[] metadataBytes;
@@ -140,7 +139,7 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
 
       MEMORY.putByte(memoryAddress, offset, type);
       offset += 1;
-      MEMORY.putInt(memoryAddress, offset, key.hashCode());
+      MEMORY.putInt(memoryAddress, offset, hashCode);
       offset += 4;
       MEMORY.putInt(memoryAddress, offset, key.getLength());
       offset += 4;
@@ -233,11 +232,9 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
       byte[] keyBytes = new byte[MEMORY.getInt(address, offset)];
       offset += 4;
 
-      switch (metadataType) {
-         case CUSTOM:
-         case HAS_VERSION:
-            // These have additional 4 bytes for custom metadata
-            offset += 4;
+      if ((metadataType & (CUSTOM + HAS_VERSION)) != 0) {
+         // These have additional 4 bytes for custom metadata or version
+         offset += 4;
       }
 
       // Ignore value bytes
@@ -358,21 +355,14 @@ public class OffHeapEntryFactoryImpl implements OffHeapEntryFactory {
       }
    }
 
-   /**
-    * Assumes the address points to the entry excluding the pointer reference at the beginning
-    * @param address the address of an entry to read
-    * @param wrappedBytes the key to check if it equals
-    * @return whether the key and address are equal
-    */
    @Override
-   public boolean equalsKey(long address, WrappedBytes wrappedBytes) {
+   public boolean equalsKey(long address, WrappedBytes wrappedBytes, int hashCode) {
       // 16 bytes for eviction if needed (optional)
       // 8 bytes for linked pointer
       int headerOffset = evictionEnabled ? 24 : 8;
       byte type = MEMORY.getByte(address, headerOffset);
       headerOffset++;
       // First if hashCode doesn't match then the key can't be equal
-      int hashCode = wrappedBytes.hashCode();
       if (hashCode != MEMORY.getInt(address, headerOffset)) {
          return false;
       }

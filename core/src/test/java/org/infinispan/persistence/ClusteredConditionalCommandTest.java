@@ -12,12 +12,12 @@ import java.util.List;
 import java.util.Map;
 
 import org.infinispan.Cache;
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.Flag;
 import org.infinispan.distribution.DistributionInfo;
 import org.infinispan.distribution.Ownership;
+import org.infinispan.eviction.ActivationManager;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.impl.CacheLoaderInterceptor;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
@@ -27,9 +27,11 @@ import org.infinispan.persistence.dummy.DummyInMemoryStore;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.InCacheMode;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.SkipException;
+import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
 /**
@@ -70,10 +72,21 @@ public class ClusteredConditionalCommandTest extends MultipleCacheManagersTest {
             .addStore(DummyInMemoryStoreConfigurationBuilder.class)
             .storeName(storeName + (shared ? "-shared" : storePrefix))
             .fetchPersistentState(false)
-            .purgeOnStartup(true)
             .shared(shared);
       builder.locking().isolationLevel(IsolationLevel.READ_COMMITTED);
       return builder;
+   }
+
+   @AfterMethod
+   public void afterMethod() {
+      if (passivation) {
+         for (EmbeddedCacheManager cacheManager : cacheManagers) {
+            ActivationManager activationManager = TestingUtil.extractComponent(cacheManager.getCache(PRIVATE_STORE_CACHE_NAME),
+                  ActivationManager.class);
+            // Make sure no activations are pending, which could leak between tests
+            eventuallyEquals((long) 0, activationManager::getPendingActivationCount);
+         }
+      }
    }
 
    private static <K, V> void writeToStore(CacheHelper<K, V> cacheHelper, Ownership ownership, K key, V value) {
@@ -583,10 +596,6 @@ public class ClusteredConditionalCommandTest extends MultipleCacheManagersTest {
       private DummyInMemoryStore cacheStore(Ownership ownership) {
          Cache<K, V> cache = cache(ownership);
          return cache != null ? getFirstWriter(cache) : null;
-      }
-
-      private StreamingMarshaller marshaller(Ownership ownership) {
-         return cacheEnumMap.get(ownership).getAdvancedCache().getComponentRegistry().getCacheMarshaller();
       }
 
       protected long loads(Ownership ownership) {

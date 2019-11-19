@@ -1,10 +1,10 @@
 package org.infinispan.interceptors.impl;
 
-import static org.infinispan.persistence.PersistenceUtil.internalMetadata;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.PRIVATE;
 
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
@@ -15,7 +15,6 @@ import javax.transaction.TransactionManager;
 
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.SegmentSpecificCommand;
-import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.functional.FunctionalCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
@@ -48,11 +47,9 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.functional.Param;
 import org.infinispan.functional.Param.PersistenceMode;
-import org.infinispan.interceptors.InvocationSuccessAction;
-import org.infinispan.jmx.annotations.DisplayType;
+import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
-import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.spi.MarshallableEntry;
@@ -60,6 +57,9 @@ import org.infinispan.persistence.spi.MarshallableEntryFactory;
 import org.infinispan.persistence.support.BatchModification;
 import org.infinispan.stream.StreamMarshalling;
 import org.infinispan.transaction.xa.GlobalTransaction;
+import org.infinispan.util.concurrent.AggregateCompletionStage;
+import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -80,15 +80,15 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
    private final boolean trace = getLog().isTraceEnabled();
 
    @Inject protected PersistenceManager persistenceManager;
-   @Inject private InternalEntryFactory entryFactory;
-   @Inject private TransactionManager transactionManager;
-   @Inject private KeyPartitioner keyPartitioner;
-   @Inject private MarshallableEntryFactory marshalledEntryFactory;
+   @Inject InternalEntryFactory entryFactory;
+   @Inject TransactionManager transactionManager;
+   @Inject KeyPartitioner keyPartitioner;
+   @Inject MarshallableEntryFactory marshalledEntryFactory;
 
    PersistenceConfiguration loaderConfig = null;
    final AtomicLong cacheStores = new AtomicLong(0);
 
-   protected InvocationSuccessAction handlePutMapCommandReturn = this::handlePutMapCommandReturn;
+   protected InvocationSuccessFunction<PutMapCommand> handlePutMapCommandReturn = this::handlePutMapCommandReturn;
 
    protected Log getLog() {
       return log;
@@ -103,19 +103,18 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
 
    @Override
    public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
-      commitCommand(ctx);
-      return invokeNext(ctx, command);
+      return asyncInvokeNext(ctx, command, commitCommand(ctx));
    }
 
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
       if (command.isOnePhaseCommit()) {
-         commitCommand(ctx);
+         return asyncInvokeNext(ctx, command, commitCommand(ctx));
       }
       return invokeNext(ctx, command);
    }
 
-   protected void commitCommand(TxInvocationContext ctx) throws Throwable {
+   protected CompletionStage<Void> commitCommand(TxInvocationContext ctx) throws Throwable {
       if (!ctx.getCacheTransaction().getAllModifications().isEmpty()) {
          // this is a commit call.
          GlobalTransaction tx = ctx.getGlobalTransaction();
@@ -124,12 +123,13 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
          Transaction xaTx = null;
          try {
             xaTx = suspendRunningTx(ctx);
-            store(ctx);
+            return store(ctx);
          } finally {
             resumeRunningTx(xaTx);
          }
       } else {
          if (trace) getLog().trace("Commit called with no modifications; ignoring.");
+         return null;
       }
    }
 
@@ -151,113 +151,116 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
 
    @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-         RemoveCommand removeCommand = (RemoveCommand) rCommand;
-         if (!isStoreEnabled(removeCommand) || rCtx.isInTxScope() || !removeCommand.isSuccessful()) return;
-         if (!isProperWriter(rCtx, removeCommand, removeCommand.getKey())) return;
+      return invokeNextThenApply(ctx, command, (rCtx, removeCommand, rv) -> {
+         if (!isStoreEnabled(removeCommand) || rCtx.isInTxScope() || !removeCommand.isSuccessful() ||
+               !isProperWriter(rCtx, removeCommand, removeCommand.getKey())) {
+            return rv;
+         }
 
          Object key = removeCommand.getKey();
-         boolean resp = persistenceManager.deleteFromAllStores(key, command.getSegment(), BOTH);
-         if (trace)
-            getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
+         CompletionStage<?> stage = persistenceManager.deleteFromAllStores(key, removeCommand.getSegment(), BOTH);
+         if (trace) {
+            stage = stage.thenAccept(removed ->
+                  getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, removed));
+         } else {
+
+         }
+         return delayedValue(stage, rv);
       });
    }
 
    @Override
    public Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
-      if (isStoreEnabled(command) && !ctx.isInTxScope())
-         persistenceManager.clearAllStores(ctx.isOriginLocal() ? BOTH : PRIVATE);
-
-      return invokeNext(ctx, command);
+      if (isStoreEnabled(command) && !ctx.isInTxScope()) {
+         return asyncInvokeNext(ctx, command, persistenceManager.clearAllStores(ctx.isOriginLocal() ? BOTH : PRIVATE));
+      } else {
+         return invokeNext(ctx, command);
+      }
    }
 
    @Override
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-         PutKeyValueCommand putKeyValueCommand = (PutKeyValueCommand) rCommand;
+      return invokeNextThenApply(ctx, command, (rCtx, putKeyValueCommand, rv) -> {
          if (!isStoreEnabled(putKeyValueCommand) || rCtx.isInTxScope() || !putKeyValueCommand.isSuccessful())
-            return;
+            return rv;
          if (!isProperWriter(rCtx, putKeyValueCommand, putKeyValueCommand.getKey()))
-            return;
+            return rv;
 
          Object key = putKeyValueCommand.getKey();
-         storeEntry(rCtx, key, putKeyValueCommand);
-         if (getStatisticsEnabled())
-            cacheStores.incrementAndGet();
+         return delayedValue(storeEntry(rCtx, key, putKeyValueCommand), rv);
       });
    }
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-         ReplaceCommand replaceCommand = (ReplaceCommand) rCommand;
+      return invokeNextThenApply(ctx, command, (rCtx, replaceCommand, rv) -> {
          if (!isStoreEnabled(replaceCommand) || rCtx.isInTxScope() || !replaceCommand.isSuccessful())
-            return;
+            return rv;
          if (!isProperWriter(rCtx, replaceCommand, replaceCommand.getKey()))
-            return;
+            return rv;
 
          Object key = replaceCommand.getKey();
-         storeEntry(rCtx, key, replaceCommand);
-         if (getStatisticsEnabled())
-            cacheStores.incrementAndGet();
+         return delayedValue(storeEntry(rCtx, key, replaceCommand), rv);
       });
    }
 
    @Override
    public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-         ComputeCommand computeCommand = (ComputeCommand) rCommand;
-         if (!isStoreEnabled(computeCommand) || rCtx.isInTxScope() || !computeCommand.isSuccessful())
-            return;
-         if (!isProperWriter(rCtx, computeCommand, computeCommand.getKey()))
-            return;
+      return invokeNextThenApply(ctx, command, (rCtx, computeCommand, rv) -> {
+         if (!isStoreEnabled(computeCommand) || rCtx.isInTxScope() || !computeCommand.isSuccessful() ||
+               !isProperWriter(rCtx, computeCommand, computeCommand.getKey()))
+            return rv;
 
          Object key = computeCommand.getKey();
+         CompletionStage<?> resultStage;
          if(rv == null) {
-            boolean resp = persistenceManager.deleteFromAllStores(key, command.getSegment(), BOTH);
-            if (trace)
-               getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
+            CompletionStage<Boolean> stage = persistenceManager.deleteFromAllStores(key, computeCommand.getSegment(), BOTH);
+            if (trace) {
+               resultStage = stage.thenAccept(removed ->
+                     getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, removed));
+            } else {
+               resultStage = stage;
+            }
          } else {
-            storeEntry(rCtx, key, computeCommand);
-            if (getStatisticsEnabled())
-               cacheStores.incrementAndGet();
+            resultStage = storeEntry(rCtx, key, computeCommand);
          }
+         return delayedValue(resultStage, rv);
       });
    }
 
    @Override
    public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-         ComputeIfAbsentCommand computeIfAbsentCommand = (ComputeIfAbsentCommand) rCommand;
+      return invokeNextThenApply(ctx, command, (rCtx, computeIfAbsentCommand, rv) -> {
          if (!isStoreEnabled(computeIfAbsentCommand) || rCtx.isInTxScope() || !computeIfAbsentCommand.isSuccessful())
-            return;
+            return rv;
          if (!isProperWriter(rCtx, computeIfAbsentCommand, computeIfAbsentCommand.getKey()))
-            return;
+            return rv;
 
          if (rv != null) {
             Object key = computeIfAbsentCommand.getKey();
-            storeEntry(rCtx, key, computeIfAbsentCommand);
-            if (getStatisticsEnabled())
-               cacheStores.incrementAndGet();
+            return delayedValue(storeEntry(rCtx, key, computeIfAbsentCommand), rv);
          }
+         return rv;
       });
    }
 
    @Override
    public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, handlePutMapCommandReturn);
+      return invokeNextThenApply(ctx, command, handlePutMapCommandReturn);
    }
 
-   protected void handlePutMapCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Object rv) {
-      PutMapCommand putMapCommand = (PutMapCommand) rCommand;
+   protected Object handlePutMapCommandReturn(InvocationContext rCtx, PutMapCommand putMapCommand, Object rv) {
       if (!isStoreEnabled(putMapCommand) || rCtx.isInTxScope())
-         return;
+         return rv;
 
-      processIterableBatch(rCtx, putMapCommand, BOTH, key -> !skipSharedStores(rCtx, key, putMapCommand));
-      processIterableBatch(rCtx, putMapCommand, PRIVATE, key -> skipSharedStores(rCtx, key, putMapCommand));
+
+      CompletionStage<Void> writeStage = CompletionStages.allOf(
+            processIterableBatch(rCtx, putMapCommand, BOTH, key -> !skipSharedStores(rCtx, key, putMapCommand)),
+            processIterableBatch(rCtx, putMapCommand, PRIVATE, key -> skipSharedStores(rCtx, key, putMapCommand)));
+      return delayedValue(writeStage, rv);
    }
 
-   protected void processIterableBatch(InvocationContext ctx, PutMapCommand cmd, PersistenceManager.AccessMode mode, Predicate<Object> filter) {
+   protected CompletionStage<Void> processIterableBatch(InvocationContext ctx, PutMapCommand cmd, PersistenceManager.AccessMode mode, Predicate<Object> filter) {
       if (getStatisticsEnabled())
          cacheStores.addAndGet(cmd.getMap().size());
 
@@ -266,7 +269,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
             .map(key -> marshalledEntry(ctx, key))
             .filter(StreamMarshalling.nonNullPredicate())
             .iterator();
-      persistenceManager.writeBatchToAllNonTxStores(iterable, mode, cmd.getFlagsBitSet());
+      return persistenceManager.writeBatchToAllNonTxStores(iterable, mode, cmd.getFlagsBitSet());
    }
 
    @Override
@@ -293,15 +296,13 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       return visitWriteCommand(ctx, command);
    }
 
-   private <T extends DataWriteCommand & FunctionalCommand> Object visitWriteCommand(InvocationContext ctx,
-         VisitableCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-         T dataWriteCommand = (T) rCommand;
-         if (!isStoreEnabled(dataWriteCommand) || rCtx.isInTxScope() || !dataWriteCommand.isSuccessful())
-            return;
-         if (!isProperWriter(rCtx, dataWriteCommand, dataWriteCommand.getKey()))
-            return;
+   private <T extends DataWriteCommand & FunctionalCommand> Object visitWriteCommand(InvocationContext ctx, T command) {
+      return invokeNextThenApply(ctx, command, (rCtx, dataWriteCommand, rv) -> {
+         if (!isStoreEnabled(dataWriteCommand) || rCtx.isInTxScope() || !dataWriteCommand.isSuccessful() ||
+               !isProperWriter(rCtx, dataWriteCommand, dataWriteCommand.getKey()))
+            return rv;
 
+         CompletionStage<?> stage = CompletableFutures.completedNull();
          Param<PersistenceMode> persistMode = dataWriteCommand.getParams().get(PersistenceMode.ID);
          switch (persistMode.get()) {
             case LOAD_PERSIST:
@@ -310,12 +311,19 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
                CacheEntry entry = rCtx.lookupEntry(key);
                if (entry != null) {
                   if (entry.isRemoved()) {
-                     boolean resp = persistenceManager.deleteFromAllStores(key, dataWriteCommand.getSegment(), BOTH);
-                     if (trace)
-                        getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key,
-                              resp);
+                     stage = persistenceManager.deleteFromAllStores(key, dataWriteCommand.getSegment(), BOTH);
+                     if (trace) {
+                        stage = stage.thenAccept(removed ->
+                              getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, removed));
+                     }
                   } else if (entry.isChanged()) {
-                     storeEntry(rCtx, key, dataWriteCommand);
+                     stage = storeEntry(rCtx, key, dataWriteCommand);
+                     if (trace) {
+                        stage = stage.thenAccept(removed ->
+                              getLog().tracef("Stored entry for key %s in CacheStore", key));
+                     }
+                  } else if (trace) {
+                     getLog().tracef("Skipping write for key %s as entry wasn't changed");
                   }
                }
                log.trace("Skipping cache store since entry was not found in context");
@@ -323,7 +331,9 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
             case SKIP_PERSIST:
             case SKIP:
                log.trace("Skipping cache store since persistence mode parameter is SKIP");
+               break;
          }
+         return delayedValue(stage, rv);
       });
    }
 
@@ -352,26 +362,32 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
    }
 
    private <T extends WriteCommand & FunctionalCommand> Object visitWriteManyCommand(InvocationContext ctx,
-                                                                                                   WriteCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-         T manyEntriesCommand = (T) rCommand;
+                                                                                                   T command) throws Throwable {
+      return invokeNextThenApply(ctx, command, (rCtx, manyEntriesCommand, rv) -> {
          if (!isStoreEnabled(manyEntriesCommand) || rCtx.isInTxScope())
-            return;
+            return rv;
 
+         CompletionStage<Void> stage = CompletableFutures.completedNull();
          Param<PersistenceMode> persistMode = manyEntriesCommand.getParams().get(PersistenceMode.ID);
          switch (persistMode.get()) {
             case LOAD_PERSIST:
             case SKIP_LOAD:
+               AggregateCompletionStage<Void> composedCompletionStage = CompletionStages.aggregateCompletionStage();
                int storedCount = 0;
-               for (Object key : ((WriteCommand) rCommand).getAffectedKeys()) {
+               for (Object key : manyEntriesCommand.getAffectedKeys()) {
                   CacheEntry entry = rCtx.lookupEntry(key);
                   if (entry != null) {
                      if (entry.isRemoved()) {
-                        boolean resp = persistenceManager.deleteFromAllStores(key, keyPartitioner.getSegment(key), BOTH);
-                        if (trace) getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
+                        CompletionStage<?> innerStage = persistenceManager.deleteFromAllStores(key,
+                              keyPartitioner.getSegment(key), BOTH);
+                        if (trace) {
+                           innerStage = innerStage.thenAccept(removed ->
+                                 getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, removed));
+                        }
+                        composedCompletionStage.dependsOn(innerStage);
                      } else {
                         if (entry.isChanged() && isProperWriter(rCtx, manyEntriesCommand, key)) {
-                           storeEntry(rCtx, key, manyEntriesCommand);
+                           composedCompletionStage.dependsOn(storeEntry(rCtx, key, manyEntriesCommand, false));
                            storedCount++;
                         }
                      }
@@ -380,19 +396,22 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
 
                if (getStatisticsEnabled())
                   cacheStores.getAndAdd(storedCount);
+               stage = composedCompletionStage.freeze();
                break;
             case SKIP_PERSIST:
             case SKIP:
                log.trace("Skipping cache store since persistence mode parameter is SKIP");
+               break;
          }
+         return delayedValue(stage, rv);
       });
    }
 
-   protected final void store(TxInvocationContext ctx) throws Throwable {
+   protected final CompletionStage<Void> store(TxInvocationContext ctx) throws Throwable {
       List<WriteCommand> modifications = ctx.getCacheTransaction().getAllModifications();
       if (modifications.isEmpty()) {
          if (trace) getLog().trace("Transaction has not logged any modifications!");
-         return;
+         return CompletableFutures.completedNull();
       }
       if (trace) getLog().tracef("Cache loader modification list: %s", modifications);
 
@@ -406,10 +425,12 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       BatchModification sharedMods = modsBuilder.getModifications();
       BatchModification nonSharedMods = modsBuilder.getNonSharedModifications();
 
-      persistenceManager.writeBatchToAllNonTxStores(sharedMods.getMarshallableEntries(), BOTH, 0);
-      persistenceManager.writeBatchToAllNonTxStores(nonSharedMods.getMarshallableEntries(), PRIVATE, 0);
-      persistenceManager.deleteBatchFromAllNonTxStores(sharedMods.getKeysToRemove(), BOTH, 0);
-      persistenceManager.deleteBatchFromAllNonTxStores(nonSharedMods.getKeysToRemove(), PRIVATE, 0);
+      // Performs all the batch writes in parallel
+      CompletionStage<Void> writeStage = CompletionStages.allOf(
+            persistenceManager.writeBatchToAllNonTxStores(sharedMods.getMarshallableEntries(), BOTH, 0),
+            persistenceManager.writeBatchToAllNonTxStores(nonSharedMods.getMarshallableEntries(), PRIVATE, 0),
+            persistenceManager.deleteBatchFromAllNonTxStores(sharedMods.getKeysToRemove(), BOTH, 0),
+            persistenceManager.deleteBatchFromAllNonTxStores(nonSharedMods.getKeysToRemove(), PRIVATE, 0));
 
       if (trace) {
          getLog().tracef("Writing shared batch with #entries=%d and non-shared batch with #entries=%d", sharedMods.getMarshallableEntries().size(), nonSharedMods.getMarshallableEntries().size());
@@ -419,6 +440,7 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       if (getStatisticsEnabled() && modsBuilder.getPutCount() > 0) {
          cacheStores.getAndAdd(modsBuilder.getPutCount());
       }
+      return writeStage;
    }
 
    protected boolean isStoreEnabled(FlagAffectedCommand command) {
@@ -434,10 +456,6 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   @ManagedOperation(
-         description = "Resets statistics gathered by this component",
-         displayName = "Reset statistics"
-   )
    public void resetStatistics() {
       cacheStores.set(0);
    }
@@ -453,25 +471,41 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedAttribute(
          description = "Number of entries currently persisted excluding expired entries",
-         displayName = "Number of persisted entries",
-         displayType = DisplayType.SUMMARY
+         displayName = "Number of persisted entries"
    )
    public int getNumberOfPersistedEntries() {
-      return persistenceManager.size();
+      return CompletionStages.join(persistenceManager.size());
    }
 
-   void storeEntry(InvocationContext ctx, Object key, FlagAffectedCommand command) {
+   CompletionStage<Void> storeEntry(InvocationContext ctx, Object key, FlagAffectedCommand command) {
+      return storeEntry(ctx, key, command, true);
+   }
+
+   CompletionStage<Void> storeEntry(InvocationContext ctx, Object key, FlagAffectedCommand command, boolean incrementStats) {
+      if (persistenceManager.isReadOnly())
+         return CompletableFutures.completedNull();
+
       MarshallableEntry entry = marshalledEntry(ctx, key);
       if (entry != null) {
-         persistenceManager.writeToAllNonTxStores(entry, SegmentSpecificCommand.extractSegment(command, key, keyPartitioner),
+         CompletionStage<Void> stage = persistenceManager.writeToAllNonTxStores(entry,
+               SegmentSpecificCommand.extractSegment(command, key, keyPartitioner),
                skipSharedStores(ctx, key, command) ? PRIVATE : BOTH, command.getFlagsBitSet());
-         if (trace) getLog().tracef("Stored entry %s under key %s", entry.getValue(), key);
+         if (trace) {
+            stage = stage.thenAccept(ignore ->
+               getLog().tracef("Stored entry %s under key %s", entry.getValue(), key));
+         }
+         if (incrementStats && getStatisticsEnabled()) {
+            stage = stage.thenAccept(ignore ->
+                  cacheStores.incrementAndGet());
+         }
+         return stage;
       }
+      return CompletableFutures.completedNull();
    }
 
    MarshallableEntry marshalledEntry(InvocationContext ctx, Object key) {
       InternalCacheValue sv = entryFactory.getValueFromCtx(key, ctx);
-      return sv != null ? marshalledEntryFactory.create(key, sv.getValue(), internalMetadata(sv)) : null;
+      return sv != null ? marshalledEntryFactory.create(key, sv.getValue(), sv.getMetadata(), sv.getCreated(), sv.getLastUsed()) : null;
    }
 
    protected boolean skipSharedStores(InvocationContext ctx, Object key, FlagAffectedCommand command) {

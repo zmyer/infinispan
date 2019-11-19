@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Stream;
@@ -16,7 +17,6 @@ import org.infinispan.cache.impl.AbstractDelegatingCache;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.CloseableIterator;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IntSets;
 import org.infinispan.configuration.cache.ClusteringConfiguration;
@@ -28,6 +28,8 @@ import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.annotation.DataRehashed;
@@ -49,23 +51,24 @@ import org.infinispan.util.logging.LogFactory;
  * @param <V> value type of underlying cache
  */
 @Listener(observation = Listener.Observation.POST)
+@Scope(Scopes.NAMED_CACHE)
 public class LocalStreamManagerImpl<Original, K, V> implements LocalStreamManager<Original, K> {
    private final static Log log = LogFactory.getLog(LocalStreamManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
    private AdvancedCache<K, V> cache;
-   @Inject private ComponentRegistry registry;
-   @Inject private DistributionManager dm;
-   @Inject private RpcManager rpc;
-   @Inject private CommandsFactory factory;
-   @Inject private IteratorHandler iteratorHandler;
+   @Inject ComponentRegistry registry;
+   @Inject DistributionManager dm;
+   @Inject RpcManager rpc;
+   @Inject CommandsFactory factory;
+   @Inject IteratorHandler iteratorHandler;
    private boolean hasLoader;
    private boolean isReplicated;
    private int maxSegment;
 
    private Address localAddress;
 
-   private final ConcurrentMap<Object, SegmentListener> changeListener = CollectionFactory.makeConcurrentMap();
+   private final ConcurrentMap<Object, SegmentListener> changeListener = new ConcurrentHashMap<>();
    private ByteString cacheName;
 
    class SegmentListener {
@@ -489,6 +492,11 @@ public class LocalStreamManagerImpl<Original, K, V> implements LocalStreamManage
    public IteratorResponse continueIterator(Object requestId, long batchSize) {
       CloseableIterator<Object> iterator = iteratorHandler.getIterator(requestId);
       return new IteratorResponses.RemoteResponse(iterator, changeListener.get(requestId).segmentsLost, batchSize);
+   }
+
+   @Override
+   public void closeIterator(Address origin, Object requestId) {
+      iteratorHandler.closeIterator(origin, requestId);
    }
 
    class NonRehashIntermediateCollector<R> implements KeyTrackingTerminalOperation.IntermediateCollector<R> {

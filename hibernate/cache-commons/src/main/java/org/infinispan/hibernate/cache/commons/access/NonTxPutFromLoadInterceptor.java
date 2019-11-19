@@ -6,14 +6,12 @@
  */
 package org.infinispan.hibernate.cache.commons.access;
 
-import org.infinispan.hibernate.cache.commons.util.BeginInvalidationCommand;
-import org.infinispan.hibernate.cache.commons.util.CacheCommandInitializer;
-import org.infinispan.hibernate.cache.commons.util.EndInvalidationCommand;
-
-import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.hibernate.cache.commons.util.BeginInvalidationCommand;
+import org.infinispan.hibernate.cache.commons.util.EndInvalidationCommand;
+import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
 import org.infinispan.interceptors.BaseCustomAsyncInterceptor;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.rpc.RpcManager;
@@ -32,8 +30,7 @@ public class NonTxPutFromLoadInterceptor extends BaseCustomAsyncInterceptor {
 	private final ByteString cacheName;
 	private final PutFromLoadValidator putFromLoadValidator;
 
-	@Inject private CacheCommandInitializer commandInitializer;
-	@Inject private RpcManager rpcManager;
+	@Inject RpcManager rpcManager;
 
 	public NonTxPutFromLoadInterceptor(PutFromLoadValidator putFromLoadValidator, ByteString cacheName) {
 		this.putFromLoadValidator = putFromLoadValidator;
@@ -55,9 +52,6 @@ public class NonTxPutFromLoadInterceptor extends BaseCustomAsyncInterceptor {
 		if (!putFromLoadValidator.endInvalidatingKey(lockOwner, key, successful)) {
 			log.failedEndInvalidating(key, cacheName);
 		}
-
-		EndInvalidationCommand endInvalidationCommand = commandInitializer.buildEndInvalidationCommand(
-				cacheName, new Object[] { key }, lockOwner);
-		rpcManager.sendToAll(endInvalidationCommand, DeliverOrder.NONE);
+		rpcManager.sendToAll(new EndInvalidationCommand(cacheName, new Object[] {key}, lockOwner), DeliverOrder.NONE);
 	}
 }

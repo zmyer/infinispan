@@ -1,10 +1,10 @@
 package org.infinispan.server.memcached;
 
-import static org.infinispan.server.core.ExternalizerIds.MEMCACHED_METADATA;
-
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.factories.GlobalComponentRegistry;
+import org.infinispan.factories.annotations.InfinispanModule;
 import org.infinispan.lifecycle.ModuleLifecycle;
+import org.infinispan.marshall.protostream.impl.SerializationContextRegistry;
 
 /**
  * Module lifecycle callbacks implementation that enables module specific
@@ -13,10 +13,11 @@ import org.infinispan.lifecycle.ModuleLifecycle;
  * @author Galder Zamarreño
  * @since 5.0
  */
+@InfinispanModule(name = "server-memcached", requiredModules = "core")
 public class LifecycleCallbacks implements ModuleLifecycle {
    @Override
    public void cacheManagerStarting(GlobalComponentRegistry gcr, GlobalConfiguration globalConfiguration) {
-      globalConfiguration.serialization().advancedExternalizers().put(MEMCACHED_METADATA,
-            new MemcachedMetadataExternalizer());
+      SerializationContextRegistry ctxRegistry = gcr.getComponent(SerializationContextRegistry.class);
+      ctxRegistry.addContextInitializer(SerializationContextRegistry.MarshallerType.PERSISTENCE, new PersistenceContextInitializerImpl());
    }
 }

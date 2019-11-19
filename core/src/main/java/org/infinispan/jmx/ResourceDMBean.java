@@ -4,8 +4,12 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import javax.management.Attribute;
 import javax.management.AttributeList;
@@ -16,23 +20,21 @@ import javax.management.MBeanException;
 import javax.management.MBeanInfo;
 import javax.management.MBeanOperationInfo;
 import javax.management.MBeanParameterInfo;
-import javax.management.ReflectionException;
+import javax.management.MBeanRegistration;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 import javax.management.ServiceNotFoundException;
 
-import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.ReflectionUtil;
-import org.infinispan.factories.components.JmxAttributeMetadata;
-import org.infinispan.factories.components.JmxOperationMetadata;
-import org.infinispan.factories.components.JmxOperationParameter;
-import org.infinispan.factories.components.ManageableComponentMetadata;
+import org.infinispan.factories.impl.MBeanMetadata;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 /**
- * This class was entirely copied from JGroups 2.7 (same name there). Couldn't simply reuse it because JGroups does not
- * ship with MBean, ManagedAttribute and ManagedOperation.
+ * This class was copied from JGroups and adapted.
  * <p/>
  * The original JGroup's ResourceDMBean logic has been modified so that invoke() method checks whether the operation
  * called has been exposed as a {@link ManagedOperation}, otherwise the call fails. JGroups deviated from this logic on
@@ -43,66 +45,88 @@ import org.infinispan.util.logging.LogFactory;
  * @author Galder Zamarreño
  * @since 4.0
  */
-public class ResourceDMBean implements DynamicMBean {
-
-   private static final String MBEAN_DESCRITION = "Dynamic MBean Description";
+public final class ResourceDMBean implements DynamicMBean, MBeanRegistration {
 
    private static final Log log = LogFactory.getLog(ResourceDMBean.class);
    private static final boolean trace = log.isTraceEnabled();
+
    private final Object obj;
    private final Class<?> objectClass;
-   private final IspnMBeanOperationInfo[] opInfos;
+   private final MBeanOperationInfo[] opInfos;
+   private final String[] opNames;
    private final MBeanAttributeInfo[] attInfos;
-   private final HashMap<String, InvokableMBeanAttributeInfo> atts = new HashMap<String, InvokableMBeanAttributeInfo>(2);
-   private final ManageableComponentMetadata mBeanMetadata;
-   private final String name;
+   private final HashMap<String, InvokableMBeanAttributeInfo> atts = new HashMap<>(2);
+   private final String mbeanName;
+   private final String description;
 
-   private static final Map<String, Field> FIELD_CACHE = CollectionFactory.makeConcurrentMap(64);
-   private static final Map<String, Method> METHOD_CACHE = CollectionFactory.makeConcurrentMap(64);
+   /**
+    * This is the name under which this MBean was registered.
+    */
+   private ObjectName objectName;
 
-   public ResourceDMBean(Object instance, ManageableComponentMetadata mBeanMetadata) throws NoSuchFieldException, ClassNotFoundException {
-      this(instance, mBeanMetadata, null);
-   }
+   private static final Map<String, Field> FIELD_CACHE = new ConcurrentHashMap<>(64);
+   private static final Map<String, Method> METHOD_CACHE = new ConcurrentHashMap<>(64);
 
-   public ResourceDMBean(Object instance, ManageableComponentMetadata mBeanMetadata, String name) throws NoSuchFieldException, ClassNotFoundException {
-      if (instance == null)
+   ResourceDMBean(Object instance, MBeanMetadata mBeanMetadata, String componentName) {
+      if (instance == null) {
          throw new NullPointerException("Cannot make an MBean wrapper for null instance");
-
+      }
       this.obj = instance;
       this.objectClass = instance.getClass();
-      this.mBeanMetadata = mBeanMetadata;
-      this.name = name;
+      if (mBeanMetadata.getJmxObjectName() != null) {
+         mbeanName = mBeanMetadata.getJmxObjectName();
+      } else if (componentName != null) {
+         mbeanName = componentName;
+      } else {
+         throw new IllegalArgumentException("MBean.objectName and componentName cannot be both null");
+      }
+      this.description = mBeanMetadata.getDescription();
 
       // Load up all fields.
       int i = 0;
-      attInfos = new MBeanAttributeInfo[mBeanMetadata.getAttributeMetadata().size()];
-      for (JmxAttributeMetadata attributeMetadata : mBeanMetadata.getAttributeMetadata()) {
+      attInfos = new MBeanAttributeInfo[mBeanMetadata.getAttributes().size()];
+      for (MBeanMetadata.AttributeMetadata attributeMetadata : mBeanMetadata.getAttributes()) {
          String attributeName = attributeMetadata.getName();
-         InvokableMBeanAttributeInfo info = toJmxInfo(attributeMetadata);
          if (atts.containsKey(attributeName)) {
-            throw new IllegalArgumentException("Component " + mBeanMetadata.getName()
-                                                     + " metadata has a duplicate attribute: " + attributeName);
+            throw new IllegalArgumentException("Component " + objectClass.getName()
+                  + " metadata has a duplicate attribute: " + attributeName);
          }
+         InvokableMBeanAttributeInfo info = toJmxInfo(attributeMetadata);
          atts.put(attributeName, info);
-         attInfos[i++] = info.getMBeanAttributeInfo();
+         attInfos[i++] = info.attributeInfo;
          if (trace)
             log.tracef("Attribute %s [r=%b,w=%b,is=%b,type=%s]", attributeName,
-                       info.getMBeanAttributeInfo().isReadable(), info.getMBeanAttributeInfo().isWritable(),
-                       info.getMBeanAttributeInfo().isIs(), info.getMBeanAttributeInfo().getType());
+                  info.attributeInfo.isReadable(), info.attributeInfo.isWritable(),
+                  info.attributeInfo.isIs(), info.attributeInfo.getType());
       }
 
       // And operations
-      IspnMBeanOperationInfo op;
-      opInfos = new IspnMBeanOperationInfo[mBeanMetadata.getOperationMetadata().size()];
+      opInfos = new MBeanOperationInfo[mBeanMetadata.getOperations().size()];
+      opNames = new String[opInfos.length];
       i = 0;
-      for (JmxOperationMetadata operation : mBeanMetadata.getOperationMetadata()) {
-         op = toJmxInfo(operation);
+      for (MBeanMetadata.OperationMetadata operation : mBeanMetadata.getOperations()) {
+         opNames[i] = operation.getOperationName();
+         MBeanOperationInfo op = toJmxInfo(operation);
          opInfos[i++] = op;
          if (trace) log.tracef("Operation %s %s", op.getReturnType(), op.getName());
       }
    }
 
-   private static Field findField(Class<?> objectClass, String fieldName) throws NoSuchFieldException {
+   /**
+    * The name assigned via {@link MBean#objectName} or generated based on default rules if missing.
+    */
+   String getMBeanName() {
+      return mbeanName;
+   }
+
+   /**
+    * The ObjectName. Only available if the MBean was registered.
+    */
+   public ObjectName getObjectName() {
+      return objectName;
+   }
+
+   private static Field findField(Class<?> objectClass, String fieldName) {
       String key = objectClass.getName() + "#" + fieldName;
       Field f = FIELD_CACHE.get(key);
       if (f == null) {
@@ -112,7 +136,7 @@ public class ResourceDMBean implements DynamicMBean {
       return f;
    }
 
-   private static Method findSetter(Class<?> objectClass, String fieldName) throws NoSuchFieldException {
+   private static Method findSetter(Class<?> objectClass, String fieldName) {
       String key = objectClass.getName() + "#s#" + fieldName;
       Method m = METHOD_CACHE.get(key);
       if (m == null) {
@@ -122,7 +146,7 @@ public class ResourceDMBean implements DynamicMBean {
       return m;
    }
 
-   private static Method findGetter(Class<?> objectClass, String fieldName) throws NoSuchFieldException {
+   private static Method findGetter(Class<?> objectClass, String fieldName) {
       String key = objectClass.getName() + "#g#" + fieldName;
       Method m = METHOD_CACHE.get(key);
       if (m == null) {
@@ -132,47 +156,36 @@ public class ResourceDMBean implements DynamicMBean {
       return m;
    }
 
-   private InvokableMBeanAttributeInfo toJmxInfo(JmxAttributeMetadata attributeMetadata) throws NoSuchFieldException {
+   private InvokableMBeanAttributeInfo toJmxInfo(MBeanMetadata.AttributeMetadata attributeMetadata) {
       if (!attributeMetadata.isUseSetter()) {
          Field field = findField(objectClass, attributeMetadata.getName());
          if (field != null) {
             return new InvokableFieldBasedMBeanAttributeInfo(attributeMetadata.getName(), attributeMetadata.getType(),
-                                                             attributeMetadata.getDescription(), true, attributeMetadata.isWritable(),
-                                                             attributeMetadata.isIs(), field, this);
+                  attributeMetadata.getDescription(), true, attributeMetadata.isWritable(),
+                  attributeMetadata.isIs(), field, attributeMetadata.accessorFunction());
          }
       }
 
       Method setter = attributeMetadata.isWritable() ? findSetter(objectClass, attributeMetadata.getName()) : null;
       Method getter = findGetter(objectClass, attributeMetadata.getName());
       return new InvokableSetterBasedMBeanAttributeInfo(attributeMetadata.getName(), attributeMetadata.getType(),
-                                                        attributeMetadata.getDescription(), true, attributeMetadata.isWritable(),
-                                                        attributeMetadata.isIs(), getter, setter, this);
+            attributeMetadata.getDescription(), true, attributeMetadata.isWritable(),
+            attributeMetadata.isIs(), getter, setter, attributeMetadata.accessorFunction());
    }
 
-   private IspnMBeanOperationInfo toJmxInfo(JmxOperationMetadata operationMetadata) throws ClassNotFoundException {
-      JmxOperationParameter[] parameters = operationMetadata.getMethodParameters();
+   private MBeanOperationInfo toJmxInfo(MBeanMetadata.OperationMetadata operationMetadata) {
+      MBeanMetadata.OperationParameterMetadata[] parameters = operationMetadata.getMethodParameters();
       MBeanParameterInfo[] params = new MBeanParameterInfo[parameters.length];
       for (int i = 0; i < parameters.length; i++) {
          params[i] = new MBeanParameterInfo(parameters[i].getName(), parameters[i].getType(), parameters[i].getDescription());
       }
-      return new IspnMBeanOperationInfo(operationMetadata.getMethodName(), operationMetadata.getDescription(), params, operationMetadata.getReturnType(), MBeanOperationInfo.UNKNOWN,
-                                        operationMetadata.getOperationName());
-   }
-
-   Object getObject() {
-      return obj;
+      return new MBeanOperationInfo(operationMetadata.getMethodName(), operationMetadata.getDescription(),
+            params, operationMetadata.getReturnType(), MBeanOperationInfo.UNKNOWN);
    }
 
    @Override
-   public synchronized MBeanInfo getMBeanInfo() {
-      //the client doesn't know about IspnMBeanOperationInfo so we need to convert first
-      MBeanOperationInfo[] operationInfoForClient = new MBeanOperationInfo[opInfos.length];
-      for (int i = 0; i < opInfos.length; i++) {
-         IspnMBeanOperationInfo current = opInfos[i];
-         operationInfoForClient[i] = new MBeanOperationInfo(current.getOperationName(), current.getDescription(),
-                                                            current.getSignature(), current.getReturnType(), MBeanOperationInfo.UNKNOWN);
-      }
-      return new MBeanInfo(getObject().getClass().getCanonicalName(), mBeanMetadata.getDescription(), attInfos, null, operationInfoForClient, null);
+   public MBeanInfo getMBeanInfo() {
+      return new MBeanInfo(objectClass.getName(), description, attInfos, null, opInfos, null);
    }
 
    @Override
@@ -183,7 +196,7 @@ public class ResourceDMBean implements DynamicMBean {
       Attribute attr = getNamedAttribute(name);
       if (attr == null) {
          throw new AttributeNotFoundException("Unknown attribute '" + name
-                                                    + "'. Known attributes names are: " + atts.keySet());
+               + "'. Known attributes names are: " + atts.keySet());
       }
       return attr.getValue();
    }
@@ -205,9 +218,21 @@ public class ResourceDMBean implements DynamicMBean {
             al.add(attr);
          } else {
             log.couldNotFindAttribute(name);
+            //todo [anistor] is it ok to ignore missing attributes ?
          }
       }
       return al;
+   }
+
+   public Supplier<?> getAttributeValueSupplier(String attributeName) throws AttributeNotFoundException {
+      InvokableMBeanAttributeInfo i = atts.get(attributeName);
+      if (i == null) {
+         throw new AttributeNotFoundException("Unknown attribute '" + attributeName + "'");
+      }
+      if (i.attributeAccessor == null) {
+         return null;
+      }
+      return () -> i.attributeAccessor.apply(obj);
    }
 
    @Override
@@ -227,22 +252,21 @@ public class ResourceDMBean implements DynamicMBean {
    }
 
    @Override
-   public Object invoke(String name, Object[] args, String[] sig) throws MBeanException,
-                                                                         ReflectionException {
+   public Object invoke(String name, Object[] args, String[] sig) throws MBeanException {
       if (log.isDebugEnabled()) {
          log.debugf("Invoke method called on %s", name);
       }
 
       MBeanOperationInfo opInfo = null;
-      for (IspnMBeanOperationInfo op : opInfos) {
-         if (op.getOperationName().equals(name)) {
-            opInfo = op;
+      for (int i = 0; i < opNames.length; i++) {
+         if (opNames[i].equals(name)) {
+            opInfo = opInfos[i];
             break;
          }
       }
 
       if (opInfo == null) {
-         final String msg = "Operation " + name + " not amongst operations in " + opInfos;
+         final String msg = "Operation " + name + " not amongst operations in " + Arrays.toString(opInfos);
          throw new MBeanException(new ServiceNotFoundException(msg), msg);
       }
 
@@ -252,13 +276,12 @@ public class ResourceDMBean implements DynamicMBean {
          if (args[i] != null) {
             if (log.isDebugEnabled())
                log.debugf("Argument value before transformation: %s and its class: %s. " +
-                                "For method.invoke we need it to be class: %s", args[i], args[i].getClass(), sig[i]);
-            if (sig[i].equals(int.class.getCanonicalName()) || sig[i].equals(Integer.class.getCanonicalName())) {
-               if ((args[i].getClass() != Integer.class) && (args[i].getClass() != int.class))
+                     "For method.invoke we need it to be class: %s", args[i], args[i].getClass(), sig[i]);
+            if (sig[i].equals(int.class.getName()) || sig[i].equals(Integer.class.getName())) {
+               if (args[i].getClass() != Integer.class && args[i].getClass() != int.class)
                   args[i] = Integer.parseInt((String) args[i]);
-            }
-            if (sig[i].equals(Long.class.getCanonicalName()) || sig[i].equals(long.class.getCanonicalName())) {
-               if ((args[i].getClass() != Long.class) && (args[i].getClass() != long.class))
+            } else if (sig[i].equals(Long.class.getName()) || sig[i].equals(long.class.getName())) {
+               if (args[i].getClass() != Long.class && args[i].getClass() != long.class)
                   args[i] = Long.parseLong((String) args[i]);
             }
          }
@@ -269,14 +292,14 @@ public class ResourceDMBean implements DynamicMBean {
          for (int i = 0; i < classes.length; i++) {
             classes[i] = ReflectionUtil.getClassForName(sig[i], null);
          }
-         Method method = getObject().getClass().getMethod(opInfo.getName(), classes);
-         return method.invoke(getObject(), args);
+         Method method = objectClass.getMethod(opInfo.getName(), classes);
+         return method.invoke(obj, args);
       } catch (Exception e) {
          throw new MBeanException(new Exception(getRootCause(e)));
       }
    }
 
-   public Throwable getRootCause(Throwable throwable) {
+   private Throwable getRootCause(Throwable throwable) {
       Throwable cause;
       while ((cause = throwable.getCause()) != null) {
          throwable = cause;
@@ -284,47 +307,47 @@ public class ResourceDMBean implements DynamicMBean {
       return throwable;
    }
 
-
    private Attribute getNamedAttribute(String name) {
       Attribute result = null;
-      if (name.equals(MBEAN_DESCRITION)) {
-         result = new Attribute(MBEAN_DESCRITION, mBeanMetadata.getDescription());
-      } else {
-         InvokableMBeanAttributeInfo i = atts.get(name);
-         if (i == null && name.length() > 0) {
-            // This is legacy.  Earlier versions used an upper-case starting letter for *some* attributes.
-            Character firstChar = name.charAt(0);
-            if (Character.isUpperCase(firstChar)) {
-               name = name.replaceFirst(Character.toString(firstChar), Character.toString(Character.toLowerCase(firstChar)));
-               i = atts.get(name);
-            }
-         }
-         if (i != null) {
-            try {
-               result = new Attribute(name, i.invoke(null));
-               if (trace)
-                  log.tracef("Attribute %s has r=%b,w=%b,is=%b and value %s",
-                             name, i.getMBeanAttributeInfo().isReadable(), i.getMBeanAttributeInfo().isWritable(), i.getMBeanAttributeInfo().isIs(), result.getValue());
-            } catch (Exception e) {
-               log.debugf(e, "Exception while reading value of attribute %s", name);
-            }
-         } else {
-            log.queriedAttributeNotFound(name);
+
+      InvokableMBeanAttributeInfo i = atts.get(name);
+      if (i == null && name.length() > 0) {
+         // This is legacy.  Earlier versions used an upper-case starting letter for *some* attributes.
+         char firstChar = name.charAt(0);
+         if (Character.isUpperCase(firstChar)) {
+            name = Character.toLowerCase(firstChar) + name.substring(1);
+            i = atts.get(name);
          }
       }
+
+      if (i != null) {
+         try {
+            result = new Attribute(name, i.invoke(null));
+            if (trace)
+               log.tracef("Attribute %s has r=%b,w=%b,is=%b and value %s",
+                     name, i.attributeInfo.isReadable(), i.attributeInfo.isWritable(), i.attributeInfo.isIs(), result.getValue());
+         } catch (Exception e) {
+            log.debugf(e, "Exception while reading value of attribute %s", name);
+            throw new CacheException(e);
+         }
+      } else {
+         log.queriedAttributeNotFound(name);
+         //todo [anistor] why not throw an AttributeNotFoundException ?
+      }
+
       return result;
    }
 
    private void setNamedAttribute(Attribute attribute) throws MBeanException, AttributeNotFoundException {
-      if (log.isDebugEnabled())
-         log.debugf("Invoking set on attribute %s with value %s",
-                    attribute.getName(), attribute.getValue());
+      if (log.isDebugEnabled()) {
+         log.debugf("Invoking set on attribute %s with value %s", attribute.getName(), attribute.getValue());
+      }
 
       String name = attribute.getName();
       InvokableMBeanAttributeInfo i = atts.get(name);
       if (i == null && name.length() > 0) {
          // This is legacy.  Earlier versions used an upper-case starting letter for *some* attributes.
-         Character firstChar = name.charAt(0);
+         char firstChar = name.charAt(0);
          if (Character.isUpperCase(firstChar)) {
             name = name.replaceFirst(Character.toString(firstChar), Character.toString(Character.toLowerCase(firstChar)));
             i = atts.get(name);
@@ -344,75 +367,101 @@ public class ResourceDMBean implements DynamicMBean {
       }
    }
 
-   private static abstract class InvokableMBeanAttributeInfo {
-
-      private final MBeanAttributeInfo attributeInfo;
-
-      public InvokableMBeanAttributeInfo(String name, String type, String description, boolean isReadable, boolean isWritable, boolean isIs) {
-         attributeInfo = new MBeanAttributeInfo(name, type, description, isReadable, isWritable, isIs);
-      }
-
-      public abstract Object invoke(Attribute a) throws IllegalAccessException, InvocationTargetException;
-
-      public MBeanAttributeInfo getMBeanAttributeInfo() {
-         return attributeInfo;
-      }
+   @Override
+   public ObjectName preRegister(MBeanServer server, ObjectName name) {
+      objectName = name;
+      return name;
    }
 
-   private static class InvokableFieldBasedMBeanAttributeInfo extends InvokableMBeanAttributeInfo {
-      private transient final Field field;
-      private transient final ResourceDMBean resource;
+   @Override
+   public void postRegister(Boolean registrationDone) {
+   }
 
-      public InvokableFieldBasedMBeanAttributeInfo(String name, String type, String description, boolean isReadable, boolean isWritable, boolean isIs, Field field, ResourceDMBean resource) {
-         super(name, type, description, isReadable, isWritable, isIs);
+   @Override
+   public void preDeregister() {
+   }
+
+   @Override
+   public void postDeregister() {
+      objectName = null;
+   }
+
+   private static abstract class InvokableMBeanAttributeInfo {
+
+      final MBeanAttributeInfo attributeInfo;
+      final Function<Object, ?> attributeAccessor;
+
+      InvokableMBeanAttributeInfo(String name, String type, String description, boolean isReadable, boolean isWritable, boolean isIs, Function<?, ?> attributeAccessor) {
+         attributeInfo = new MBeanAttributeInfo(name, type, description, isReadable, isWritable, isIs);
+         this.attributeAccessor = (Function<Object, ?>) attributeAccessor;
+      }
+
+      abstract Object invoke(Attribute a) throws IllegalAccessException, InvocationTargetException;
+   }
+
+   private final class InvokableFieldBasedMBeanAttributeInfo extends InvokableMBeanAttributeInfo {
+      private final Field field;
+
+      InvokableFieldBasedMBeanAttributeInfo(String name, String type, String description, boolean isReadable, boolean isWritable, boolean isIs, Field field, Function<?, ?> attributeAccessor) {
+         super(name, type, description, isReadable, isWritable, isIs, attributeAccessor);
          this.field = field;
-         this.resource = resource;
       }
 
       @Override
-      public Object invoke(Attribute a) throws IllegalAccessException {
+      Object invoke(Attribute a) throws IllegalAccessException {
          if (!Modifier.isPublic(field.getModifiers())) field.setAccessible(true);
          if (a == null) {
-            return field.get(resource.getObject());
+            return field.get(obj);
          } else {
-            field.set(resource.getObject(), a.getValue());
+            field.set(obj, a.getValue());
             return null;
          }
       }
    }
 
-   private static class InvokableSetterBasedMBeanAttributeInfo extends InvokableMBeanAttributeInfo {
-      private transient final Method setter;
-      private transient final Method getter;
-      private transient final ResourceDMBean resource;
+   private final class InvokableSetterBasedMBeanAttributeInfo extends InvokableMBeanAttributeInfo {
+      private final Method setter;
+      private final Method getter;
 
-      public InvokableSetterBasedMBeanAttributeInfo(String name, String type, String description, boolean isReadable, boolean isWritable, boolean isIs, Method getter, Method setter, ResourceDMBean resource) {
-         super(name, type, description, isReadable, isWritable, isIs);
+      InvokableSetterBasedMBeanAttributeInfo(String name, String type, String description, boolean isReadable, boolean isWritable, boolean isIs, Method getter, Method setter, Function<?, ?> attributeAccessor) {
+         super(name, type, description, isReadable, isWritable, isIs, attributeAccessor);
          this.setter = setter;
          this.getter = getter;
-         this.resource = resource;
       }
 
       @Override
-      public Object invoke(Attribute a) throws IllegalAccessException, InvocationTargetException {
+      Object invoke(Attribute a) throws IllegalAccessException, InvocationTargetException {
          if (a == null) {
             if (!Modifier.isPublic(getter.getModifiers())) getter.setAccessible(true);
-            return getter.invoke(resource.getObject(), null);
+            return getter.invoke(obj);
          } else {
             if (!Modifier.isPublic(setter.getModifiers())) setter.setAccessible(true);
-            return setter.invoke(resource.getObject(), a.getValue());
+            return setter.invoke(obj, a.getValue());
          }
       }
    }
 
-   public String getObjectName() {
-      String s = mBeanMetadata.getJmxObjectName();
-      if (s != null && s.trim().length() > 0) {
-         return s;
-      } else if (name != null) {
-         return name;
-      } else {
-          return objectClass.getSimpleName();
-      }
+   @Override
+   public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || o.getClass() != ResourceDMBean.class) return false;
+      ResourceDMBean that = (ResourceDMBean) o;
+      return obj == that.obj;  // == is intentional
+   }
+
+   @Override
+   public int hashCode() {
+      return obj.hashCode();
+   }
+
+   @Override
+   public String toString() {
+      return "ResourceDMBean{" +
+            "obj=" + System.identityHashCode(obj) +
+            ", objectClass=" + objectClass +
+            ", mbeanName='" + mbeanName + '\'' +
+            ", description='" + description + '\'' +
+            ", objectName=" + objectName +
+            '}';
    }
 }

@@ -1,0 +1,24 @@
+COUNTER(1)
+==========
+:doctype: manpage
+
+
+NAME
+----
+counter - selects the default counter for subsequent commands.
+
+
+SYNOPSIS
+--------
+*counter* ['COUNTER_NAME']
+
+
+EXAMPLE
+-------
+`counter cnt_a` +
+Selects `cnt_a` and is the same as navigating the resource tree using `cd counters/cnt_a`.
+
+
+SEE ALSO
+--------
+add(1), cas(1)

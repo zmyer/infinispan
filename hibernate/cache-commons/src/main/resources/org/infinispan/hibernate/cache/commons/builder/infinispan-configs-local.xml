@@ -7,14 +7,12 @@
   -->
 <infinispan
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} http://www.infinispan.org/schemas/infinispan-config-${infinispan.core.schema.version}.xsd"
+        xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} https://infinispan.org/schemas/infinispan-config-${infinispan.core.schema.version}.xsd"
         xmlns="urn:infinispan:config:${infinispan.core.schema.version}">
 
 
    <!-- This configuration is suitable for non-clustered environments, where only single instance accesses the DB -->
    <cache-container name="SampleCacheManager" statistics="false" default-cache="the-default-cache" shutdown-hook="DEFAULT">
-      <jmx duplicate-domains="true"/>
-
       <local-cache-configuration name="the-default-cache" statistics="false" />
 
       <!-- Default configuration is appropriate for entity/collection caching. -->

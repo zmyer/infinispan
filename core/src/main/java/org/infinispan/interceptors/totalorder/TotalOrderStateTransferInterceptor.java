@@ -16,12 +16,14 @@ import org.infinispan.util.logging.LogFactory;
  * Synchronizes the incoming totally ordered transactions with the state transfer.
  *
  * @author Pedro Ruivo
+ * @deprecated since 10.0. Total Order will be removed.
  */
+@Deprecated
 public class TotalOrderStateTransferInterceptor extends BaseStateTransferInterceptor {
    private static final Log log = LogFactory.getLog(TotalOrderStateTransferInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   private final InvocationExceptionFunction handleLocalPrepareReturn = this::handleLocalPrepareReturn;
+   private final InvocationExceptionFunction<PrepareCommand> handleLocalPrepareReturn = this::handleLocalPrepareReturn;
 
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
@@ -64,14 +66,13 @@ public class TotalOrderStateTransferInterceptor extends BaseStateTransferInterce
       return invokeNextAndExceptionally(ctx, command, handleLocalPrepareReturn);
    }
 
-   private Object handleLocalPrepareReturn(InvocationContext ctx, VisitableCommand command, Throwable t)
+   private Object handleLocalPrepareReturn(InvocationContext ctx, PrepareCommand prepareCommand, Throwable t)
          throws Throwable {
       assert t != null;
       // If we receive a RetryPrepareException it was because the prepare was delivered during a state transfer.
       // Remember that the REBALANCE_START and CH_UPDATE are totally ordered with the prepares and the
       // prepares are unblocked after the rebalance has finished.
       boolean needsToPrepare = needsToRePrepare(t);
-      PrepareCommand prepareCommand = (PrepareCommand) command;
       if (trace) {
          log.tracef("Exception caught while preparing transaction %s (cause = %s). Needs to retransmit? %s",
                prepareCommand.getGlobalTransaction().globalId(), t.getCause(), needsToPrepare);
@@ -81,9 +82,9 @@ public class TotalOrderStateTransferInterceptor extends BaseStateTransferInterce
          throw t;
       } else {
          int newTopologyId = currentTopologyId();
-         logRetry(newTopologyId, (TopologyAffectedCommand) command);
+         logRetry(newTopologyId, prepareCommand);
          prepareCommand.setTopologyId(newTopologyId);
-         return invokeNextAndExceptionally(ctx, command, handleLocalPrepareReturn);
+         return invokeNextAndExceptionally(ctx, prepareCommand, handleLocalPrepareReturn);
       }
    }
 

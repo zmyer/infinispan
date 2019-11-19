@@ -1,7 +1,9 @@
 package org.infinispan.interceptors.locking;
 
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.function.Predicate;
+import java.util.Collections;
+import java.util.List;
 
 import org.infinispan.InvalidCacheUsageException;
 import org.infinispan.commands.DataCommand;
@@ -9,7 +11,7 @@ import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.util.concurrent.locks.KeyAwareLockPromise;
+import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -20,8 +22,6 @@ import org.infinispan.util.logging.LogFactory;
  */
 public class NonTransactionalLockingInterceptor extends AbstractLockingInterceptor {
    private static final Log log = LogFactory.getLog(NonTransactionalLockingInterceptor.class);
-
-   private final Predicate<Object> shouldLockKey = this::shouldLockKey;
 
    @Override
    protected Log getLog() {
@@ -52,8 +52,17 @@ public class NonTransactionalLockingInterceptor extends AbstractLockingIntercept
       if (forwarded || hasSkipLocking(command)) {
          return invokeNext(ctx, command);
       }
-      KeyAwareLockPromise lockPromise = lockAllAndRecord(ctx, keys.stream().filter(shouldLockKey), getLockTimeoutMillis(command));
-      return nonTxLockAndInvokeNext(ctx, command, lockPromise, unlockAllReturnHandler);
+      List<K> keysToLock = Collections.emptyList();
+      for (K key : keys) {
+         if (shouldLockKey(key)) {
+            if (keysToLock == Collections.emptyList()) {
+               keysToLock = new ArrayList<>();
+            }
+            keysToLock.add(key);
+         }
+      }
+      InvocationStage lockStage = lockAllAndRecord(ctx, command, keysToLock, getLockTimeoutMillis(command));
+      return nonTxLockAndInvokeNext(ctx, command, lockStage, unlockAllReturnHandler);
    }
 
    private void assertNonTransactional(InvocationContext ctx) {

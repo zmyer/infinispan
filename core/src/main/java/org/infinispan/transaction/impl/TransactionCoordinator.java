@@ -21,6 +21,8 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.impl.ComponentRef;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.transaction.xa.recovery.RecoveryManager;
@@ -36,16 +38,17 @@ import org.infinispan.util.logging.LogFactory;
  * @author Pedro Ruivo
  * @since 5.0
  */
+@Scope(Scopes.NAMED_CACHE)
 public class TransactionCoordinator {
    private static final Log log = LogFactory.getLog(TransactionCoordinator.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private ComponentRef<InvocationContextFactory> icf;
-   @Inject private ComponentRef<AsyncInterceptorChain> invoker;
-   @Inject private ComponentRef<TransactionTable> txTable;
-   @Inject private ComponentRef<RecoveryManager> recoveryManager;
-   @Inject private Configuration configuration;
+   @Inject CommandsFactory commandsFactory;
+   @Inject ComponentRef<InvocationContextFactory> icf;
+   @Inject ComponentRef<AsyncInterceptorChain> invoker;
+   @Inject ComponentRef<TransactionTable> txTable;
+   @Inject ComponentRef<RecoveryManager> recoveryManager;
+   @Inject Configuration configuration;
 
    private CommandCreator commandCreator;
    private volatile boolean shuttingDown = false;
@@ -55,12 +58,12 @@ public class TransactionCoordinator {
    private boolean use1PcForAutoCommitTransactions;
 
    @Start(priority = 1)
-   private void setStartStatus() {
+   void setStartStatus() {
       shuttingDown = false;
    }
 
    @Stop(priority = 1)
-   private void setStopStatus() {
+   void setStopStatus() {
       shuttingDown = true;
    }
 

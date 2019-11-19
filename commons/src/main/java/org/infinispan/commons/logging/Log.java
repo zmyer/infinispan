@@ -5,9 +5,6 @@ import static org.jboss.logging.Logger.Level.WARN;
 
 import java.io.IOException;
 
-import javax.management.InstanceAlreadyExistsException;
-import javax.management.ObjectName;
-
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.dataconversion.EncodingException;
@@ -15,6 +12,7 @@ import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.counter.exception.CounterException;
 import org.infinispan.counter.exception.CounterOutOfBoundsException;
 import org.jboss.logging.BasicLogger;
+import org.jboss.logging.Logger;
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
@@ -55,6 +53,11 @@ import org.jboss.logging.annotations.MessageLogger;
  */
 @MessageLogger(projectCode = "ISPN")
 public interface Log extends BasicLogger {
+   String LOG_ROOT = "org.infinispan.";
+   Log CONFIG = Logger.getMessageLogger(Log.class, LOG_ROOT + "CONFIG");
+   Log CONTAINER = Logger.getMessageLogger(Log.class, LOG_ROOT + "CONTAINER");
+   Log SECURITY = Logger.getMessageLogger(Log.class, LOG_ROOT + "SECURITY");
+
    @LogMessage(level = WARN)
    @Message(value = "Property %s could not be replaced as intended!", id = 901)
    void propertyCouldNotBeReplaced(String line);
@@ -196,12 +199,15 @@ public interface Log extends BasicLogger {
    @Message(value = "Unable to convert property [%s] to an enum! Using default value of %d", id = 942)
    void unableToConvertStringPropertyToEnum(String value, String defaultValue);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Could not register object with name: %s", id = 943)
-   void couldNotRegisterObjectName(ObjectName objectName, @Cause InstanceAlreadyExistsException e);
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Could not register object with name: %s", id = 943)
+//   void couldNotRegisterObjectName(ObjectName objectName, @Cause Exception e);
 
    @Message(value = "Feature %s is disabled!", id = 944)
    CacheConfigurationException featureDisabled(String feature);
+
+//   @Message(value = "Unable to marshall Object '%s' wrapped by '%s', the wrapped object must be registered with the marshallers SerializationContext", id = 945)
+//   MarshallingException unableToMarshallRuntimeObject(String wrappedObjectClass, String wrapperClass);
 
    //----- counters exceptions // don't use the same id range ------
 
@@ -216,6 +222,10 @@ public interface Log extends BasicLogger {
 
    @Message(value = "WEAK and BOUNDED encoded flag isn't supported!", id = 29522)
    CounterException invalidCounterTypeEncoded();
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Cannot load %s", id = 29523)
+   void cannotLoadMimeTypes(String mimeTypes);
 
    //----- counters exceptions // don't use the same id range  ------
 }

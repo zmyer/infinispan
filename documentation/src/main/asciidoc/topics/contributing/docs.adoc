@@ -1,0 +1,180 @@
+[[documentation_guidelines]]
+= Documentation Guidelines
+
+Welcome to {brandname} documentation. This is a place where anyone can
+contribute and share their knowledge.
+
+[[documentation_guidelines_source_files]]
+== Working with Documentation Source Files
+
+All you need to do is fork {brandname} to edit the documentation source files.
+You can then submit your changes in a _pull request_ as you would any other
+contribution to the project.
+
+See the `README` file in the _documentation/src/main/asciidoc_ directory for
+information on what you need to edit and build the documentation.
+
+[[documentation_guidelines_style_guide]]
+== Style Guide
+
+Infinispan is the community project on which Red Hat Data Grid is based. For
+this reason, we follow link:https://redhat-documentation.github.io/[Guidelines
+for Red Hat Documentation].
+
+The link:http://asciidoctor.org/docs/asciidoc-writers-guide/[AsciiDoctor
+Writer's Guide] also has some excellent resources on writing effective
+documentation.
+
+[[documentation_guidelines_format_reference]]
+== AsciiDoc Format Reference
+
+Tips for which AsciiDoc markup to use when formatting text.
+
+Monospace (```)::
+[cols="50%,50%",options="header"]
+|===
+|Item |Example
+|File names and paths |The \`/home/user/.bashrc` file ...
+|Literal values | If the value is \`true` ...
+|Configuration attributes | Set the \`enabled` attribute ...
+|Java class names |The \`java.sql.Connection` class ...
+|Java annotations |The \`@Clustered` annotation ...
+|===
+
+Italics (`_`)::
+[cols="50%,50%",options="header"]
+|===
+|Item |Example
+|Guide titles |See the \_Installation Guide_ ...
+|Emphasis _(first occurrence of the term only)_ |\_High availability_ refers to the ...
+|===
+
+Bold (`*`)::
+[cols="50%,50%",options="header"]
+|===
+|Item |Example
+|GUI items _(menus, buttons)_|Click the \*Add* button and ...
+|===
+
+Underline (`[.underline]#value#`)::
+[cols="50%,50%",options="header"]
+|===
+|Item |Example
+|Default item in a multi-select | \`yes\[.underline]\#no#\maybe`
+|===
+
+[[documentation_guidelines_general]]
+== General Guidelines
+
+* Always use `++{brandname}++` to refer to the product. Never abbreviate the product name to something like "ISPN".
+* Prefer active voice to passive voice.
+* Use the second or third person, but never the first. Prefer second person singular to address the user directly.
+* Always use the present tense. There are instances where future tense makes sense but do not mix tenses. Never use the past tense.
+* Use American English spelling conventions.
+* Avoid contractions. Use "do not" instead of "don't".
+* Terminate bulleted and numbered lists with periods (.) except for simple name
+  lists.
+* Avoid the word "simply" unless it clarifies.
+* For substitution of `{attr}` in code blocks, use `[subs=+attributes]`.
+* For styling of `++*bold*++` (`*bold*`) in code blocks, use
+  `[subs=+quotes]`.
+* Never use colloquialisms or slang in documentation.
+
+[cols="33%,33%a,33%a",options="header"]
+|===
+|Item |Use |Do Not Use
+|Root commands  | $ sudo  |#
+|Emphasis  |\_yay_  |\*yay*
+|Decimal integers < 10  |four  |4
+|Decimal integers >= 10  |12  |twelve
+|Hexadecimal integers (_always numeric, lowercase x_) |0x123 |0X13
+|Number ranges (_always use numerals_)  |1-20 |1-twenty
+.3+|Avoid Latin abbreviations  |that is |i.e.
+|and so on |etc.
+|for example  |e.g.
+|===
+
+Characters Per Line::
+Use a soft limit of 80 characters per line. This makes it easier to see changes
+in GitHub diffs, which are about 90 characters long.
+Asciidoc End of File::
+To avoid formatting issues, end `adoc` files with two empty lines.
+Notes and Admonitions::
+Encapsulate notes, tips, and warnings in brackets. Surround the text in four equals characters, as follows:
++
+----
+[NOTE]
+====
+This is a note that you should read.
+====
+----
+
+[[documentation_guidelines_section_ids]]
+== Section IDs
+
+When creating anchors for section IDs, use the following format:
+
+`++[[anchor_name]]++`
+
+You should always use underscores (_) to delimit anchors. Do not use other characters such as dashes (-) or periods (.) to avoid issues at build time.
+
+To create anchors for reusable content, use this format:
+
+`++[id="same-as-section-heading-{context}"]++`
+
+Learn more about content reuse in the link:https://redhat-documentation.github.io/modular-docs/#reusing-modules[Modular Documentation Reference Guide].
+
+[[documentation_guidelines_xrefs]]
+== Cross References
+
+To reference a section within the same book, use `link:#`:
+
+`++link:#anchor_name[Link Text]++`
+
+[[documentation_guidelines_images]]
+== Diagrams, Screenshots, and Other Media
+
+* Images should be saved as *PNG* or *JPG*, with a width of at least *660 px*, at *110 dpi*. Try to keep file size less than *300 KB*.
+* Screenshots supplement the text, not replace it.  *Do not use images as the sole means to convey information or context*.
+* *Do not include any test or pre-release labels*.
+* *Do not include any personally identifying information*.
+* Capture just the part of the screen or window that users must focus on; *do not include window headers in the final screenshots unless completely necessary*.
+* Crop screenshots to *condense important information* and limit empty GUI space and other inconsequential parts.
+* All information in an image must be available in an alternative text format for accessibility (Section 508).
+* Save all images under `documentation/src/main/asciidoc/${your_document}/images`
+
+[[documentation_guidelines_images_include]]
+=== Including Images
+Insert images using the `image::` or `image:` directive.
+
+* Example 1: Image title in title case (which automatically appends a Figure #).
++
+----
+.Image Title
+image::icon.png[Alt text, 50, 50]
+----
+
+* Example 2: Inline image. Note, there is only one colon (:) used here.
++
+----
+This is an inline image. image:icon.png[Alt text] Cool!
+----
+
+[[documentation_guidelines_code_blocks]]
+== Code Samples
+
+Include code samples in blocks such as the following:
+
+----
+  [source,java,options="nowrap"]
+  .MyClass.java
+  ----
+  //some Java code
+  ----
+----
+
+[TIP]
+====
+Include code samples that demonstrate an idea. To share reusable blocks of code or configuration files, store them in GitHub
+as a link:https://gist.github.com/[gist] and linking to them.
+====

@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.hash.MurmurHash3;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.global.GlobalConfiguration;
@@ -30,8 +31,13 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.globalstate.GlobalStateManager;
 import org.infinispan.globalstate.ScopedPersistentState;
+import org.infinispan.jmx.annotations.DataType;
+import org.infinispan.jmx.annotations.MBean;
+import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
 import org.infinispan.persistence.manager.PreloadManager;
@@ -45,6 +51,7 @@ import org.infinispan.topology.CacheJoinInfo;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.topology.CacheTopologyHandler;
 import org.infinispan.topology.LocalTopologyManager;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -54,6 +61,8 @@ import org.infinispan.util.logging.LogFactory;
  * @author anistor@redhat.com
  * @since 5.2
  */
+@MBean(objectName = "StateTransferManager", description = "Component that handles state transfer")
+@Scope(Scopes.NAMED_CACHE)
 public class StateTransferManagerImpl implements StateTransferManager {
 
    private static final Log log = LogFactory.getLog(StateTransferManagerImpl.class);
@@ -61,21 +70,21 @@ public class StateTransferManagerImpl implements StateTransferManager {
 
    @ComponentName(KnownComponentNames.CACHE_NAME)
    @Inject protected String cacheName;
-   @Inject private StateConsumer stateConsumer;
-   @Inject private StateProvider stateProvider;
-   @Inject private PartitionHandlingManager partitionHandlingManager;
-   @Inject private DistributionManager distributionManager;
-   @Inject private CacheNotifier cacheNotifier;
-   @Inject private Configuration configuration;
-   @Inject private GlobalConfiguration globalConfiguration;
-   @Inject private RpcManager rpcManager;
-   @Inject private LocalTopologyManager localTopologyManager;
-   @Inject private KeyPartitioner keyPartitioner;
-   @Inject private GlobalStateManager globalStateManager;
+   @Inject StateConsumer stateConsumer;
+   @Inject StateProvider stateProvider;
+   @Inject PartitionHandlingManager partitionHandlingManager;
+   @Inject DistributionManager distributionManager;
+   @Inject CacheNotifier cacheNotifier;
+   @Inject Configuration configuration;
+   @Inject GlobalConfiguration globalConfiguration;
+   @Inject RpcManager rpcManager;
+   @Inject LocalTopologyManager localTopologyManager;
+   @Inject KeyPartitioner keyPartitioner;
+   @Inject GlobalStateManager globalStateManager;
    // Only join the cluster after preloading
-   @Inject private PreloadManager preloadManager;
+   @Inject PreloadManager preloadManager;
    // Make sure we can handle incoming requests before joining
-   @Inject private PerCacheInboundInvocationHandler inboundInvocationHandler;
+   @Inject PerCacheInboundInvocationHandler inboundInvocationHandler;
 
    private Optional<Integer> persistentStateChecksum;
 
@@ -97,7 +106,7 @@ public class StateTransferManagerImpl implements StateTransferManager {
       float capacityFactor = globalConfiguration.isZeroCapacityNode() ? 0.0f : configuration.clustering().hash().capacityFactor();
 
       CacheJoinInfo joinInfo = new CacheJoinInfo(pickConsistentHashFactory(globalConfiguration, configuration),
-            configuration.clustering().hash().hash(),
+            MurmurHash3.getInstance(),
             configuration.clustering().hash().numSegments(),
             configuration.clustering().hash().numOwners(),
             configuration.clustering().stateTransfer().timeout(),
@@ -195,7 +204,8 @@ public class StateTransferManagerImpl implements StateTransferManager {
       int newRebalanceId = newCacheTopology.getRebalanceId();
       CacheTopology.Phase phase = newCacheTopology.getPhase();
 
-      cacheNotifier.notifyTopologyChanged(oldCacheTopology, newCacheTopology, newTopologyId, true);
+      // TODO: these should be non blocking at some point
+      CompletionStages.join(cacheNotifier.notifyTopologyChanged(oldCacheTopology, newCacheTopology, newTopologyId, true));
 
       CompletableFuture<Void> consumerFuture = stateConsumer.onTopologyUpdate(newCacheTopology, isRebalance);
       CompletableFuture<Void> providerFuture = stateProvider.onTopologyUpdate(newCacheTopology, isRebalance);
@@ -209,7 +219,8 @@ public class StateTransferManagerImpl implements StateTransferManager {
          }
       });
 
-      cacheNotifier.notifyTopologyChanged(oldCacheTopology, newCacheTopology, newTopologyId, false);
+      // TODO: these should be non blocking at some point
+      CompletionStages.join(cacheNotifier.notifyTopologyChanged(oldCacheTopology, newCacheTopology, newTopologyId, false));
 
       if (initialStateTransferComplete.getCount() > 0) {
          assert distributionManager.getCacheTopology().getTopologyId() == newCacheTopology.getTopologyId();
@@ -256,29 +267,22 @@ public class StateTransferManagerImpl implements StateTransferManager {
       localTopologyManager.leave(cacheName, configuration.clustering().remoteTimeout());
    }
 
+   @ManagedAttribute(description = "If true, the node has successfully joined the grid and is considered to hold state.  If false, the join process is still in progress.", displayName = "Is join completed?", dataType = DataType.TRAIT)
    @Override
    public boolean isJoinComplete() {
       return distributionManager.getCacheTopology() != null; // TODO [anistor] this does not mean we have received a topology update or a rebalance yet
    }
 
+   @ManagedAttribute(description = "Retrieves the rebalancing status for this cache. Possible values are PENDING, SUSPENDED, IN_PROGRESS, BALANCED", displayName = "Rebalancing progress", dataType = DataType.TRAIT)
    @Override
    public String getRebalancingStatus() throws Exception {
       return localTopologyManager.getRebalancingStatus(cacheName).toString();
    }
 
+   @ManagedAttribute(description = "Checks whether there is a pending inbound state transfer on this cluster member.", displayName = "Is state transfer in progress?", dataType = DataType.TRAIT)
    @Override
    public boolean isStateTransferInProgress() {
       return stateConsumer.isStateTransferInProgress();
-   }
-
-   @Override
-   public boolean isStateTransferInProgressForKey(Object key) {
-      return stateConsumer.isStateTransferInProgressForKey(key);
-   }
-
-   @Override
-   public CacheTopology getCacheTopology() {
-      return distributionManager.getCacheTopology();
    }
 
    @Override
@@ -324,19 +328,17 @@ public class StateTransferManagerImpl implements StateTransferManager {
       return Collections.emptyMap();
    }
 
-   // TODO Investigate merging ownsData() and getFirstTopologyAsMember(), as they serve a similar purpose
    @Override
-   public boolean ownsData() {
-      return stateConsumer.ownsData();
+   public StateConsumer getStateConsumer() {
+      return stateConsumer;
    }
 
    @Override
-   public int getFirstTopologyAsMember() {
-      return inboundInvocationHandler.getFirstTopologyAsMember();
+   public StateProvider getStateProvider() {
+      return stateProvider;
    }
 
    @Override
-
    public String toString() {
       return "StateTransferManagerImpl [" + cacheName + "@" + rpcManager.getAddress() + "]";
    }

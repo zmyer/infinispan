@@ -2,6 +2,7 @@ package org.infinispan.transaction.impl;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -13,9 +14,7 @@ import javax.transaction.Transaction;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.container.entries.RepeatableReadEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.remoting.transport.Address;
@@ -102,7 +101,7 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
          throw new CacheException("This transaction is marked for rollback and cannot acquire locks!");
       }
       if (lookedUpEntries == null)
-         lookedUpEntries = CollectionFactory.makeMap(4);
+         lookedUpEntries = new HashMap<>(4);
 
       lookedUpEntries.put(key, e);
    }
@@ -113,7 +112,7 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
          throw new CacheException("This transaction is marked for rollback and cannot acquire locks!");
       }
       if (lookedUpEntries == null) {
-         lookedUpEntries = CollectionFactory.makeMap(entries);
+         lookedUpEntries = new HashMap<>(entries);
       } else {
          lookedUpEntries.putAll(entries);
       }
@@ -151,24 +150,6 @@ public abstract class LocalTransaction extends AbstractCacheTransaction {
             ", topologyId=" + topologyId +
             ", stateTransferFlag=" + getStateTransferFlag() +
             "} " + super.toString();
-   }
-
-   @Override
-   public void addReadKey(Object key) {
-      CacheEntry entry = lookupEntry(key);
-      if (entry instanceof RepeatableReadEntry) {
-         ((RepeatableReadEntry) entry).setRead();
-      }
-   }
-
-   @Override
-   public boolean keyRead(Object key) {
-      CacheEntry entry = lookupEntry(key);
-      if (entry instanceof RepeatableReadEntry) {
-         return ((RepeatableReadEntry) entry).isRead();
-      } else {
-         return false;
-      }
    }
 
    public void setStateTransferFlag(Flag stateTransferFlag) {

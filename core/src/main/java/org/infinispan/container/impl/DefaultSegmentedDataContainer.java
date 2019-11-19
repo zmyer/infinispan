@@ -14,7 +14,6 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
-import java.util.function.ObjIntConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -25,7 +24,6 @@ import org.infinispan.commons.util.ConcatIterator;
 import org.infinispan.commons.util.FlattenSpliterator;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.reactivestreams.Publisher;
 
@@ -57,8 +55,8 @@ public class DefaultSegmentedDataContainer<K, V> extends AbstractInternalDataCon
       this.mapSupplier = Objects.requireNonNull(mapSupplier);
    }
 
-   @Start
    public void start() {
+      super.start();
       // Local (invalidation), replicated and scattered cache we just instantiate all the maps immediately
       // Scattered needs this for backups as they can be for any segment
       // Distributed needs them all only at beginning for preload of data - rehash event will remove others
@@ -69,14 +67,19 @@ public class DefaultSegmentedDataContainer<K, V> extends AbstractInternalDataCon
       // in some fashion
       shouldStopSegments = configuration.clustering().cacheMode().isDistributed();
 
-      notExpiredPredicate = ice ->
-            // TODO: should we optimize wallClockTime per entry invocation?
-            !ice.canExpire() || !ice.isExpired(timeService.wallClockTime());
+      notExpiredPredicate = ice -> {
+         if (!ice.canExpire()) {
+            return true;
+         }
+         // TODO: should we optimize wallClockTime per entry invocation?
+         long currentTime = timeService.wallClockTime();
+         return !(ice.isExpired(currentTime) && expirationManager.entryExpiredInMemoryFromIteration(ice, currentTime));
+      };
    }
 
-   // Priority has to be higher than the clear priority - which is currently 999
-   @Stop(priority = 9999)
+   @Stop
    public void stop() {
+      clear();
       for (int i = 0; i < maps.length(); ++i) {
          stopMap(i, false);
       }
@@ -225,17 +228,6 @@ public class DefaultSegmentedDataContainer<K, V> extends AbstractInternalDataCon
             map.forEach(biConsumer);
          }
       });
-   }
-
-   @Override
-   public void forEachIncludingExpired(ObjIntConsumer<? super InternalCacheEntry<K, V>> action) {
-      for (int i = 0; i < maps.length(); ++i) {
-         ConcurrentMap<K, InternalCacheEntry<K, V>> map = maps.get(i);
-         if (map != null) {
-            int segment = i;
-            map.forEach((k, ice) -> action.accept(ice, segment));
-         }
-      }
    }
 
    @Override

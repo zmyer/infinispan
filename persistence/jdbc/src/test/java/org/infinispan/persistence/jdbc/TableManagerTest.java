@@ -1,6 +1,5 @@
 package org.infinispan.persistence.jdbc;
 
-import java.io.ByteArrayInputStream;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -13,14 +12,14 @@ import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfigu
 import org.infinispan.persistence.jdbc.configuration.PooledConnectionFactoryConfiguration;
 import org.infinispan.persistence.jdbc.configuration.SimpleConnectionFactoryConfiguration;
 import org.infinispan.persistence.jdbc.connectionfactory.ConnectionFactory;
-import org.infinispan.persistence.jdbc.connectionfactory.PooledConnectionFactory;
-import org.infinispan.persistence.jdbc.connectionfactory.SimpleConnectionFactory;
-import org.infinispan.persistence.jdbc.table.management.TableManager;
-import org.infinispan.persistence.jdbc.table.management.TableManagerFactory;
-import org.infinispan.persistence.jdbc.table.management.TableName;
+import org.infinispan.persistence.jdbc.impl.connectionfactory.PooledConnectionFactory;
+import org.infinispan.persistence.jdbc.impl.connectionfactory.SimpleConnectionFactory;
+import org.infinispan.persistence.jdbc.impl.table.TableManager;
+import org.infinispan.persistence.jdbc.impl.table.TableManagerFactory;
+import org.infinispan.persistence.jdbc.impl.table.TableName;
 import org.infinispan.persistence.spi.PersistenceException;
+import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
-import org.infinispan.test.fwk.UnitTestDatabaseManager;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
@@ -32,10 +31,10 @@ import org.testng.annotations.Test;
  * @author Ryan Emerson
  */
 @Test(groups = "functional", testName = "persistence.jdbc.TableManagerTest")
-public class TableManagerTest {
-   ConnectionFactory connectionFactory;
-   Connection connection;
-   TableManager tableManager;
+public class TableManagerTest extends AbstractInfinispanTest {
+   protected ConnectionFactory connectionFactory;
+   protected Connection connection;
+   protected TableManager tableManager;
 
    @BeforeClass
    public void createConnection() throws Exception {
@@ -62,13 +61,13 @@ public class TableManagerTest {
          connectionFactory.start(pooledConfiguration, connectionFactory.getClass().getClassLoader());
          connection = connectionFactory.getConnection();
       }
-      tableManager = TableManagerFactory.getManager(connectionFactory, storeBuilder.create());
-      tableManager.setCacheName("aName");
+      tableManager = TableManagerFactory.getManager(connectionFactory, storeBuilder.create(), "aName");
    }
 
-   @AfterClass
+   @AfterClass(alwaysRun = true)
    public void closeConnection() throws SQLException {
       connection.close();
+      connectionFactory.stop();
    }
 
    public void testConnectionLeakGuessDialect() throws Exception {
@@ -84,8 +83,7 @@ public class TableManagerTest {
       connectionFactory.start(config, Thread.currentThread().getContextClassLoader());
 
       // JdbcStringBasedStoreConfiguration defaults to null dialect, so dialect and versions must be guessed
-      TableManager tableManager = TableManagerFactory.getManager(connectionFactory, storeBuilder.create());
-      tableManager.setCacheName("GuessDialect");
+      TableManager tableManager = TableManagerFactory.getManager(connectionFactory, storeBuilder.create(), "GuessDialect");
       tableManager.start();
       UnitTestDatabaseManager.verifyConnectionLeaks(connectionFactory);
       tableManager.stop();
@@ -115,10 +113,11 @@ public class TableManagerTest {
       new Random().nextBytes(data);
       PreparedStatement ps = null;
       try {
-         ps = connection.prepareStatement("INSERT INTO " + tableManager.getTableName() + "(ID_COLUMN, DATA_COLUMN, TIMESTAMP_COLUMN) values(?, ?, ?)");
+         ps = connection.prepareStatement("INSERT INTO " + tableManager.getTableName() + "(ID_COLUMN, DATA_COLUMN, TIMESTAMP_COLUMN, SEGMENT_COLUMN) values(?, ?, ?, ?)");
          ps.setString(1, System.currentTimeMillis() + "");
-         ps.setBlob(2, new ByteArrayInputStream(data));
+         ps.setBytes(2, data);
          ps.setLong(3, System.currentTimeMillis());
+         ps.setLong(4, 1);
          assert 1 == ps.executeUpdate();
       } finally {
          JdbcUtil.safeClose(ps);
@@ -128,7 +127,7 @@ public class TableManagerTest {
    }
 
    public void testTableQuoting() throws Exception {
-      tableManager.setCacheName("my.cache");
+      tableManager.dropTable(connection);
       assert !existsTable(connection, tableManager.getTableName());
       tableManager.createTable(connection);
       assert existsTable(connection, tableManager.getTableName());

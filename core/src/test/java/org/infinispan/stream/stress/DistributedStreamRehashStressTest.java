@@ -68,8 +68,7 @@ public class DistributedStreamRehashStressTest extends StressTest {
 
       gcb.transport().remoteCommandThreadPool().threadPoolFactory(executorFactory);
 
-      EmbeddedCacheManager cm = TestCacheManagerFactory.newDefaultCacheManager(true, gcb, new ConfigurationBuilder(),
-              false);
+      EmbeddedCacheManager cm = TestCacheManagerFactory.newDefaultCacheManager(true, gcb, new ConfigurationBuilder());
       cacheManagers.add(cm);
       return cm;
    }
@@ -99,6 +98,7 @@ public class DistributedStreamRehashStressTest extends StressTest {
       }));
    }
 
+   // TODO: this fails still for some reason - NEED to find out why!
    public void testStressNodesLeavingWhileMultipleIterators() throws Throwable {
       testStressNodesLeavingWhilePerformingCallable((cache, masterValues, iteration) -> {
          Map<Integer, Integer> seenValues = new HashMap<>();

@@ -1,8 +1,8 @@
 package org.infinispan.factories;
 
 import static org.infinispan.factories.KnownComponentNames.MODULE_COMMAND_INITIALIZERS;
+import static org.infinispan.util.logging.Log.CONTAINER;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
@@ -11,22 +11,21 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
-import javax.management.MBeanServer;
+
 import javax.management.MBeanServerFactory;
 
-import net.jcip.annotations.ThreadSafe;
-import org.infinispan.Version;
+import org.infinispan.commons.util.Version;
 import org.infinispan.commands.module.ModuleCommandFactory;
 import org.infinispan.commands.module.ModuleCommandInitializer;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.time.TimeService;
-import org.infinispan.commons.util.uberjar.ManifestUberJarDuplicatedJarsWarner;
-import org.infinispan.commons.util.uberjar.UberJarDuplicatedJarsWarner;
+import org.infinispan.configuration.ConfigurationManager;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.ShutdownHookBehavior;
 import org.infinispan.conflict.EntryMergePolicyFactoryRegistry;
+import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.annotations.SurvivesRestarts;
-import org.infinispan.factories.components.ComponentMetadataRepo;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.globalstate.GlobalConfigurationManager;
@@ -34,6 +33,7 @@ import org.infinispan.jmx.CacheManagerJmxRegistration;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.manager.ModuleRepository;
 import org.infinispan.marshall.core.EncoderRegistry;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifierImpl;
@@ -51,6 +51,8 @@ import org.infinispan.util.logging.LogFactory;
 import org.infinispan.util.logging.events.EventLogManager;
 import org.infinispan.xsite.GlobalXSiteAdminOperations;
 
+import net.jcip.annotations.ThreadSafe;
+
 /**
  * A global component registry where shared components are stored.
  *
@@ -63,7 +65,9 @@ import org.infinispan.xsite.GlobalXSiteAdminOperations;
 public class GlobalComponentRegistry extends AbstractComponentRegistry {
 
    private static final Log log = LogFactory.getLog(GlobalComponentRegistry.class);
+
    private static final AtomicBoolean versionLogged = new AtomicBoolean(false);
+
    /**
     * Hook to shut down the cache when the JVM exits.
     */
@@ -76,6 +80,7 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
 
    private final GlobalConfiguration globalConfiguration;
 
+   private final EmbeddedCacheManager cacheManager;
    /**
     * Tracking set of created caches in order to make it easy to remove a cache on remote nodes.
     */
@@ -84,9 +89,8 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
    private final ModuleProperties moduleProperties = new ModuleProperties();
 
    final Collection<ModuleLifecycle> moduleLifecycles;
-   boolean modulesStarted;
 
-   final ConcurrentMap<ByteString, ComponentRegistry> namedComponents = new ConcurrentHashMap<>(4);
+   private final ConcurrentMap<ByteString, ComponentRegistry> namedComponents = new ConcurrentHashMap<>(4);
 
    protected final ClassLoader classLoader;
 
@@ -94,17 +98,16 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
     * Creates an instance of the component registry.  The configuration passed in is automatically registered.
     *
     * @param configuration configuration with which this is created
+    * @param configurationManager
     */
    public GlobalComponentRegistry(GlobalConfiguration configuration,
                                   EmbeddedCacheManager cacheManager,
-                                  Set<String> createdCaches) {
-      super(new ComponentMetadataRepo(), configuration.classLoader(), Scopes.GLOBAL, null);
+                                  Set<String> createdCaches, ModuleRepository moduleRepository,
+                                  ConfigurationManager configurationManager) {
+      super(moduleRepository, true, null);
 
       ClassLoader configuredClassLoader = configuration.classLoader();
-      moduleLifecycles = ModuleProperties.resolveModuleLifecycles(configuredClassLoader);
-
-      // Load up the component metadata
-      componentMetadataRepo.initialize(ModuleProperties.getModuleMetadataFiles(configuredClassLoader), configuredClassLoader);
+      moduleLifecycles = moduleRepository.getModuleLifecycles();
 
       classLoader = configuredClassLoader;
 
@@ -112,10 +115,10 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
          // this order is important ...
          globalConfiguration = configuration;
 
-         registerComponent(componentMetadataRepo, ComponentMetadataRepo.class);
          registerComponent(this, GlobalComponentRegistry.class);
          registerComponent(configuration, GlobalConfiguration.class);
          registerComponent(cacheManager, EmbeddedCacheManager.class);
+         basicComponentRegistry.registerComponent(ConfigurationManager.class.getName(), configurationManager, true);
          basicComponentRegistry.registerComponent(CacheManagerJmxRegistration.class.getName(), new CacheManagerJmxRegistration(), true);
          basicComponentRegistry.registerComponent(CacheManagerNotifier.class.getName(), new CacheManagerNotifierImpl(), true);
          basicComponentRegistry.registerComponent(InternalCacheRegistry.class.getName(), new InternalCacheRegistryImpl(), true);
@@ -146,8 +149,11 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
                Collections.emptyMap(), MODULE_COMMAND_INITIALIZERS);
          }
 
+         // Allow caches to depend only on module initialization instead of the entire GCR
+         basicComponentRegistry.registerComponent(ModuleInitializer.class, new ModuleInitializer(), true);
 
          this.createdCaches = createdCaches;
+         this.cacheManager = cacheManager;
 
          // Initialize components that do not have strong references from the cache manager
          basicComponentRegistry.getComponent(EventLogManager.class);
@@ -176,11 +182,6 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
    }
 
    @Override
-   public ComponentMetadataRepo getComponentMetadataRepo() {
-      return componentMetadataRepo;
-   }
-
-   @Override
    protected synchronized void removeShutdownHook() {
       // if this is called from a source other than the shutdown hook, de-register the shutdown hook.
       if (!invokedFromShutdownHook && shutdownHook != null) Runtime.getRuntime().removeShutdownHook(shutdownHook);
@@ -191,11 +192,20 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
       return getOrCreateComponent(TimeService.class);
    }
 
+   /**
+    * This method returns true if there is an mbean server running
+    * <p>
+    * NOTE: This method is here for Quarkus (due to mbean usage) - so do not remove without modifying Quarkus as well
+    * @return true if any mbean server is running
+    */
+   private boolean isMBeanServerRunning() {
+      return !MBeanServerFactory.findMBeanServer(null).isEmpty();
+   }
+
    @Override
    protected synchronized void addShutdownHook() {
-      ArrayList<MBeanServer> al = MBeanServerFactory.findMBeanServer(null);
       ShutdownHookBehavior shutdownHookBehavior = globalConfiguration.shutdown().hookBehavior();
-      boolean registerShutdownHook = (shutdownHookBehavior == ShutdownHookBehavior.DEFAULT && al.isEmpty())
+      boolean registerShutdownHook = (shutdownHookBehavior == ShutdownHookBehavior.DEFAULT && !isMBeanServerRunning())
             || shutdownHookBehavior == ShutdownHookBehavior.REGISTER;
 
       if (registerShutdownHook) {
@@ -239,48 +249,49 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
          cr.rewire();
    }
 
-   public Map<Byte,ModuleCommandInitializer> getModuleCommandInitializers() {
-      //moduleProperties is final so we don't need to synchronize this method for safe-publishing
-      return Collections.unmodifiableMap(moduleProperties.moduleCommandInitializers());
+   @Override
+   protected void preStart() {
+      basicComponentRegistry.getComponent(ModuleInitializer.class).running();
+
+      if (versionLogged.compareAndSet(false, true)) {
+         CONTAINER.version(Version.printVersion());
+      }
    }
 
    @Override
-   protected void preStart() {
+   protected void postStart() {
+      modulesManagerStarted();
+   }
+
+   private void modulesManagerStarting() {
       for (ModuleLifecycle l : moduleLifecycles) {
          if (log.isTraceEnabled()) {
             log.tracef("Invoking %s.cacheManagerStarting()", l);
          }
          l.cacheManagerStarting(this, globalConfiguration);
       }
-
-      if (versionLogged.compareAndSet(false, true)) {
-         log.version(Version.printVersion());
-      }
    }
 
-   @Override
-   protected void postStart() {
+   private void modulesManagerStarted() {
       for (ModuleLifecycle l : moduleLifecycles) {
          if (log.isTraceEnabled()) {
             log.tracef("Invoking %s.cacheManagerStarted()", l);
          }
          l.cacheManagerStarted(this);
       }
-
-      warnAboutUberJarDuplicates();
-   }
-
-   private void warnAboutUberJarDuplicates() {
-      UberJarDuplicatedJarsWarner scanner = new ManifestUberJarDuplicatedJarsWarner();
-      scanner.isClasspathCorrectAsync()
-            .thenAcceptAsync(isClasspathCorrect -> {
-               if(!isClasspathCorrect)
-                  log.warnAboutUberJarDuplicates();
-            });
    }
 
    @Override
    protected void preStop() {
+      modulesManagerStopping();
+   }
+
+   @Override
+   protected void postStop() {
+      // Do nothing, ModulesOuterLifecycle invokes modulesManagerStopped automatically
+   }
+
+   private void modulesManagerStopping() {
       for (ModuleLifecycle l : moduleLifecycles) {
          if (log.isTraceEnabled()) {
             log.tracef("Invoking %s.cacheManagerStopping()", l);
@@ -288,13 +299,12 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
          try {
             l.cacheManagerStopping(this);
          } catch (Throwable t) {
-            log.moduleStopError(l.getClass().getName(), t);
+            CONTAINER.moduleStopError(l.getClass().getName(), t);
          }
       }
    }
 
-   @Override
-   protected void postStop() {
+   private void modulesManagerStopped() {
       if (state == ComponentStatus.TERMINATED) {
          for (ModuleLifecycle l : moduleLifecycles) {
             if (log.isTraceEnabled()) {
@@ -303,7 +313,7 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
             try {
                l.cacheManagerStopped(this);
             } catch (Throwable t) {
-               log.moduleStopError(l.getClass().getName(), t);
+               CONTAINER.moduleStopError(l.getClass().getName(), t);
             }
          }
       }
@@ -331,7 +341,29 @@ public class GlobalComponentRegistry extends AbstractComponentRegistry {
       return createdCaches.remove(cacheName);
    }
 
+   @Deprecated
    public ModuleProperties getModuleProperties() {
       return moduleProperties;
+   }
+
+   public EmbeddedCacheManager getCacheManager() {
+      return cacheManager;
+   }
+
+   /**
+    * Module initialization happens in {@link ModuleLifecycle#cacheManagerStarting(GlobalComponentRegistry, GlobalConfiguration)}.
+    * This component helps guarantee that all modules are initialized before the first cache starts.
+    */
+   @Scope(Scopes.GLOBAL)
+   public class ModuleInitializer {
+      @Start
+      void start() {
+         modulesManagerStarting();
+      }
+
+      @Stop
+      void stop() {
+         modulesManagerStopped();
+      }
    }
 }

@@ -15,12 +15,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import org.infinispan.commands.ReplicableCommand;
-import org.infinispan.util.logging.TraceException;
 import org.infinispan.commons.api.Lifecycle;
 import org.infinispan.commons.util.Experimental;
 import org.infinispan.commons.util.Util;
-import org.infinispan.factories.annotations.Start;
-import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
@@ -29,6 +26,7 @@ import org.infinispan.remoting.rpc.ResponseFilter;
 import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.TraceException;
 import org.infinispan.xsite.XSiteBackup;
 import org.infinispan.xsite.XSiteReplicateCommand;
 
@@ -177,7 +175,26 @@ public interface Transport extends Lifecycle {
    }
 
 
+   /**
+    * @deprecated since 10.0. Use {@link #backupRemotely(XSiteBackup, XSiteReplicateCommand)} instead.
+    */
+   @Deprecated
    BackupResponse backupRemotely(Collection<XSiteBackup> backups, XSiteReplicateCommand rpcCommand) throws Exception;
+
+   /**
+    * Sends a cross-site request to a remote site.
+    * <p>
+    * Currently, no reply values are supported. Or the request completes successfully or it throws an {@link
+    * Exception}.
+    * <p>
+    * If {@link XSiteBackup#isSync()} returns {@code false}, the {@link XSiteResponse} is only completed when the an
+    * ACK from the remote site is received. The invoker needs to make sure not to wait for the {@link XSiteResponse}.
+    *
+    * @param backup     The remote site.
+    * @param rpcCommand The command to send.
+    * @return A {@link XSiteResponse} that is completed when the request is completed.
+    */
+   XSiteResponse backupRemotely(XSiteBackup backup, XSiteReplicateCommand rpcCommand);
 
    /**
     * @return true if the current Channel is the coordinator of the cluster.
@@ -213,6 +230,14 @@ public interface Transport extends Lifecycle {
     */
    List<Address> getMembers();
 
+
+   /**
+    * Returns physical addresses of members in the current cluster view.
+    *
+    * @return a list of physical addresses
+    */
+   List<Address> getMembersPhysicalAddresses();
+
    /**
     * Tests whether the transport supports true multicast
     *
@@ -221,11 +246,9 @@ public interface Transport extends Lifecycle {
    boolean isMulticastCapable();
 
    @Override
-   @Start(priority = 10)
    void start();
 
    @Override
-   @Stop
    void stop();
 
    /**

@@ -20,6 +20,8 @@ import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.ch.impl.ReplicatedConsistentHash;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.Parameter;
@@ -42,13 +44,14 @@ import org.infinispan.util.logging.LogFactory;
  * @since 4.0
  */
 @MBean(objectName = "DistributionManager", description = "Component that handles distribution of content across a cluster")
+@Scope(Scopes.NAMED_CACHE)
 public class DistributionManagerImpl implements DistributionManager {
    private static final Log log = LogFactory.getLog(DistributionManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private Transport transport;
-   @Inject private KeyPartitioner keyPartitioner;
-   @Inject private Configuration configuration;
+   @Inject Transport transport;
+   @Inject KeyPartitioner keyPartitioner;
+   @Inject Configuration configuration;
 
    private CacheMode cacheMode;
 
@@ -57,7 +60,7 @@ public class DistributionManagerImpl implements DistributionManager {
    // Start before RpcManagerImpl
    @Start(priority = 8)
    @SuppressWarnings("unused")
-   private void start() throws Exception {
+   void start() throws Exception {
       if (trace) log.tracef("starting distribution manager on %s", getAddress());
 
       cacheMode = configuration.clustering().cacheMode();

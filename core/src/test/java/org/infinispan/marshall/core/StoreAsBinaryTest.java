@@ -6,12 +6,6 @@ import static org.infinispan.test.TestingUtil.extractGlobalMarshaller;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertTrue;
 
-import java.io.Externalizable;
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutput;
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -19,10 +13,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
 import org.infinispan.cache.impl.EncoderCache;
-import org.infinispan.commons.marshall.NotSerializableException;
+import org.infinispan.commons.marshall.MarshallingException;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.marshall.WrappedBytes;
@@ -42,7 +37,9 @@ import org.infinispan.notifications.cachelistener.event.CacheEntryModifiedEvent;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.test.Exceptions;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.data.CountMarshallingPojo;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.AfterClass;
@@ -63,9 +60,8 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
    @Override
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder replSync = getDefaultClusteredCacheConfig(CacheMode.REPL_SYNC, false);
-      replSync.dataContainer().memory().storageType(StorageType.BINARY);
-
-      createClusteredCaches(2, "replSync", replSync);
+      replSync.memory().storageType(StorageType.BINARY);
+      createClusteredCaches(2, "replSync", TestDataSCI.INSTANCE, replSync);
    }
 
    @Override
@@ -76,17 +72,16 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
 
    @BeforeMethod
    public void resetSerializationCounts() {
-      Pojo.serializationCount = 0;
-      Pojo.deserializationCount = 0;
+      CountMarshallingPojo.reset();
    }
 
-   public void testNonSerializable() {
+   public void testNonMarshallable() {
       Cache<Object, Object> cache1 = cache(0, "replSync");
       cache(1, "replSync");
 
-      Exceptions.expectException(NotSerializableException.class, () -> cache1.put("Hello", new Object()));
+      Exceptions.expectException(MarshallingException.class, () -> cache1.put("Hello", new Object()));
 
-      Exceptions.expectException(NotSerializableException.class, () -> cache1.put(new Object(), "Hello"));
+      Exceptions.expectException(MarshallingException.class, () -> cache1.put(new Object(), "Hello"));
    }
 
    public void testReleaseObjectValueReferences() {
@@ -94,7 +89,7 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       Cache<String, Object> cache2 = cache(1, "replSync");
 
       assertTrue(cache1.isEmpty());
-      Pojo value = new Pojo();
+      CountMarshallingPojo value = new CountMarshallingPojo();
       cache1.put("key", value);
       assertTrue(cache1.containsKey("key"));
 
@@ -134,19 +129,19 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
    public void testReleaseObjectKeyReferences() {
       Cache<Object, String> cache1 = cache(0, "replSync");
       Cache<Object, String> cache2 = cache(1, "replSync");
-      Pojo key = new Pojo();
+      CountMarshallingPojo key = new CountMarshallingPojo();
       cache1.put(key, "value");
 
-      DataContainer dc1 = extractComponent(cache1, InternalDataContainer.class);
+      DataContainer<Object, String> dc1 = extractComponent(cache1, InternalDataContainer.class);
 
-      Object o = dc1.keySet().iterator().next();
+      Object o = dc1.iterator().next().getKey();
 
       assertEquals("value", cache1.get(key));
 
 
       // now on cache 2
-      DataContainer dc2 = extractComponent(cache2, InternalDataContainer.class);
-      o = dc2.keySet().iterator().next();
+      DataContainer<Object, String> dc2 = extractComponent(cache2, InternalDataContainer.class);
+      o = dc2.iterator().next().getKey();
       assertEquals("value", cache2.get(key));
    }
 
@@ -154,7 +149,7 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       Cache<Object, Object> cache1 = cache(0, "replSync");
       Cache<Object, Object> cache2 = cache(1, "replSync");
 
-      Pojo key1 = new Pojo(1), value1 = new Pojo(11), key2 = new Pojo(2), value2 = new Pojo(22);
+      CountMarshallingPojo key1 = new CountMarshallingPojo(1), value1 = new CountMarshallingPojo(11), key2 = new CountMarshallingPojo(2), value2 = new CountMarshallingPojo(22);
       String key3 = "3", value3 = "three";
       cache1.put(key1, value1);
       cache1.put(key2, value2);
@@ -476,27 +471,20 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
 
    public void testEqualsAndHashCode() throws Exception {
       StreamingMarshaller marshaller = extractGlobalMarshaller(cache(0).getCacheManager());
-      Pojo pojo = new Pojo();
-
+      CountMarshallingPojo pojo = new CountMarshallingPojo();
       WrappedBytes wb = new WrappedByteArray(marshaller.objectToByteBuffer(pojo));
-
       WrappedBytes wb2 = new WrappedByteArray(marshaller.objectToByteBuffer(pojo));
-
-      assertTrue(wb2.hashCode() == wb.hashCode());
+      assertEquals(wb2.hashCode(), wb.hashCode());
       assertEquals(wb, wb2);
    }
 
-   public void testMarshallValueWithCustomReadObjectMethod() {
-      Cache<Object, Object> cache1 = cache(0, "replSync");
-      Cache<Object, Object> cache2 = cache(1, "replSync");
-      CustomReadObjectMethod obj = new CustomReadObjectMethod();
-      cache1.put("ab-key", obj);
-      assertEquals(obj, cache2.get("ab-key"));
+   public void testComputeIfAbsentMethods() {
+      Cache<Object, Object> cache = cache(0, "replSync");
+      cache.computeIfAbsent("1", k -> k + "1", -1, TimeUnit.NANOSECONDS);
+      assertEquals(1, cache.size());
 
-      ObjectThatContainsACustomReadObjectMethod anotherObj = new ObjectThatContainsACustomReadObjectMethod();
-      anotherObj.anObjectWithCustomReadObjectMethod = obj;
-      cache1.put("cd-key", anotherObj);
-      assertEquals(anotherObj, cache2.get("cd-key"));
+      cache.computeIfAbsent("2", k -> k + "2", -1, TimeUnit.NANOSECONDS, -1, TimeUnit.NANOSECONDS);
+      assertEquals(2, cache.size());
    }
 
    /**
@@ -504,7 +492,7 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
     */
    public void testStores() {
       ConfigurationBuilder cacheCofig = getDefaultClusteredCacheConfig(CacheMode.REPL_SYNC, false);
-      cacheCofig.dataContainer().memory().storageType(StorageType.BINARY);
+      cacheCofig.memory().storageType(StorageType.BINARY);
       DummyInMemoryStoreConfigurationBuilder dimcs = new DummyInMemoryStoreConfigurationBuilder(cacheCofig.persistence());
       dimcs.storeName(getClass().getSimpleName());
       cacheCofig.persistence().addStore(dimcs);
@@ -514,7 +502,7 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       Cache<Object, Object> cache1 = cache(0, "replSync2");
       Cache<Object, Object> cache2 = cache(1, "replSync2");
 
-      Pojo pojo = new Pojo();
+      CountMarshallingPojo pojo = new CountMarshallingPojo();
       cache1.put("key", pojo);
 
       assertEquals(pojo, cache2.get("key"));
@@ -526,9 +514,9 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       MockListener l = new MockListener();
       cache1.addListener(l);
       try {
-         Pojo pojo = new Pojo();
+         CountMarshallingPojo pojo = new CountMarshallingPojo();
          cache1.put("key", pojo);
-         assertTrue("received " + l.newValue.getClass().getName(), l.newValue instanceof Pojo);
+         assertTrue("received " + l.newValue.getClass().getName(), l.newValue instanceof CountMarshallingPojo);
       } finally {
          cache1.removeListener(l);
       }
@@ -540,9 +528,9 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       MockListener l = new MockListener();
       cache2.addListener(l);
       try {
-         Pojo pojo = new Pojo();
+         CountMarshallingPojo pojo = new CountMarshallingPojo();
          cache1.put("key", pojo);
-         assertTrue(l.newValue instanceof Pojo);
+         assertTrue(l.newValue instanceof CountMarshallingPojo);
       } finally {
          cache2.removeListener(l);
       }
@@ -551,7 +539,7 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
    public void testEvictWithMarshalledValueKey() {
       Cache<Object, Object> cache1 = cache(0, "replSync");
       cache(1, "replSync");
-      Pojo pojo = new Pojo();
+      CountMarshallingPojo pojo = new CountMarshallingPojo();
       cache1.put(pojo, pojo);
       cache1.evict(pojo);
       assertTrue(!cache1.containsKey(pojo));
@@ -561,12 +549,12 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       Cache<Object, Object> cache1 = cache(0, "replSync");
       Cache<Object, Object> cache2 = cache(1, "replSync");
 
-      Pojo key1 = new Pojo();
+      CountMarshallingPojo key1 = new CountMarshallingPojo();
       log.trace("First put");
       cache1.put(key1, "1");
 
       log.trace("Second put");
-      Pojo key2 = new Pojo();
+      CountMarshallingPojo key2 = new CountMarshallingPojo();
       assertEquals("1", cache2.put(key2, "2"));
    }
 
@@ -574,9 +562,9 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       Cache<Object, Object> cache1 = cache(0, "replSync");
       cache(1, "replSync");
 
-      Pojo v1 = new Pojo(1);
+      CountMarshallingPojo v1 = new CountMarshallingPojo(1);
       cache1.put("1", v1);
-      Pojo previous = (Pojo) cache1.put("1", new Pojo(2));
+      CountMarshallingPojo previous = (CountMarshallingPojo) cache1.put("1", new CountMarshallingPojo(2));
       assertEquals(v1, previous);
    }
 
@@ -584,7 +572,7 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       Cache<Object, Object> cache1 = cache(0, "replSync");
       cache(1, "replSync");
 
-      Pojo key1 = new Pojo();
+      CountMarshallingPojo key1 = new CountMarshallingPojo();
       cache1.put(key1, "1");
 
       assertEquals("1", cache1.getAdvancedCache().withFlags(Flag.CACHE_MODE_LOCAL).getCacheEntry(key1).getValue());
@@ -602,141 +590,6 @@ public class StoreAsBinaryTest extends MultipleCacheManagersTest {
       @CacheEntryCreated
       public void created(CacheEntryCreatedEvent e) {
          if (!e.isPre()) newValue = e.getValue();
-      }
-   }
-
-   public static class Pojo implements Externalizable, ExternalPojo {
-      public int i;
-      static int serializationCount, deserializationCount;
-      final Log log = LogFactory.getLog(Pojo.class);
-      private static final long serialVersionUID = -2888014339659501395L;
-
-      Pojo(int i) {
-         this.i = i;
-      }
-
-      public Pojo() {
-      }
-
-      @Override
-      public boolean equals(Object o) {
-         if (this == o) return true;
-         if (o == null || getClass() != o.getClass()) return false;
-
-         Pojo pojo = (Pojo) o;
-
-         return i == pojo.i;
-      }
-
-      @Override
-      public int hashCode() {
-         return i;
-      }
-
-      @Override
-      public void writeExternal(ObjectOutput out) throws IOException {
-         out.writeInt(i);
-         int serCount = updateSerializationCount();
-         log.trace("serializationCount=" + serCount);
-      }
-
-      @Override
-      public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
-         i = in.readInt();
-         int deserCount = updateDeserializationCount();
-         log.trace("deserializationCount=" + deserCount);
-      }
-
-      int updateSerializationCount() {
-         return ++serializationCount;
-      }
-
-      int updateDeserializationCount() {
-         return ++deserializationCount;
-      }
-
-      @Override
-      public String toString() {
-         return "Pojo{" +
-               "i=" + i +
-               '}';
-      }
-   }
-
-   public static class ObjectThatContainsACustomReadObjectMethod implements Serializable, ExternalPojo {
-      private static final long serialVersionUID = 1L;
-      //      Integer id;
-      CustomReadObjectMethod anObjectWithCustomReadObjectMethod;
-      Integer balance;
-//      String branch;
-
-      @Override
-      public boolean equals(Object obj) {
-         if (obj == this)
-            return true;
-         if (!(obj instanceof ObjectThatContainsACustomReadObjectMethod))
-            return false;
-         ObjectThatContainsACustomReadObjectMethod acct = (ObjectThatContainsACustomReadObjectMethod) obj;
-//         if (!safeEquals(id, acct.id))
-//            return false;
-//         if (!safeEquals(branch, acct.branch))
-//            return false;
-         return safeEquals(balance, acct.balance) && safeEquals(anObjectWithCustomReadObjectMethod, acct.anObjectWithCustomReadObjectMethod);
-      }
-
-      @Override
-      public int hashCode() {
-         int result = 17;
-//         result = result * 31 + safeHashCode(id);
-//         result = result * 31 + safeHashCode(branch);
-         result = result * 31 + safeHashCode(balance);
-         result = result * 31 + safeHashCode(anObjectWithCustomReadObjectMethod);
-         return result;
-      }
-
-      private static int safeHashCode(Object obj) {
-         return obj == null ? 0 : obj.hashCode();
-      }
-
-      private static boolean safeEquals(Object a, Object b) {
-         return (a == b || (a != null && a.equals(b)));
-      }
-   }
-
-   public static class CustomReadObjectMethod implements Serializable, ExternalPojo {
-      private static final long serialVersionUID = 1L;
-      String lastName;
-      String ssn;
-      transient boolean deserialized;
-
-      CustomReadObjectMethod() {
-         this("Zamarreno", "234-567-8901");
-      }
-
-      CustomReadObjectMethod(String lastName, String ssn) {
-         this.lastName = lastName;
-         this.ssn = ssn;
-      }
-
-      @Override
-      public boolean equals(Object obj) {
-         if (obj == this) return true;
-         if (!(obj instanceof CustomReadObjectMethod)) return false;
-         CustomReadObjectMethod pk = (CustomReadObjectMethod) obj;
-         return lastName.equals(pk.lastName) && ssn.equals(pk.ssn);
-      }
-
-      @Override
-      public int hashCode() {
-         int result = 17;
-         result = result * 31 + lastName.hashCode();
-         result = result * 31 + ssn.hashCode();
-         return result;
-      }
-
-      private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
-         ois.defaultReadObject();
-         deserialized = true;
       }
    }
 }

@@ -1,17 +1,19 @@
 package org.infinispan.query.jmx;
 
-import java.io.InputStream;
+import static org.infinispan.test.fwk.TestCacheManagerFactory.configureGlobalJmx;
 
-import javax.management.MBeanServer;
+import java.net.URL;
+
 import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.commons.util.FileLookupFactory;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ParserRegistry;
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.query.distributed.DistributedMassIndexingTest;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
@@ -26,40 +28,36 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "query.jmx.DistributedMassIndexingViaJmxTest")
 public class DistributedMassIndexingViaJmxTest extends DistributedMassIndexingTest {
 
-   static final String BASE_JMX_DOMAIN = DistributedMassIndexingViaJmxTest.class.getSimpleName();
-   MBeanServer server;
+   private static final String BASE_JMX_DOMAIN = DistributedMassIndexingViaJmxTest.class.getName();
+
+   private final MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      server = PerThreadMBeanServerLookup.getThreadMBeanServer();
       for (int i = 0; i < NUM_NODES; i++) {
-         InputStream is = FileLookupFactory.newInstance().lookupFileStrict(
+         URL url = FileLookupFactory.newInstance().lookupFileLocation(
                "dynamic-indexing-distribution.xml",
                Thread.currentThread().getContextClassLoader());
          ParserRegistry parserRegistry = new ParserRegistry(
                Thread.currentThread().getContextClassLoader());
-         ConfigurationBuilderHolder holder = parserRegistry.parse(is);
-         // Each cache manager should use a different jmx domain and
-         // a parallel-testsuite friendly mbean server
-         holder.getGlobalConfigurationBuilder().globalJmxStatistics()
-               .jmxDomain(BASE_JMX_DOMAIN + i)
-               .mBeanServerLookup(new PerThreadMBeanServerLookup());
+         ConfigurationBuilderHolder holder = parserRegistry.parse(url);
+         configureGlobalJmx(holder.getGlobalConfigurationBuilder(), BASE_JMX_DOMAIN + i, mBeanServerLookup);
 
          EmbeddedCacheManager cm = TestCacheManagerFactory
-               .createClusteredCacheManager(holder, true);
+               .createClusteredCacheManager(holder);
          registerCacheManager(cm);
-         Cache cache = cm.getCache();
+         Cache cache = cm.getCache(getClass().getSimpleName());
          caches.add(cache);
       }
-      waitForClusterToForm(neededCacheNames);
+      waitForClusterToForm();
    }
 
    @Override
    protected void rebuildIndexes() throws Exception {
-      String cacheManagerName = manager(0).getCacheManagerConfiguration().globalJmxStatistics().cacheManagerName();
+      String cacheManagerName = manager(0).getCacheManagerConfiguration().cacheManagerName();
       ObjectName massIndexerObjName = getMassIndexerObjectName(
-            BASE_JMX_DOMAIN + 0, cacheManagerName, manager(0).getCacheManagerConfiguration().defaultCacheName().get());
-      server.invoke(massIndexerObjName, "start", new Object[0], new String[0]);
+            BASE_JMX_DOMAIN + 0, cacheManagerName, getClass().getSimpleName());
+      mBeanServerLookup.getMBeanServer().invoke(massIndexerObjName, "start", new Object[0], new String[0]);
    }
 
    private ObjectName getMassIndexerObjectName(String jmxDomain, String cacheManagerName, String cacheName) {
@@ -71,5 +69,4 @@ public class DistributedMassIndexingViaJmxTest extends DistributedMassIndexingTe
          throw new CacheException("Malformed object name", e);
       }
    }
-
 }

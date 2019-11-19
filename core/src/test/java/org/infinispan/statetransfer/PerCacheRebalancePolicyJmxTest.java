@@ -1,5 +1,6 @@
 package org.infinispan.statetransfer;
 
+import static org.infinispan.test.fwk.TestCacheManagerFactory.configureGlobalJmx;
 import static org.testng.Assert.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNull;
@@ -13,12 +14,13 @@ import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
 import org.infinispan.Cache;
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
@@ -34,10 +36,12 @@ import org.testng.annotations.Test;
  */
 @Test(groups = "functional", testName = "statetransfer.PerCacheRebalancePolicyJmxTest")
 @CleanupAfterMethod
-@InCacheMode({ CacheMode.DIST_SYNC, CacheMode.SCATTERED_SYNC })
+@InCacheMode({CacheMode.DIST_SYNC, CacheMode.SCATTERED_SYNC})
 public class PerCacheRebalancePolicyJmxTest extends MultipleCacheManagersTest {
 
    private static final String REBALANCING_ENABLED = "rebalancingEnabled";
+
+   private final MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
 
    public void testJoinAndLeaveWithRebalanceSuspended() throws Exception {
       doTest(false);
@@ -60,11 +64,10 @@ public class PerCacheRebalancePolicyJmxTest extends MultipleCacheManagersTest {
    }
 
    private GlobalConfigurationBuilder getGlobalConfigurationBuilder(String rackId) {
+      int index = cacheManagers.size();
       GlobalConfigurationBuilder gcb = GlobalConfigurationBuilder.defaultClusteredBuilder();
-      gcb.globalJmxStatistics()
-            .enable()
-            .mBeanServerLookup(new PerThreadMBeanServerLookup())
-            .transport().rackId(rackId);
+      gcb.transport().rackId(rackId);
+      configureGlobalJmx(gcb, getClass().getSimpleName() + index, mBeanServerLookup);
       return gcb;
    }
 
@@ -80,7 +83,7 @@ public class PerCacheRebalancePolicyJmxTest extends MultipleCacheManagersTest {
       addNode(getGlobalConfigurationBuilder("r1"), builder);
       waitForClusterToForm("a", "b");
 
-      MBeanServer mBeanServer = PerThreadMBeanServerLookup.getThreadMBeanServer();
+      MBeanServer mBeanServer = mBeanServerLookup.getMBeanServer();
       String domain0 = manager(1).getCacheManagerConfiguration().globalJmxStatistics().domain();
       ObjectName ltmName0 = TestingUtil.getCacheManagerObjectName(domain0, "DefaultCacheManager", "LocalTopologyManager");
       String domain1 = manager(1).getCacheManagerConfiguration().globalJmxStatistics().domain();

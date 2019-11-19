@@ -1,0 +1,41 @@
+QUERY(1)
+========
+:doctype: manpage
+
+
+NAME
+----
+query - retrieves entries that match Ickle query strings.
+
+
+SYNOPSIS
+--------
+*query* ['OPTIONS'] `QUERY_STRING`
+
+
+OPTIONS
+-------
+*-c, --cache*='NAME'::
+Specifies the cache to query. Defaults to the currently selected cache.
+
+*--max-results*='MAX_RESULTS'::
+Sets the number of results to return. The default is `10`.
+
+*-o, --offset*='OFFSET'::
+Specifies the index of the first result to return. The default is `0`.
+
+*--query-mode*='QUERY_MODE'::
+Specifies how the server executes the query. Values are `FETCH` and BROADCAST.
+The default is `FETCH`.
+
+
+EXAMPLES
+--------
+`query "from org.infinispan.rest.search.entity.Person p where p.gender = 'MALE'"` +
+Queries the currently selected cache to return entries from a Protobuf `Person`
+entity where the gender datatype is `MALE`.
+
+
+SEE ALSO
+--------
+schema(1)

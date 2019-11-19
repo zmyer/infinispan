@@ -2,9 +2,10 @@ package org.infinispan.persistence.jpa;
 
 import static org.testng.AssertJUnit.assertNotNull;
 
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.marshall.persistence.PersistenceMarshaller;
 import org.infinispan.marshall.persistence.impl.MarshalledEntryFactoryImpl;
 import org.infinispan.persistence.DummyInitializationContext;
 import org.infinispan.persistence.jpa.configuration.JpaStoreConfigurationBuilder;
@@ -34,7 +35,7 @@ public abstract class AbstractJpaStoreTest extends AbstractInfinispanTest {
 
    //protected TransactionFactory gtf = new TransactionFactory();
 
-   protected StreamingMarshaller marshaller;
+   protected PersistenceMarshaller marshaller;
 
    protected MarshallableEntryFactory entryFactory;
 
@@ -43,18 +44,19 @@ public abstract class AbstractJpaStoreTest extends AbstractInfinispanTest {
    }
 
    protected EmbeddedCacheManager createCacheManager() {
-      return TestCacheManagerFactory.createCacheManager(true);
+      return TestCacheManagerFactory.createCacheManager(JpaSCI.INSTANCE);
    }
 
-   protected JpaStore createCacheStore() {
+   protected JpaStore createCacheStore(GlobalConfiguration gc) {
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.persistence().addStore(JpaStoreConfigurationBuilder.class)
             .persistenceUnitName(PERSISTENCE_UNIT_NAME)
-            .entityClass(getEntityClass());
+            .entityClass(getEntityClass())
+            .segmented(false);
 
       JpaStore store = new JpaStore();
       store.init(new DummyInitializationContext(builder.persistence().stores().get(0).create(), cm.getCache(),
-            marshaller, null, entryFactory, new WithinThreadExecutor()));
+            marshaller, null, entryFactory, new WithinThreadExecutor(), gc));
       store.start();
 
       assertNotNull(store.getEntityManagerFactory());
@@ -68,9 +70,9 @@ public abstract class AbstractJpaStoreTest extends AbstractInfinispanTest {
    public void setUp() throws Exception {
       try {
          cm = createCacheManager();
-         marshaller = cm.getCache().getAdvancedCache().getComponentRegistry().getCacheMarshaller();
+         marshaller = cm.getCache().getAdvancedCache().getComponentRegistry().getPersistenceMarshaller();
          entryFactory = new MarshalledEntryFactoryImpl(marshaller);
-         cs = createCacheStore();
+         cs = createCacheStore(cm.getCacheManagerConfiguration());
          cs.clear();
       } catch (Exception e) {
          log.warn("Error during test setup", e);
@@ -86,7 +88,7 @@ public abstract class AbstractJpaStoreTest extends AbstractInfinispanTest {
    }
 
    protected MarshallableEntry createEntry(Object key, Object value) {
-      return entryFactory.create(key, value, null);
+      return entryFactory.create(key, value);
    }
 
    protected MarshallableEntry createEntry(TestObject obj) {

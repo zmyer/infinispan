@@ -6,14 +6,18 @@
     </jgroups>
 
     <cache-container name="QueryEnabledGrid-Dist" default-cache="default" statistics="true">
+        <serialization>
+            <context-initializer class="org.infinispan.test.integration.as.WidlflyIntegrationSCIImpl"/>
+        </serialization>
         <transport stack="tcpStack" cluster="Infinispan-Query-Cluster"/>
-        <jmx duplicate-domains="true"/>
         <distributed-cache name="default" mode="SYNC" remote-timeout="20000" statistics="true">
             <locking acquire-timeout="20000" write-skew="false" concurrency-level="500" striping="false"/>
             <state-transfer timeout="480000" enabled="true"/>
-            <eviction max-entries="-1" strategy="NONE"/>
+            <memory>
+                <object size="-1"/>
+            </memory>
             <expiration max-idle="-1"/>
-            <indexing index="LOCAL">
+            <indexing index="PRIMARY_OWNER">
                 <property name="default.indexmanager">elasticsearch</property>
                 <property name="default.elasticsearch.refresh_after_write">true</property>
                 <property name="default.elasticsearch.required_index_status">yellow</property>

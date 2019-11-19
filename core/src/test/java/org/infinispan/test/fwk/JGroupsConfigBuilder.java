@@ -6,10 +6,9 @@ import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.FD_ALL;
 import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.FD_ALL2;
 import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.FD_SOCK;
 import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.MERGE3;
-import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.TEST_RELAY2;
 import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.TCP;
 import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.TCP_NIO2;
-import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.TEST_PING;
+import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.TEST_RELAY2;
 import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.UDP;
 import static org.infinispan.test.fwk.JGroupsConfigBuilder.ProtocolType.VERIFY_SUSPECT;
 
@@ -17,6 +16,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.infinispan.commons.util.LegacyKeySupportSystemProperties;
@@ -52,43 +53,26 @@ public class JGroupsConfigBuilder {
    /**
     * Holds unique mcast_addr for each thread used for JGroups channel construction.
     */
-   private static final ThreadLocal<String> threadMcastIP = new ThreadLocal<String>() {
-      private final AtomicInteger uniqueAddr = new AtomicInteger(11);
-
-      @Override
-      protected String initialValue() {
-         return "228.10.10." + uniqueAddr.getAndIncrement();
-      }
-   };
-
-   /**
-    * Holds unique mcast_port for each thread used for JGroups channel construction.
-    */
-   private static final ThreadLocal<Integer> threadMcastPort = new ThreadLocal<Integer>() {
-      private final AtomicInteger uniquePort = new AtomicInteger(45589);
+   private static final ThreadLocal<Integer> threadUdpIndex = new ThreadLocal<Integer>() {
+      private final AtomicInteger counter = new AtomicInteger(0);
 
       @Override
       protected Integer initialValue() {
-         return uniquePort.getAndIncrement();
+         return counter.getAndIncrement();
       }
    };
 
+   private static final ConcurrentMap<String, Integer> testUdpIndex = new ConcurrentHashMap<>();
+
    static {
-      JGROUPS_STACK = LegacyKeySupportSystemProperties.getProperty("infinispan.test.jgroups.protocol", "protocol.stack", "tcp");
+      JGROUPS_STACK = LegacyKeySupportSystemProperties.getProperty("infinispan.cluster.stack", "infinispan.test.jgroups.protocol", "udp");
       System.out.println("Transport protocol stack used = " + JGROUPS_STACK);
    }
 
    public static String getJGroupsConfig(String fullTestName, TransportFlags flags) {
-      if (JGROUPS_STACK.equalsIgnoreCase("tcp")) return getTcpConfig(fullTestName, flags);
-      if (JGROUPS_STACK.equalsIgnoreCase("udp")) return getUdpConfig(fullTestName, flags);
-      throw new IllegalStateException("Unknown protocol stack : " + JGROUPS_STACK);
-   }
-
-   public static String getTcpConfig(String fullTestName, TransportFlags flags) {
       // With the XML already parsed, make a safe copy of the
       // protocol stack configurator and use that accordingly.
-      JGroupsProtocolCfg jgroupsCfg =
-            getJGroupsProtocolCfg(tcpConfigurator.getProtocolStack());
+      JGroupsProtocolCfg jgroupsCfg = getJGroupsProtocolCfg(getConfigurator().getProtocolStack());
 
       if (!flags.withFD())
          removeFailureDetection(jgroupsCfg);
@@ -105,40 +89,23 @@ public class JGroupsConfigBuilder {
       if (!flags.withMerge())
          removeMerge(jgroupsCfg);
 
-      if (jgroupsCfg.containsProtocol(TEST_PING)) {
-         replaceTcpStartPort(jgroupsCfg, flags);
-         if (fullTestName == null)
-            return jgroupsCfg.toString(); // IDE run of test
-         else
-            return getTestPingDiscovery(fullTestName, jgroupsCfg); // Cmd line test run
-      } else {
-         return replaceMCastAddressAndPort(jgroupsCfg);
+      replaceTcpStartPort(jgroupsCfg, flags);
+      replaceMCastAddressAndPort(jgroupsCfg, fullTestName);
+      return jgroupsCfg.toString();
+   }
+
+   public static ProtocolStackConfigurator getConfigurator() {
+      if (JGROUPS_STACK.equalsIgnoreCase("tcp")) {
+         return tcpConfigurator;
       }
+      if (JGROUPS_STACK.equalsIgnoreCase("udp")) {
+         return udpConfigurator;
+      }
+      throw new IllegalStateException("Unknown protocol stack : " + JGROUPS_STACK);
    }
 
    private static void removeMerge(JGroupsProtocolCfg jgroupsCfg) {
       jgroupsCfg.removeProtocol(MERGE3);
-   }
-
-   public static String getUdpConfig(String fullTestName, TransportFlags flags) {
-      JGroupsProtocolCfg jgroupsCfg = getJGroupsProtocolCfg(udpConfigurator.getProtocolStack());
-
-      if (!flags.withFD())
-         removeFailureDetection(jgroupsCfg);
-
-      if (!flags.withMerge())
-         removeMerge(jgroupsCfg);
-
-      if (!flags.isRelayRequired()) {
-         removeRelay2(jgroupsCfg);
-      }
-
-      if (jgroupsCfg.containsProtocol(TEST_PING)) {
-         if (fullTestName != null)
-            return getTestPingDiscovery(fullTestName, jgroupsCfg); // Cmd line test run
-      }
-
-      return replaceMCastAddressAndPort(jgroupsCfg);
    }
 
    /**
@@ -154,25 +121,23 @@ public class JGroupsConfigBuilder {
       jgroupsCfg.removeProtocol(TEST_RELAY2);
    }
 
-   private static String getTestPingDiscovery(String fullTestName, JGroupsProtocolCfg jgroupsCfg) {
-      ProtocolType type = TEST_PING;
-      Map<String, String> props = jgroupsCfg.getProtocol(type).getProperties();
-      props.put("testName", fullTestName);
-      return replaceProperties(jgroupsCfg, props, type);
-   }
-
-   private static String replaceMCastAddressAndPort(JGroupsProtocolCfg jgroupsCfg) {
+   private static void replaceMCastAddressAndPort(JGroupsProtocolCfg jgroupsCfg, String fullTestName) {
       ProtocolConfiguration udp = jgroupsCfg.getProtocol(UDP);
-      if (udp == null) return jgroupsCfg.toString();
+      if (udp == null) return;
+
+      Integer udpIndex = testUdpIndex.computeIfAbsent(fullTestName, k -> threadUdpIndex.get());
 
       Map<String, String> props = udp.getProperties();
-      props.put("mcast_addr", threadMcastIP.get());
-      props.put("mcast_port", threadMcastPort.get().toString());
-      return replaceProperties(jgroupsCfg, props, UDP);
+      props.put("mcast_addr", "228.10.10." + udpIndex);
+      props.put("mcast_port", String.valueOf(46000 + udpIndex));
+      replaceProperties(jgroupsCfg, props, UDP);
    }
 
-   private static String replaceTcpStartPort(JGroupsProtocolCfg jgroupsCfg, TransportFlags transportFlags) {
-      ProtocolType transportProtocol = jgroupsCfg.containsProtocol(TCP_NIO2) ? TCP_NIO2 : TCP;
+   private static void replaceTcpStartPort(JGroupsProtocolCfg jgroupsCfg, TransportFlags transportFlags) {
+      ProtocolType transportProtocol = jgroupsCfg.transportType;
+      if (transportProtocol != TCP && transportProtocol != TCP_NIO2)
+         return;
+
       Map<String, String> props = jgroupsCfg.getProtocol(transportProtocol).getProperties();
       Integer startPort = threadTcpStartPort.get();
       int portRange = TCP_PORT_RANGE_PER_THREAD;
@@ -187,16 +152,15 @@ public class JGroupsConfigBuilder {
       props.put("bind_port", startPort.toString());
       // In JGroups, the port_range is inclusive
       props.put("port_range", String.valueOf(portRange - 1));
-      return replaceProperties(jgroupsCfg, props, transportProtocol);
+      replaceProperties(jgroupsCfg, props, transportProtocol);
    }
 
-   private static String replaceProperties(
+   private static void replaceProperties(
          JGroupsProtocolCfg cfg, Map<String, String> newProps, ProtocolType type) {
       ProtocolConfiguration protocol = cfg.getProtocol(type);
       ProtocolConfiguration newProtocol =
             new ProtocolConfiguration(protocol.getProtocolName(), newProps);
       cfg.replaceProtocol(type, newProtocol);
-      return cfg.toString();
    }
 
    private static ProtocolStackConfigurator loadTcp() {
@@ -218,17 +182,18 @@ public class JGroupsConfigBuilder {
    private static JGroupsProtocolCfg getJGroupsProtocolCfg(List<ProtocolConfiguration> baseStack) {
       JGroupsXmxlConfigurator configurator = new JGroupsXmxlConfigurator(baseStack);
       List<ProtocolConfiguration> protoStack = configurator.getProtocolStack();
-      Map<ProtocolType, ProtocolConfiguration> protoMap = new HashMap<ProtocolType, ProtocolConfiguration>(protoStack.size());
-      for (ProtocolConfiguration cfg : protoStack)
+      ProtocolType transportType = getProtocolType(protoStack.get(0).getProtocolName());
+      Map<ProtocolType, ProtocolConfiguration> protoMap = new HashMap<>(protoStack.size());
+      for (ProtocolConfiguration cfg : protoStack) {
          protoMap.put(getProtocolType(cfg.getProtocolName()), cfg);
+      }
 
-      return new JGroupsProtocolCfg(protoMap, configurator);
+      return new JGroupsProtocolCfg(protoMap, configurator, transportType);
    }
 
    private static ProtocolType getProtocolType(String name) {
       int dotIndex = name.lastIndexOf(".");
-      return ProtocolType.valueOf(
-            dotIndex == -1 ? name : name.substring(dotIndex + 1, name.length()));
+      return ProtocolType.valueOf(dotIndex == -1 ? name : name.substring(dotIndex + 1));
    }
 
    static class JGroupsXmxlConfigurator extends XmlConfigurator {
@@ -238,11 +203,10 @@ public class JGroupsConfigBuilder {
 
       static List<ProtocolConfiguration> copy(List<ProtocolConfiguration> protocols) {
          // Make a safe copy of the protocol stack to avoid concurrent modification issues
-         List<ProtocolConfiguration> copy =
-               new ArrayList<ProtocolConfiguration>(protocols.size());
-         for (ProtocolConfiguration p : protocols)
-            copy.add(new ProtocolConfiguration(
-                  p.getProtocolName(), immutableMapCopy(p.getProperties())));
+         List<ProtocolConfiguration> copy = new ArrayList<>(protocols.size());
+         for (ProtocolConfiguration p : protocols) {
+            copy.add(new ProtocolConfiguration(p.getProtocolName(), immutableMapCopy(p.getProperties())));
+         }
 
          return copy;
       }
@@ -251,11 +215,14 @@ public class JGroupsConfigBuilder {
    static class JGroupsProtocolCfg {
       final Map<ProtocolType, ProtocolConfiguration> protoMap;
       final XmlConfigurator configurator;
+      final ProtocolType transportType;
 
       JGroupsProtocolCfg(Map<ProtocolType, ProtocolConfiguration> protoMap,
-                         XmlConfigurator configurator) {
+                         XmlConfigurator configurator,
+                         ProtocolType transportType) {
          this.protoMap = protoMap;
          this.configurator = configurator;
+         this.transportType = transportType;
       }
 
       JGroupsProtocolCfg addProtocol(ProtocolType type, ProtocolConfiguration cfg, int position) {
@@ -293,7 +260,7 @@ public class JGroupsConfigBuilder {
 
    enum ProtocolType {
       TCP, TCP_NIO2, UDP, SHARED_LOOPBACK,
-      MPING, PING, TCPPING, TEST_PING, SHARED_LOOPBACK_PING,
+      MPING, PING, TCPPING, LOCAL_PING, SHARED_LOOPBACK_PING,
       MERGE2, MERGE3,
       FD_SOCK, FD, VERIFY_SUSPECT, FD_ALL, FD_ALL2,
       BARRIER,
@@ -302,7 +269,7 @@ public class JGroupsConfigBuilder {
       RSVP,
       STABLE,
       GMS,
-      UFC, MFC, FC,
+      UFC, MFC, FC, UFC_NB, MFC_NB,
       FRAG2, FRAG3,
       STREAMING_STATE_TRANSFER,
       TEST_RELAY2,

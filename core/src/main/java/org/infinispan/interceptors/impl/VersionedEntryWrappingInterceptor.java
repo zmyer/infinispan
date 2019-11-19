@@ -1,7 +1,8 @@
 package org.infinispan.interceptors.impl;
 
+import java.util.concurrent.CompletionStage;
+
 import org.infinispan.commands.FlagAffectedCommand;
-import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.VersionedCommitCommand;
@@ -14,9 +15,11 @@ import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -31,7 +34,7 @@ public class VersionedEntryWrappingInterceptor extends EntryWrappingInterceptor 
 
    @Inject protected VersionGenerator versionGenerator;
 
-   private final InvocationSuccessFunction prepareHandler = this::prepareHandler;
+   private final InvocationSuccessFunction<VersionedPrepareCommand> prepareHandler = this::prepareHandler;
 
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
@@ -39,40 +42,47 @@ public class VersionedEntryWrappingInterceptor extends EntryWrappingInterceptor 
       if (ctx.isOriginLocal()) {
          versionedPrepareCommand.setVersionsSeen(ctx.getCacheTransaction().getVersionsRead());
       }
-      return wrapEntriesForPrepareAndApply(ctx, command, prepareHandler);
+      return wrapEntriesForPrepareAndApply(ctx, versionedPrepareCommand, prepareHandler);
    }
 
-   private Object prepareHandler(InvocationContext nonTxCtx, VisitableCommand command, Object nil) {
+   private Object prepareHandler(InvocationContext nonTxCtx, VersionedPrepareCommand command, Object nil) {
       TxInvocationContext ctx = (TxInvocationContext) nonTxCtx;
-      EntryVersionsMap originVersionData;
+      CompletionStage<EntryVersionsMap> originVersionData;
       if (ctx.isOriginLocal() && !ctx.getCacheTransaction().isFromStateTransfer()) {
          originVersionData =
-               cdl.createNewVersionsAndCheckForWriteSkews(versionGenerator, ctx, (VersionedPrepareCommand) command);
+               cdl.createNewVersionsAndCheckForWriteSkews(versionGenerator, ctx, command);
       } else {
-         originVersionData = null;
+         originVersionData = CompletableFutures.completedNull();
       }
 
-      return invokeNextThenApply(ctx, command, (rCtx, rCommand, rv) -> {
+      InvocationStage originVersionStage = makeStage(asyncInvokeNext(ctx, command, originVersionData));
+
+      InvocationStage newVersionStage = originVersionStage.thenApplyMakeStage(ctx, command, (rCtx, rCommand, rv) -> {
          TxInvocationContext txInvocationContext = (TxInvocationContext) rCtx;
          VersionedPrepareCommand versionedPrepareCommand = (VersionedPrepareCommand) rCommand;
-         EntryVersionsMap newVersionData;
          if (txInvocationContext.isOriginLocal()) {
-            newVersionData = originVersionData;
+            // This is already completed, so just return a sync stage
+            return asyncValue(originVersionData);
          } else {
-            newVersionData = cdl.createNewVersionsAndCheckForWriteSkews(versionGenerator, txInvocationContext,
-                  versionedPrepareCommand);
+            return asyncValue(cdl.createNewVersionsAndCheckForWriteSkews(versionGenerator, txInvocationContext,
+                  versionedPrepareCommand));
          }
+      });
 
-         boolean onePhaseCommit = ((PrepareCommand) rCommand).isOnePhaseCommit();
+      return newVersionStage.thenApply(ctx, command, (rCtx, rCommand, rv) -> {
+         TxInvocationContext txInvocationContext = (TxInvocationContext) rCtx;
+         VersionedPrepareCommand versionedPrepareCommand = (VersionedPrepareCommand) rCommand;
+         boolean onePhaseCommit = versionedPrepareCommand.isOnePhaseCommit();
          if (onePhaseCommit) {
             txInvocationContext.getCacheTransaction()
                   .setUpdatedEntryVersions(versionedPrepareCommand.getVersionsSeen());
          }
 
+         CompletionStage<Void> stage = null;
          if (onePhaseCommit) {
-            commitContextEntries(txInvocationContext, null);
+            stage = commitContextEntries(txInvocationContext, null);
          }
-         return newVersionData;
+         return delayedValue(stage, rv);
       });
    }
 
@@ -83,20 +93,20 @@ public class VersionedEntryWrappingInterceptor extends EntryWrappingInterceptor 
          versionedCommitCommand.setUpdatedVersions(ctx.getCacheTransaction().getUpdatedEntryVersions());
       }
 
-      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) ->
-            doCommit(rCtx, ((VersionedCommitCommand) rCommand)));
+      return invokeNextAndHandle(ctx, versionedCommitCommand, (rCtx, rCommand, rv, t) ->
+            delayedValue(doCommit(rCtx, rCommand), rv, t));
    }
 
-   private void doCommit(InvocationContext rCtx, VersionedCommitCommand versionedCommitCommand) {
+   private CompletionStage<Void> doCommit(InvocationContext rCtx, VersionedCommitCommand versionedCommitCommand) {
       if (!rCtx.isOriginLocal()) {
          ((TxInvocationContext<?>) rCtx).getCacheTransaction().setUpdatedEntryVersions(
                versionedCommitCommand.getUpdatedVersions());
       }
-      commitContextEntries(rCtx, null);
+      return commitContextEntries(rCtx, null);
    }
 
    @Override
-   protected void commitContextEntry(CacheEntry entry, InvocationContext ctx, FlagAffectedCommand command,
+   protected CompletionStage<Void> commitContextEntry(CacheEntry entry, InvocationContext ctx, FlagAffectedCommand command,
                                      Flag stateTransferFlag, boolean l1Invalidation) {
       if (ctx.isInTxScope() && stateTransferFlag == null) {
          EntryVersion updatedEntryVersion = ((TxInvocationContext) ctx)
@@ -113,10 +123,10 @@ public class VersionedEntryWrappingInterceptor extends EntryWrappingInterceptor 
          }
 
          entry.setMetadata(commitMetadata);
-         cdl.commitEntry(entry, command, ctx, null, l1Invalidation);
+         return cdl.commitEntry(entry, command, ctx, null, l1Invalidation);
       } else {
          // This could be a state transfer call!
-         cdl.commitEntry(entry, command, ctx, stateTransferFlag, l1Invalidation);
+         return cdl.commitEntry(entry, command, ctx, stateTransferFlag, l1Invalidation);
       }
    }
 

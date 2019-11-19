@@ -1,21 +1,20 @@
 package org.infinispan.configuration;
 
+import static org.infinispan.util.logging.Log.CONFIG;
+
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.GlobUtils;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
-import org.infinispan.manager.CacheContainer;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * It manages all the configuration for a specific container.
@@ -27,15 +26,13 @@ import org.infinispan.util.logging.LogFactory;
  * @since 8.1
  */
 public class ConfigurationManager {
-   private static final Log log = LogFactory.getLog(ConfigurationManager.class);
-
    private final GlobalConfiguration globalConfiguration;
    private final ConcurrentMap<String, Configuration> namedConfiguration;
 
 
    public ConfigurationManager(GlobalConfiguration globalConfiguration) {
       this.globalConfiguration = globalConfiguration;
-      this.namedConfiguration = CollectionFactory.makeConcurrentMap();
+      this.namedConfiguration = new ConcurrentHashMap<>();
    }
 
    public ConfigurationManager(ConfigurationBuilderHolder holder) {
@@ -63,7 +60,7 @@ public class ConfigurationManager {
       if (defaultCacheName != null) {
          return namedConfiguration.get(defaultCacheName);
       } else {
-         throw log.noSuchCacheConfiguration(cacheName);
+         throw CONFIG.noSuchCacheConfiguration(cacheName);
       }
    }
 
@@ -77,10 +74,15 @@ public class ConfigurationManager {
             String key = c.getKey();
             if (GlobUtils.isGlob(key)) {
                if (name.matches(GlobUtils.globToRegex(key))) {
-                  if (match == null)
+                  if (match == null) {
                      match = c.getValue();
-                  else
-                     throw log.configurationNameMatchesMultipleWildcards(name);
+                     // If this is a template, turn it into a concrete configuration
+                     if (match.isTemplate()) {
+                        ConfigurationBuilder builder = new ConfigurationBuilder().read(match).template(false);
+                        match = builder.build();
+                     }
+                  } else
+                     throw CONFIG.configurationNameMatchesMultipleWildcards(name);
                }
             }
          }
@@ -103,7 +105,7 @@ public class ConfigurationManager {
 
    public Collection<String> getDefinedCaches() {
       List<String> cacheNames = namedConfiguration.entrySet().stream()
-            .filter(entry -> !entry.getValue().isTemplate() && !entry.getKey().equals(CacheContainer.DEFAULT_CACHE_NAME))
+            .filter(entry -> !entry.getValue().isTemplate())
             .map(entry -> entry.getKey())
             .collect(Collectors.toList());
       return Collections.unmodifiableCollection(cacheNames);

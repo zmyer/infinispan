@@ -1,19 +1,15 @@
 package org.infinispan.query.remote.impl.indexing;
 
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.Set;
 
 import org.hibernate.search.spi.IndexedTypeIdentifier;
 import org.hibernate.search.spi.impl.PojoIndexedTypeIdentifier;
-import org.infinispan.commons.io.UnsignedNumeric;
-import org.infinispan.commons.marshall.AbstractExternalizer;
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
 import org.infinispan.commons.marshall.WrappedBytes;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
 import org.infinispan.protostream.descriptors.Descriptor;
-import org.infinispan.query.remote.impl.ExternalizerIds;
 
 /**
  * This is used to wrap binary values encoded with Protocol Buffers. {@link ProtobufValueWrapperFieldBridge} is used as
@@ -22,6 +18,7 @@ import org.infinispan.query.remote.impl.ExternalizerIds;
  * @author anistor@redhat.com
  * @since 6.0
  */
+@ProtoTypeId(ProtoStreamTypeIds.PROTOBUF_VALUE_WRAPPER)
 public final class ProtobufValueWrapper implements WrappedBytes {
 
    public static final IndexedTypeIdentifier INDEXING_TYPE = PojoIndexedTypeIdentifier.convertFromLegacy(ProtobufValueWrapper.class);
@@ -46,6 +43,7 @@ public final class ProtobufValueWrapper implements WrappedBytes {
     */
    private transient Descriptor messageDescriptor;
 
+   @ProtoFactory
    public ProtobufValueWrapper(byte[] binary) {
       if (binary == null) {
          throw new IllegalArgumentException("argument cannot be null");
@@ -58,6 +56,7 @@ public final class ProtobufValueWrapper implements WrappedBytes {
     *
     * @return the wrapped byte array
     */
+   @ProtoField(number = 1)
    public byte[] getBinary() {
       return binary;
    }
@@ -144,32 +143,5 @@ public final class ProtobufValueWrapper implements WrappedBytes {
          if (binary[i] != other.getByte(i)) return false;
       }
       return true;
-   }
-
-   public static final class Externalizer extends AbstractExternalizer<ProtobufValueWrapper> {
-
-      @Override
-      public void writeObject(ObjectOutput output, ProtobufValueWrapper protobufValueWrapper) throws IOException {
-         UnsignedNumeric.writeUnsignedInt(output, protobufValueWrapper.binary.length);
-         output.write(protobufValueWrapper.binary);
-      }
-
-      @Override
-      public ProtobufValueWrapper readObject(ObjectInput input) throws IOException {
-         int length = UnsignedNumeric.readUnsignedInt(input);
-         byte[] binary = new byte[length];
-         input.readFully(binary);
-         return new ProtobufValueWrapper(binary);
-      }
-
-      @Override
-      public Integer getId() {
-         return ExternalizerIds.PROTOBUF_VALUE_WRAPPER;
-      }
-
-      @Override
-      public Set<Class<? extends ProtobufValueWrapper>> getTypeClasses() {
-         return Collections.singleton(ProtobufValueWrapper.class);
-      }
    }
 }

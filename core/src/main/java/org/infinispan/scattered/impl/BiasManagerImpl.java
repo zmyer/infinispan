@@ -30,6 +30,8 @@ import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.TopologyChanged;
@@ -44,6 +46,7 @@ import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 @Listener
+@Scope(Scopes.NAMED_CACHE)
 public class BiasManagerImpl implements BiasManager {
    private static Log log = LogFactory.getLog(BiasManager.class);
    private static final boolean trace = log.isTraceEnabled();
@@ -54,15 +57,15 @@ public class BiasManagerImpl implements BiasManager {
    private ConcurrentMap<Object, RemoteBias> remoteBias = new ConcurrentHashMap<>();
    private long renewLeasePeriod;
 
-   @Inject private CacheNotifier cacheNotifier;
-   @Inject private Configuration configuration;
-   @Inject private TimeService timeService;
-   @Inject private DistributionManager distributionManager;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private RpcManager rpcManager;
-   @Inject private KeyPartitioner keyPartitioner;
+   @Inject CacheNotifier cacheNotifier;
+   @Inject Configuration configuration;
+   @Inject TimeService timeService;
+   @Inject DistributionManager distributionManager;
+   @Inject CommandsFactory commandsFactory;
+   @Inject RpcManager rpcManager;
+   @Inject KeyPartitioner keyPartitioner;
    @ComponentName(KnownComponentNames.EXPIRATION_SCHEDULED_EXECUTOR)
-   @Inject private ScheduledExecutorService executor;
+   @Inject ScheduledExecutorService executor;
 
    @Start
    public void start() {

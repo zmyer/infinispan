@@ -7,11 +7,9 @@ import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.factories.annotations.Start;
 import org.infinispan.remoting.inboundhandler.action.ActionState;
 import org.infinispan.remoting.inboundhandler.action.CheckTopologyAction;
 import org.infinispan.remoting.inboundhandler.action.DefaultReadyAction;
-import org.infinispan.remoting.inboundhandler.action.LockAction;
 import org.infinispan.remoting.inboundhandler.action.ReadyAction;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.util.concurrent.BlockingRunnable;
@@ -37,8 +35,8 @@ public class NonTotalOrderPerCacheInboundInvocationHandler extends BasePerCacheI
 
    private final CheckTopologyAction checkTopologyAction;
 
-   @Inject private LockManager lockManager;
-   @Inject private DistributionManager distributionManager;
+   @Inject LockManager lockManager;
+   @Inject DistributionManager distributionManager;
 
    private long lockTimeout;
    private boolean isLocking;
@@ -48,7 +46,6 @@ public class NonTotalOrderPerCacheInboundInvocationHandler extends BasePerCacheI
    }
 
    @Override
-   @Start
    public void start() {
       super.start();
       lockTimeout = configuration.locking().lockAcquisitionTimeout();
@@ -110,8 +107,7 @@ public class NonTotalOrderPerCacheInboundInvocationHandler extends BasePerCacheI
       final long timeoutMillis = command.hasZeroLockAcquisition() ? 0 : lockTimeout;
 
       DefaultReadyAction action = new DefaultReadyAction(new ActionState(command, topologyId, timeoutMillis),
-            checkTopologyAction,
-            new LockAction(lockManager, distributionManager));
+            checkTopologyAction);
       action.registerListener();
       return action;
    }

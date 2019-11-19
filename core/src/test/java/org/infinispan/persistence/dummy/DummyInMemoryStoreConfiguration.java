@@ -6,14 +6,12 @@ import org.infinispan.commons.configuration.ConfigurationInfo;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
-import org.infinispan.configuration.cache.AbstractSegmentedStoreConfiguration;
 import org.infinispan.configuration.cache.AbstractStoreConfiguration;
 import org.infinispan.configuration.cache.AsyncStoreConfiguration;
-import org.infinispan.configuration.cache.SingletonStoreConfiguration;
 
 @BuiltBy(DummyInMemoryStoreConfigurationBuilder.class)
 @ConfigurationFor(DummyInMemoryStore.class)
-public class DummyInMemoryStoreConfiguration extends AbstractSegmentedStoreConfiguration<DummyInMemoryStoreConfiguration> implements ConfigurationInfo {
+public class DummyInMemoryStoreConfiguration extends AbstractStoreConfiguration implements ConfigurationInfo {
    static final AttributeDefinition<Boolean> SLOW = AttributeDefinition.builder("slow", false).immutable().build();
    static final AttributeDefinition<String> STORE_NAME = AttributeDefinition.builder("storeName", null, String.class).immutable().build();
    static final AttributeDefinition<Integer> START_FAILURES = AttributeDefinition.builder("startFailures", 0).immutable().build();
@@ -33,34 +31,18 @@ public class DummyInMemoryStoreConfiguration extends AbstractSegmentedStoreConfi
       }
 
       @Override
-      public boolean isSynthetic(String attribute) {
-         return attribute.equals("class");
-      }
-
-      @Override
       public boolean supports(String name) {
          return false;
       }
    };
 
-   public DummyInMemoryStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore) {
-      super(attributes, async, singletonStore);
+   public DummyInMemoryStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async) {
+      super(attributes, async);
    }
 
    @Override
    public ElementDefinition getElementDefinition() {
       return ELEMENT_DEFINITION;
-   }
-
-   @Override
-   public DummyInMemoryStoreConfiguration newConfigurationFrom(int segment) {
-      AttributeSet set = DummyInMemoryStoreConfiguration.attributeDefinitionSet();
-      set.read(attributes);
-      String storeName = set.attribute(STORE_NAME).get();
-      if (storeName != null) {
-         set.attribute(STORE_NAME).set(storeName + "-" + segment);
-      }
-      return new DummyInMemoryStoreConfiguration(set.protect(), async(), singletonStore());
    }
 
    public boolean slow() {

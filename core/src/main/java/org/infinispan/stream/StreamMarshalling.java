@@ -16,6 +16,8 @@ import org.infinispan.commons.marshall.AdvancedExternalizer;
 import org.infinispan.commons.util.Util;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.marshall.core.Ids;
 
 /**
@@ -157,8 +159,9 @@ public class StreamMarshalling {
       }
    }
 
-   private static final class KeyToEntryFunction<K, V> implements Function<K, CacheEntry<K, V>> {
-      @Inject private AdvancedCache<K, V> advancedCache;
+   @Scope(Scopes.NONE)
+   static final class KeyToEntryFunction<K, V> implements Function<K, CacheEntry<K, V>> {
+      @Inject AdvancedCache<K, V> advancedCache;
 
       @Override
       public CacheEntry<K, V> apply(K k) {

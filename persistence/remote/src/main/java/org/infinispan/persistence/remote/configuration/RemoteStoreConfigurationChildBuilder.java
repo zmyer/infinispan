@@ -67,13 +67,6 @@ public interface RemoteStoreConfigurationChildBuilder<S> extends StoreConfigurat
 
    /**
     * This property defines the protocol version that this client should use. Defaults to {@link ProtocolVersion#DEFAULT_PROTOCOL_VERSION}
-    * @deprecated Use {@link #protocolVersion(ProtocolVersion)} instead
-    */
-   @Deprecated
-   RemoteStoreConfigurationBuilder protocolVersion(String protocolVersion);
-
-   /**
-    * This property defines the protocol version that this client should use. Defaults to {@link ProtocolVersion#DEFAULT_PROTOCOL_VERSION}
     */
    RemoteStoreConfigurationBuilder protocolVersion(ProtocolVersion protocolVersion);
 
@@ -89,7 +82,6 @@ public interface RemoteStoreConfigurationChildBuilder<S> extends StoreConfigurat
     * unspecified, the default cache will be used
     */
    RemoteStoreConfigurationBuilder remoteCacheName(String remoteCacheName);
-
 
    /**
     * Configures connection security
@@ -109,12 +101,18 @@ public interface RemoteStoreConfigurationChildBuilder<S> extends StoreConfigurat
 
    /**
     * Controls which transport to use. Currently only the TcpTransport is supported.
+    *
+    * @deprecated since 10.0. This method has no effect
     */
+   @Deprecated
    RemoteStoreConfigurationBuilder transportFactory(String transportFactory);
 
    /**
     * Controls which transport to use. Currently only the TcpTransport is supported.
+    *
+    * @deprecated since 10.0. This method has no effect
     */
+   @Deprecated
    RemoteStoreConfigurationBuilder transportFactory(Class<? extends ChannelFactory> transportFactory);
 
    /**

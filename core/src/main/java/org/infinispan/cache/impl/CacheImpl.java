@@ -8,22 +8,22 @@ import static org.infinispan.context.Flag.IGNORE_RETURN_VALUES;
 import static org.infinispan.context.Flag.PUT_FOR_EXTERNAL_READ;
 import static org.infinispan.context.Flag.ZERO_LOCK_ACQUISITION_TIMEOUT;
 import static org.infinispan.context.InvocationContextFactory.UNBOUNDED;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.lang.annotation.Annotation;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+
 import javax.security.auth.Subject;
 import javax.transaction.SystemException;
 import javax.transaction.Transaction;
@@ -34,16 +34,11 @@ import org.infinispan.AdvancedCache;
 import org.infinispan.CacheCollection;
 import org.infinispan.CacheSet;
 import org.infinispan.LockedStream;
-import org.infinispan.Version;
-import org.infinispan.atomic.Delta;
-import org.infinispan.atomic.DeltaAware;
-import org.infinispan.atomic.impl.ApplyDelta;
 import org.infinispan.batch.BatchContainer;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
-import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
 import org.infinispan.commands.functional.functions.MergeFunction;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetAllCommand;
@@ -64,7 +59,6 @@ import org.infinispan.commands.write.RemoveExpiredCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.commons.dataconversion.Encoder;
 import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.commons.dataconversion.IdentityWrapper;
@@ -74,6 +68,7 @@ import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.commons.util.Util;
+import org.infinispan.commons.util.Version;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.format.PropertyFormatter;
 import org.infinispan.configuration.global.GlobalConfiguration;
@@ -82,7 +77,6 @@ import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.TxInvocationContext;
@@ -90,19 +84,19 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.eviction.EvictionManager;
-import org.infinispan.eviction.PassivationManager;
 import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.factories.KnownComponentNames;
+import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.SurvivesRestarts;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.functional.impl.Params;
-import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
@@ -144,6 +138,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author <a href="http://gleamynode.net/">Trustin Lee</a>
  * @since 4.0
  */
+@Scope(Scopes.NAMED_CACHE)
 @SurvivesRestarts
 @MBean(objectName = CacheImpl.OBJECT_NAME, description = "Component that represents an individual cache instance.")
 public class CacheImpl<K, V> implements AdvancedCache<K, V> {
@@ -162,20 +157,21 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @Inject protected ComponentRegistry componentRegistry;
    @Inject protected TransactionManager transactionManager;
    @Inject protected RpcManager rpcManager;
-   @Inject protected StreamingMarshaller marshaller;
+   @Inject @ComponentName(KnownComponentNames.INTERNAL_MARSHALLER)
+   protected StreamingMarshaller marshaller;
    @Inject protected KeyPartitioner keyPartitioner;
-   @Inject private EvictionManager evictionManager;
-   @Inject private InternalExpirationManager<K, V> expirationManager;
-   @Inject private InternalDataContainer dataContainer;
-   @Inject private EmbeddedCacheManager cacheManager;
-   @Inject private LockManager lockManager;
-   @Inject private DistributionManager distributionManager;
-   @Inject private TransactionTable txTable;
-   @Inject private AuthorizationManager authorizationManager;
-   @Inject private PartitionHandlingManager partitionHandlingManager;
-   @Inject private GlobalConfiguration globalCfg;
-   @Inject private LocalTopologyManager localTopologyManager;
-   @Inject private StateTransferManager stateTransferManager;
+   @Inject EvictionManager evictionManager;
+   @Inject InternalExpirationManager<K, V> expirationManager;
+   @Inject InternalDataContainer dataContainer;
+   @Inject EmbeddedCacheManager cacheManager;
+   @Inject LockManager lockManager;
+   @Inject DistributionManager distributionManager;
+   @Inject TransactionTable txTable;
+   @Inject AuthorizationManager authorizationManager;
+   @Inject PartitionHandlingManager partitionHandlingManager;
+   @Inject GlobalConfiguration globalCfg;
+   @Inject LocalTopologyManager localTopologyManager;
+   @Inject StateTransferManager stateTransferManager;
 
    protected Metadata defaultMetadata;
    private final String name;
@@ -269,7 +265,6 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    public final V replace(K key, V value) {
       return replace(key, value, defaultMetadata);
    }
-
 
    @Override
    public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
@@ -488,7 +483,18 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    final int size(long explicitFlags) {
       SizeCommand command = commandsFactory.buildSizeCommand(explicitFlags);
-      return (Integer) invoker.invoke(invocationContextFactory.createInvocationContext(false, UNBOUNDED), command);
+      long size = (Long) invoker.invoke(invocationContextFactory.createInvocationContext(false, UNBOUNDED), command);
+      return size > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) size;
+   }
+
+   @Override
+   public CompletableFuture<Long> sizeAsync() {
+      return sizeAsync(EnumUtil.EMPTY_BIT_SET);
+   }
+
+   final CompletableFuture<Long> sizeAsync(long explicitFlags) {
+      SizeCommand command = commandsFactory.buildSizeCommand(explicitFlags);
+      return (CompletableFuture) invoker.invokeAsync(invocationContextFactory.createInvocationContext(false, UNBOUNDED), command).toCompletableFuture();
    }
 
    @Override
@@ -527,16 +533,16 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return (V) invoker.invoke(ctx, command);
    }
 
-   final CacheEntry getCacheEntry(Object key, long explicitFlags, InvocationContext ctx) {
+   final CacheEntry<K, V> getCacheEntry(Object key, long explicitFlags, InvocationContext ctx) {
       assertKeyNotNull(key);
       GetCacheEntryCommand command = commandsFactory.buildGetCacheEntryCommand(key, keyPartitioner.getSegment(key),
             explicitFlags);
       Object ret = invoker.invoke(ctx, command);
-      return (CacheEntry) ret;
+      return (CacheEntry<K, V>) ret;
    }
 
    @Override
-   public final CacheEntry getCacheEntry(Object key) {
+   public final CacheEntry<K, V> getCacheEntry(Object key) {
       return getCacheEntry(key, EnumUtil.EMPTY_BIT_SET, invocationContextFactory.createInvocationContext(false, 1));
    }
 
@@ -692,7 +698,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    final CompletableFuture<Void> removeLifespanExpired(K key, V value, Long lifespan, long explicitFlags) {
       RemoveExpiredCommand command = commandsFactory.buildRemoveExpiredCommand(key, value, keyPartitioner.getSegment(key),
-            lifespan, explicitFlags | FlagBitSets.SKIP_CACHE_LOAD);
+            lifespan, explicitFlags | FlagBitSets.SKIP_CACHE_LOAD | FlagBitSets.SKIP_XSITE_BACKUP);
       // Remove expired returns a boolean - just ignore it, the caller just needs to know that the expired
       // entry is removed when this completes
       CompletableFuture<Boolean> completableFuture = performRemoveExpiredCommand(command);
@@ -706,7 +712,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    final CompletableFuture<Boolean> removeMaxIdleExpired(K key, V value, long explicitFlags) {
       RemoveExpiredCommand command = commandsFactory.buildRemoveExpiredCommand(key, value, keyPartitioner.getSegment(key),
-            explicitFlags | FlagBitSets.SKIP_CACHE_LOAD);
+            explicitFlags | FlagBitSets.SKIP_CACHE_LOAD | FlagBitSets.SKIP_XSITE_BACKUP);
       return performRemoveExpiredCommand(command);
    }
 
@@ -862,7 +868,6 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       return new LockedStreamImpl<>(cacheEntrySet().stream(), config.locking().lockAcquisitionTimeout(), TimeUnit.MILLISECONDS);
    }
 
-   @SuppressWarnings("unchecked")
    CacheSet<CacheEntry<K, V>> cacheEntrySet(long explicitFlags) {
       return cacheEntrySet(explicitFlags, invocationContextFactory.createInvocationContext(false, UNBOUNDED));
    }
@@ -951,23 +956,22 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
-   public void addListener(Object listener) {
-      notifier.addListener(listener);
+   public CompletionStage<Void> addListenerAsync(Object listener) {
+      return notifier.addListenerAsync(listener);
    }
 
-   void addListener(ListenerHolder listenerHolder) {
-      notifier.addListener(listenerHolder, null, null, null);
+   CompletionStage<Void> addListenerAsync(ListenerHolder listenerHolder) {
+      return notifier.addListenerAsync(listenerHolder, null, null, null);
    }
 
-   <C> void addListener(ListenerHolder listenerHolder, CacheEventFilter<? super K, ? super V> filter,
+   <C> CompletionStage<Void> addListenerAsync(ListenerHolder listenerHolder, CacheEventFilter<? super K, ? super V> filter,
                         CacheEventConverter<? super K, ? super V, C> converter) {
-      notifier.addListener(listenerHolder, filter, converter, null);
+      return notifier.addListenerAsync(listenerHolder, filter, converter, null);
    }
 
    <C> void addListener(ListenerHolder listenerHolder, KeyFilter<? super K> filter) {
       notifier.addListener(listenerHolder, filter);
    }
-
 
    @Override
    public void addListener(Object listener, KeyFilter<? super K> filter) {
@@ -975,39 +979,40 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
-   public <C> void addListener(Object listener, CacheEventFilter<? super K, ? super V> filter,
+   public <C> CompletionStage<Void> addListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter,
                                CacheEventConverter<? super K, ? super V, C> converter) {
-      notifier.addListener(listener, filter, converter);
+      return notifier.addListenerAsync(listener, filter, converter);
    }
 
    @Override
-   public void removeListener(Object listener) {
-      notifier.removeListener(listener);
+   public CompletionStage<Void> removeListenerAsync(Object listener) {
+      return notifier.removeListenerAsync(listener);
    }
 
+   @Deprecated
    @Override
    public Set<Object> getListeners() {
       return notifier.getListeners();
    }
 
    @Override
-   public <C> void addFilteredListener(Object listener,
+   public <C> CompletionStage<Void> addFilteredListenerAsync(Object listener,
                                        CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter,
                                        Set<Class<? extends Annotation>> filterAnnotations) {
-      notifier.addFilteredListener(listener, filter, converter, filterAnnotations);
+      return notifier.addFilteredListenerAsync(listener, filter, converter, filterAnnotations);
    }
 
    @Override
-   public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter,
+   public <C> CompletionStage<Void> addStorageFormatFilteredListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter,
                                                     CacheEventConverter<? super K, ? super V, C> converter,
                                                     Set<Class<? extends Annotation>> filterAnnotations) {
-      notifier.addStorageFormatFilteredListener(listener, filter, converter, filterAnnotations);
+      return notifier.addStorageFormatFilteredListenerAsync(listener, filter, converter, filterAnnotations);
    }
 
-   <C> void addFilteredListener(ListenerHolder listener,
+   <C> CompletionStage<Void> addFilteredListenerAsync(ListenerHolder listener,
                                 CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter,
                                 Set<Class<? extends Annotation>> filterAnnotations) {
-      notifier.addFilteredListener(listener, filter, converter, filterAnnotations);
+      return notifier.addFilteredListenerAsync(listener, filter, converter, filterAnnotations);
    }
 
    /**
@@ -1078,30 +1083,6 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
-   public void applyDelta(K deltaAwareValueKey, Delta delta, Object... locksToAcquire) {
-      if (locksToAcquire == null || locksToAcquire.length == 0) {
-         throw new IllegalArgumentException("Cannot lock empty list of keys");
-      } else if (locksToAcquire.length != 1) {
-         throw new IllegalArgumentException("Only one lock is permitted.");
-      } else if (!Objects.equals(locksToAcquire[0], deltaAwareValueKey)) {
-         throw new IllegalArgumentException("The delta aware key and locked key must match.");
-      }
-      assertKeyNotNull(deltaAwareValueKey);
-      InvocationContext ctx = invocationContextFactory.createInvocationContext(true, 1);
-      ReadWriteKeyValueCommand<K, Object, Object, Object> command = createApplyDelta(deltaAwareValueKey, delta, FlagBitSets.IGNORE_RETURN_VALUES);
-      checkLockOwner(ctx, command);
-      invoker.invoke(ctx, command);
-   }
-
-   private ReadWriteKeyValueCommand<K, Object, Object, Object> createApplyDelta(K deltaAwareValueKey, Delta delta, long explicitFlags) {
-      ReadWriteKeyValueCommand<K, Object, Object, Object> command = commandsFactory.buildReadWriteKeyValueCommand(
-            deltaAwareValueKey, delta, new ApplyDelta<>(marshaller), keyPartitioner.getSegment(deltaAwareValueKey),
-            Params.create(), getKeyDataConversion(), getValueDataConversion());
-      command.setFlagsBitSet(explicitFlags);
-      return command;
-   }
-
-   @Override
    @ManagedOperation(
          description = "Starts the cache.",
          displayName = "Starts cache."
@@ -1159,54 +1140,13 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       componentRegistry.stop();
    }
 
-   public void performGracefulShutdown() {
-      // Perform any orderly shutdown operations here
-      PassivationManager passivationManager = componentRegistry.getComponent(PassivationManager.class);
-      if (passivationManager != null) {
-         passivationManager.passivateAll();
-      }
-   }
-
-   @Override
-   public List<CommandInterceptor> getInterceptorChain() {
-      List<AsyncInterceptor> interceptors = invoker.getInterceptors();
-      ArrayList<CommandInterceptor> list = new ArrayList<>(interceptors.size());
-      interceptors.forEach(interceptor -> {
-         if (interceptor instanceof CommandInterceptor) {
-            list.add((CommandInterceptor) interceptor);
-         }
-      });
-      return list;
-   }
-
-   @Override
-   public void addInterceptor(CommandInterceptor i, int position) {
-      invoker.addInterceptor(i, position);
-   }
-
+   /**
+    * @deprecated Since 10.0, will be removed without a replacement
+    */
+   @Deprecated
    @Override
    public AsyncInterceptorChain getAsyncInterceptorChain() {
       return invoker;
-   }
-
-   @Override
-   public boolean addInterceptorAfter(CommandInterceptor i, Class<? extends CommandInterceptor> afterInterceptor) {
-      return invoker.addInterceptorAfter(i, afterInterceptor);
-   }
-
-   @Override
-   public boolean addInterceptorBefore(CommandInterceptor i, Class<? extends CommandInterceptor> beforeInterceptor) {
-      return invoker.addInterceptorBefore(i, beforeInterceptor);
-   }
-
-   @Override
-   public void removeInterceptor(int position) {
-      invoker.removeInterceptor(position);
-   }
-
-   @Override
-   public void removeInterceptor(Class<? extends CommandInterceptor> interceptorType) {
-      invoker.removeInterceptor(interceptorType);
    }
 
    @Override
@@ -1236,7 +1176,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public AdvancedCache<K, V> lockAs(Object lockOwner) {
-      return new DecoratedCache<>(this, requireNonNull(lockOwner, "lockOwner can't be null"));
+      return new DecoratedCache<>(this, requireNonNull(lockOwner, "lockOwner can't be null"), EnumUtil.EMPTY_BIT_SET);
    }
 
    @Override
@@ -1251,8 +1191,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache status",
          displayName = "Cache status",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public String getCacheStatus() {
       return getStatus().toString();
@@ -1319,7 +1258,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @Override
    public boolean startBatch() {
       if (!batchingEnabled) {
-         throw log.invocationBatchingNotEnabled();
+         throw CONFIG.invocationBatchingNotEnabled();
       }
       return batchContainer.startBatch();
    }
@@ -1327,7 +1266,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @Override
    public void endBatch(boolean successful) {
       if (!batchingEnabled) {
-         throw log.invocationBatchingNotEnabled();
+         throw CONFIG.invocationBatchingNotEnabled();
       }
       batchContainer.endBatch(successful);
    }
@@ -1343,12 +1282,10 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache name",
          displayName = "Cache name",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public String getCacheName() {
-      String name = getName().equals(BasicCacheContainer.DEFAULT_CACHE_NAME) ? "Default Cache" : getName();
-      return name + "(" + getCacheConfiguration().clustering().cacheMode().toString().toLowerCase() + ")";
+      return getName() + "(" + getCacheConfiguration().clustering().cacheMode().toString().toLowerCase() + ")";
    }
 
    /**
@@ -1357,8 +1294,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @ManagedAttribute(
          description = "Returns the version of Infinispan",
          displayName = "Infinispan version",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    @Override
    public String getVersion() {
@@ -1373,11 +1309,6 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @Override
    public BatchContainer getBatchContainer() {
       return batchContainer;
-   }
-
-   @Override
-   public InvocationContextContainer getInvocationContextContainer() {
-      return null;
    }
 
    @Override
@@ -1402,7 +1333,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public Stats getStats() {
-      return new StatsImpl(invoker);
+      return StatsImpl.create(config, invoker);
    }
 
    @Override
@@ -1420,20 +1351,10 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    final V put(K key, V value, Metadata metadata, long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
-      DataWriteCommand command;
-      // CACHE_MODE_LOCAL is used for example when preloading - the entry has empty changeset (unless it's better
-      // defined) and that wouldn't store the value properly.
-      if (value instanceof Delta) {
-         command = createApplyDelta(key, (Delta) value, explicitFlags);
-      } else if (value instanceof DeltaAware && (explicitFlags & FlagBitSets.CACHE_MODE_LOCAL) == 0) {
-         command = createApplyDelta(key, ((DeltaAware) value).delta(), explicitFlags);
-      } else {
-         command = createPutCommand(key, value, metadata, explicitFlags);
-      }
+      DataWriteCommand command = createPutCommand(key, value, metadata, explicitFlags);
       return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
-   @SuppressWarnings("unchecked")
    private PutKeyValueCommand createPutCommand(K key, V value, Metadata metadata, long explicitFlags) {
       long flags = addUnsafeFlags(explicitFlags);
       Metadata merged = applyDefaultMetadata(metadata);
@@ -1463,14 +1384,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
 
    final V putIfAbsent(K key, V value, Metadata metadata, long explicitFlags, ContextBuilder contextBuilder) {
       assertKeyValueNotNull(key, value);
-      DataWriteCommand command;
-      if (value instanceof Delta) {
-         command = createApplyDelta(key, (Delta) value, explicitFlags);
-      } else if (value instanceof DeltaAware && (explicitFlags & FlagBitSets.CACHE_MODE_LOCAL) == 0) {
-         command = createApplyDelta(key, ((DeltaAware) value).delta(), explicitFlags);
-      } else {
-         command = createPutIfAbsentCommand(key, value, metadata, explicitFlags);
-      }
+      DataWriteCommand command = createPutIfAbsentCommand(key, value, metadata, explicitFlags);
       return executeCommandAndCommitIfNeeded(contextBuilder, command, 1);
    }
 
@@ -1859,7 +1773,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       if (flags == null || flags.length == 0)
          return this;
       else
-         return new DecoratedCache<>(this, flags);
+         return new DecoratedCache<>(this, EnumUtil.bitSetOf(flags));
    }
 
    @Override
@@ -1867,7 +1781,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
       if (flags == null || flags.isEmpty())
          return this;
       else
-         return new DecoratedCache<>(this, flags);
+         return new DecoratedCache<>(this, EnumUtil.bitSetOf(flags));
    }
 
    @Override
@@ -1982,7 +1896,6 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
          return result;
       });
    }
-
 
    private boolean isTxInjected(InvocationContext ctx) {
       return ctx.isInTxScope() && ((TxInvocationContext) ctx).isImplicitTransaction();
@@ -2107,8 +2020,7 @@ public class CacheImpl<K, V> implements AdvancedCache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache configuration in form of properties",
          displayName = "Cache configuration properties",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public Properties getConfigurationAsProperties() {
       return new PropertyFormatter().format(config);

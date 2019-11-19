@@ -1,13 +1,17 @@
 package org.infinispan.interceptors.distribution;
 
+import static org.infinispan.factories.KnownComponentNames.PERSISTENCE_EXECUTOR;
+
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -35,7 +39,6 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.impl.EntryFactory;
@@ -44,6 +47,7 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.L1Manager;
 import org.infinispan.distribution.ch.KeyPartitioner;
+import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.impl.BaseRpcInterceptor;
@@ -71,9 +75,12 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
    @Inject protected InternalDataContainer dataContainer;
    @Inject protected StateTransferLock stateTransferLock;
    @Inject protected KeyPartitioner keyPartitioner;
+   @Inject @ComponentName(PERSISTENCE_EXECUTOR)
+   ExecutorService persistenceExecutor;
 
    private long l1Lifespan;
    private long replicationTimeout;
+   private boolean hasPassivation;
 
    /**
     *  This map holds all the current write synchronizers registered for a given key.  This map is only added to when an
@@ -98,12 +105,13 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
     * overridden methods.  Failure to wait for the update to occur could cause a L1 data inconsistency as the
     * invalidation may not invalidate the new value.
     */
-   private final ConcurrentMap<Object, L1WriteSynchronizer> concurrentWrites = CollectionFactory.makeConcurrentMap();
+   private final ConcurrentMap<Object, L1WriteSynchronizer> concurrentWrites = new ConcurrentHashMap<>();
 
    @Start
    public void start() {
       l1Lifespan = cacheConfiguration.clustering().l1().lifespan();
       replicationTimeout = cacheConfiguration.clustering().remoteTimeout();
+      hasPassivation = cacheConfiguration.persistence().usingStores() && cacheConfiguration.persistence().passivation();
    }
 
    @Override
@@ -145,7 +153,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
                                                 boolean runInterceptorOnConflict, Object key, boolean isEntry) throws Throwable {
       // Most times the putIfAbsent will be successful, so not doing a get first
       L1WriteSynchronizer l1WriteSync = new L1WriteSynchronizer(dataContainer, l1Lifespan, stateTransferLock,
-                                                                cdl);
+                                                                cdl, hasPassivation ? persistenceExecutor : null);
       L1WriteSynchronizer presentSync = concurrentWrites.putIfAbsent(key, l1WriteSync);
 
       // If the sync was null that means we are the first to register for the given key.  If not that means there is
@@ -283,18 +291,18 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
       Iterator<VisitableCommand> subCommands = keys.stream()
             .filter(k -> !cdl.getCacheTopology().isWriteOwner(k))
             .map(k -> removeFromL1Command(ctx, k, keyPartitioner.getSegment(k))).iterator();
-      return invokeNextAndHandle(ctx, command, (InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable ex) -> {
-         WriteCommand writeCommand = (WriteCommand) rCommand;
+      return invokeNextAndHandle(ctx, command, (InvocationContext rCtx, WriteCommand writeCommand, Object rv, Throwable ex) -> {
          if (ex != null) {
             if (mustSyncInvalidation(invalidationFuture, writeCommand)) {
-               return asyncValue(invalidationFuture).thenApply(rCtx, rCommand, (rCtx1, rCommand1, rv1) -> {
+               return asyncValue(invalidationFuture).thenApply(rCtx, writeCommand, (rCtx1, rCommand1, rv1) -> {
                   throw ex;
                });
             }
             throw ex;
          } else {
             if (mustSyncInvalidation(invalidationFuture, writeCommand)) {
-               return asyncValue(invalidationFuture).thenApply(null, null, (rCtx2, rCommand2, rv2) -> MultiSubCommandInvoker.invokeEach(rCtx, subCommands, this, rv));
+               return asyncValue(invalidationFuture).thenApply(null, null,
+                     (rCtx2, rCommand2, rv2) -> MultiSubCommandInvoker.invokeEach(rCtx, subCommands, this, rv));
             } else {
                return MultiSubCommandInvoker.invokeEach(rCtx, subCommands, this, rv);
             }
@@ -359,11 +367,10 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
          return invokeNext(ctx, command);
       }
       CompletableFuture<?> l1InvalidationFuture = invalidateL1InCluster(ctx, command, assumeOriginKeptEntryInL1);
-      return invokeNextAndHandle(ctx, command, (InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable ex) -> {
-         DataWriteCommand dataWriteCommand = (DataWriteCommand) rCommand;
+      return invokeNextAndHandle(ctx, command, (InvocationContext rCtx, DataWriteCommand dataWriteCommand, Object rv, Throwable ex) -> {
          if (ex != null) {
             if (mustSyncInvalidation(l1InvalidationFuture, dataWriteCommand)) {
-               return asyncValue(l1InvalidationFuture).thenApply(rCtx, rCommand, (rCtx1, rCommand1, rv1) -> {
+               return asyncValue(l1InvalidationFuture).thenApply(rCtx, dataWriteCommand, (rCtx1, rCommand1, rv1) -> {
                   throw ex;
                });
             }
@@ -376,7 +383,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
                   return makeStage(asyncInvokeNext(rCtx, removeFromL1Command, l1InvalidationFuture))
                         .thenApply(null, null, (rCtx2, rCommand2, rv2) -> rv);
                } else {
-                  return asyncValue(l1InvalidationFuture).thenApply(rCtx, rCommand, (rCtx1, rCommand1, rv1) -> rv);
+                  return asyncValue(l1InvalidationFuture).thenApply(rCtx, dataWriteCommand, (rCtx1, rCommand1, rv1) -> rv);
                }
             } else if (shouldRemoveFromLocalL1(rCtx, dataWriteCommand)) {
                VisitableCommand removeFromL1Command = removeFromL1Command(rCtx, dataWriteCommand.getKey(),

@@ -1,0 +1,30 @@
+= Accessing the Health API via REST
+Get {brandname} cluster health via the REST API.
+
+.Procedure
+* Invoke a `GET` request to retrieve cluster health.
++
+[source,bash]
+----
+include::rest_examples/get_v2_cluster_health.adoc[]
+----
+
+{brandname} responds with a `JSON` document such as the following:
+
+[source,json,options="nowrap",subs=attributes+]
+----
+include::rest_examples/rest_cache_health_response.json[]
+----
+
+[TIP]
+====
+Get cache manager status as follows:
+
+[source,options="nowrap",subs=attributes+]
+----
+include::rest_examples/get_v2_health_status.adoc[]
+----
+====
+
+.Reference
+See the _REST v2 (version 2) API_ documentation for more information.

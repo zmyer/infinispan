@@ -33,17 +33,19 @@ import org.infinispan.util.logging.LogFactory;
  *
  * @author Pedro Ruivo
  * @author Mircea.Markus@jboss.com
+ * @deprecated since 10.0. Total Order will be removed.
  */
+@Deprecated
 public class TotalOrderInterceptor extends DDAsyncInterceptor {
 
    private static final Log log = LogFactory.getLog(TotalOrderInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private TransactionTable transactionTable;
-   @Inject private TotalOrderManager totalOrderManager;
-   @Inject private ClusteringDependentLogic clusteringDependentLogic;
+   @Inject TransactionTable transactionTable;
+   @Inject TotalOrderManager totalOrderManager;
+   @Inject ClusteringDependentLogic clusteringDependentLogic;
    @Inject @ComponentName(value = KnownComponentNames.REMOTE_COMMAND_EXECUTOR)
-   private BlockingTaskAwareExecutorService executorService;
+   BlockingTaskAwareExecutorService executorService;
 
    @Override
    public final Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command)
@@ -66,7 +68,7 @@ public class TotalOrderInterceptor extends DDAsyncInterceptor {
          if (ctx.isOriginLocal()) {
             return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
                if (t != null) {
-                  rollbackTxOnPrepareException(rCtx, (PrepareCommand) rCommand, t);
+                  rollbackTxOnPrepareException(rCtx, rCommand, t);
                }
             });
          }
@@ -91,7 +93,7 @@ public class TotalOrderInterceptor extends DDAsyncInterceptor {
          }
 
          return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
-            afterPrepare((TxInvocationContext) rCtx, (PrepareCommand) rCommand, state, t);
+            afterPrepare((TxInvocationContext) rCtx, rCommand, state, t);
          });
       } catch (Throwable t) {
          afterPrepare(ctx, command, state, t);
@@ -158,7 +160,7 @@ public class TotalOrderInterceptor extends DDAsyncInterceptor {
       }
 
       return invokeNextAndFinally(context, command, (rCtx, rCommand, rv, t) ->
-            finishSecondPhaseCommand(commit, state, rCtx, (AbstractTransactionBoundaryCommand) rCommand));
+            finishSecondPhaseCommand(commit, state, rCtx, rCommand));
    }
 
    private void finishSecondPhaseCommand(boolean commit, TotalOrderRemoteTransactionState state, InvocationContext ctx,

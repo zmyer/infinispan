@@ -1,8 +1,6 @@
 package org.infinispan.test;
 
 import static java.io.File.separator;
-import static org.infinispan.commons.api.BasicCacheContainer.DEFAULT_CACHE_NAME;
-import static org.infinispan.commons.util.Util.EMPTY_OBJECT_ARRAY;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.fail;
@@ -14,13 +12,9 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.Serializable;
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Proxy;
-import java.lang.reflect.Type;
 import java.security.Principal;
 import java.util.AbstractMap;
 import java.util.ArrayList;
@@ -30,7 +24,6 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
@@ -57,10 +50,12 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import javax.management.JMException;
 import javax.management.MBeanInfo;
 import javax.management.MBeanOperationInfo;
 import javax.management.MBeanParameterInfo;
 import javax.management.MBeanServer;
+import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
 import javax.security.auth.Subject;
 import javax.transaction.Status;
@@ -68,23 +63,20 @@ import javax.transaction.TransactionManager;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
-import org.infinispan.Version;
 import org.infinispan.cache.impl.AbstractDelegatingCache;
-import org.infinispan.cache.impl.CacheImpl;
 import org.infinispan.commands.CommandsFactory;
-import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commons.api.Lifecycle;
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
+import org.infinispan.commons.marshall.StreamAwareMarshaller;
 import org.infinispan.commons.marshall.StreamingMarshaller;
-import org.infinispan.commons.util.ReflectionUtil;
+import org.infinispan.commons.util.Version;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
-import org.infinispan.context.InvocationContext;
-import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.ConsistentHashFactory;
@@ -93,30 +85,32 @@ import org.infinispan.distribution.group.impl.PartitionerConsistentHash;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.KnownComponentNames;
-import org.infinispan.factories.annotations.ComponentName;
-import org.infinispan.factories.annotations.Inject;
-import org.infinispan.factories.annotations.Start;
-import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.impl.BasicComponentRegistry;
 import org.infinispan.factories.impl.ComponentRef;
+import org.infinispan.factories.impl.TestComponentAccessors;
 import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.jmx.CacheJmxRegistration;
+import org.infinispan.jmx.CacheManagerJmxRegistration;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.manager.CacheContainer;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.GlobalMarshaller;
 import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
+import org.infinispan.marshall.persistence.impl.PersistenceMarshallerImpl;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
-import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.manager.PersistenceManagerImpl;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.CacheWriter;
 import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.persistence.support.DelegatingPersistenceManager;
+import org.infinispan.protostream.ProtobufUtil;
+import org.infinispan.protostream.SerializationContext;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.remoting.inboundhandler.PerCacheInboundInvocationHandler;
 import org.infinispan.remoting.transport.Address;
@@ -128,6 +122,7 @@ import org.infinispan.statetransfer.StateTransferManagerImpl;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.util.DependencyGraph;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
@@ -173,6 +168,12 @@ public class TestingUtil {
       return future;
    }
 
+   public static <T> CompletableFuture<T> delayed(Supplier<T> value, long timeout, TimeUnit timeUnit) {
+      CompletableFuture<T> future = new CompletableFuture<>();
+      timeoutExecutor.schedule(() -> future.complete(value.get()), timeout, timeUnit);
+      return future;
+   }
+
    /**
     * Should be used by tests for a timeout when they need to wait for that timeout to expire.
     *
@@ -213,7 +214,7 @@ public class TestingUtil {
 
    public static void installNewView(Stream<Address> members, EmbeddedCacheManager... where) {
       installNewView(members, ecm -> {
-         Transport transport = ecm.getTransport();
+         Transport transport = ecm.getGlobalComponentRegistry().getComponent(Transport.class);
          while (Proxy.isProxyClass(transport.getClass())) {
             // Unwrap proxies created by the StateSequencer
             transport = extractField(extractField(transport, "h"), "wrappedInstance");
@@ -250,7 +251,7 @@ public class TestingUtil {
       sb.append("<infinispan xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" ");
       sb.append("xsi:schemaLocation=\"urn:infinispan:config:");
       sb.append(schema);
-      sb.append(" http://www.infinispan.org/schemas/infinispan-config-");
+      sb.append(" https://infinispan.org/schemas/infinispan-config-");
       sb.append(schema);
       sb.append(".xsd\" xmlns=\"urn:infinispan:config:");
       sb.append(schema);
@@ -291,7 +292,6 @@ public class TestingUtil {
       try {
          field = baseType.getDeclaredField(fieldName);
          field.setAccessible(true);
-         stripFinalModifier(field);
          field.set(owner, newValue);
       }
       catch (Exception e) {
@@ -308,7 +308,6 @@ public class TestingUtil {
       try {
          field = baseType.getDeclaredField(fieldName);
          field.setAccessible(true);
-         stripFinalModifier(field);
          Object prevValue = field.get(owner);
          Object newValue = func.apply((T) prevValue);
          field.set(owner, newValue);
@@ -317,16 +316,6 @@ public class TestingUtil {
          throw new RuntimeException(e);//just to simplify exception handling
       }
    }
-
-   private static void stripFinalModifier(Field field) throws NoSuchFieldException, IllegalAccessException {
-      int modifiers = field.getModifiers();
-      if (Modifier.isFinal(modifiers)) {
-         Field modField = Field.class.getDeclaredField("modifiers");
-         modField.setAccessible(true);
-         modField.setInt(field, modifiers & ~Modifier.FINAL);
-      }
-   }
-
 
    public static Object extractField(Class type, Object target, String fieldName) {
       while (true) {
@@ -381,7 +370,8 @@ public class TestingUtil {
             if (cacheTopology != null) {
                rebalanceInProgress = cacheTopology.getPhase() != CacheTopology.Phase.NO_REBALANCE;
                ConsistentHash currentCH = cacheTopology.getCurrentCH();
-               ConsistentHashFactory chf = StateTransferManagerImpl.pickConsistentHashFactory(c.getCacheManager().getCacheManagerConfiguration(), c.getCacheConfiguration());
+               ConsistentHashFactory chf = StateTransferManagerImpl.pickConsistentHashFactory(
+                  extractGlobalConfiguration(c.getCacheManager()), c.getCacheConfiguration());
 
                chContainsAllMembers = currentCH.getMembers().size() == caches.length;
                currentChIsBalanced = true;
@@ -452,10 +442,6 @@ public class TestingUtil {
 
    public static Set<String> getInternalAndUserCacheNames(EmbeddedCacheManager cacheManager) {
       Set<String> testCaches = new HashSet<>(cacheManager.getCacheNames());
-      if (cacheManager.isDefaultRunning()) {
-         String defaultCacheName = cacheManager.getCacheManagerConfiguration().defaultCacheName().orElse(CacheContainer.DEFAULT_CACHE_NAME);
-         testCaches.add(defaultCacheName);
-      }
       testCaches.addAll(getInternalCacheNames(cacheManager));
       return testCaches;
    }
@@ -524,13 +510,14 @@ public class TestingUtil {
       }
       viewsTimedOut(cacheContainers);
    }
+
    private static void viewsTimedOut(CacheContainer[] cacheContainers) {
       int length = cacheContainers.length;
       List<View> incompleteViews = new ArrayList<>(length);
       for (CacheContainer cacheContainer : cacheContainers) {
          EmbeddedCacheManager cm = (EmbeddedCacheManager) cacheContainer;
          if (cm.getMembers().size() != cacheContainers.length) {
-            incompleteViews.add(((JGroupsTransport) cm.getTransport()).getChannel().getView());
+            incompleteViews.add(((JGroupsTransport) cm.getGlobalComponentRegistry().getComponent(Transport.class)).getChannel().getView());
             log.warnf("Manager %s has an incomplete view: %s", cm.getAddress(), cm.getMembers());
          }
       }
@@ -552,7 +539,6 @@ public class TestingUtil {
 
       viewsTimedOut(caches);
    }
-
 
    /**
     * Version of blockUntilViewsReceived that uses varargs
@@ -576,11 +562,11 @@ public class TestingUtil {
    }
 
    /**
-    * Waits for the given memebrs to be removed from the cluster. The difference between this and {@link
+    * Waits for the given members to be removed from the cluster. The difference between this and {@link
     * #blockUntilViewsReceived(long, org.infinispan.manager.CacheContainer...)} methods(s) is that it does not barf if
-    * more than expected memebers is in the cluster - this is because we expect to start with a grater number fo
-    * memebers than we eventually expect. It will barf though, if the number of members is not the one expected but only
-    * after the timeout expieres.
+    * more than expected members is in the cluster - this is because we expect to start with a grater number fo members
+    * than we eventually expect. It will barf though, if the number of members is not the one expected but only after
+    * the timeout expires.
     */
    public static void blockForMemberToFail(long timeout, CacheContainer... cacheContainers) {
       blockUntilViewsReceived(timeout, false, cacheContainers);
@@ -843,8 +829,9 @@ public class TestingUtil {
       for (int i = cacheManagers.size() - 1; i >= 0; i--) {
          EmbeddedCacheManager cm = cacheManagers.get(i);
          try {
-            if (cm != null)
-               cm.stop();
+            if (cm != null) {
+               SecurityActions.stopManager(cm);
+            }
          } catch (Throwable e) {
             log.warn("Problems killing cache manager " + cm, e);
          }
@@ -904,13 +891,17 @@ public class TestingUtil {
       Set<String> running = new LinkedHashSet<>(getOrderedCacheNames(cacheContainer));
       extractGlobalComponent(cacheContainer, InternalCacheRegistry.class).filterPrivateCaches(running);
       running.addAll(cacheContainer.getCacheNames());
-      running.add(cacheContainer.getCacheManagerConfiguration().defaultCacheName().orElse(DEFAULT_CACHE_NAME));
+      extractGlobalConfiguration(cacheContainer).defaultCacheName().ifPresent(n -> running.add(n));
 
       return running.stream()
               .map(s -> cacheContainer.getCache(s, false))
               .filter(Objects::nonNull)
               .filter(c -> c.getStatus().allowInvocations())
               .collect(Collectors.toCollection(LinkedHashSet::new));
+   }
+
+   public static GlobalConfiguration extractGlobalConfiguration(EmbeddedCacheManager cacheContainer) {
+      return SecurityActions.getCacheManagerConfiguration(cacheContainer);
    }
 
    private static void clearRunningTx(Cache cache) {
@@ -922,7 +913,7 @@ public class TestingUtil {
 
    public static void clearCacheLoader(Cache cache) {
       PersistenceManager persistenceManager = TestingUtil.extractComponent(cache, PersistenceManager.class);
-      persistenceManager.clearAllStores(BOTH);
+      CompletionStages.join(persistenceManager.clearAllStores(BOTH));
    }
 
    public static <K, V> List<CacheLoader<K, V>> cachestores(List<Cache<K, V>> caches) {
@@ -933,14 +924,7 @@ public class TestingUtil {
    }
 
    private static void removeInMemoryData(Cache cache) {
-      EmbeddedCacheManager mgr = cache.getCacheManager();
-      Address a = mgr.getAddress();
-      String str;
-      if (a == null)
-         str = "a non-clustered cache manager";
-      else
-         str = "a cache manager at address " + a;
-      log.debugf("Cleaning data for cache '%s' on %s", cache.getName(), str);
+      log.debugf("Cleaning data for cache %s", cache);
       InternalDataContainer dataContainer = TestingUtil.extractComponent(cache, InternalDataContainer.class);
       if (log.isDebugEnabled()) log.debugf("Data container size before clear: %d", dataContainer.sizeIncludingExpired());
       dataContainer.clear();
@@ -1031,11 +1015,11 @@ public class TestingUtil {
     * @return component registry
     */
    public static ComponentRegistry extractComponentRegistry(Cache cache) {
-      return cache.getAdvancedCache().getComponentRegistry();
+      return SecurityActions.getComponentRegistry(cache);
    }
 
    public static GlobalComponentRegistry extractGlobalComponentRegistry(CacheContainer cacheContainer) {
-      return ((EmbeddedCacheManager) cacheContainer).getGlobalComponentRegistry();
+      return SecurityActions.getGlobalComponentRegistry((EmbeddedCacheManager) cacheContainer);
    }
 
    public static LockManager extractLockManager(Cache cache) {
@@ -1043,16 +1027,22 @@ public class TestingUtil {
    }
 
    public static GlobalMarshaller extractGlobalMarshaller(EmbeddedCacheManager cm) {
-      GlobalComponentRegistry gcr = extractField(cm, "globalComponentRegistry");
-      return (GlobalMarshaller) gcr.getComponent(StreamingMarshaller.class);
+      GlobalComponentRegistry gcr = extractGlobalComponentRegistry(cm);
+      return (GlobalMarshaller) gcr.getComponent(StreamingMarshaller.class, KnownComponentNames.INTERNAL_MARSHALLER);
+   }
+
+   public static PersistenceMarshallerImpl extractPersistenceMarshaller(EmbeddedCacheManager cm) {
+      return cm.getGlobalComponentRegistry().getComponent(PersistenceMarshallerImpl.class, KnownComponentNames.PERSISTENCE_MARSHALLER);
+   }
+
+   public static AsyncInterceptorChain extractInterceptorChain(Cache cache) {
+      return extractComponent(cache, AsyncInterceptorChain.class);
    }
 
    /**
     * Add a hook to cache startup sequence that will allow to replace existing component with a mock.
-    * @param cacheContainer
-    * @param consumer
     */
-   public static void addCacheStartingHook(CacheContainer cacheContainer, BiConsumer<String, ComponentRegistry> consumer) {
+   public static void addCacheStartingHook(EmbeddedCacheManager cacheContainer, BiConsumer<String, ComponentRegistry> consumer) {
       GlobalComponentRegistry gcr = extractGlobalComponentRegistry(cacheContainer);
       extractField(gcr, "moduleLifecycles");
       TestingUtil.<Collection<ModuleLifecycle>>replaceField(gcr, "moduleLifecycles", moduleLifecycles -> {
@@ -1065,27 +1055,6 @@ public class TestingUtil {
          });
          return copy;
       });
-   }
-
-   /**
-    * Replaces an existing interceptor of the given type in the interceptor chain with a new interceptor instance passed
-    * as parameter.
-    *
-    * @param replacingInterceptor        the interceptor to add to the interceptor chain
-    * @param toBeReplacedInterceptorType the type of interceptor that should be swapped with the new one
-    *
-    * @return true if the interceptor was replaced
-    */
-   public static boolean replaceInterceptor(Cache cache, CommandInterceptor replacingInterceptor, Class<? extends CommandInterceptor> toBeReplacedInterceptorType) {
-      ComponentRegistry cr = extractComponentRegistry(cache);
-      // make sure all interceptors here are wired.
-      CommandInterceptor i = replacingInterceptor;
-      do {
-         cr.wireDependencies(i);
-      }
-      while ((i = i.getNext()) != null);
-      AsyncInterceptorChain inch = cache.getAdvancedCache().getAsyncInterceptorChain();
-      return inch.replaceInterceptor(replacingInterceptor, toBeReplacedInterceptorType);
    }
 
    /**
@@ -1106,18 +1075,6 @@ public class TestingUtil {
    }
 
    /**
-    * Retrieves the remote delegate for a given cache.  It is on this remote delegate that the JGroups RPCDispatcher
-    * invokes remote methods.
-    *
-    * @param cache cache instance for which a remote delegate is to be retrieved
-    *
-    * @return remote delegate, or null if the cacge is not configured for replication.
-    */
-   public static CacheImpl getInvocationDelegate(Cache cache) {
-      return (CacheImpl) cache;
-   }
-
-   /**
     * Blocks until the cache has reached a specified state.
     *
     * @param cache       cache to watch
@@ -1132,14 +1089,6 @@ public class TestingUtil {
          sleepThread(50);
       }
       throw new RuntimeException("Timed out waiting for condition");
-   }
-
-   public static void replicateCommand(Cache cache, VisitableCommand command) throws Throwable {
-      ComponentRegistry cr = extractComponentRegistry(cache);
-      AsyncInterceptorChain ic = cr.getComponent(AsyncInterceptorChain.class);
-      InvocationContextFactory icf = cr.getComponent(InvocationContextFactory.class);
-      InvocationContext ctxt = icf.createInvocationContext(true, -1);
-      ic.invoke(ctxt, command);
    }
 
    public static void blockUntilViewsReceived(int timeout, Collection caches) {
@@ -1247,7 +1196,7 @@ public class TestingUtil {
     * @param componentType        component type of which to replace
     * @param replacementComponent new instance
     * @param rewire               if true, ComponentRegistry.rewire() is called after replacing.
-    * @param stopBeforeWire       stops the lifecycle component before rewiring (this will cause it to be started
+    * @param stopBeforeWire       stops the new component before wiring (the registry will start it again)
     * @return the original component that was replaced
     */
    public static <T extends Lifecycle> T replaceComponent(Cache<?, ?> cache, Class<T> componentType, T replacementComponent, boolean rewire,
@@ -1380,8 +1329,7 @@ public class TestingUtil {
     * @return an absolute path
     */
    public static String tmpDirectory(Class<?> test) {
-      String prefix = System.getProperty("infinispan.test.tmpdir", System.getProperty("java.io.tmpdir"));
-      return prefix + separator + TEST_PATH + separator + test.getSimpleName();
+      return tmpDirectory() + separator + TEST_PATH + separator + test.getSimpleName();
    }
 
    /**
@@ -1390,8 +1338,11 @@ public class TestingUtil {
     * @return an absolute path
     */
    public static String tmpDirectory(String folder) {
-      String prefix = System.getProperty("infinispan.test.tmpdir", System.getProperty("java.io.tmpdir"));
-      return prefix + separator + TEST_PATH + separator + folder;
+      return tmpDirectory() + separator + TEST_PATH + separator + folder;
+   }
+
+   public static String tmpDirectory() {
+      return System.getProperty("infinispan.test.tmpdir", System.getProperty("java.io.tmpdir"));
    }
 
    public static String k(Method method, int index) {
@@ -1422,10 +1373,6 @@ public class TestingUtil {
       return cache.getAdvancedCache().getComponentRegistry().getComponent(TransactionTable.class);
    }
 
-   public static String getMethodSpecificJmxDomain(Method m, String jmxDomain) {
-      return jmxDomain + '.' + m.getName();
-   }
-
    public static ObjectName getCacheManagerObjectName(String jmxDomain) {
       return getCacheManagerObjectName(jmxDomain, "DefaultCacheManager");
    }
@@ -1437,13 +1384,9 @@ public class TestingUtil {
    public static ObjectName getCacheManagerObjectName(String jmxDomain, String cacheManagerName, String component) {
       try {
          return new ObjectName(jmxDomain + ":type=CacheManager,name=" + ObjectName.quote(cacheManagerName) + ",component=" + component);
-      } catch (Exception e) {
+      } catch (MalformedObjectNameException e) {
          throw new RuntimeException(e);
       }
-   }
-
-   public static ObjectName getCacheObjectName(String jmxDomain) {
-      return getCacheObjectName(jmxDomain, DEFAULT_CACHE_NAME + "(local)");
    }
 
    public static ObjectName getCacheObjectName(String jmxDomain, String cacheName) {
@@ -1455,36 +1398,37 @@ public class TestingUtil {
    }
 
    public static ObjectName getCacheObjectName(String jmxDomain, String cacheName, String component, String cacheManagerName) {
+      if (!cacheName.contains("(") || !cacheName.endsWith(")")) {
+         throw new IllegalArgumentException("Cache name does not appear to include a cache mode suffix: " + cacheName);
+      }
       try {
          return new ObjectName(jmxDomain + ":type=Cache,manager=" + ObjectName.quote(cacheManagerName)
                + ",name=" + ObjectName.quote(cacheName) + ",component=" + component);
-      } catch (Exception e) {
+      } catch (MalformedObjectNameException e) {
          throw new RuntimeException(e);
       }
    }
 
-   public static ObjectName getJGroupsChannelObjectName(String jmxDomain, String clusterName) throws Exception {
-      return new ObjectName(String.format("%s:type=channel,cluster=%s", jmxDomain, ObjectName.quote(clusterName)));
+   public static ObjectName getJGroupsChannelObjectName(String jmxDomain, String clusterName) {
+      try {
+         return new ObjectName(String.format("%s:type=channel,cluster=%s", jmxDomain, ObjectName.quote(clusterName)));
+      } catch (MalformedObjectNameException e) {
+         throw new RuntimeException(e);
+      }
    }
 
-   public static boolean existsObject(ObjectName objectName) {
-      return PerThreadMBeanServerLookup.getThreadMBeanServer().isRegistered(objectName);
-   }
-
-   public static boolean existsDomains(String... domains) {
-      MBeanServer mBeanServer = PerThreadMBeanServerLookup.getThreadMBeanServer();
-      Set<String> domainSet = new HashSet<>(Arrays.asList(domains));
-      for (String domain : mBeanServer.getDomains()) {
-         if (domainSet.contains(domain)) return true;
+   public static boolean existsDomain(MBeanServer mBeanServer, String domain) {
+      for (String d : mBeanServer.getDomains()) {
+         if (domain.equals(d)) return true;
       }
       return false;
    }
 
-   public static void checkMBeanOperationParameterNaming(ObjectName objectName) throws Exception {
-      MBeanServer mBeanServer = PerThreadMBeanServerLookup.getThreadMBeanServer();
+   public static void checkMBeanOperationParameterNaming(MBeanServer mBeanServer, ObjectName objectName) throws JMException {
       MBeanInfo mBeanInfo = mBeanServer.getMBeanInfo(objectName);
-      for(MBeanOperationInfo op : mBeanInfo.getOperations()) {
-         for(MBeanParameterInfo param : op.getSignature()) {
+      for (MBeanOperationInfo op : mBeanInfo.getOperations()) {
+         for (MBeanParameterInfo param : op.getSignature()) {
+            // assert that all operation parameters have a proper name (not an autogenerated p0, p1, ...
             assertFalse(param.getName().matches("p[0-9]+"));
          }
       }
@@ -1590,6 +1534,23 @@ public class TestingUtil {
    }
 
    /**
+    * Invoke a task using a cache manager.
+    * This method guarantees that the cache manager will
+    * be cleaned up after the task has completed, regardless of the task outcome.
+    *
+    * @param cm cache manager
+    * @param c consumer function to execute with cache manager
+    */
+   public static void withCacheManager(EmbeddedCacheManager cm,
+                                       Consumer<EmbeddedCacheManager> c) {
+      try {
+         c.accept(cm);
+      } finally {
+         TestingUtil.killCacheManagers(cm);
+      }
+   }
+
+   /**
     * Invoke a task using a several cache managers. This method guarantees
     * that the cache managers used in the task will be cleaned up after the
     * task has completed, regardless of the task outcome.
@@ -1606,6 +1567,10 @@ public class TestingUtil {
       } finally {
          TestingUtil.killCacheManagers(c.cms);
       }
+   }
+
+   public static String getDefaultCacheName(EmbeddedCacheManager cm) {
+      return extractGlobalConfiguration(cm).defaultCacheName().get();
    }
 
 
@@ -1627,33 +1592,36 @@ public class TestingUtil {
       return new EmbeddedMetadata.Builder().lifespan(lifespan != null ? lifespan : -1)
             .maxIdle(maxIdle != null ? maxIdle : -1).build();
    }
+
    public static Metadata metadata(Integer lifespan, Integer maxIdle) {
       return new EmbeddedMetadata.Builder().lifespan(lifespan != null ? lifespan : -1)
             .maxIdle(maxIdle != null ? maxIdle : -1).build();
    }
 
-   public static InternalMetadataImpl internalMetadata(Long lifespan, Long maxIdle) {
-      long now = System.currentTimeMillis();
-      return new InternalMetadataImpl(metadata(lifespan, maxIdle), now, now);
-   }
-
-
    public static <T extends CacheLoader<K, V>, K, V>  T getFirstLoader(Cache<K, V> cache) {
-      PersistenceManagerImpl persistenceManager = (PersistenceManagerImpl) extractComponent(cache, PersistenceManager.class);
+      PersistenceManagerImpl persistenceManager = getActualPersistenceManager(cache);
       //noinspection unchecked
       return (T) persistenceManager.getAllLoaders().get(0);
    }
 
    @SuppressWarnings("unchecked")
    public static <T extends CacheWriter<K, V>, K, V> T getFirstWriter(Cache<K, V> cache) {
-      PersistenceManagerImpl persistenceManager = (PersistenceManagerImpl) extractComponent(cache, PersistenceManager.class);
+      PersistenceManagerImpl persistenceManager = getActualPersistenceManager(cache);
       return (T) persistenceManager.getAllWriters().get(0);
    }
 
    @SuppressWarnings("unchecked")
    public static <T extends CacheWriter<K, V>, K, V> T getFirstTxWriter(Cache<K, V> cache) {
-      PersistenceManagerImpl persistenceManager = (PersistenceManagerImpl) extractComponent(cache, PersistenceManager.class);
+      PersistenceManagerImpl persistenceManager = getActualPersistenceManager(cache);
       return (T) persistenceManager.getAllTxWriters().get(0);
+   }
+
+   private static PersistenceManagerImpl getActualPersistenceManager(Cache<?, ?> cache) {
+      PersistenceManager persistenceManager = extractComponent(cache, PersistenceManager.class);
+      if (persistenceManager instanceof DelegatingPersistenceManager) {
+         return (PersistenceManagerImpl) ((DelegatingPersistenceManager) persistenceManager).getActual();
+      }
+      return (PersistenceManagerImpl) persistenceManager;
    }
 
    public static <K, V> Set<MarshallableEntry<K, V>> allEntries(AdvancedLoadWriteStore<K, V> cl, Predicate<K> filter) {
@@ -1693,14 +1661,14 @@ public class TestingUtil {
       AdvancedCache<K, V> advCache = cache.getAdvancedCache();
       PersistenceManager pm = advCache.getComponentRegistry().getComponent(PersistenceManager.class);
       KeyPartitioner keyPartitioner = extractComponent(cache, KeyPartitioner.class);
-      pm.writeToAllNonTxStores(MarshalledEntryUtil.create(key, value, cache), keyPartitioner.getSegment(key), BOTH);
+      CompletionStages.join(pm.writeToAllNonTxStores(MarshalledEntryUtil.create(key, value, cache), keyPartitioner.getSegment(key), BOTH));
    }
 
    public static <K, V> boolean deleteFromAllStores(K key, Cache<K, V> cache) {
       AdvancedCache<K, V> advCache = cache.getAdvancedCache();
       PersistenceManager pm = advCache.getComponentRegistry().getComponent(PersistenceManager.class);
       KeyPartitioner keyPartitioner = extractComponent(cache, KeyPartitioner.class);
-      return pm.deleteFromAllStores(key, keyPartitioner.getSegment(key), BOTH);
+      return CompletionStages.join(pm.deleteFromAllStores(key, keyPartitioner.getSegment(key), BOTH));
    }
 
    public static Subject makeSubject(String... principals) {
@@ -1732,6 +1700,14 @@ public class TestingUtil {
       if (actual < lowerBound || upperBound < actual) {
          fail("Expected between:<" + lowerBound + "> and:<" + upperBound + "> but was:<" + actual + ">");
       }
+   }
+
+   public static MBeanServer getMBeanServer(Cache<?, ?> cache) {
+      return extractComponent(cache, CacheJmxRegistration.class).getMBeanServer();
+   }
+
+   public static MBeanServer getMBeanServer(EmbeddedCacheManager cacheManager) {
+      return extractGlobalComponent(cacheManager, CacheManagerJmxRegistration.class).getMBeanServer();
    }
 
    public static class TestPrincipal implements Principal, Serializable {
@@ -1823,7 +1799,7 @@ public class TestingUtil {
       for (;;) {
          if (c.isAssignableFrom(t.getClass())) {
             if (messageRegex != null && !Pattern.matches(messageRegex, t.getMessage())) {
-               throw new RuntimeException(String.format("Exception message '%s' does not match regex '%s'", t.getMessage(), messageRegex));
+               throw new RuntimeException(String.format("Exception message '%s' does not match regex '%s'", t.getMessage(), messageRegex), t);
             }
             return;
          }
@@ -1834,17 +1810,6 @@ public class TestingUtil {
             t = cause;
          }
       }
-   }
-
-   public static void detectThreadLeaks(String regexp) {
-      List<Thread> leakedThreads = new ArrayList<>();
-      for (Map.Entry<Thread, StackTraceElement[]> s : Thread.getAllStackTraces().entrySet()) {
-         Thread thread = s.getKey();
-         if (thread.getName().matches(regexp)) leakedThreads.add(thread);
-      }
-
-      if (!leakedThreads.isEmpty())
-         throw new AssertionError("Leaked threads: " + leakedThreads);
    }
 
    public static boolean isTriangleAlgorithm(CacheMode cacheMode, boolean transactional) {
@@ -1873,108 +1838,55 @@ public class TestingUtil {
     * Named setters are not handled either.
     */
    public static void inject(Object instance, Object... components) {
-      List<Field> fields = ReflectionUtil.getAllFields(instance.getClass(), Inject.class);
-      Map<Object, Object> unmatchedComponents = new IdentityHashMap<>();
-      for (Object component : components) {
-         unmatchedComponents.put(component, component);
-      }
-      for (Field f : fields) {
-         boolean lazy = f.getType() == ComponentRef.class;
-         Class<?> componentType = getFieldComponentType(f, lazy);
-
-         Object previousMatch = null;
-         for (Object component : components) {
-            Object currentMatch = null;
-            Object componentInstance = null;
-            String componentName = null;
-            if (component instanceof NamedComponent) {
-               NamedComponent nc = (NamedComponent) component;
-               ComponentName nameAnnotation = f.getAnnotation(ComponentName.class);
-               if (nameAnnotation != null && nameAnnotation.value().equals(nc.name)) {
-                  currentMatch = nc;
-                  componentInstance = nc.component;
-                  componentName = nc.name;
-               }
-            } else {
-               if (componentType.isInstance(component)) {
-                  currentMatch = component;
-                  componentInstance = component;
-                  componentName = componentType.getName();
-               }
-            }
-            if (currentMatch != null) {
-               if (previousMatch != null) {
-                  throw new IllegalArgumentException(
-                     "Two components match the field " + f.getName() + ": " + previousMatch + " and " + component);
-               }
-               Object value = lazy ? new RunningComponentRef(componentName, componentType, componentInstance) : componentInstance;
-               ReflectionUtil.setAccessibly(instance, f, value);
-               previousMatch = currentMatch;
-               unmatchedComponents.remove(currentMatch);
-            }
-         }
-      }
-      if (!unmatchedComponents.isEmpty()) {
-         throw new IllegalArgumentException("No fields match components " + unmatchedComponents.values());
-      }
-   }
-
-   private static Class<?> getFieldComponentType(Field f, boolean lazy) {
-      Class<?> componentType;
-      if (lazy) {
-         Type lazyType = ((ParameterizedType) f.getGenericType()).getActualTypeArguments()[0];
-         String typeName;
-         if (lazyType instanceof ParameterizedType) {
-            // Ignore any generic parameters on the component type
-            typeName = ((ParameterizedType) lazyType).getRawType().getTypeName();
-         } else {
-            typeName = lazyType.getTypeName();
-         }
-         try {
-            componentType = Class.forName(typeName);
-         } catch (ClassNotFoundException e) {
-            throw new IllegalStateException("Field class cannot be loaded: " + f, e);
-         }
-      } else {
-         componentType = f.getType();
-      }
-      return componentType;
+      TestComponentAccessors.wire(instance, components);
    }
 
    public static void startComponent(Object component) {
-      invokeLifecycle(component, Start.class);
+      try {
+         TestComponentAccessors.start(component);
+      } catch (Exception e) {
+         throw new TestException(e);
+      }
    }
 
    public static void stopComponent(Object component) {
-      invokeLifecycle(component, Stop.class);
-   }
-
-   public static void invokeLifecycle(Object component, Class<? extends Annotation> lifecycle) {
-      List<Method> methods = ReflectionUtil.getAllMethods(component.getClass(), lifecycle);
-      for (Method m : methods) {
-         ReflectionUtil.invokeAccessibly(component, m, EMPTY_OBJECT_ARRAY);
+      try {
+         TestComponentAccessors.stop(component);
+      } catch (Exception e) {
+         throw new TestException(e);
       }
    }
 
    public static Object named(String name, Object instance) {
-      return new NamedComponent(name, instance);
+      return new TestComponentAccessors.NamedComponent(name, instance);
    }
 
-   private static class NamedComponent {
-      private final String name;
-      private final Object component;
+   public static void cleanUpDataContainerForCache(Cache<?, ?> cache) {
+      InternalDataContainer dataContainer = extractComponent(cache, InternalDataContainer.class);
+      dataContainer.cleanUp();
+   }
 
-      private NamedComponent(String name, Object component) {
-         this.name = name;
-         this.component = component;
-      }
+   // The first call to JbossMarshall::isMarshallable results in an object actually being serialized, the additional
+   // call to PersistenceMarshaller::isMarshallable in the GlobalMarshaller may break stats on test Externalizer implementations
+   // this is simply a convenience method to initialise MarshallableTypeHints
+   public static void initJbossMarshallerTypeHints(EmbeddedCacheManager cm, Object... objects) throws Exception {
+      StreamAwareMarshaller marshaller = extractPersistenceMarshaller(cm);
+      for (Object o : objects)
+         marshaller.isMarshallable(o);
+   }
 
-      @Override
-      public String toString() {
-         return "NamedComponent{" +
-                "name='" + name + '\'' +
-                ", component=" + component +
-                '}';
+   public static void copy(InputStream is, OutputStream os) throws IOException {
+      byte[] buffer = new byte[1024];
+      int length;
+      while ((length = is.read(buffer)) > 0) {
+         os.write(buffer, 0, length);
       }
+   }
+
+   public static ProtoStreamMarshaller createProtoStreamMarshaller(SerializationContextInitializer sci) {
+      SerializationContext ctx = ProtobufUtil.newSerializationContext();
+      sci.registerSchema(ctx);
+      sci.registerMarshallers(ctx);
+      return new ProtoStreamMarshaller(ctx);
    }
 }

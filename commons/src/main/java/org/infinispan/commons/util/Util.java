@@ -23,14 +23,21 @@ import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileVisitOption;
+import java.nio.file.FileVisitResult;
+import java.nio.file.FileVisitor;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -45,6 +52,7 @@ import javax.security.auth.Subject;
 
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.configuration.ClassWhiteList;
 import org.infinispan.commons.hash.Hash;
 import org.infinispan.commons.logging.Log;
 import org.infinispan.commons.logging.LogFactory;
@@ -67,6 +75,8 @@ public final class Util {
    public static final String[] EMPTY_STRING_ARRAY = new String[0];
    public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
    public static final byte[][] EMPTY_BYTE_ARRAY_ARRAY = new byte[0][];
+   public static final String GENERIC_JBOSS_MARSHALLING_CLASS = "org.infinispan.jboss.marshalling.commons.GenericJBossMarshaller";
+   public static final String JBOSS_USER_MARSHALLER_CLASS = "org.infinispan.jboss.marshalling.core.JBossUserMarshaller";
 
    private static final Log log = LogFactory.getLog(Util.class);
 
@@ -888,7 +898,8 @@ public final class Util {
 
    /**
     * Returns a number such that the number is a power of two that is equal to, or greater than, the number passed in as
-    * an argument.  The smallest number returned will be 1, not 0.
+    * an argument.  The smallest number returned will be 1. Due to having to be a power of two, the highest int
+    * this can return is 2<sup>31 since int is signed.
     */
    public static int findNextHighestPowerOfTwo(int num) {
       if (num <= 1) {
@@ -1106,6 +1117,42 @@ public final class Util {
       absoluteFile.delete();
    }
 
+   public static void recursiveDirectoryCopy(Path source, Path target) throws IOException {
+      Files.walkFileTree(source, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE, new FileVisitor<Path>() {
+         @Override
+         public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+            try {
+               if (!source.equals(dir)) {
+                  Path relativize = source.relativize(dir);
+                  Path resolve = target.resolve(relativize);
+                  Files.copy(dir, resolve);
+               }
+            } catch (FileAlreadyExistsException x) {
+               // do nothing
+            } catch (IOException x) {
+               return FileVisitResult.SKIP_SUBTREE;
+            }
+            return FileVisitResult.CONTINUE;
+         }
+
+         @Override
+         public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+            Files.copy(file, target.resolve(source.relativize(file)));
+            return FileVisitResult.CONTINUE;
+         }
+
+         @Override
+         public FileVisitResult visitFileFailed(Path file, IOException exc) {
+            return FileVisitResult.CONTINUE;
+         }
+
+         @Override
+         public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+            return FileVisitResult.CONTINUE;
+         }
+      });
+   }
+
    public static boolean isBasicType(Class<?> type) {
       return BASIC_TYPES.contains(type);
    }
@@ -1149,6 +1196,25 @@ public final class Util {
          if (!lockFile.delete()) {
             log.debugf("Unable to delete lock file %s", lockFile);
          }
+      }
+   }
+
+   public static Throwable getRootCause(Throwable re) {
+      if (re == null) return null;
+      Throwable cause = re.getCause();
+      if (cause != null)
+         return getRootCause(cause);
+      else
+         return re;
+   }
+
+   public static Marshaller getJBossMarshaller(ClassLoader classLoader, ClassWhiteList classWhiteList) {
+      try {
+         Class<?> marshallerClass = classLoader.loadClass(GENERIC_JBOSS_MARSHALLING_CLASS);
+         return Util.newInstanceOrNull(marshallerClass.asSubclass(Marshaller.class),
+               new Class[]{ClassLoader.class, ClassWhiteList.class}, classLoader, classWhiteList);
+      } catch (ClassNotFoundException e) {
+         return null;
       }
    }
 }

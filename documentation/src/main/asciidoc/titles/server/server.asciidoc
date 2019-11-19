@@ -1,0 +1,23 @@
+//Directory attributes
+:stories: ../../stories
+:topics: ../topics
+:images_dir: ../{topics}/images
+
+//Community doc attributes
+include::../{topics}/attributes/community-attributes.adoc[]
+
+//Community title attributes
+:toc2:
+:icons: font
+:toclevels: 3
+:numbered:
+:stem: asciimath
+:context: server
+
+//Title
+= Deploying and Configuring {brandname} {infinispanversion} Servers
+
+{brandname} server is a managed, distributed, and clusterable data grid that provides elastic scaling and high performance access to caches from multiple endpoints, such as Hot Rod and REST.
+
+//User stories
+include::stories.adoc[]

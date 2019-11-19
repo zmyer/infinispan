@@ -11,13 +11,14 @@ import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
 import org.infinispan.context.impl.TxInvocationContext;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.query.CacheQuery;
 import org.infinispan.query.Search;
 import org.infinispan.query.SearchManager;
 import org.infinispan.query.test.Person;
+import org.infinispan.query.test.QueryTestSCI;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
@@ -48,7 +49,7 @@ public class TwoPhaseCommitIndexingTest extends SingleCacheManagerTest {
             .addProperty("default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT")
          .locking().isolationLevel(IsolationLevel.READ_COMMITTED);
-      return TestCacheManagerFactory.createCacheManager(cfg);
+      return TestCacheManagerFactory.createCacheManager(QueryTestSCI.INSTANCE, cfg);
    }
 
    public void testQueryAfterAddingNewNode() throws Exception {
@@ -97,7 +98,7 @@ public class TwoPhaseCommitIndexingTest extends SingleCacheManagerTest {
       }
    }
 
-   private static class BlowUpInterceptor extends CommandInterceptor {
+   static class BlowUpInterceptor extends DDAsyncInterceptor {
 
       private final AtomicBoolean injectFailures;
 

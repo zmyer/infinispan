@@ -6,7 +6,7 @@ import static org.junit.Assert.assertTrue;
 import java.io.IOException;
 
 import org.infinispan.Cache;
-import org.infinispan.Version;
+import org.infinispan.commons.util.Version;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.StoreConfiguration;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
@@ -43,7 +43,8 @@ public class InfinispanStoreJpaIT {
       return ShrinkWrap
             .create(WebArchive.class, "jpa.war")
             .addClass(InfinispanStoreJpaIT.class)
-            .addClass(KeyValueEntity.class)
+            .addClasses(WidlflyIntegrationSCI.CLASSES)
+            .addAsResource(WidlflyIntegrationSCI.RESOURCE)
             .addAsResource("META-INF/persistence.xml")
             .addAsResource("jpa-config.xml")
             .add(manifest(), "META-INF/MANIFEST.MF");
@@ -64,10 +65,12 @@ public class InfinispanStoreJpaIT {
    @Test
    public void testCacheManager() {
       GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder();
-
+      gcb.defaultCacheName("default");
+      gcb.serialization().addContextInitializer(new WidlflyIntegrationSCIImpl());
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.persistence().addStore(JpaStoreConfigurationBuilder.class)
             .persistenceUnitName("org.infinispan.persistence.jpa")
+            .segmented(false)
             .entityClass(KeyValueEntity.class);
 
       cm = new DefaultCacheManager(gcb.build(), builder.build());

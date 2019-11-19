@@ -5,7 +5,7 @@ import org.infinispan.commons.CacheException;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.BaseAsyncInterceptor;
 import org.infinispan.interceptors.locking.PessimisticLockingInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.transaction.LockingMode;
@@ -30,13 +30,15 @@ public class ExceptionDuringGetTest extends MultipleCacheManagersTest {
 
    @Test(expectedExceptions = CacheException.class, expectedExceptionsMessageRegExp = "java.lang.RuntimeException: Induced!")
    public void testExceptionDuringGet() {
-      advancedCache(0).getAsyncInterceptorChain().addInterceptorAfter(new CommandInterceptor() {
-         @Override
-         protected Object handleDefault(InvocationContext ctx, VisitableCommand command) throws Throwable {
-            throw new RuntimeException("Induced!");
-         }
-      }, PessimisticLockingInterceptor.class);
+      advancedCache(0).getAsyncInterceptorChain().addInterceptorAfter(new ExceptionInterceptor(), PessimisticLockingInterceptor.class);
       cache(0).get("k");
       assert false;
+   }
+
+   static class ExceptionInterceptor extends BaseAsyncInterceptor {
+      @Override
+      public Object visitCommand(InvocationContext ctx, VisitableCommand command) throws Throwable {
+         throw new RuntimeException("Induced!");
+      }
    }
 }

@@ -1,13 +1,8 @@
 package org.infinispan.stream.impl;
 
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
 import java.lang.invoke.MethodHandles;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -18,6 +13,7 @@ import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -28,6 +24,7 @@ import java.util.function.BiFunction;
 import java.util.function.BinaryOperator;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -48,14 +45,11 @@ import org.infinispan.DoubleCacheStream;
 import org.infinispan.IntCacheStream;
 import org.infinispan.LongCacheStream;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.marshall.Externalizer;
-import org.infinispan.commons.marshall.SerializeWith;
 import org.infinispan.commons.util.AbstractIterator;
 import org.infinispan.commons.util.CloseableIterator;
-import org.infinispan.commons.util.Closeables;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IntSets;
-import org.infinispan.commons.util.IteratorMapper;
+import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.PersistenceConfiguration;
 import org.infinispan.configuration.cache.StoreConfiguration;
@@ -63,6 +57,11 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.LocalizedCacheTopology;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.marshall.core.MarshallableFunctions;
+import org.infinispan.reactive.RxJavaInterop;
+import org.infinispan.reactive.publisher.PublisherReducers;
+import org.infinispan.reactive.publisher.impl.DeliveryGuarantee;
+import org.infinispan.reactive.publisher.impl.SegmentCompletionPublisher;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.stream.impl.intops.IntermediateOperation;
 import org.infinispan.stream.impl.intops.object.DistinctOperation;
@@ -79,6 +78,7 @@ import org.infinispan.stream.impl.intops.object.MapToLongOperation;
 import org.infinispan.stream.impl.intops.object.PeekOperation;
 import org.infinispan.stream.impl.termop.object.ForEachBiOperation;
 import org.infinispan.stream.impl.termop.object.ForEachOperation;
+import org.infinispan.util.Closeables;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.reactivestreams.Publisher;
@@ -97,6 +97,7 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
    private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
    private final boolean writeBehindShared;
+   private final int maxSegment;
 
    // This is a hack to allow for cast to work properly, since Java doesn't work as well with nested generics
    protected static <R> Supplier<CacheStream<R>> supplierStreamCast(Supplier supplier) {
@@ -126,6 +127,7 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
       Configuration configuration = registry.getComponent(Configuration.class);
       writeBehindShared = hasWriteBehindSharedStore(configuration.persistence());
+      maxSegment = configuration.clustering().hash().numSegments();
    }
 
    /**
@@ -138,6 +140,7 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
       Configuration configuration = registry.getComponent(Configuration.class);
       writeBehindShared = hasWriteBehindSharedStore(configuration.persistence());
+      maxSegment = configuration.clustering().hash().numSegments();
    }
 
    boolean hasWriteBehindSharedStore(PersistenceConfiguration persistenceConfiguration) {
@@ -268,27 +271,21 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
    @Override
    public R reduce(R identity, BinaryOperator<R> accumulator) {
-      return performOperation(TerminalFunctions.reduceFunction(identity, accumulator), true, accumulator, null);
+      return performPublisherOperation(PublisherReducers.reduce(identity, accumulator),
+            PublisherReducers.reduce(accumulator));
    }
 
    @Override
    public Optional<R> reduce(BinaryOperator<R> accumulator) {
-      R value = performOperation(TerminalFunctions.reduceFunction(accumulator), true,
-              (e1, e2) -> {
-                 if (e1 != null) {
-                    if (e2 != null) {
-                       return accumulator.apply(e1, e2);
-                    }
-                    return e1;
-                 }
-                 return e2;
-              }, null);
+      Function<Publisher<R>, CompletionStage<R>> function = PublisherReducers.reduce(accumulator);
+      R value = performPublisherOperation(function, function);
       return Optional.ofNullable(value);
    }
 
    @Override
    public <U> U reduce(U identity, BiFunction<U, ? super R, U> accumulator, BinaryOperator<U> combiner) {
-      return performOperation(TerminalFunctions.reduceFunction(identity, accumulator, combiner), true, combiner, null);
+      return performPublisherOperation(PublisherReducers.reduce(identity, accumulator),
+            PublisherReducers.reduce(combiner));
    }
 
    /**
@@ -305,126 +302,49 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
     */
    @Override
    public <R1> R1 collect(Supplier<R1> supplier, BiConsumer<R1, ? super R> accumulator, BiConsumer<R1, R1> combiner) {
-      return performOperation(TerminalFunctions.collectFunction(supplier, accumulator, combiner), true,
-              (e1, e2) -> {
-                 combiner.accept(e1, e2);
-                 return e1;
-              }, null);
-   }
-
-   @SerializeWith(value = IdentifyFinishCollector.IdentityFinishCollectorExternalizer.class)
-   private static final class IdentifyFinishCollector<T, A> implements Collector<T, A, A> {
-      private final Collector<T, A, ?> realCollector;
-
-      IdentifyFinishCollector(Collector<T, A, ?> realCollector) {
-         this.realCollector = realCollector;
-      }
-
-      @Override
-      public Supplier<A> supplier() {
-         return realCollector.supplier();
-      }
-
-      @Override
-      public BiConsumer<A, T> accumulator() {
-         return realCollector.accumulator();
-      }
-
-      @Override
-      public BinaryOperator<A> combiner() {
-         return realCollector.combiner();
-      }
-
-      @Override
-      public Function<A, A> finisher() {
-         return null;
-      }
-
-      @Override
-      public Set<Characteristics> characteristics() {
-         Set<Characteristics> characteristics = realCollector.characteristics();
-         if (characteristics.size() == 0) {
-            return EnumSet.of(Characteristics.IDENTITY_FINISH);
-         } else {
-            Set<Characteristics> tweaked = EnumSet.copyOf(characteristics);
-            tweaked.add(Characteristics.IDENTITY_FINISH);
-            return tweaked;
-         }
-      }
-
-      public static final class IdentityFinishCollectorExternalizer implements Externalizer<IdentifyFinishCollector> {
-         @Override
-         public void writeObject(ObjectOutput output, IdentifyFinishCollector object) throws IOException {
-            output.writeObject(object.realCollector);
-         }
-
-         @Override
-         public IdentifyFinishCollector readObject(ObjectInput input) throws IOException, ClassNotFoundException {
-            return new IdentifyFinishCollector((Collector) input.readObject());
-         }
-      }
+      return performPublisherOperation(PublisherReducers.collect(supplier, accumulator),
+            PublisherReducers.accumulate(combiner));
    }
 
    @Override
    public <R1, A> R1 collect(Collector<? super R, A, R1> collector) {
-      // If it is not an identify finish we have to prevent the remote finisher, and apply locally only after
-      // everything is combined.
+      A intermediateResult = performPublisherOperation(PublisherReducers.collectorReducer(collector),
+            PublisherReducers.collectorFinalizer(collector));
+      // Identify finish means we can just ignore the finisher method
       if (collector.characteristics().contains(Collector.Characteristics.IDENTITY_FINISH)) {
-         return performOperation(TerminalFunctions.collectorFunction(collector), true,
-                 (BinaryOperator<R1>) collector.combiner(), null);
+         return (R1) intermediateResult;
       } else {
-         // Need to wrap collector to force identity finish
-         A intermediateResult = performOperation(TerminalFunctions.collectorFunction(
-                 new IdentifyFinishCollector<>(collector)), true, collector.combiner(), null);
          return collector.finisher().apply(intermediateResult);
       }
    }
 
    @Override
    public Optional<R> min(Comparator<? super R> comparator) {
-      R value = performOperation(TerminalFunctions.minFunction(comparator), false,
-              (e1, e2) -> {
-                 if (e1 != null) {
-                    if (e2 != null) {
-                       return comparator.compare(e1, e2) > 0 ? e2 : e1;
-                    } else {
-                       return e1;
-                    }
-                 }
-                 return e2;
-              }, null);
+      Function<Publisher<R>, CompletionStage<R>> function = PublisherReducers.min(comparator);
+      R value = performPublisherOperation(function, function);
       return Optional.ofNullable(value);
    }
 
    @Override
    public Optional<R> max(Comparator<? super R> comparator) {
-      R value = performOperation(TerminalFunctions.maxFunction(comparator), false,
-              (e1, e2) -> {
-                 if (e1 != null) {
-                    if (e2 != null) {
-                       return comparator.compare(e1, e2) > 0 ? e1 : e2;
-                    } else {
-                       return e1;
-                    }
-                 }
-                 return e2;
-              }, null);
+      Function<Publisher<R>, CompletionStage<R>> function = PublisherReducers.max(comparator);
+      R value = performPublisherOperation(function, function);
       return Optional.ofNullable(value);
    }
 
    @Override
    public boolean anyMatch(Predicate<? super R> predicate) {
-      return performOperation(TerminalFunctions.anyMatchFunction(predicate), false, Boolean::logicalOr, b -> b);
+      return performPublisherOperation(PublisherReducers.anyMatch(predicate), PublisherReducers.or());
    }
 
    @Override
    public boolean allMatch(Predicate<? super R> predicate) {
-      return performOperation(TerminalFunctions.allMatchFunction(predicate), false, Boolean::logicalAnd, b -> !b);
+      return performPublisherOperation(PublisherReducers.allMatch(predicate), PublisherReducers.and());
    }
 
    @Override
    public boolean noneMatch(Predicate<? super R> predicate) {
-      return performOperation(TerminalFunctions.noneMatchFunction(predicate), false, Boolean::logicalAnd, b -> !b);
+      return performPublisherOperation(PublisherReducers.noneMatch(predicate), PublisherReducers.and());
    }
 
    @Override
@@ -435,14 +355,14 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
    @Override
    public Optional<R> findAny() {
-      R value = performOperation(TerminalFunctions.findAnyFunction(), false, (r1, r2) -> r1 == null ? r2 : r1,
-              Objects::nonNull);
+      Function<Publisher<R>, CompletionStage<R>> function = PublisherReducers.findFirst();
+      R value = performPublisherOperation(function, function);
       return Optional.ofNullable(value);
    }
 
    @Override
    public long count() {
-      return performOperation(TerminalFunctions.countFunction(), true, (l1, l2) -> l1 + l2, null);
+      return performPublisherOperation(PublisherReducers.count(), PublisherReducers.add());
    }
 
 
@@ -451,29 +371,102 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
    @Override
    public Iterator<R> iterator() {
       log.tracef("Distributed iterator invoked with rehash: %s", rehashAware);
-      if (!rehashAware) {
-         // Non rehash doesn't care about lost segments or completed ones
-         CloseableIterator<R> closeableIterator = nonRehashRemoteIterator(dm.getReadConsistentHash(), segmentsToFilter,
-               null, IdentityPublisherDecorator.getInstance(), intermediateOperations);
-         onClose(closeableIterator::close);
-         return closeableIterator;
+      Function usedTransformer;
+      if (intermediateOperations.isEmpty()) {
+         usedTransformer = MarshallableFunctions.identity();
       } else {
-         Iterable<IntermediateOperation> ops = iteratorOperation.prepareForIteration(intermediateOperations,
-               (Function) nonNullKeyFunction());
-         CloseableIterator<R> closeableIterator;
-         if (segmentCompletionListener != null && iteratorOperation != IteratorOperation.FLAT_MAP) {
-            closeableIterator = new CompletionListenerRehashIterator<>(ops, segmentCompletionListener);
-         } else {
-            closeableIterator = new RehashIterator<>(ops);
+         usedTransformer = new CacheStreamIntermediatePublisher(intermediateOperations);
+      }
+      DeliveryGuarantee deliveryGuarantee = rehashAware ? DeliveryGuarantee.EXACTLY_ONCE : DeliveryGuarantee.AT_MOST_ONCE;
+      Publisher<R> publisherToSubscribeTo;
+      SegmentCompletionPublisher<R> publisher;
+      if (toKeyFunction == null) {
+         publisher = cpm.keyPublisher(segmentsToFilter, keysToFilter, null, includeLoader,
+               deliveryGuarantee, distributedBatchSize, usedTransformer);
+      } else {
+         publisher = cpm.entryPublisher(segmentsToFilter, keysToFilter, null, includeLoader,
+               deliveryGuarantee, distributedBatchSize, usedTransformer);
+      }
+
+      CompletionSegmentTracker segmentTracker;
+      if (segmentCompletionListener != null) {
+         // Tracker relies on ordering that a segment completion occurs
+         segmentTracker = new CompletionSegmentTracker(segmentCompletionListener);
+         publisherToSubscribeTo = Flowable.<R>fromPublisher(s -> publisher.subscribe(s, segmentTracker))
+               .doOnNext(segmentTracker);
+      } else {
+         segmentTracker = null;
+         publisherToSubscribeTo = publisher;
+      }
+
+      CloseableIterator<R> realIterator = Closeables.iterator(Flowable.fromPublisher(publisherToSubscribeTo)
+            // Make sure any runtime errors are wrapped in CacheException
+            .onErrorResumeNext(RxJavaInterop.cacheExceptionWrapper()), distributedBatchSize);
+      onClose(realIterator::close);
+
+      if (segmentTracker != null) {
+         return new AbstractIterator<R>() {
+            @Override
+            protected R getNext() {
+               if (realIterator.hasNext()) {
+                  R value = realIterator.next();
+                  segmentTracker.returningObject(value);
+                  return value;
+               } else {
+                  segmentTracker.onComplete();
+               }
+               return null;
+            }
+         };
+      }
+      return realIterator;
+   }
+
+   /**
+    * Tracking class that keeps track of segment completions and maps them to a given value. This value is not actually
+    * part of these segments, but is instead the object returned immediately after the segments complete. This way
+    * we can guarantee to notify the user after all elements have been processed of which segments were completed.
+    * All methods except for accept(int) are guaranteed to be called sequentially and in a safe manner.
+    */
+   private class CompletionSegmentTracker implements IntConsumer, io.reactivex.functions.Consumer<Object> {
+      private final Consumer<Supplier<PrimitiveIterator.OfInt>> listener;
+      private final Map<Object, IntSet> awaitingNotification;
+      volatile IntSet completedSegments;
+
+      private CompletionSegmentTracker(Consumer<Supplier<PrimitiveIterator.OfInt>> listener) {
+         this.listener = Objects.requireNonNull(listener);
+         this.awaitingNotification = new HashMap<>();
+         this.completedSegments = IntSets.concurrentSet(maxSegment);
+      }
+
+
+      @Override
+      public void accept(int value) {
+         // This method can technically be called from multiple threads
+         completedSegments.set(value);
+      }
+
+      @Override
+      public void accept(Object r) {
+         if (!completedSegments.isEmpty()) {
+            log.tracef("Going to complete segments %s when %s is iterated upon", completedSegments, Util.toStr(r));
+            awaitingNotification.put(r, completedSegments);
+            completedSegments = IntSets.concurrentSet(maxSegment);
          }
-         onClose(closeableIterator::close);
-         // This cast messes up generic checking, but that is okay
-         Function<R, R> function = iteratorOperation.getFunction();
-         if (function != null) {
-            return new IteratorMapper<>(closeableIterator, function);
-         } else {
-            return closeableIterator;
+      }
+
+      public void returningObject(Object value) {
+         IntSet segments = awaitingNotification.remove(value);
+         if (segments != null) {
+            log.tracef("Notifying listeners of segments %s complete now that %s is returning", segments, Util.toStr(value));
+            listener.accept(segments::iterator);
          }
+      }
+
+      public void onComplete() {
+         log.tracef("Completing last segments of: %s", completedSegments);
+         listener.accept(completedSegments::iterator);
+         completedSegments.clear();
       }
    }
 
@@ -675,7 +668,7 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
       }
 
       if (stayLocal) {
-         return Closeables.iterator(Flowable.fromPublisher(localPublisher).blockingIterable().iterator());
+         return Closeables.iterator(localPublisher, distributedBatchSize);
       } else {
          Map<Address, IntSet> targets = determineTargets(ch, segmentsToFilter);
          Iterator<Map.Entry<Address, IntSet>> targetIter = targets.entrySet().iterator();
@@ -775,23 +768,17 @@ public class DistributedCacheStream<Original, R> extends AbstractCacheStream<Ori
 
    @Override
    public Object[] toArray() {
-      return performOperation(TerminalFunctions.toArrayFunction(), false,
-              (v1, v2) -> {
-                 Object[] array = Arrays.copyOf(v1, v1.length + v2.length);
-                 System.arraycopy(v2, 0, array, v1.length, v2.length);
-                 return array;
-              }, null);
+      return performPublisherOperation(PublisherReducers.toArrayReducer(), PublisherReducers.toArrayFinalizer());
    }
 
    @Override
    public <A> A[] toArray(IntFunction<A[]> generator) {
-      return performOperation(TerminalFunctions.toArrayFunction(generator), false,
-              (v1, v2) -> {
-                 A[] array = generator.apply(v1.length + v2.length);
-                 System.arraycopy(v1, 0, array, 0, v1.length);
-                 System.arraycopy(v2, 0, array, v1.length, v2.length);
-                 return array;
-              }, null);
+      // The types are really Function<Publisher<R>, CompletionStage<A[]>> but to help users call toArrayReducer with
+      // proper compile type checks it forces a type restriction that the generated array must be a super class
+      // of the stream type. Unfortunately Stream API does not have that restriction and thus only throws
+      // a RuntimeException instead.
+      Function function = PublisherReducers.toArrayReducer(generator);
+      return (A[]) performPublisherOperation(function, PublisherReducers.toArrayFinalizer(generator));
    }
 
    // These are the custom added methods for cache streams

@@ -1,5 +1,7 @@
 package org.infinispan.partitionhandling.impl;
 
+import static org.infinispan.util.logging.Log.CONTAINER;
+
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -39,11 +41,11 @@ import org.infinispan.util.logging.LogFactory;
 public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
    private static final Log log = LogFactory.getLog(PartitionHandlingInterceptor.class);
 
-   @Inject private PartitionHandlingManager partitionHandlingManager;
+   @Inject PartitionHandlingManager partitionHandlingManager;
 
-   private InvocationFinallyAction handleDataReadReturn = this::handleDataReadReturn;
-   private InvocationFinallyAction handleGetAllCommandReturn = this::handleGetAllCommandReturn;
-   private InvocationSuccessAction postTxCommandCheck = this::postTxCommandCheck;
+   private InvocationFinallyAction<DataCommand> handleDataReadReturn = this::handleDataReadReturn;
+   private InvocationFinallyAction<GetAllCommand> handleGetAllCommandReturn = this::handleGetAllCommandReturn;
+   private InvocationSuccessAction<VisitableCommand> postTxCommandCheck = this::postTxCommandCheck;
 
    private boolean performPartitionCheck(InvocationContext ctx, FlagAffectedCommand command) {
       return !command.hasAnyFlag(FlagBitSets.CACHE_MODE_LOCAL | FlagBitSets.SKIP_OWNERSHIP_CHECK | FlagBitSets.PUT_FOR_STATE_TRANSFER);
@@ -136,8 +138,7 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
       return invokeNextAndFinally(ctx, command, handleDataReadReturn);
    }
 
-   private void handleDataReadReturn(InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable t) throws Throwable {
-      DataCommand dataCommand = (DataCommand) rCommand;
+   private void handleDataReadReturn(InvocationContext rCtx, DataCommand dataCommand, Object rv, Throwable t) throws Throwable {
       if (!performPartitionCheck(rCtx, dataCommand))
          return;
 
@@ -146,7 +147,7 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
             // We must have received an AvailabilityException from one of the owners.
             // There is no way to verify the cause here, but there isn't any other way to get an invalid
             // get response.
-            throw log.degradedModeKeyUnavailable(dataCommand.getKey());
+            throw CONTAINER.degradedModeKeyUnavailable(dataCommand.getKey());
          } else if (t instanceof AllOwnersLostException) {
             // Scattered cache throws AllOwnersLostException even if there's no need to fail with AvailabilityException\
             // Dist caches should never throw AllOwnersLostException
@@ -199,14 +200,13 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
       return invokeNextAndFinally(ctx, command, handleGetAllCommandReturn);
    }
 
-   private void handleGetAllCommandReturn(InvocationContext rCtx, VisitableCommand rCommand, Object rv, Throwable t) throws Throwable {
-      GetAllCommand getAllCommand = (GetAllCommand) rCommand;
+   private void handleGetAllCommandReturn(InvocationContext rCtx, GetAllCommand getAllCommand, Object rv, Throwable t) throws Throwable {
       if (t != null) {
          if (t instanceof RpcException && performPartitionCheck(rCtx, getAllCommand)) {
             // We must have received an AvailabilityException from one of the owners.
             // There is no way to verify the cause here, but there isn't any other way to get an invalid
             // get response.
-            throw log.degradedModeKeysUnavailable(((GetAllCommand) rCommand).getKeys());
+            throw CONTAINER.degradedModeKeysUnavailable(getAllCommand.getKeys());
          }
       }
 
@@ -228,7 +228,7 @@ public class PartitionHandlingInterceptor extends DDAsyncInterceptor {
          if (result.size() != getAllCommand.getKeys().size()) {
             Set<Object> missingKeys = new HashSet<>(getAllCommand.getKeys());
             missingKeys.removeAll(result.keySet());
-            throw log.degradedModeKeysUnavailable(missingKeys);
+            throw CONTAINER.degradedModeKeysUnavailable(missingKeys);
          }
       }
    }

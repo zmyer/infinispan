@@ -1,0 +1,31 @@
+REMOVE(1)
+=======
+:doctype: manpage
+
+
+NAME
+----
+remove - deletes entries from a cache.
+
+
+SYNOPSIS
+--------
+*remove* `KEY` ['OPTIONS']
+
+
+OPTIONS
+-------
+*--cache*='NAME'::
+Specifies the cache from which to remove entries. Defaults to the currently
+selected cache.
+
+
+EXAMPLE
+-------
+`remove --cache=mycache hola` +
+Deletes the `hola` entry from the `mycache` cache.
+
+
+SEE ALSO
+--------
+cache(1), drop(1), clearcache(1)

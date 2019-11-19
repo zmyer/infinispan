@@ -1,0 +1,24 @@
+QUIT(1)
+========
+:doctype: manpage
+
+
+NAME
+----
+quit - exits the command line interface.
+
+
+SYNOPSIS
+--------
+*quit*
+
+
+EXAMPLE
+-------
+`quit` +
+Exits the CLI.
+
+
+SEE ALSO
+--------
+disconnect(1), shutdown(1)

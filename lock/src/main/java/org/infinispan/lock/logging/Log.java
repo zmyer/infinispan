@@ -1,7 +1,11 @@
 package org.infinispan.lock.logging;
 
+import static org.jboss.logging.Logger.Level.INFO;
+
 import org.infinispan.lock.exception.ClusteredLockException;
 import org.jboss.logging.BasicLogger;
+import org.jboss.logging.annotations.Cause;
+import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageLogger;
 
@@ -14,14 +18,13 @@ import org.jboss.logging.annotations.MessageLogger;
 @MessageLogger(projectCode = "ISPN")
 public interface Log extends BasicLogger {
    String LOCK_DELETE_MSG = "The lock was deleted.";
-   String NODE_LEFT_MSG = "The node has left the cluster.";
    String UNLOCK_FAILED_MSG = "LOCK[%s] Unlock failed from node %s";
 
    @Message(value = LOCK_DELETE_MSG, id = 29001)
    ClusteredLockException lockDeleted();
 
-   @Message(value = NODE_LEFT_MSG, id = 29002)
-   ClusteredLockException nodeShutdown();
+//   @Message(value = "The node has left the cluster.", id = 29002)
+//   ClusteredLockException nodeShutdown();
 
    @Message(value = UNLOCK_FAILED_MSG, id = 29003)
    ClusteredLockException unlockFailed(String lockName, Object originator);
@@ -38,6 +41,13 @@ public interface Log extends BasicLogger {
    @Message(value = "Invalid scope for tag <clustered-lock>. Expected CACHE_CONTAINER but was %s", id = 29007)
    ClusteredLockException invalidScope(String scope);
 
-   @Message(value = "When the node is configured as a zero-capacity node, you need to specify the number of owners for the lock", id = 29008)
-   ClusteredLockException zeroCapacityNodeError();
+   @Message(value = "Cannot create clustered locks when clustering is not enabled", id = 29008)
+   ClusteredLockException requireClustered();
+
+   @LogMessage(level = INFO)
+   @Message(value = "Configuration is not clustered, clustered locks are disabled", id = 29009)
+   void configurationNotClustered();
+
+   @Message(value = "MBean registration failed", id = 29010)
+   ClusteredLockException jmxRegistrationFailed(@Cause Throwable cause);
 }

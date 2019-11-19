@@ -2,7 +2,7 @@ package org.infinispan.factories.impl;
 
 import java.util.Collection;
 
-import org.infinispan.commons.api.Lifecycle;
+import org.infinispan.commons.IllegalLifecycleStateException;
 import org.infinispan.commons.util.Experimental;
 import org.infinispan.factories.annotations.Inject;
 
@@ -39,18 +39,17 @@ import org.infinispan.factories.annotations.Inject;
  * <p>Dependency cycles are not allowed. Declaring the dependency field of type {@link ComponentRef},
  * breaks the cycle by allowing the registry to inject/start the dependency lazily.</p>
  *
- * <p>For all the components that implement {@link Lifecycle}, the registry calls {@linkplain Lifecycle#start()} during
- * startup, in the order they were registered.
- * If a component is registered when the registry is already running, {@linkplain Lifecycle#start()} is called during
- * registration.</p>
+ * <p>Components are not started by default.
+ * Methods annotated with {@link org.infinispan.factories.annotations.Start} and
+ * {@link org.infinispan.factories.annotations.PostStart} are invoked only on
+ * {@link ComponentRef#running()}.</p>
  *
  * <p>During shutdown, registration of new components is not allowed.
  * The registry stops all the components in the reverse order of their start, by invoking all the methods annotated
- * with {@link org.infinispan.factories.annotations.Stop}.
- * The </p>
+ * with {@link org.infinispan.factories.annotations.Stop}.</p>
  *
- * <p>Methods annotated with {@link org.infinispan.factories.annotations.Start} and
- * {@link org.infinispan.factories.annotations.PostStart} a</p>
+ * @author Dan Berindei
+ * @since 9.4
  */
 public interface BasicComponentRegistry {
    /**
@@ -64,7 +63,7 @@ public interface BasicComponentRegistry {
     * @param name The component name.
     * @param componentType The expected component type, not used to identify the component.
     */
-   <T> ComponentRef<T> getComponent(String name, Class<T> componentType);
+   <T, U extends T> ComponentRef<T> getComponent(String name, Class<U> componentType);
 
    /**
     * Looks up a running component named {@code name} in the registry, or registers it if necessary.
@@ -86,7 +85,7 @@ public interface BasicComponentRegistry {
     * @param manageLifecycle {@code false} if the registry should ignore methods annotated with
     * {@linkplain org.infinispan.factories.annotations.Start} and {@linkplain org.infinispan.factories.annotations.Stop}
     *
-    * @throws org.infinispan.IllegalLifecycleStateException If the registry is stopping/stopped
+    * @throws IllegalLifecycleStateException If the registry is stopping/stopped
     * @throws org.infinispan.commons.CacheConfigurationException If a component/alias is already registered with that
     *         name, or if a dependency cannot be resolved
     */
@@ -106,7 +105,7 @@ public interface BasicComponentRegistry {
     *
     * <p>Components that depend on the alias will behave as if they depended on the original component directly.</p>
     *
-    * @throws org.infinispan.IllegalLifecycleStateException If the registry is stopping/stopped
+    * @throws IllegalLifecycleStateException If the registry is stopping/stopped
     * @throws org.infinispan.commons.CacheConfigurationException If a component/alias is already registered with that
     *         name
     */
@@ -120,7 +119,7 @@ public interface BasicComponentRegistry {
     * @param target An instance of a class with {@link Inject} annotations.
     * @param startDependencies If {@code true}, start the dependencies before injecting them.
     *
-    * @throws org.infinispan.IllegalLifecycleStateException If the registry is stopping/stopped
+    * @throws IllegalLifecycleStateException If the registry is stopping/stopped
     * @throws org.infinispan.commons.CacheConfigurationException If a dependency cannot be resolved
     */
    void wireDependencies(Object target, boolean startDependencies);
@@ -147,7 +146,7 @@ public interface BasicComponentRegistry {
     * Need to call {@link #rewire()} to inject the new component in all the components that depend on it.
     * If the component is global, need to call {@link #rewire()} on all the cache component registries as well.</p>
     *
-    * @throws org.infinispan.IllegalLifecycleStateException If the registry is stopping/stopped
+    * @throws IllegalLifecycleStateException If the registry is stopping/stopped
     */
    @Experimental
    void replaceComponent(String componentName, Object newInstance, boolean manageLifecycle);
@@ -166,5 +165,22 @@ public interface BasicComponentRegistry {
    @Experimental
    Collection<ComponentRef<?>> getRegisteredComponents();
 
+   /**
+    * @return The MBean metadata for class {@code className}
+    */
+   @Experimental
+   MBeanMetadata getMBeanMetadata(String className);
+
+   /**
+    * Check if a component accessor has been registered for class {@code componentClassName}
+    */
+   @Experimental
+   boolean hasComponentAccessor(String componentClassName);
+
+   /**
+    * Stop the registry and all the components that have been started.
+    *
+    * <p>Components cannot be instantiated or started after this.</p>
+    */
    void stop();
 }

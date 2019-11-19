@@ -2,10 +2,10 @@ package org.infinispan.security.impl;
 
 import java.lang.annotation.Annotation;
 import java.util.Collection;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -18,7 +18,6 @@ import org.infinispan.AdvancedCache;
 import org.infinispan.CacheCollection;
 import org.infinispan.CacheSet;
 import org.infinispan.LockedStream;
-import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
 import org.infinispan.commons.dataconversion.Encoder;
 import org.infinispan.commons.dataconversion.Wrapper;
@@ -26,7 +25,6 @@ import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
-import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.eviction.EvictionManager;
@@ -34,7 +32,6 @@ import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.metadata.Metadata;
@@ -91,10 +88,10 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    }
 
    @Override
-   public <C> void addListener(Object listener, CacheEventFilter<? super K, ? super V> filter,
-                               CacheEventConverter<? super K, ? super V, C> converter) {
+   public <C> CompletionStage<Void> addListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter,
+         CacheEventConverter<? super K, ? super V, C> converter) {
       authzManager.checkPermission(subject, AuthorizationPermission.LISTEN);
-      delegate.addListener(listener, filter, converter);
+      return delegate.addListenerAsync(listener, filter, converter);
    }
 
    @Override
@@ -104,23 +101,29 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    }
 
    @Override
-   public void addListener(Object listener) {
+   public CompletionStage<Void> addListenerAsync(Object listener) {
       authzManager.checkPermission(subject, AuthorizationPermission.LISTEN);
-      delegate.addListener(listener);
+      return delegate.addListenerAsync(listener);
    }
 
    @Override
-   public <C> void addFilteredListener(Object listener,
-                                       CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter,
-                                       Set<Class<? extends Annotation>> filterAnnotations) {
+   public <C> CompletionStage<Void> addFilteredListenerAsync(Object listener,
+         CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter,
+         Set<Class<? extends Annotation>> filterAnnotations) {
       authzManager.checkPermission(subject, AuthorizationPermission.LISTEN);
-      delegate.addFilteredListener(listener, filter, converter, filterAnnotations);
+      return delegate.addFilteredListenerAsync(listener, filter, converter, filterAnnotations);
    }
 
    @Override
-   public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+   public <C> CompletionStage<Void> addStorageFormatFilteredListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
       authzManager.checkPermission(subject, AuthorizationPermission.LISTEN);
-      delegate.addStorageFormatFilteredListener(listener, filter, converter, filterAnnotations);
+      return delegate.addStorageFormatFilteredListenerAsync(listener, filter, converter, filterAnnotations);
+   }
+
+   @Override
+   public void shutdown() {
+      authzManager.checkPermission(subject, AuthorizationPermission.LIFECYCLE);
+      delegate.shutdown();
    }
 
    @Override
@@ -148,11 +151,12 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    }
 
    @Override
-   public void removeListener(Object listener) {
+   public CompletionStage<Void> removeListenerAsync(Object listener) {
       authzManager.checkPermission(subject, AuthorizationPermission.LISTEN);
-      delegate.removeListener(listener);
+      return delegate.removeListenerAsync(listener);
    }
 
+   @Deprecated
    @Override
    public Set<Object> getListeners() {
       authzManager.checkPermission(subject, AuthorizationPermission.LISTEN);
@@ -242,12 +246,10 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
       return delegate.putAllAsync(data, lifespan, unit);
    }
 
-   @Override
-   public void addInterceptor(CommandInterceptor i, int position) {
-      authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
-      delegate.addInterceptor(i, position);
-   }
-
+   /**
+    * @deprecated Since 10.0, will be removed without a replacement
+    */
+   @Deprecated
    @Override
    public AsyncInterceptorChain getAsyncInterceptorChain() {
       authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
@@ -261,12 +263,6 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    }
 
    @Override
-   public boolean addInterceptorAfter(CommandInterceptor i, Class<? extends CommandInterceptor> afterInterceptor) {
-      authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
-      return delegate.addInterceptorAfter(i, afterInterceptor);
-   }
-
-   @Override
    public CompletableFuture<Void> putAllAsync(Map<? extends K, ? extends V> data, long lifespan, TimeUnit lifespanUnit,
                                               long maxIdle, TimeUnit maxIdleUnit) {
       authzManager.checkPermission(subject, AuthorizationPermission.WRITE);
@@ -277,12 +273,6 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    public void putAll(Map<? extends K, ? extends V> map, long lifespan, TimeUnit unit) {
       authzManager.checkPermission(subject, AuthorizationPermission.WRITE);
       delegate.putAll(map, lifespan, unit);
-   }
-
-   @Override
-   public boolean addInterceptorBefore(CommandInterceptor i, Class<? extends CommandInterceptor> beforeInterceptor) {
-      authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
-      return delegate.addInterceptorBefore(i, beforeInterceptor);
    }
 
    @Override
@@ -304,33 +294,15 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    }
 
    @Override
-   public void removeInterceptor(int position) {
-      authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
-      delegate.removeInterceptor(position);
-   }
-
-   @Override
    public CompletableFuture<V> putIfAbsentAsync(K key, V value) {
       authzManager.checkPermission(subject, AuthorizationPermission.WRITE);
       return delegate.putIfAbsentAsync(key, value);
    }
 
    @Override
-   public void removeInterceptor(Class<? extends CommandInterceptor> interceptorType) {
-      authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
-      delegate.removeInterceptor(interceptorType);
-   }
-
-   @Override
    public boolean replace(K key, V oldValue, V value, long lifespan, TimeUnit unit) {
       authzManager.checkPermission(subject, AuthorizationPermission.WRITE);
       return delegate.replace(key, oldValue, value, lifespan, unit);
-   }
-
-   @Override
-   public List<CommandInterceptor> getInterceptorChain() {
-      authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
-      return delegate.getInterceptorChain();
    }
 
    @Override
@@ -685,12 +657,6 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    }
 
    @Override
-   public void applyDelta(K deltaAwareValueKey, Delta delta, Object... locksToAcquire) {
-      authzManager.checkPermission(subject, AuthorizationPermission.WRITE);
-      delegate.applyDelta(deltaAwareValueKey, delta, locksToAcquire);
-   }
-
-   @Override
    public void evict(K key) {
       authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
       delegate.evict(key);
@@ -742,12 +708,6 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    public EmbeddedCacheManager getCacheManager() {
       authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
       return delegate.getCacheManager();
-   }
-
-   @Override
-   public InvocationContextContainer getInvocationContextContainer() {
-      authzManager.checkPermission(subject, AuthorizationPermission.ADMIN);
-      return delegate.getInvocationContextContainer();
    }
 
    @Override
@@ -861,6 +821,12 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    public int size() {
       authzManager.checkPermission(subject, AuthorizationPermission.BULK_READ);
       return delegate.size();
+   }
+
+   @Override
+   public CompletableFuture<Long> sizeAsync() {
+      authzManager.checkPermission(subject, AuthorizationPermission.BULK_READ);
+      return delegate.sizeAsync();
    }
 
    @Override
@@ -1050,7 +1016,7 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
    }
 
    @Override
-   public CacheEntry getCacheEntry(Object key) {
+   public CacheEntry<K, V> getCacheEntry(Object key) {
       authzManager.checkPermission(subject, AuthorizationPermission.READ);
       return delegate.getCacheEntry(key);
    }
@@ -1097,6 +1063,6 @@ public final class SecureCacheImpl<K, V> implements SecureCache<K, V> {
 
    @Override
    public String toString() {
-      return String.format("SecureCache '%s'", delegate.getName());
+      return "Secure " + delegate;
    }
 }

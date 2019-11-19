@@ -1,18 +1,20 @@
 package org.infinispan.rest.logging;
 
 import static org.jboss.logging.Logger.Level.ERROR;
+import static org.jboss.logging.Logger.Level.INFO;
 import static org.jboss.logging.Logger.Level.TRACE;
 import static org.jboss.logging.Logger.Level.WARN;
 
 import org.infinispan.commons.CacheConfigurationException;
-import org.infinispan.commons.dataconversion.EncodingException;
 import org.infinispan.rest.cachemanager.exceptions.CacheUnavailableException;
+import org.infinispan.rest.framework.Invocation;
 import org.infinispan.rest.framework.Method;
 import org.infinispan.rest.framework.RegistrationException;
 import org.infinispan.rest.operations.exceptions.NoCacheFoundException;
 import org.infinispan.rest.operations.exceptions.ServiceUnavailableException;
 import org.infinispan.rest.operations.exceptions.UnacceptableDataFormatException;
 import org.jboss.logging.BasicLogger;
+import org.jboss.logging.Logger;
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
@@ -27,8 +29,10 @@ import org.jboss.logging.annotations.MessageLogger;
  */
 @MessageLogger(projectCode = "ISPN")
 public interface Log extends BasicLogger {
-   @Message(value = "Error transcoding content", id = 495)
-   EncodingException errorTranscoding(@Cause Throwable cause);
+   Log REST = Logger.getMessageLogger(Log.class, org.infinispan.util.logging.Log.LOG_ROOT + "REST");
+
+//   @Message(value = "Error transcoding content", id = 495)
+//   EncodingException errorTranscoding(@Cause Throwable cause);
 
    @Message(value = "Unsupported configuration option", id = 12004)
    UnsupportedOperationException unsupportedConfigurationOption();
@@ -63,9 +67,30 @@ public interface Log extends BasicLogger {
    CacheConfigurationException illegalCompressionLevel(int compressionLevel);
 
    @Message(value = "Cannot register invocation '%s': resource already registered for method '%s' at the destination path '/%s'", id = 12015)
-   RegistrationException duplicateResource(String invocationName, Method method, String existingPath);
+   RegistrationException duplicateResourceMethod(String invocationName, Method method, String existingPath);
 
    @LogMessage(level = WARN)
    @Message(value = "Header '%s' will be ignored, expecting a number but got '%s'", id = 12016)
    void warnInvalidNumber(String header, String value);
+
+   @Message(value = "Cannot enable authentication without an authenticator", id = 12017)
+   CacheConfigurationException authenticationWithoutAuthenticator();
+
+   @Message(value = "Cannot register invocation with path '%s': '*' is only allowed at the end", id = 12018)
+   RegistrationException invalidPath(String path);
+
+   @Message(value = "Cannot register path '%s' for invocation '%s', since it conflicts with resource '%s'", id = 12019)
+   RegistrationException duplicateResource(String candidate, Invocation invocation, String existingPath);
+
+   @LogMessage(level = INFO)
+   @Message(value = "MassIndexer started", id = 12020)
+   void asyncMassIndexerStarted();
+
+   @LogMessage(level = INFO)
+   @Message(value = "MassIndexer completed successfully", id = 12021)
+   void asyncMassIndexerSuccess();
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Error executing MassIndexer", id = 12022)
+   void errorExecutingMassIndexer(@Cause Throwable e);
 }

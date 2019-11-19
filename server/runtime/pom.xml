@@ -1,0 +1,484 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+         xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+   <modelVersion>4.0.0</modelVersion>
+   <parent>
+      <groupId>org.infinispan</groupId>
+      <artifactId>infinispan-server-parent</artifactId>
+      <version>10.1.0-SNAPSHOT</version>
+      <relativePath>../pom.xml</relativePath>
+   </parent>
+
+   <artifactId>infinispan-server-runtime</artifactId>
+   <packaging>jar</packaging>
+   <name>Infinispan Server</name>
+   <description>Infinispan Server</description>
+
+   <properties>
+      <module.skipMavenRemoteResource>true</module.skipMavenRemoteResource>
+      <defaultTestGroup />
+      <defaultExcludedTestGroup />
+      <server.output.dir>${project.build.directory}/${infinispan.brand.prefix}-server-${infinispan.brand.version}</server.output.dir>
+      <server.test.lib.dir>${project.build.directory}/testlibs</server.test.lib.dir>
+   </properties>
+
+   <dependencies>
+      <!-- Build dependencies. -->
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-component-processor</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>protostream-processor</artifactId>
+      </dependency>
+      <!-- Compile dependencies. All of these will be shipped in the server -->
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-hotrod</artifactId>
+         <type>jar</type>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-rest</artifactId>
+         <type>jar</type>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-memcached</artifactId>
+         <type>jar</type>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-router</artifactId>
+         <type>jar</type>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-client-hotrod</artifactId>
+         <exclusions>
+            <exclusion>
+               <groupId>org.wildfly.security</groupId>
+               <artifactId>*</artifactId>
+            </exclusion>
+         </exclusions>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-client-rest</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-cachestore-jdbc</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-cachestore-rocksdb</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-cachestore-remote</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-persistence-soft-index</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-cli-client</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-scripting</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-jboss-marshalling</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.wildfly.security</groupId>
+         <artifactId>wildfly-elytron</artifactId>
+         <exclusions>
+            <exclusion>
+               <groupId>org.wildfly.security</groupId>
+               <artifactId>*</artifactId>
+            </exclusion>
+         </exclusions>
+      </dependency>
+      <dependency>
+         <groupId>org.jboss.threads</groupId>
+         <artifactId>jboss-threads</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>io.agroal</groupId>
+         <artifactId>agroal-pool</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.jboss.logmanager</groupId>
+         <artifactId>jboss-logmanager</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.jboss.slf4j</groupId>
+         <artifactId>slf4j-jboss-logmanager</artifactId>
+         <scope>compile</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.glassfish</groupId>
+         <artifactId>javax.json</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.kohsuke.metainf-services</groupId>
+         <artifactId>metainf-services</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>io.netty</groupId>
+         <artifactId>netty-tcnative</artifactId>
+         <classifier>linux-x86_64</classifier>
+      </dependency>
+      <!-- Test dependencies -->
+      <dependency>
+         <groupId>junit</groupId>
+         <artifactId>junit</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>net.spy</groupId>
+         <artifactId>spymemcached</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-rest</artifactId>
+         <type>test-jar</type>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.testcontainers</groupId>
+         <artifactId>testcontainers</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.apache.directory.server</groupId>
+         <artifactId>apacheds-all</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>sample-domain-definition</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>sample-domain-implementation</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.antlr</groupId>
+         <artifactId>antlr-runtime</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.jboss.shrinkwrap.resolver</groupId>
+         <artifactId>shrinkwrap-resolver-depchain</artifactId>
+         <scope>test</scope>
+         <type>pom</type>
+      </dependency>
+
+      <!-- Database test dependencies -->
+      <dependency>
+         <groupId>com.h2database</groupId>
+         <artifactId>h2</artifactId>
+         <scope>test</scope>
+      </dependency>
+   </dependencies>
+
+   <build>
+      <plugins>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>console</id>
+                  <phase>package</phase>
+                  <goals>
+                     <goal>unpack</goal>
+                  </goals>
+                  <configuration>
+                     <artifactItems>
+                        <artifactItem>
+                           <groupId>org.infinispan</groupId>
+                           <artifactId>infinispan-console-ng</artifactId>
+                           <version>${version.console}</version>
+                           <outputDirectory>${server.output.dir}/static/console</outputDirectory>
+                        </artifactItem>
+                     </artifactItems>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-enforcer-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>enforce-banned-dependencies</id>
+                  <goals>
+                     <goal>enforce</goal>
+                  </goals>
+                  <configuration>
+                     <rules>
+                        <bannedDependencies>
+                           <excludes>
+                              <exclude>org.apache.logging.log4j:log4j-slf4j-impl</exclude>
+                           </excludes>
+                        </bannedDependencies>
+                     </rules>
+                     <fail>true</fail>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+               <parallel>classes</parallel>
+               <groups combine.self="override"/>
+               <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
+               <testNGArtifactName>none:none</testNGArtifactName>
+               <disableXmlReport>false</disableXmlReport>
+               <properties combine.self="override">
+                  <usedefaultlisteners>false</usedefaultlisteners>
+                  <listener>${junitListener}</listener>
+               </properties>
+               <systemPropertyVariables>
+                  <server.output.dir>${server.output.dir}</server.output.dir>
+               </systemPropertyVariables>
+            </configuration>
+         </plugin>
+         <plugin>
+            <artifactId>maven-jar-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>default-jar</id>
+                  <configuration>
+                     <excludes>
+                        <exclude>org/infinispan/server/loader/**</exclude>
+                     </excludes>
+                  </configuration>
+               </execution>
+               <execution>
+                  <id>loader</id>
+                  <phase>package</phase>
+                  <goals>
+                     <goal>jar</goal>
+                  </goals>
+                  <configuration>
+                     <classifier>loader</classifier>
+                     <includes>
+                        <include>org/infinispan/server/loader/*</include>
+                     </includes>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.infinispan.maven-plugins</groupId>
+            <artifactId>proto-schema-compatibility</artifactId>
+            <executions>
+               <execution>
+                  <goals>
+                     <goal>proto-schema-compatibility-check</goal>
+                  </goals>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>clean-server</id>
+                  <phase>clean</phase>
+                  <goals>
+                     <goal>run</goal>
+                  </goals>
+                  <configuration>
+                     <target>
+                        <property name="output.dir"
+                                  value="${server.output.dir}"/>
+                        <ant antfile="build.xml" inheritRefs="true">
+                           <target name="clean"/>
+                        </ant>
+                     </target>
+                  </configuration>
+               </execution>
+               <execution>
+                  <id>build-server</id>
+                  <phase>package</phase>
+                  <goals>
+                     <goal>run</goal>
+                  </goals>
+                  <configuration>
+                     <target>
+                        <property name="compile_classpath" refid="maven.compile.classpath"/>
+                        <property name="output.dir"
+                                  value="${server.output.dir}"/>
+                        <property name="server.dir"
+                                  value="${project.basedir}/src/main/server"/>
+                        <property name="test.lib.dir"
+                                  value="${server.test.lib.dir}"/>
+                        <property name="dollar" value="$"/>
+
+                        <filterset id="brandfilter" begintoken="${dollar}{" endtoken="}">
+                           <filter token="infinispan.brand.name" value="${infinispan.brand.name}" />
+                           <filter token="infinispan.brand.version" value="${infinispan.brand.version}" />
+                           <filter token="infinispan.brand.short-name" value="${infinispan.brand.short-name}" />
+                           <filter token="current.year" value="${current.year}" />
+                        </filterset>
+
+                        <dependencyfilesets scopes="compile"/>
+                        <dependencyfilesets scopes="test" projectDependenciesId="maven.test.dependencies"/>
+                        <ant antfile="build.xml" inheritRefs="true">
+                           <target name="build"/>
+                        </ant>
+                     </target>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.wildfly.maven.plugins</groupId>
+            <artifactId>licenses-plugin</artifactId>
+            <executions>
+               <execution>
+                  <id>update-licenses-xml</id>
+                  <goals>
+                     <goal>insert-versions</goal>
+                  </goals>
+                  <phase>package</phase>
+                  <configuration>
+                     <sortByGroupIdAndArtifactId>true</sortByGroupIdAndArtifactId>
+                     <licensesOutputFile>${server.output.dir}/docs/licenses/licenses.xml</licensesOutputFile>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>xml-maven-plugin</artifactId>
+            <version>1.0.1</version>
+            <inherited>false</inherited>
+            <executions>
+               <execution>
+                  <id>generate-licenses-html</id>
+                  <goals>
+                     <goal>transform</goal>
+                  </goals>
+                  <phase>package</phase>
+                  <configuration>
+                     <transformationSets>
+                        <transformationSet>
+                           <dir>${server.output.dir}/docs/licenses</dir>
+                           <includes>
+                              <include>licenses.xml</include>
+                           </includes>
+                           <stylesheet>${server.output.dir}/docs/licenses/licenses.xsl</stylesheet>
+                           <outputDir>${server.output.dir}/docs/licenses</outputDir>
+                           <fileMappers>
+                              <fileMapper
+                                      implementation="org.codehaus.plexus.components.io.filemappers.FileExtensionMapper">
+                                 <targetExtension>.html</targetExtension>
+                              </fileMapper>
+                           </fileMappers>
+                           <parameters>
+                              <parameter>
+                                 <name>product</name>
+                                 <value>${project.name}</value>
+                              </parameter>
+                              <parameter>
+                                 <name>version</name>
+                                 <value>${project.version}</value>
+                              </parameter>
+                           </parameters>
+                        </transformationSet>
+                     </transformationSets>
+                  </configuration>
+               </execution>
+            </executions>
+         </plugin>
+         <plugin>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <configuration>
+               <groups combine.self="override"/>
+               <excludedGroups combine.self="override"/>
+               <parallel>none</parallel>
+               <threadCount>${infinispan.test.parallel.threads}</threadCount>
+               <forkCount>1</forkCount>
+               <reuseForks>true</reuseForks>
+               <disableXmlReport>false</disableXmlReport>
+               <useFile>false</useFile>
+               <systemPropertyVariables>
+                  <infinispan.cluster.stack>${infinispan.cluster.stack}</infinispan.cluster.stack>
+                  <jgroups.bind_addr>127.0.0.1</jgroups.bind_addr>
+                  <jgroups.join_timeout>2000</jgroups.join_timeout>
+                  <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
+                  <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
+                  <build.directory>${project.build.directory}</build.directory>
+                  <com.arjuna.ats.arjuna.common.propertiesFile>test-jbossts-properties.xml</com.arjuna.ats.arjuna.common.propertiesFile>
+
+                  <!-- this is picked up in the log4j xml which prepends it to each module's log file-->
+                  <infinispan.module-suffix>${infinispan.module-suffix}</infinispan.module-suffix>
+                  <ansi.strip>${ansi.strip}</ansi.strip>
+                  <!-- Log the correct thread name after we call Thread.setName(),
+                       see https://issues.apache.org/jira/browse/LOG4J2-2052 -->
+                  <AsyncLogger.ThreadNameStrategy>UNCACHED</AsyncLogger.ThreadNameStrategy>
+               </systemPropertyVariables>
+               <trimStackTrace>false</trimStackTrace>
+               <testNGArtifactName>none:none</testNGArtifactName>
+               <properties>
+                  <usedefaultlisteners>false</usedefaultlisteners>
+                  <listener>${junitListener}</listener>
+               </properties>
+               <argLine>${forkJvmArgs} ${testjvm.jigsawArgs} -Dserver.output.dir=${server.output.dir} -Djdk.attach.allowAttachSelf=true</argLine>
+            </configuration>
+            <executions>
+               <execution>
+                  <goals>
+                     <goal>integration-test</goal>
+                     <goal>verify</goal>
+                  </goals>
+               </execution>
+            </executions>
+         </plugin>
+      </plugins>
+   </build>
+
+   <profiles>
+      <profile>
+         <id>container</id>
+         <activation>
+            <activeByDefault>false</activeByDefault>
+         </activation>
+         <properties>
+            <container.argLine>${forkJvmArgs} ${testjvm.jigsawArgs} -Dserver.output.dir=${server.output.dir} -Djdk.attach.allowAttachSelf=true -Dorg.infinispan.test.server.driver=CONTAINER</container.argLine>
+         </properties>
+         <build>
+            <plugins>
+               <plugin>
+                  <artifactId>maven-failsafe-plugin</artifactId>
+                  <configuration>
+                     <argLine>${container.argLine}</argLine>
+                  </configuration>
+               </plugin>
+               <plugin>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <configuration>
+                     <argLine>${container.argLine}</argLine>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
+</project>
+

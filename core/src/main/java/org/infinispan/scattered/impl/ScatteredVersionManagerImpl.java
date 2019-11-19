@@ -34,10 +34,13 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
-import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.persistence.manager.OrderedUpdatesManager;
 import org.infinispan.persistence.manager.PersistenceManager;
+import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.reactive.RxJavaInterop;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
@@ -45,6 +48,7 @@ import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.scattered.ScatteredVersionManager;
 import org.infinispan.topology.ClusterTopologyManager;
 import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.reactivestreams.Publisher;
@@ -54,6 +58,7 @@ import io.reactivex.Flowable;
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
+@Scope(Scopes.NAMED_CACHE)
 public class ScatteredVersionManagerImpl<K> implements ScatteredVersionManager<K> {
    private static final AtomicIntegerFieldUpdater<ScatteredVersionManagerImpl> topologyIdUpdater
          = AtomicIntegerFieldUpdater.newUpdater(ScatteredVersionManagerImpl.class, "topologyId");
@@ -61,17 +66,17 @@ public class ScatteredVersionManagerImpl<K> implements ScatteredVersionManager<K
    protected static final Log log = LogFactory.getLog(ScatteredVersionManagerImpl.class);
    protected static final boolean trace = log.isTraceEnabled();
 
-   @Inject private Configuration configuration;
-   @Inject private ComponentRegistry componentRegistry;
+   @Inject Configuration configuration;
+   @Inject ComponentRegistry componentRegistry;
    @Inject @ComponentName(ASYNC_TRANSPORT_EXECUTOR)
-   private ExecutorService executorService;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private RpcManager rpcManager;
-   @Inject private InternalDataContainer<K, ?> dataContainer;
-   @Inject private PersistenceManager persistenceManager;
-   @Inject private DistributionManager distributionManager;
-   @Inject private ClusterTopologyManager clusterTopologyManager;
-   @Inject private OrderedUpdatesManager orderedUpdatesManager;
+   ExecutorService executorService;
+   @Inject CommandsFactory commandsFactory;
+   @Inject RpcManager rpcManager;
+   @Inject InternalDataContainer<K, ?> dataContainer;
+   @Inject PersistenceManager persistenceManager;
+   @Inject DistributionManager distributionManager;
+   @Inject ClusterTopologyManager clusterTopologyManager;
+   @Inject OrderedUpdatesManager orderedUpdatesManager;
 
    private int invalidationBatchSize;
    private int numSegments;
@@ -131,16 +136,17 @@ public class ScatteredVersionManagerImpl<K> implements ScatteredVersionManager<K
       // TODO: implement start after shutdown
       AtomicInteger maxTopologyId = new AtomicInteger(preloadedTopologyId);
       Publisher<MarshallableEntry<Object, Object>> publisher = persistenceManager.publishEntries(false, true);
-      Flowable.fromPublisher(publisher).blockingForEach(me -> {
+      CompletionStage<Void> stage = Flowable.fromPublisher(publisher).doOnNext(me -> {
          Metadata metadata = me.getMetadata();
          EntryVersion entryVersion = metadata.version();
          if (entryVersion instanceof SimpleClusteredVersion) {
-            int entryTopologyId = ((SimpleClusteredVersion) entryVersion).topologyId;
+            int entryTopologyId = ((SimpleClusteredVersion) entryVersion).getTopologyId();
             if (maxTopologyId.get() < entryTopologyId) {
                maxTopologyId.updateAndGet(current -> Math.max(current, entryTopologyId));
             }
          }
-      });
+      }).to(RxJavaInterop.flowableToCompletionStage());
+      CompletionStages.join(stage);
       if (maxTopologyId.get() > 0) {
          clusterTopologyManager.setInitialCacheTopologyId(componentRegistry.getCacheName(), maxTopologyId.get() + 1);
       }
@@ -236,7 +242,7 @@ public class ScatteredVersionManagerImpl<K> implements ScatteredVersionManager<K
    @Override
    public boolean isVersionActual(int segment, EntryVersion version) {
       SimpleClusteredVersion clusteredVersion = (SimpleClusteredVersion) version;
-      return clusteredVersion.topologyId >= ownerTopologyIds.get(segment);
+      return clusteredVersion.getTopologyId() >= ownerTopologyIds.get(segment);
    }
 
    @Override
@@ -332,7 +338,7 @@ public class ScatteredVersionManagerImpl<K> implements ScatteredVersionManager<K
    @Override
    public void updatePreloadedEntryVersion(EntryVersion version) {
       if (version instanceof SimpleClusteredVersion) {
-         int topologyId = ((SimpleClusteredVersion) version).topologyId;
+         int topologyId = ((SimpleClusteredVersion) version).getTopologyId();
          preloadedTopologyId = Math.max(preloadedTopologyId, topologyId);
       }
    }
@@ -505,7 +511,7 @@ public class ScatteredVersionManagerImpl<K> implements ScatteredVersionManager<K
          }
       });
       // remove the entries on self, too
-      removeCommand.init(dataContainer, orderedUpdatesManager, null, null, null);
+      commandsFactory.initializeReplicableCommand(removeCommand, false);
       removeCommand.invokeAsync();
    }
 
@@ -537,8 +543,8 @@ public class ScatteredVersionManagerImpl<K> implements ScatteredVersionManager<K
       public final boolean removal;
 
       private InvalidationInfo(SimpleClusteredVersion version, boolean removal) {
-         this.topologyId = version.topologyId;
-         this.version = version.version;
+         this.topologyId = version.getTopologyId();
+         this.version = version.getVersion();
          this.removal = removal;
       }
 

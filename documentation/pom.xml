@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.infinispan</groupId>
         <artifactId>infinispan-parent</artifactId>
-        <version>10.0.0-SNAPSHOT</version>
+        <version>10.1.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -16,6 +16,7 @@
     <description>The Infinispan Documentation</description>
 
     <properties>
+        <download.url>https://infinispan.org/download/</download.url>
         <javadoc.root>https://docs.jboss.org/infinispan/${infinispan.base.version}/apidocs</javadoc.root>
         <configdoc.root>https://docs.jboss.org/infinispan/${infinispan.base.version}/configdocs/</configdoc.root>
         <wildfly.docroot>https://docs.jboss.org/author/display/WFLY11</wildfly.docroot>
@@ -24,9 +25,10 @@
         <javaee.docroot>https://docs.oracle.com/javaee/7/api</javaee.docroot>
         <skipTests>true</skipTests>
         <defaults.file>${project.build.directory}/default-attributes.adoc</defaults.file>
-        <asciidoctor.version>1.5.7</asciidoctor.version>
+        <asciidoctor.version>1.6.2</asciidoctor.version>
+        <asciidoctor.maven.plugin.version>1.5.7.1</asciidoctor.maven.plugin.version>
         <asciidoctorj.pdf.version>1.5.0-alpha.16</asciidoctorj.pdf.version>
-        <jruby.version>9.1.17.0</jruby.version>
+        <jruby.version>9.2.6.0</jruby.version>
     </properties>
 
     <dependencies>
@@ -55,20 +57,21 @@
             <artifactId>infinispan-cachestore-rest</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.infinispan.server</groupId>
+            <groupId>org.infinispan.wildfly</groupId>
             <artifactId>infinispan-server-commons</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.infinispan.server</groupId>
+            <groupId>org.infinispan.wildfly</groupId>
             <artifactId>infinispan-server-jgroups</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.infinispan.server</groupId>
-            <artifactId>infinispan-server-endpoints</artifactId>
+            <groupId>org.infinispan.wildfly</groupId>
+            <artifactId>infinispan-wildfly-infinispan</artifactId>
         </dependency>
+
         <dependency>
-            <groupId>org.infinispan.server</groupId>
-            <artifactId>infinispan-server-infinispan</artifactId>
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-clustered-counter</artifactId>
         </dependency>
     </dependencies>
 
@@ -109,9 +112,8 @@
                                 <jar>infinispan-cachestore-rocksdb</jar>
                                 <jar>infinispan-cachestore-remote</jar>
                                 <jar>infinispan-cachestore-rest</jar>
-                                <jar>infinispan-server-endpoints</jar>
                                 <jar>infinispan-server-jgroups</jar>
-                                <jar>infinispan-server-infinispan</jar>
+                                <jar>infinispan-wildfly-infinispan</jar>
                             </jars>
                         </configuration>
                     </execution>
@@ -120,7 +122,7 @@
             <plugin>
                 <groupId>org.asciidoctor</groupId>
                 <artifactId>asciidoctor-maven-plugin</artifactId>
-                <version>${asciidoctor.version}</version>
+                <version>${asciidoctor.maven.plugin.version}</version>
                 <dependencies>
                     <dependency>
                         <groupId>org.asciidoctor</groupId>
@@ -165,7 +167,10 @@
                                 <docinfo>true</docinfo>
                                 <experimental>true</experimental>
                                 <infinispanversion>${infinispan.base.version}</infinispanversion>
+                                <infinispancomponentversion>${version.component.infinispan}</infinispancomponentversion>
                                 <brandname>${infinispan.brand.name}</brandname>
+                                <fullbrandname>${infinispan.brand.name}</fullbrandname>
+                                <wildflybrandname>${wildfly.brand.name}</wildflybrandname>
                                 <moduleprefix>${infinispan.module.slot.prefix}</moduleprefix>
                                 <infinispanslot>${infinispan.module.slot.prefix}-${parsedVersion.majorVersion}.${parsedVersion.minorVersion}</infinispanslot>
                                 <defaults>${defaults.file}</defaults>
@@ -174,6 +179,7 @@
                                 <wildflydocroot>${wildfly.docroot}</wildflydocroot>
                                 <jdkdocroot>${jdk.docroot}</jdkdocroot>
                                 <javaeedocroot>${javaee.docroot}</javaeedocroot>
+                                <download_url>${download.url}</download_url>
                             </attributes>
                         </configuration>
                     </execution>
@@ -191,7 +197,7 @@
                     <plugin>
                         <groupId>org.asciidoctor</groupId>
                         <artifactId>asciidoctor-maven-plugin</artifactId>
-                        <version>${asciidoctor.version}</version>
+                        <version>${asciidoctor.maven.plugin.version}</version>
                         <dependencies>
                             <dependency>
                                 <groupId>org.asciidoctor</groupId>
@@ -231,6 +237,9 @@
                                         <docinfo>true</docinfo>
                                         <experimental>true</experimental>
                                         <infinispanversion>${infinispan.base.version}</infinispanversion>
+                                        <infinispancomponentversion>${version.component.infinispan}</infinispancomponentversion>
+                                        <brandname>${infinispan.brand.name}</brandname>
+                                        <fullbrandname>${infinispan.brand.name}</fullbrandname>
                                         <defaults>${defaults.file}</defaults>
                                         <infinispanslot>${infinispan.module.slot.prefix}-${parsedVersion.majorVersion}.${parsedVersion.minorVersion}</infinispanslot>
                                         <javadocroot>${javadoc.root}</javadocroot>
@@ -238,6 +247,7 @@
                                         <wildflydocroot>${wildfly.docroot}</wildflydocroot>
                                         <jdkdocroot>${jdk.docroot}</jdkdocroot>
                                         <javaeedocroot>${javaee.docroot}</javaeedocroot>
+                                        <download_url>${download.url}</download_url>
                                     </attributes>
                                 </configuration>
                             </execution>

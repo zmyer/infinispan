@@ -1,6 +1,7 @@
 package org.infinispan.globalstate.impl;
 
 import static org.infinispan.commons.util.Util.renameTempFile;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -11,20 +12,22 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.api.CacheContainerAdmin;
-import org.infinispan.commons.util.concurrent.ConcurrentHashSet;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalStateConfiguration;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.globalstate.LocalConfigurationStorage;
 
 /**
- * An implementation of {@link LocalConfigurationStorage} which stores
- * {@link org.infinispan.commons.api.CacheContainerAdmin.AdminFlag#PERMANENT}
- *
+ * An implementation of {@link LocalConfigurationStorage} which stores non-{@link org.infinispan.commons.api.CacheContainerAdmin.AdminFlag#VOLATILE}
+ * <p>
  * This component persists cache configurations to the {@link GlobalStateConfiguration#persistentLocation()} in a
  * <pre>caches.xml</pre> file which is read on startup.
  *
@@ -33,27 +36,34 @@ import org.infinispan.globalstate.LocalConfigurationStorage;
  */
 
 public class OverlayLocalConfigurationStorage extends VolatileLocalConfigurationStorage {
-   private ConcurrentHashSet<String> persistentCaches = new ConcurrentHashSet<>();
+   private Set<String> persistentCaches = ConcurrentHashMap.newKeySet();
 
    @Override
    public void validateFlags(EnumSet<CacheContainerAdmin.AdminFlag> flags) {
-      if (flags.contains(CacheContainerAdmin.AdminFlag.PERMANENT) && !globalConfiguration.globalState().enabled())
-         throw log.globalStateDisabled();
+      GlobalConfiguration globalConfiguration = configurationManager.getGlobalConfiguration();
+      if (!flags.contains(CacheContainerAdmin.AdminFlag.VOLATILE) && !globalConfiguration.globalState().enabled())
+         throw CONFIG.globalStateDisabled();
    }
 
-   public void createCache(String name, String template, Configuration configuration, EnumSet<CacheContainerAdmin.AdminFlag> flags) {
-      super.createCache(name, template, configuration, flags);
-      if (flags.contains(CacheContainerAdmin.AdminFlag.PERMANENT)) {
-         persistentCaches.add(name);
-         storeAll();
+   public CompletableFuture<Void> createCache(String name, String template, Configuration configuration, EnumSet<CacheContainerAdmin.AdminFlag> flags) {
+      CompletableFuture<Void> future = super.createCache(name, template, configuration, flags);
+      if (!flags.contains(CacheContainerAdmin.AdminFlag.VOLATILE)) {
+         return future.thenApplyAsync((v) -> {
+            persistentCaches.add(name);
+            storeAll();
+            return v;
+         }, executor);
+      } else {
+         return future;
       }
    }
 
-   public void removeCache(String name, EnumSet<CacheContainerAdmin.AdminFlag> flags) {
-      if (persistentCaches.remove(name)) {
-         storeAll();
-      }
-      super.removeCache(name, flags);
+   public CompletableFuture<Void> removeCache(String name, EnumSet<CacheContainerAdmin.AdminFlag> flags) {
+      return CompletableFuture.runAsync(() -> {
+         if (persistentCaches.remove(name)) {
+            storeAll();
+         }
+      }, executor).thenCompose((v) -> super.removeCache(name, flags));
    }
 
    public Map<String, Configuration> loadAll() {
@@ -61,7 +71,7 @@ public class OverlayLocalConfigurationStorage extends VolatileLocalConfiguration
 
       try (FileInputStream fis = new FileInputStream(getPersistentFile())) {
          Map<String, Configuration> configurations = new HashMap<>();
-         ConfigurationBuilderHolder holder = parserRegistry.parse(fis);
+         ConfigurationBuilderHolder holder = parserRegistry.parse(fis, null);
          for (Map.Entry<String, ConfigurationBuilder> entry : holder.getNamedConfigurationBuilders().entrySet()) {
             String name = entry.getKey();
             Configuration configuration = entry.getValue().build();
@@ -78,12 +88,13 @@ public class OverlayLocalConfigurationStorage extends VolatileLocalConfiguration
 
    private void storeAll() {
       try {
+         GlobalConfiguration globalConfiguration = configurationManager.getGlobalConfiguration();
          File sharedDirectory = new File(globalConfiguration.globalState().sharedPersistentLocation());
          sharedDirectory.mkdirs();
          File temp = File.createTempFile("caches", null, sharedDirectory);
          Map<String, Configuration> configurationMap = new HashMap<>();
          for (String cacheName : persistentCaches) {
-            configurationMap.put(cacheName, cacheManager.getCacheConfiguration(cacheName));
+            configurationMap.put(cacheName, configurationManager.getConfiguration(cacheName, true));
          }
          try (FileOutputStream f = new FileOutputStream(temp)) {
             parserRegistry.serialize(f, null, configurationMap);
@@ -92,18 +103,18 @@ public class OverlayLocalConfigurationStorage extends VolatileLocalConfiguration
          try {
             renameTempFile(temp, getPersistentFileLock(), persistentFile);
          } catch (Exception e) {
-             throw log.cannotRenamePersistentFile(temp.getAbsolutePath(), persistentFile, e);
+            throw CONFIG.cannotRenamePersistentFile(temp.getAbsolutePath(), persistentFile, e);
          }
       } catch (Exception e) {
-         throw log.errorPersistingGlobalConfiguration(e);
+         throw CONFIG.errorPersistingGlobalConfiguration(e);
       }
    }
 
    private File getPersistentFile() {
-      return new File(globalConfiguration.globalState().sharedPersistentLocation(), "caches.xml");
+      return new File(configurationManager.getGlobalConfiguration().globalState().sharedPersistentLocation(), "caches.xml");
    }
 
    private File getPersistentFileLock() {
-      return new File(globalConfiguration.globalState().sharedPersistentLocation(), "caches.xml.lck");
+      return new File(configurationManager.getGlobalConfiguration().globalState().sharedPersistentLocation(), "caches.xml.lck");
    }
 }

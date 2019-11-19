@@ -2,13 +2,11 @@ package org.infinispan.marshall.core;
 
 import java.util.Set;
 
-import org.infinispan.atomic.DeltaCompositeKey;
-import org.infinispan.atomic.impl.ApplyDelta;
-import org.infinispan.atomic.impl.AtomicKeySetImpl;
-import org.infinispan.atomic.impl.AtomicMapProxyImpl;
+import org.infinispan.cache.impl.BiFunctionMapper;
 import org.infinispan.cache.impl.EncoderEntryMapper;
 import org.infinispan.cache.impl.EncoderKeyMapper;
 import org.infinispan.cache.impl.EncoderValueMapper;
+import org.infinispan.cache.impl.FunctionMapper;
 import org.infinispan.commands.RemoteCommandsFactory;
 import org.infinispan.commands.functional.functions.MergeFunction;
 import org.infinispan.commons.hash.MurmurHash3;
@@ -18,9 +16,8 @@ import org.infinispan.commons.marshall.AdvancedExternalizer;
 import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.marshall.exts.EquivalenceExternalizer;
 import org.infinispan.commons.tx.XidImpl;
+import org.infinispan.commons.util.ImmutableListCopy;
 import org.infinispan.commons.util.Immutables;
-import org.infinispan.compat.BiFunctionMapper;
-import org.infinispan.compat.FunctionMapper;
 import org.infinispan.container.entries.ImmortalCacheEntry;
 import org.infinispan.container.entries.ImmortalCacheValue;
 import org.infinispan.container.entries.MortalCacheEntry;
@@ -53,6 +50,7 @@ import org.infinispan.distribution.ch.impl.TopologyAwareConsistentHashFactory;
 import org.infinispan.distribution.ch.impl.TopologyAwareSyncConsistentHashFactory;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.GlobalComponentRegistry;
+import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.filter.AcceptAllKeyValueFilter;
 import org.infinispan.filter.CacheFilters;
 import org.infinispan.filter.CollectionKeyFilter;
@@ -61,15 +59,17 @@ import org.infinispan.filter.CompositeKeyValueFilter;
 import org.infinispan.filter.KeyFilterAsKeyValueFilter;
 import org.infinispan.filter.KeyValueFilterAsKeyFilter;
 import org.infinispan.functional.impl.EntryViews;
-import org.infinispan.functional.impl.MetaParamsInternalMetadata;
 import org.infinispan.functional.impl.StatsEnvelope;
 import org.infinispan.globalstate.ScopeFilter;
 import org.infinispan.globalstate.ScopedState;
 import org.infinispan.interceptors.distribution.VersionedResult;
 import org.infinispan.interceptors.distribution.VersionedResults;
+import org.infinispan.marshall.core.impl.ClassToExternalizerMap;
 import org.infinispan.marshall.exts.CacheRpcCommandExternalizer;
+import org.infinispan.marshall.exts.ClassExternalizer;
 import org.infinispan.marshall.exts.CollectionExternalizer;
 import org.infinispan.marshall.exts.DoubleSummaryStatisticsExternalizer;
+import org.infinispan.marshall.exts.EnumExternalizer;
 import org.infinispan.marshall.exts.EnumSetExternalizer;
 import org.infinispan.marshall.exts.IntSummaryStatisticsExternalizer;
 import org.infinispan.marshall.exts.LongSummaryStatisticsExternalizer;
@@ -77,16 +77,15 @@ import org.infinispan.marshall.exts.MapExternalizer;
 import org.infinispan.marshall.exts.MetaParamExternalizers;
 import org.infinispan.marshall.exts.OptionalExternalizer;
 import org.infinispan.marshall.exts.ReplicableCommandExternalizer;
+import org.infinispan.marshall.exts.ThrowableExternalizer;
 import org.infinispan.marshall.exts.TriangleAckExternalizer;
 import org.infinispan.marshall.exts.UuidExternalizer;
+import org.infinispan.marshall.persistence.PersistenceMarshaller;
 import org.infinispan.marshall.persistence.impl.MarshalledEntryImpl;
 import org.infinispan.metadata.EmbeddedMetadata;
-import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.notifications.cachelistener.cluster.ClusterEvent;
-import org.infinispan.notifications.cachelistener.cluster.ClusterEventCallable;
 import org.infinispan.notifications.cachelistener.cluster.ClusterListenerRemoveCallable;
 import org.infinispan.notifications.cachelistener.cluster.ClusterListenerReplicateCallable;
-import org.infinispan.notifications.cachelistener.cluster.MultiClusterEventCallable;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverterAsConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilterAsKeyValueFilter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilterConverterAsKeyValueFilterConverter;
@@ -95,7 +94,8 @@ import org.infinispan.notifications.cachelistener.filter.KeyValueFilterAsCacheEv
 import org.infinispan.notifications.cachelistener.filter.KeyValueFilterConverterAsCacheEventFilterConverter;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.reactive.publisher.PublisherReducers;
-import org.infinispan.reactive.publisher.impl.SegmentPublisherResult;
+import org.infinispan.reactive.publisher.impl.commands.batch.PublisherResponseExternalizer;
+import org.infinispan.reactive.publisher.impl.commands.reduction.SegmentPublisherResult;
 import org.infinispan.remoting.MIMECacheEntry;
 import org.infinispan.remoting.responses.BiasRevocationResponse;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
@@ -107,8 +107,11 @@ import org.infinispan.remoting.transport.jgroups.JGroupsAddress;
 import org.infinispan.remoting.transport.jgroups.JGroupsTopologyAwareAddress;
 import org.infinispan.statetransfer.StateChunk;
 import org.infinispan.statetransfer.TransactionInfo;
+import org.infinispan.stats.impl.ClusterCacheStatsImpl;
 import org.infinispan.stream.StreamMarshalling;
 import org.infinispan.stream.impl.AbstractCacheStream;
+import org.infinispan.stream.impl.CacheStreamIntermediatePublisher;
+import org.infinispan.stream.impl.CacheStreamIntermediateReducer;
 import org.infinispan.stream.impl.EndIterator;
 import org.infinispan.stream.impl.IteratorResponses;
 import org.infinispan.stream.impl.intops.IntermediateOperationExternalizer;
@@ -133,9 +136,8 @@ final class InternalExternalizers {
    private InternalExternalizers() {
    }
 
-   static ClassToExternalizerMap load(
-         GlobalMarshaller marshaller, GlobalComponentRegistry gcr,
-         RemoteCommandsFactory cmdFactory) {
+   static ClassToExternalizerMap load(GlobalComponentRegistry gcr, RemoteCommandsFactory cmdFactory) {
+      final PersistenceMarshaller persistenceMarshaller = gcr.getComponent(PersistenceMarshaller.class, KnownComponentNames.PERSISTENCE_MARSHALLER);
       // TODO Add initial value and load factor
       ClassToExternalizerMap exts = new ClassToExternalizerMap(512, 0.6f);
 
@@ -145,10 +147,6 @@ final class InternalExternalizers {
 
       // Add the rest of stateless externalizers
       addInternalExternalizer(new AcceptAllKeyValueFilter.Externalizer(), exts);
-      addInternalExternalizer(new ApplyDelta.Externalizer(gcr), exts);
-      addInternalExternalizer(new AtomicKeySetImpl.Externalizer(gcr), exts);
-      addInternalExternalizer(new AtomicKeySetImpl.FunctionExternalizer(), exts);
-      addInternalExternalizer(new AtomicMapProxyImpl.Externalizer(), exts);
       addInternalExternalizer(new AvailabilityMode.Externalizer(), exts);
       addInternalExternalizer(new BiasRevocationResponse.Externalizer(), exts);
       addInternalExternalizer(new BiFunctionMapper.Externalizer(), exts);
@@ -163,7 +161,6 @@ final class InternalExternalizers {
       addInternalExternalizer(new CacheStatusResponse.Externalizer(), exts);
       addInternalExternalizer(new CacheTopology.Externalizer(), exts);
       addInternalExternalizer(new ClusterEvent.Externalizer(), exts);
-      addInternalExternalizer(new ClusterEventCallable.Externalizer(), exts);
       addInternalExternalizer(new ClusterListenerRemoveCallable.Externalizer(), exts);
       addInternalExternalizer(new ClusterListenerReplicateCallable.Externalizer(), exts);
       addInternalExternalizer(new CollectionExternalizer(), exts);
@@ -172,7 +169,6 @@ final class InternalExternalizers {
       addInternalExternalizer(new CompositeKeyValueFilter.Externalizer(), exts); // TODO: Untested in core
       addInternalExternalizer(new DefaultConsistentHash.Externalizer(), exts);
       addInternalExternalizer(new DefaultConsistentHashFactory.Externalizer(), exts); // TODO: Untested in core
-      addInternalExternalizer(new DeltaCompositeKey.DeltaCompositeKeyExternalizer(), exts);
       addInternalExternalizer(new DldGlobalTransaction.Externalizer(), exts);
       addInternalExternalizer(new DoubleSummaryStatisticsExternalizer(), exts);
       addInternalExternalizer(new EmbeddedMetadata.Externalizer(), exts);
@@ -196,7 +192,6 @@ final class InternalExternalizers {
       addInternalExternalizer(new Immutables.ImmutableSetWrapperExternalizer(), exts);
       addInternalExternalizer(new InDoubtTxInfoImpl.Externalizer(), exts);
       addInternalExternalizer(new IntermediateOperationExternalizer(), exts);
-      addInternalExternalizer(new InternalMetadataImpl.Externalizer(), exts);
       addInternalExternalizer(new IntSummaryStatisticsExternalizer(), exts);
       addInternalExternalizer(new JGroupsAddress.Externalizer(), exts);
       addInternalExternalizer(new JGroupsTopologyAwareAddress.Externalizer(), exts);
@@ -207,7 +202,7 @@ final class InternalExternalizers {
       addInternalExternalizer(new MarshallableFunctionExternalizers.ConstantLambdaExternalizer(), exts);
       addInternalExternalizer(new MarshallableFunctionExternalizers.LambdaWithMetasExternalizer(), exts);
       addInternalExternalizer(new MarshallableFunctionExternalizers.SetValueIfEqualsReturnBooleanExternalizer(), exts);
-      addInternalExternalizer(new MarshalledEntryImpl.Externalizer(marshaller), exts);
+      addInternalExternalizer(new MarshalledEntryImpl.Externalizer(persistenceMarshaller), exts);
       addInternalExternalizer(new MergeFunction.Externalizer(), exts);
       addInternalExternalizer(new MetadataImmortalCacheEntry.Externalizer(), exts);
       addInternalExternalizer(new MetadataImmortalCacheValue.Externalizer(), exts);
@@ -220,11 +215,9 @@ final class InternalExternalizers {
       addInternalExternalizer(new MetaParamExternalizers.LifespanExternalizer(), exts);
       addInternalExternalizer(new MetaParamExternalizers.EntryVersionParamExternalizer(), exts);
       addInternalExternalizer(new MetaParamExternalizers.MaxIdleExternalizer(), exts);
-      addInternalExternalizer(new MetaParamsInternalMetadata.Externalizer(), exts);
       addInternalExternalizer(new MIMECacheEntry.Externalizer(), exts); // new
       addInternalExternalizer(new MortalCacheEntry.Externalizer(), exts);
       addInternalExternalizer(new MortalCacheValue.Externalizer(), exts);
-      addInternalExternalizer(new MultiClusterEventCallable.Externalizer(), exts);
       addInternalExternalizer(new MurmurHash3.Externalizer(), exts);
       addInternalExternalizer(new NumericVersion.Externalizer(), exts);
       addInternalExternalizer(new OptionalExternalizer(), exts);
@@ -260,6 +253,7 @@ final class InternalExternalizers {
       addInternalExternalizer(new WrappedByteArray.Externalizer(), exts);
       addInternalExternalizer(new XSiteState.XSiteStateExternalizer(), exts);
       addInternalExternalizer(new TriangleAckExternalizer(), exts);
+      addInternalExternalizer(new PublisherResponseExternalizer(), exts);
       addInternalExternalizer(new IteratorResponses.IteratorResponsesExternalizer(), exts);
       addInternalExternalizer(new EndIterator.EndIteratorExternalizer(), exts);
       addInternalExternalizer(XidImpl.EXTERNALIZER, exts);
@@ -274,6 +268,13 @@ final class InternalExternalizers {
       addInternalExternalizer(new AdminFlagExternalizer(), exts);
       addInternalExternalizer(new SegmentPublisherResult.Externalizer(), exts);
       addInternalExternalizer(new PublisherReducers.PublisherReducersExternalizer(), exts);
+      addInternalExternalizer(new CacheStreamIntermediateReducer.ReducerExternalizer(), exts);
+      addInternalExternalizer(new CacheStreamIntermediatePublisher.ReducerExternalizer(), exts);
+      addInternalExternalizer(new ClassExternalizer(gcr.getGlobalConfiguration().classLoader()), exts);
+      addInternalExternalizer(new ClusterCacheStatsImpl.DistributedCacheStatsCallableExternalizer(), exts);
+      addInternalExternalizer(ThrowableExternalizer.INSTANCE, exts);
+      addInternalExternalizer(new ImmutableListCopy.Externalizer(), exts);
+      addInternalExternalizer(EnumExternalizer.INSTANCE, exts);
 
       return exts;
    }

@@ -1,13 +1,16 @@
 package org.infinispan.rest.framework;
 
+import static java.util.concurrent.CompletableFuture.completedFuture;
 import static org.infinispan.rest.framework.Method.GET;
 import static org.infinispan.rest.framework.Method.HEAD;
 import static org.infinispan.rest.framework.Method.POST;
+import static org.infinispan.util.concurrent.CompletionStages.join;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.infinispan.rest.framework.impl.Invocations;
@@ -15,7 +18,6 @@ import org.infinispan.rest.framework.impl.ResourceManagerImpl;
 import org.infinispan.rest.framework.impl.RestDispatcherImpl;
 import org.infinispan.rest.framework.impl.SimpleRequest;
 import org.infinispan.rest.framework.impl.SimpleRestResponse;
-import org.infinispan.rest.operations.exceptions.ResourceNotFoundException;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -26,67 +28,88 @@ import org.testng.annotations.Test;
 public class RestDispatcherTest {
 
    @Test
-   public void testDispatch() throws Exception {
-      ResourceManagerImpl manager = new ResourceManagerImpl("ctx");
-      manager.registerResource(new RootResource());
-      manager.registerResource(new CounterResource());
-      manager.registerResource(new MemoryResource());
-      manager.registerResource(new EchoResource());
+   public void testDispatch() {
+      ResourceManagerImpl manager = new ResourceManagerImpl();
+      manager.registerResource("/", new RootResource());
+      manager.registerResource("ctx", new CounterResource());
+      manager.registerResource("ctx", new MemoryResource());
+      manager.registerResource("ctx", new EchoResource());
+      manager.registerResource("ctx", new FileResource());
 
       RestDispatcherImpl restDispatcher = new RestDispatcherImpl(manager);
 
-      RestRequest restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/").build();
-      RestResponse response = restDispatcher.dispatch(restRequest);
-      assertEquals("Hello World!", response.getEntity().toString());
+      RestRequest restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/").build();
+      CompletionStage<RestResponse> response = restDispatcher.dispatch(restRequest);
+      assertEquals("Hello World!", join(response).getEntity().toString());
 
-      restRequest = new SimpleRequest.Builder().setMethod(POST).setPath("/ctx/counters/counter1").build();
+      restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/image.gif").build();
       response = restDispatcher.dispatch(restRequest);
-      assertEquals(200, response.getStatus());
+      assertEquals("Hello World!", join(response).getEntity().toString());
+
+      restRequest = new SimpleRequest.Builder().setMethod(POST).setPath("//ctx/counters/counter1").build();
+      response = restDispatcher.dispatch(restRequest);
+      assertEquals(200, join(response).getStatus());
 
       restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/counters/counter1?action=increment").build();
       response = restDispatcher.dispatch(restRequest);
-      assertEquals(200, response.getStatus());
+      assertEquals(200, join(response).getStatus());
 
-      restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/counters/counter1").build();
+      restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/counters//counter1").build();
       response = restDispatcher.dispatch(restRequest);
-      assertEquals("counter1->1", response.getEntity().toString());
+      assertEquals("counter1->1", join(response).getEntity().toString());
 
       restRequest = new SimpleRequest.Builder().setMethod(POST).setPath("/ctx/jvm").build();
       assertNoResource(restDispatcher, restRequest);
 
       restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/jvm/memory").build();
       response = restDispatcher.dispatch(restRequest);
-      assertTrue(Long.valueOf(response.getEntity().toString()) > 0);
+      assertTrue(Long.parseLong(join(response).getEntity().toString()) > 0);
 
       restRequest = new SimpleRequest.Builder().setMethod(HEAD).setPath("/ctx/jvm/memory").build();
       response = restDispatcher.dispatch(restRequest);
-      assertTrue(Long.valueOf(response.getEntity().toString()) > 0);
+      assertTrue(Long.parseLong(join(response).getEntity().toString()) > 0);
 
       restRequest = new SimpleRequest.Builder().setMethod(HEAD).setPath("/ctx/v2/java-memory").build();
       response = restDispatcher.dispatch(restRequest);
-      assertTrue(Long.valueOf(response.getEntity().toString()) > 0);
+      assertTrue(Long.parseLong(join(response).getEntity().toString()) > 0);
 
       restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/context/var1/var2").build();
       response = restDispatcher.dispatch(restRequest);
-      assertEquals("var1,var2", response.getEntity().toString());
+      assertEquals("var1,var2", join(response).getEntity().toString());
 
       restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/context/var1/var2/var3?action=triple").build();
       response = restDispatcher.dispatch(restRequest);
-      assertEquals("triple(var1,var2,var3)", response.getEntity().toString());
+      assertEquals("triple(var1,var2,var3)", join(response).getEntity().toString());
 
       restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/context/var1/var2/var3?action=invalid").build();
       assertNoResource(restDispatcher, restRequest);
+
+      restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/web/").build();
+      response = restDispatcher.dispatch(restRequest);
+      assertEquals("/ctx/web/index.html", join(response).getEntity().toString());
+
+      restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/web/file.txt").build();
+      response = restDispatcher.dispatch(restRequest);
+      assertEquals("/ctx/web/file.txt", join(response).getEntity().toString());
+
+      restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/web/dir/file.txt").build();
+      response = restDispatcher.dispatch(restRequest);
+      assertEquals("/ctx/web/dir/file.txt", join(response).getEntity().toString());
+
+      restRequest = new SimpleRequest.Builder().setMethod(GET).setPath("/ctx/web/dir1/dir2/file.txt").build();
+      response = restDispatcher.dispatch(restRequest);
+      assertEquals("/ctx/web/dir1/dir2/file.txt", join(response).getEntity().toString());
    }
 
    private void assertNoResource(RestDispatcher dispatcher, RestRequest restRequest) {
       try {
-         RestResponse response = dispatcher.dispatch(restRequest);
-         if (response != null) Assert.fail();
-      } catch (ResourceNotFoundException ignored) {
+         CompletionStage<RestResponse> response = dispatcher.dispatch(restRequest);
+         if (join(response) != null) Assert.fail();
+      } catch (Exception ignored) {
       }
    }
 
-   class EchoResource implements ResourceHandler {
+   static class EchoResource implements ResourceHandler {
 
       @Override
       public Invocations getInvocations() {
@@ -96,24 +119,24 @@ public class RestDispatcherTest {
                .create();
       }
 
-      private RestResponse tripleVarWithAction(RestRequest restRequest) {
+      private CompletionStage<RestResponse> tripleVarWithAction(RestRequest restRequest) {
          SimpleRestResponse.Builder responseBuilder = new SimpleRestResponse.Builder();
          String variable1 = restRequest.variables().get("variable1");
          String variable2 = restRequest.variables().get("variable2");
          String variable3 = restRequest.variables().get("variable3");
          String action = restRequest.getAction();
-         return responseBuilder.entity(action + "(" + variable1 + "," + variable2 + "," + variable3 + ")").build();
+         return completedFuture(responseBuilder.entity(action + "(" + variable1 + "," + variable2 + "," + variable3 + ")").build());
       }
 
-      private RestResponse doubleVars(RestRequest restRequest) {
+      private CompletionStage<RestResponse> doubleVars(RestRequest restRequest) {
          SimpleRestResponse.Builder responseBuilder = new SimpleRestResponse.Builder();
          String variable1 = restRequest.variables().get("variable1");
          String variable2 = restRequest.variables().get("variable2");
-         return responseBuilder.entity(variable1 + "," + variable2).build();
+         return completedFuture(responseBuilder.entity(variable1 + "," + variable2).build());
       }
    }
 
-   class CounterResource implements ResourceHandler {
+   static class CounterResource implements ResourceHandler {
 
       private final Map<String, AtomicInteger> counters = new HashMap<>();
 
@@ -127,42 +150,41 @@ public class RestDispatcherTest {
                .create();
       }
 
-      private RestResponse listAllCounters(RestRequest request) {
+      private CompletionStage<RestResponse> listAllCounters(RestRequest request) {
          SimpleRestResponse.Builder responseBuilder = new SimpleRestResponse.Builder();
          StringBuilder sb = new StringBuilder();
          counters.forEach((key, value) -> sb.append(key).append("->").append(value.get()));
-         return responseBuilder.status(200).entity(sb.toString()).build();
+         return completedFuture(responseBuilder.status(200).entity(sb.toString()).build());
       }
 
-      private RestResponse addCounter(RestRequest request) {
+      private CompletionStage<RestResponse> addCounter(RestRequest request) {
          SimpleRestResponse.Builder responseBuilder = new SimpleRestResponse.Builder();
          String newCounterName = request.variables().get("name");
          if (newCounterName == null) {
-            return responseBuilder.status(503).build();
+            return completedFuture(responseBuilder.status(503).build());
          }
          counters.put(newCounterName, new AtomicInteger());
-         return responseBuilder.status(200).build();
+         return completedFuture(responseBuilder.status(200).build());
       }
 
-      private RestResponse getCounter(RestRequest restRequest) {
+      private CompletionStage<RestResponse> getCounter(RestRequest restRequest) {
          SimpleRestResponse.Builder responseBuilder = new SimpleRestResponse.Builder();
          String name = restRequest.variables().get("name");
          AtomicInteger atomicInteger = counters.get(name);
-         if (atomicInteger == null) return responseBuilder.status(404).build();
-         return responseBuilder.status(200).entity(name + "->" + atomicInteger.get()).build();
+         if (atomicInteger == null) return completedFuture(responseBuilder.status(404).build());
+         return completedFuture(responseBuilder.status(200).entity(name + "->" + atomicInteger.get()).build());
       }
 
-      private RestResponse incrementCounter(RestRequest request) {
+      private CompletionStage<RestResponse> incrementCounter(RestRequest request) {
          SimpleRestResponse.Builder responseBuilder = new SimpleRestResponse.Builder();
          String name = request.variables().get("name");
-         if (name == null) return responseBuilder.status(404).build();
+         if (name == null) return completedFuture(responseBuilder.status(404).build());
          counters.get(name).incrementAndGet();
-         return responseBuilder.status(200).build();
+         return completedFuture(responseBuilder.status(200).build());
       }
-
    }
 
-   class MemoryResource implements ResourceHandler {
+   static class MemoryResource implements ResourceHandler {
 
       @Override
       public Invocations getInvocations() {
@@ -171,22 +193,40 @@ public class RestDispatcherTest {
                .create();
       }
 
-      private RestResponse showMemory(RestRequest request) {
-         return new SimpleRestResponse.Builder().entity(String.valueOf(Runtime.getRuntime().freeMemory())).build();
+      private CompletionStage<RestResponse> showMemory(RestRequest request) {
+         return completedFuture(new SimpleRestResponse.Builder().entity(String.valueOf(Runtime.getRuntime().freeMemory())).build());
       }
    }
 
-   class RootResource implements ResourceHandler {
+   static class RootResource implements ResourceHandler {
 
       @Override
       public Invocations getInvocations() {
          return new Invocations.Builder()
-               .invocation().method(GET).path("/").handleWith(this::serveStaticResource)
+               .invocation().method(GET).path("/").path("/image.gif").handleWith(this::serveStaticResource)
                .create();
       }
 
-      private RestResponse serveStaticResource(RestRequest restRequest) {
-         return new SimpleRestResponse.Builder().entity("Hello World!").build();
+      private CompletionStage<RestResponse> serveStaticResource(RestRequest restRequest) {
+         return completedFuture(new SimpleRestResponse.Builder().entity("Hello World!").build());
+      }
+   }
+
+   static class FileResource implements ResourceHandler {
+
+      @Override
+      public Invocations getInvocations() {
+         return new Invocations.Builder()
+               .invocation().method(GET).path("/web").path("/web/*").handleWith(this::handleGet)
+               .create();
+      }
+
+      private CompletionStage<RestResponse> handleGet(RestRequest restRequest) {
+         String path = restRequest.path();
+         if (path.endsWith("web/")) {
+            path = path.concat("index.html");
+         }
+         return completedFuture(new SimpleRestResponse.Builder().entity(path).build());
       }
 
    }

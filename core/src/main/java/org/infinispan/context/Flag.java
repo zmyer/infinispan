@@ -87,7 +87,7 @@ public enum Flag {
     * in the return value (i.e. the previous value of the key).
     * <br>
     * Note that the loader will be skipped even if that changes the meaning of the operation, e.g. for
-    * conditional or {@link org.infinispan.atomic.DeltaAware} write operations. If that is not intended,
+    * conditional write operations. If that is not intended,
     * you should use {@link #IGNORE_RETURN_VALUES} instead.
     */
    SKIP_CACHE_LOAD,
@@ -108,7 +108,7 @@ public enum Flag {
     * reducing remote calls.
     * <br>
     * Note that the remote lookup will be skipped even if that changes the meaning of the operation, e.g. for
-    * conditional or {@link org.infinispan.atomic.DeltaAware} write operations. If that is not intended,
+    * conditional write operations. If that is not intended,
     * you should use {@link #IGNORE_RETURN_VALUES} instead.
     */
    SKIP_REMOTE_LOOKUP,
@@ -147,28 +147,9 @@ public enum Flag {
     */
    SKIP_SHARED_CACHE_STORE,
    /**
-    * This flag has only effect when it's used before calling {@link
-    * org.infinispan.Cache#stop()} and its effect is that apart from stopping
-    * the cache, it removes all of its content from both memory and any backing
-    * cache store.
-    *
-    * @deprecated No longer in use.
-    */
-   @Deprecated
-   REMOVE_DATA_ON_STOP,
-   /**
     * Ignore current consistent hash and read from data container/commit the change no matter what (if the flag is set).
     */
    SKIP_OWNERSHIP_CHECK,
-   /**
-    * Signals when a particular cache write operation is writing a delta of
-    * the object, rather than the full object. This can be useful in order to
-    * make decisions such as whether the cache store needs checking to see if
-    * the previous value needs to be loaded and merged.
-    * @deprecated since 9.1
-    */
-   @Deprecated
-   DELTA_WRITE,
 
    /**
     * Signals that a write operation's return value will be ignored, so reading
@@ -195,40 +176,6 @@ public enum Flag {
    SKIP_XSITE_BACKUP,
 
    /**
-    * Using a synchronous cache (whether replicated or distributed) provides
-    * the cache caller guarantees that data has been sent to other cluster
-    * nodes correctly and has been applied successfully. At the network
-    * level, message delivery acknowledgement protocols are used to provide
-    * these guarantees.
-    *
-    * In order to increase performance and achieve better throughput, it's
-    * common to use negative acknowledgment protocols to confirm the
-    * delivery of messages. The problem with these protocols is that if the
-    * last message is lost, it can be difficult to recover it because a new
-    * message would need to be sent to find the gap.
-    *
-    * Some cache use cases might involve storing an entry in a synchronously
-    * replicated or distributed cache, and if that store operation fails, the
-    * application fails to start. One such example is the Infinispan Hot Rod
-    * server. When it starts, the first thing it does is add its endpoint
-    * information to a cache which is used to notify clients of topology
-    * changes. If this operation fails, the server cannot start because
-    * topologies won't include this node, and no more cache operations
-    * are attempted.
-    *
-    * So, in exceptional use cases such as this, a cluster wide cache update
-    * should be positively acknowledged by the other nodes, so that if the
-    * data is lost, it can be retransmitted immediately without the need
-    * to wait for an extra cluster wide operation to detect the lost message.
-    * The way to force a particular cache operation to be positively
-    * acknowledged is to send this flag.
-    *
-    * Note that this is flag is <b>EXPERIMENTAL</b> and so there is a high
-    * probability that it will be removed in future Infinispan versions.
-    */
-   GUARANTEED_DELIVERY,
-
-   /**
     * This flag skips listener notifications as a result of a cache operation.
     * For example, if this flag is passed as a result of a {@link Cache#get(Object)}
     * call, no callbacks will be made on listeners annotated with
@@ -245,12 +192,16 @@ public enum Flag {
 
    /**
     * Flag to identify cache operations coming from the Hot Rod server.
+    * @deprecated Since 10.0, not in use.
     */
+   @Deprecated
    OPERATION_HOTROD,
 
    /**
     * Flag to identify cache operations coming from the Memcached server.
+    * @deprecated Since 10.0, not in use.
     */
+   @Deprecated
    OPERATION_MEMCACHED,
 
    /**
@@ -285,7 +236,13 @@ public enum Flag {
     * normally need to use this flag. This is helpful if there are concerns that can cause just a simple size invocation
     * from being consistent (eg. on-going transaction with modifications).
     */
-   SKIP_SIZE_OPTIMIZATION
+   SKIP_SIZE_OPTIMIZATION,
+
+   /**
+    * Flag that is used by keySet, entrySet and values methods so that they do not return transactional values. Normally
+    * an end user would not need to do this.
+    */
+   IGNORE_TRANSACTION,
    ;
 
    /**

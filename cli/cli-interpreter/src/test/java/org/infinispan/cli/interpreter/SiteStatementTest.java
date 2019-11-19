@@ -3,6 +3,8 @@ package org.infinispan.cli.interpreter;
 import static java.lang.String.format;
 import static org.infinispan.test.TestingUtil.extractComponent;
 import static org.infinispan.test.TestingUtil.withCacheManager;
+import static org.infinispan.test.fwk.TestCacheManagerFactory.configureGlobalJmx;
+import static org.infinispan.test.fwk.TestCacheManagerFactory.createCacheManager;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.fail;
 
@@ -13,14 +15,15 @@ import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
 import org.infinispan.cli.interpreter.result.ResultKeys;
-import org.infinispan.commons.api.BasicCacheContainer;
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.context.Flag;
-import org.infinispan.manager.DefaultCacheManager;
 import org.infinispan.statetransfer.CommitManager;
 import org.infinispan.test.CacheManagerCallable;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.xsite.AbstractTwoSitesTest;
 import org.infinispan.xsite.XSiteAdminOperations;
 import org.infinispan.xsite.statetransfer.XSiteStateProvider;
@@ -34,13 +37,15 @@ import org.testng.annotations.Test;
 @Test(groups = "xsite", testName = "cli.interpreter.SiteStatementTest")
 public class SiteStatementTest extends AbstractTwoSitesTest {
 
+   private MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
+
    public SiteStatementTest() {
       implicitBackupCache = true;
    }
 
    protected GlobalConfigurationBuilder globalConfigurationBuilderForSite(String siteName) {
       GlobalConfigurationBuilder builder = super.globalConfigurationBuilderForSite(siteName);
-      builder.globalJmxStatistics().enable();
+      configureGlobalJmx(builder, getClass().getSimpleName() + "-" + siteName, mBeanServerLookup);
       return builder;
    }
 
@@ -55,59 +60,59 @@ public class SiteStatementTest extends AbstractTwoSitesTest {
    }
 
    public void testSiteStatus() throws Exception {
-      Interpreter lonInterpreter = interpreter("LON", 0);
-      String lonCache = cache("LON", 0).getName();
+      Interpreter lonInterpreter = interpreter(LON, 0);
+      String lonCache = cache(LON, 0).getName();
       String lonSessionId = lonInterpreter.createSessionId(lonCache);
-      Interpreter nycInterpreter = interpreter("NYC", 0);
-      String nycCache = cache("NYC", 0).getName();
+      Interpreter nycInterpreter = interpreter(NYC, 0);
+      String nycCache = cache(NYC, 0).getName();
       String nycSessionId = nycInterpreter.createSessionId(nycCache);
 
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --status NYC;", "online");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --status \"%s\";", NYC), "online");
 
-      assertInterpreterOutput(nycInterpreter, nycSessionId, format("site --status %s.LON;", lonCache), "online");
+      assertInterpreterOutput(nycInterpreter, nycSessionId, format("site --status %s.%s;", lonCache, LON), "online");
 
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --offline NYC;", "ok");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --offline %s;", NYC), "ok");
 
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --online NYC;", "ok");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --online %s;", NYC), "ok");
 
    }
 
    @Test(groups = "unstable", description = "ISPN-8202")
    public void testSiteStateTransfer() throws Exception {
-      Interpreter lonInterpreter = interpreter("LON", 0);
-      String lonCache = cache("LON", 0).getName();
+      Interpreter lonInterpreter = interpreter(LON, 0);
+      String lonCache = cache(LON, 0).getName();
       String lonSessionId = lonInterpreter.createSessionId(lonCache);
-      Interpreter nycInterpreter = interpreter("NYC", 0);
-      String nycCache = cache("NYC", 0).getName();
+      Interpreter nycInterpreter = interpreter(NYC, 0);
+      String nycCache = cache(NYC, 0).getName();
       String nycSessionId = nycInterpreter.createSessionId(nycCache);
 
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --offline NYC;", "ok");
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --status NYC;", "offline");
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --push NYC;", "ok");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --offline %s;", NYC), "ok");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --status %s;", NYC), "offline");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --push %s;", NYC), "ok");
 
-      assertEventuallyNoStateTransferInReceivingSite("NYC", nycCache, 10, TimeUnit.SECONDS);
-      assertEventuallyNoStateTransferInSendingSite("LON", lonCache, 10, TimeUnit.SECONDS);
+      assertEventuallyNoStateTransferInReceivingSite(NYC, nycCache, 10, TimeUnit.SECONDS);
+      assertEventuallyNoStateTransferInSendingSite(LON, lonCache, 10, TimeUnit.SECONDS);
 
       assertInterpreterOutput(nycInterpreter, nycSessionId, "site --sendingsite;", "null");
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --pushstatus;", "NYC=OK");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --pushstatus;", format("%s=OK", NYC));
       assertInterpreterOutput(lonInterpreter, lonSessionId, "site --clearpushstatus;", "ok");
       assertInterpreterOutput(lonInterpreter, lonSessionId, "site --pushstatus;", (String) null);
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --cancelpush NYC;", "ok");
-      assertInterpreterOutput(nycInterpreter, nycSessionId, "site --cancelreceive LON;", "ok");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --cancelpush %s;", NYC), "ok");
+      assertInterpreterOutput(nycInterpreter, nycSessionId, format("site --cancelreceive %s;", LON), "ok");
    }
 
-   public void testSiteWithoutBackups() throws Exception {
+   public void testSiteWithoutBackups() {
       final String cacheName = "no-backups";
       GlobalConfigurationBuilder global = new GlobalConfigurationBuilder();
-      global.globalJmxStatistics().enable();
-      withCacheManager(new CacheManagerCallable(new DefaultCacheManager(global.build())) {
+      configureGlobalJmx(global, getClass().getSimpleName(), mBeanServerLookup);
+      withCacheManager(new CacheManagerCallable(createCacheManager(global, new ConfigurationBuilder())) {
          @Override
          public void call() {
             ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.LOCAL);
             builder.sites().disableBackups(true);
             cm.defineConfiguration(cacheName, builder.build());
-            Cache cache = cm.getCache(cacheName);
-            Interpreter interpreter = cache.getAdvancedCache().getComponentRegistry().getComponent(Interpreter.class);
+            Cache<Object, Object> cache = cm.getCache(cacheName);
+            Interpreter interpreter = TestingUtil.extractComponent(cache, Interpreter.class);
             String sessionId = interpreter.createSessionId(cacheName);
             try {
                assertInterpreterError(interpreter, sessionId, "site --status;",
@@ -132,12 +137,13 @@ public class SiteStatementTest extends AbstractTwoSitesTest {
       Interpreter lonInterpreter = interpreter(LON, 0);
       String lonCache = cache(LON, 0).getName();
       String lonSessionId = lonInterpreter.createSessionId(lonCache);
+      String defaultCacheName = site(0).cacheManagers().get(0).getCacheManagerConfiguration().defaultCacheName().get();
 
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --offlineall NYC;", (output, error) -> {
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --offlineall %s;", NYC), (output, error) -> {
          assertEquals(null, error);
          String outFormat = "%s: %s";
-         if (!output.contains(format(outFormat, BasicCacheContainer.DEFAULT_CACHE_NAME, XSiteAdminOperations.SUCCESS))) {
-            fail(format("Cache '%s' should be present in the output: %s", BasicCacheContainer.DEFAULT_CACHE_NAME, output));
+         if (!output.contains(format(outFormat, defaultCacheName, XSiteAdminOperations.SUCCESS))) {
+            fail(format("Cache '%s' should be present in the output: %s", defaultCacheName, output));
          }
          if (!output.contains(format(outFormat, "another-cache", XSiteAdminOperations.SUCCESS))) {
             fail(format("Cache '%s' should be present in the output: %s", "another-cache", output));
@@ -146,14 +152,14 @@ public class SiteStatementTest extends AbstractTwoSitesTest {
             fail(format("Cache '%s' should not be present in the output: %s", "another-cache-2", output));
          }
       });
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --status NYC;", "offline");
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --status \"another-cache\".NYC;", "offline");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --status %s;", NYC), "offline");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --status \"another-cache\".%s;", NYC), "offline");
 
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --onlineall NYC;", (output, error) -> {
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --onlineall %s;", NYC), (output, error) -> {
          assertEquals(null, error);
          String outFormat = "%s: %s";
-         if (!output.contains(format(outFormat, BasicCacheContainer.DEFAULT_CACHE_NAME, XSiteAdminOperations.SUCCESS))) {
-            fail(format("Cache '%s' should be present in the output: %s", BasicCacheContainer.DEFAULT_CACHE_NAME, output));
+         if (!output.contains(format(outFormat, defaultCacheName, XSiteAdminOperations.SUCCESS))) {
+            fail(format("Cache '%s' should be present in the output: %s", defaultCacheName, output));
          }
          if (!output.contains(format(outFormat, "another-cache", XSiteAdminOperations.SUCCESS))) {
             fail(format("Cache '%s' should be present in the output: %s", "another-cache", output));
@@ -162,14 +168,14 @@ public class SiteStatementTest extends AbstractTwoSitesTest {
             fail(format("Cache '%s' should not be present in the output: %s", "another-cache-2", output));
          }
       });
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --status NYC;", "online");
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --status \"another-cache\".NYC;", "online");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --status %s;", NYC), "online");
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --status \"another-cache\".%s;", NYC), "online");
 
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --pushall NYC;", (output, error) -> {
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --pushall %s;", NYC), (output, error) -> {
          assertEquals(null, error);
          String outFormat = "%s: %s";
-         if (!output.contains(format(outFormat, BasicCacheContainer.DEFAULT_CACHE_NAME, XSiteAdminOperations.SUCCESS))) {
-            fail(format("Cache '%s' should be present in the output: %s", BasicCacheContainer.DEFAULT_CACHE_NAME, output));
+         if (!output.contains(format(outFormat, defaultCacheName, XSiteAdminOperations.SUCCESS))) {
+            fail(format("Cache '%s' should be present in the output: %s", defaultCacheName, output));
          }
          if (!output.contains(format(outFormat, "another-cache", XSiteAdminOperations.SUCCESS))) {
             fail(format("Cache '%s' should be present in the output: %s", "another-cache", output));
@@ -179,11 +185,11 @@ public class SiteStatementTest extends AbstractTwoSitesTest {
          }
       });
 
-      assertInterpreterOutput(lonInterpreter, lonSessionId, "site --cancelpushall NYC;", (output, error) -> {
+      assertInterpreterOutput(lonInterpreter, lonSessionId, format("site --cancelpushall %s;", NYC), (output, error) -> {
          assertEquals(null, error);
          String outFormat = "%s: %s";
-         if (!output.contains(format(outFormat, BasicCacheContainer.DEFAULT_CACHE_NAME, XSiteAdminOperations.SUCCESS))) {
-            fail(format("Cache '%s' should be present in the output: %s", BasicCacheContainer.DEFAULT_CACHE_NAME, output));
+         if (!output.contains(format(outFormat, defaultCacheName, XSiteAdminOperations.SUCCESS))) {
+            fail(format("Cache '%s' should be present in the output: %s", defaultCacheName, output));
          }
          if (!output.contains(format(outFormat, "another-cache", XSiteAdminOperations.SUCCESS))) {
             fail(format("Cache '%s' should be present in the output: %s", "another-cache", output));
@@ -216,7 +222,7 @@ public class SiteStatementTest extends AbstractTwoSitesTest {
    }
 
    private Interpreter interpreter(String site, int cache) {
-      return cache(site, cache).getAdvancedCache().getComponentRegistry().getComponent(Interpreter.class);
+      return TestingUtil.extractComponent(cache(site, cache), Interpreter.class);
    }
 
    private void assertEventuallyNoStateTransferInReceivingSite(String siteName, String cacheName, long timeout, TimeUnit unit) {

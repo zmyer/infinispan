@@ -13,14 +13,14 @@ import org.infinispan.health.HealthStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.registry.InternalCacheRegistry;
 
-public class ClusterHealthImpl implements ClusterHealth {
+class ClusterHealthImpl implements ClusterHealth {
 
    private final EmbeddedCacheManager cacheManager;
    private final InternalCacheRegistry internalCacheRegistry;
 
-   public ClusterHealthImpl(EmbeddedCacheManager cacheManager) {
+   ClusterHealthImpl(EmbeddedCacheManager cacheManager, InternalCacheRegistry internalCacheRegistry) {
       this.cacheManager = cacheManager;
-      internalCacheRegistry = cacheManager.getGlobalComponentRegistry().getComponent(InternalCacheRegistry.class);
+      this.internalCacheRegistry = internalCacheRegistry;
    }
 
    @Override
@@ -34,10 +34,10 @@ public class ClusterHealthImpl implements ClusterHealth {
             .map(CacheHealthImpl::getStatus)
             .collect(Collectors.toSet());
 
-      if (healthStatuses.contains(HealthStatus.UNHEALTHY)) {
-         globalHealthStatus = HealthStatus.UNHEALTHY;
-      } else if (healthStatuses.contains(HealthStatus.REBALANCING)) {
-         globalHealthStatus = HealthStatus.REBALANCING;
+      if (healthStatuses.contains(HealthStatus.DEGRADED)) {
+         globalHealthStatus = HealthStatus.DEGRADED;
+      } else if (healthStatuses.contains(HealthStatus.HEALTHY_REBALANCING)) {
+         globalHealthStatus = HealthStatus.HEALTHY_REBALANCING;
       }
       return globalHealthStatus;
    }
@@ -49,14 +49,15 @@ public class ClusterHealthImpl implements ClusterHealth {
 
    @Override
    public int getNumberOfNodes() {
-      return Optional.ofNullable(cacheManager.getTransport()).map(t -> t.getMembers().size()).orElse(1);
+      return Optional.ofNullable(cacheManager.getMembers()).orElse(Collections.emptyList())
+                     .size();
    }
 
    @Override
    public List<String> getNodeNames() {
-      return Optional.ofNullable(cacheManager.getTransport()).map(t -> t.getMembers()).orElse(Collections.emptyList())
-            .stream()
-            .map(member -> member.toString())
-            .collect(Collectors.toList());
+      return Optional.ofNullable(cacheManager.getMembers()).orElse(Collections.emptyList())
+                     .stream()
+                     .map(Object::toString)
+                     .collect(Collectors.toList());
    }
 }

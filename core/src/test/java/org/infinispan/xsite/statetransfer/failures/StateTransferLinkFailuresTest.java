@@ -4,6 +4,7 @@ import static org.infinispan.test.TestingUtil.extractComponent;
 import static org.infinispan.test.TestingUtil.wrapGlobalComponent;
 import static org.infinispan.xsite.XSiteAdminOperations.SUCCESS;
 import static org.infinispan.xsite.statetransfer.XSiteStateTransferManager.STATUS_ERROR;
+import static org.testng.Assert.assertNotEquals;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNull;
@@ -23,6 +24,8 @@ import org.infinispan.manager.CacheContainer;
 import org.infinispan.remoting.transport.AbstractDelegatingTransport;
 import org.infinispan.remoting.transport.BackupResponse;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.remoting.transport.XSiteResponse;
+import org.infinispan.remoting.transport.impl.XSiteResponseImpl;
 import org.infinispan.statetransfer.CommitManager;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.xsite.XSiteAdminOperations;
@@ -30,7 +33,6 @@ import org.infinispan.xsite.XSiteBackup;
 import org.infinispan.xsite.XSiteReplicateCommand;
 import org.infinispan.xsite.statetransfer.XSiteStatePushCommand;
 import org.infinispan.xsite.statetransfer.XSiteStateTransferManager;
-import org.testng.AssertJUnit;
 import org.testng.annotations.Test;
 
 /**
@@ -67,9 +69,9 @@ public class StateTransferLinkFailuresTest extends AbstractTopologyChangeTest {
          transport.fail = true;
       }
 
-      assertTrue(!SUCCESS.equals(extractComponent(cache(LON, 0), XSiteAdminOperations.class).pushState(NYC)));
+      assertNotEquals(extractComponent(cache(LON, 0), XSiteAdminOperations.class).pushState(NYC), SUCCESS);
       assertDataInSite(LON);
-      assertInSite(NYC, cache -> AssertJUnit.assertTrue(cache.isEmpty()));
+      assertInSite(NYC, cache -> assertTrue(cache.isEmpty()));
       assertTrue(getStatus().isEmpty());
 
    }
@@ -120,7 +122,7 @@ public class StateTransferLinkFailuresTest extends AbstractTopologyChangeTest {
 
    @Override
    protected void adaptLONConfiguration(BackupConfigurationBuilder builder) {
-      builder.stateTransfer().chunkSize(2).timeout(2000);
+      builder.stateTransfer().chunkSize(2).timeout(2000).maxRetries(1);
    }
 
    private Map<String, String> getStatus() {
@@ -130,14 +132,13 @@ public class StateTransferLinkFailuresTest extends AbstractTopologyChangeTest {
    private List<ControllerTransport> replaceTransportInSite() {
       List<ControllerTransport> transports = new ArrayList<>(site(LON).cacheManagers().size());
       for (CacheContainer cacheContainer : site(LON).cacheManagers()) {
-         transports.add(wrapGlobalComponent(cacheContainer,
-                                            Transport.class,
+         transports.add(wrapGlobalComponent(cacheContainer, Transport.class,
                (wrapOn, current) -> new ControllerTransport(current), true));
       }
       return transports;
    }
 
-   private static class ControllerTransport extends AbstractDelegatingTransport {
+   static class ControllerTransport extends AbstractDelegatingTransport {
 
       private volatile boolean fail;
       private volatile boolean failAfterFirstChunk;
@@ -152,13 +153,22 @@ public class StateTransferLinkFailuresTest extends AbstractTopologyChangeTest {
       }
 
       @Override
-      public BackupResponse backupRemotely(Collection<XSiteBackup> backups, XSiteReplicateCommand rpcCommand) throws Exception {
+      public BackupResponse backupRemotely(Collection<XSiteBackup> backups, XSiteReplicateCommand rpcCommand) {
+         throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public XSiteResponse backupRemotely(XSiteBackup backup, XSiteReplicateCommand rpcCommand) {
          if (fail) {
-            throw new TimeoutException("induced timeout!");
+            getLog().debugf("Inducing timeout for %s", rpcCommand);
+            XSiteResponseImpl rsp = new XSiteResponseImpl(TIME_SERVICE, backup);
+            //completeExceptionally is ok since we don't care about the stats.
+            rsp.completeExceptionally(new TimeoutException("induced timeout!"));
+            return rsp;
          } else if (failAfterFirstChunk && rpcCommand instanceof XSiteStatePushCommand) {
             fail = true;
          }
-         return super.backupRemotely(backups, rpcCommand);
+         return super.backupRemotely(backup, rpcCommand);
       }
    }
 }

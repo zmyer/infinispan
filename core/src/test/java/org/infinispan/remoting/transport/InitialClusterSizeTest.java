@@ -11,7 +11,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.math.FieldElement;
-import org.infinispan.commons.CacheException;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -35,7 +34,7 @@ public class InitialClusterSizeTest extends MultipleCacheManagersTest {
          GlobalConfigurationBuilder gc = GlobalConfigurationBuilder.defaultClusteredBuilder();
          gc.transport().initialClusterSize(CLUSTER_SIZE).initialClusterTimeout(CLUSTER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
          cacheManagers.add(TestCacheManagerFactory.createClusteredCacheManager(false, gc,
-               getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC), new TransportFlags().withPortRange(i), false));
+               getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC), new TransportFlags().withPortRange(i)));
       }
    }
 
@@ -66,15 +65,14 @@ public class InitialClusterSizeTest extends MultipleCacheManagersTest {
       for (Future<Void> future : futures) {
          try {
             // JGroupsTransport only starts counting down on initialClusterTimeout *after* it connects.
-            // The initial connection may take take 3 seconds (GMS.join_timeout) because of JGRP-2028
+            // The initial connection may take take 2 seconds (GMS.join_timeout) because of JGRP-2028
             // Shutdown may also take 2 seconds (GMS.view_ack_collection_timeout) because of JGRP-2030
-            future.get(CLUSTER_TIMEOUT_SECONDS + 5, TimeUnit.SECONDS);
+            future.get(CLUSTER_TIMEOUT_SECONDS + 2 + 2, TimeUnit.SECONDS);
             fail("Should have thrown an exception");
          } catch (ExecutionException ee) {
-            Exceptions.assertException(EmbeddedCacheManagerStartupException.class, ee.getCause());
-            Exceptions.assertException(CacheException.class,
-                  org.infinispan.util.concurrent.TimeoutException.class, "ISPN000399:.*",
-                  ee.getCause().getCause());
+            Exceptions.assertException(EmbeddedCacheManagerStartupException.class,
+                                       org.infinispan.util.concurrent.TimeoutException.class,
+                                       "ISPN000399:.*", ee.getCause());
          }
       }
    }

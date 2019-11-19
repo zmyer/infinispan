@@ -2,10 +2,10 @@ package org.infinispan.cache.impl;
 
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.jmx.annotations.DisplayType;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
-import org.infinispan.jmx.annotations.Units;
 
 /**
  * CacheConfigurationMBeanImpl.
@@ -13,15 +13,15 @@ import org.infinispan.jmx.annotations.Units;
  * @author Tristan Tarrant
  * @since 8.1
  */
+@Scope(Scopes.NAMED_CACHE)
 @MBean(objectName = "Configuration", description = "Runtime cache configuration attributes")
 public class CacheConfigurationMBean {
 
-   @Inject private Configuration configuration;
+   @Inject Configuration configuration;
 
    @ManagedAttribute(description = "Gets the eviction size for the cache",
          displayName = "Gets the eviction size for the cache",
-         units = Units.NONE,
-         displayType = DisplayType.DETAIL, writable = true)
+         writable = true)
    public long getEvictionSize() {
       return configuration.memory().size();
    }

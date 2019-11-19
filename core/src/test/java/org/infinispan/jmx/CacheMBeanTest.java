@@ -3,19 +3,22 @@ package org.infinispan.jmx;
 import static org.infinispan.test.TestingUtil.checkMBeanOperationParameterNaming;
 import static org.infinispan.test.TestingUtil.getCacheManagerObjectName;
 import static org.infinispan.test.TestingUtil.getCacheObjectName;
-import static org.infinispan.test.TestingUtil.getMethodSpecificJmxDomain;
 import static org.infinispan.test.TestingUtil.withCacheManager;
-import static org.infinispan.test.fwk.TestCacheManagerFactory.createCacheManagerEnforceJmxDomain;
+import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertTrue;
+import static org.testng.AssertJUnit.fail;
 
 import java.lang.reflect.Method;
+
 import javax.management.InstanceNotFoundException;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.manager.EmbeddedCacheManagerStartupException;
@@ -23,111 +26,143 @@ import org.infinispan.test.CacheManagerCallable;
 import org.infinispan.test.Exceptions;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
 
 @Test(groups = {"functional", "smoke"}, testName = "jmx.CacheMBeanTest")
 public class CacheMBeanTest extends MultipleCacheManagersTest {
+
    private static final Log log = LogFactory.getLog(CacheMBeanTest.class);
+
    public static final String JMX_DOMAIN = CacheMBeanTest.class.getSimpleName();
-   private EmbeddedCacheManager cacheManager;
-   private MBeanServer server;
+   private final MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
 
    @Override
    protected void createCacheManagers() throws Exception {
-      cacheManager = createCacheManagerEnforceJmxDomain(JMX_DOMAIN);
+      GlobalConfigurationBuilder globalConfiguration = new GlobalConfigurationBuilder();
+      globalConfiguration
+            .cacheContainer().statistics(true)
+            .globalJmxStatistics()
+            .jmxDomain(JMX_DOMAIN)
+            .mBeanServerLookup(mBeanServerLookup);
+      ConfigurationBuilder configuration = new ConfigurationBuilder();
+      configuration.jmxStatistics().enabled(false);
+      EmbeddedCacheManager cacheManager = TestCacheManagerFactory.createCacheManager(globalConfiguration, configuration);
+
       registerCacheManager(cacheManager);
       // Create the default cache and register its JMX beans
       cacheManager.getCache();
-      server = PerThreadMBeanServerLookup.getThreadMBeanServer();
    }
 
    public void testJmxOperationMetadata() throws Exception {
-      ObjectName name = getCacheObjectName(JMX_DOMAIN);
-      checkMBeanOperationParameterNaming(name);
+      ObjectName name = getCacheObjectName(JMX_DOMAIN, getDefaultCacheName() + "(local)");
+      checkMBeanOperationParameterNaming(mBeanServerLookup.getMBeanServer(), name);
    }
 
    public void testStartStopManagedOperations() throws Exception {
-      ObjectName defaultOn = getCacheObjectName(JMX_DOMAIN);
-      ObjectName managerON = getCacheManagerObjectName(JMX_DOMAIN);
-      server.invoke(managerON, "startCache", new Object[]{}, new String[]{});
-      assert ComponentStatus.RUNNING.toString().equals(server.getAttribute(defaultOn, "CacheStatus"));
-      assert server.getAttribute(managerON, "CreatedCacheCount").equals("1");
-      assert server.getAttribute(managerON, "RunningCacheCount").equals("1");
-      server.invoke(defaultOn, "stop", new Object[]{}, new String[]{});
-      assert ComponentStatus.TERMINATED.toString().equals(server.getAttribute(defaultOn, "CacheStatus"));
-      assert server.getAttribute(managerON, "CreatedCacheCount").equals("1");
-      assert server.getAttribute(managerON, "RunningCacheCount").equals("0");
-      server.invoke(defaultOn, "start", new Object[]{}, new String[]{});
-      assert ComponentStatus.RUNNING.toString().equals(server.getAttribute(defaultOn, "CacheStatus"));
-      assert server.getAttribute(managerON, "CreatedCacheCount").equals("1");
-      assert server.getAttribute(managerON, "RunningCacheCount").equals("1");
-      server.invoke(defaultOn, "stop", new Object[]{}, new String[]{});
-      assert server.getAttribute(managerON, "CreatedCacheCount").equals("1");
-      assert server.getAttribute(managerON, "RunningCacheCount").equals("0");
-      assert ComponentStatus.TERMINATED.toString().equals(server.getAttribute(defaultOn, "CacheStatus"));
-      server.invoke(defaultOn, "start", new Object[]{}, new String[]{});
-      assert server.getAttribute(managerON, "CreatedCacheCount").equals("1");
-      assert server.getAttribute(managerON, "RunningCacheCount").equals("1");
-      assert ComponentStatus.RUNNING.toString().equals(server.getAttribute(defaultOn, "CacheStatus"));
-      server.invoke(defaultOn, "stop", new Object[]{}, new String[]{});
-      assert server.getAttribute(managerON, "CreatedCacheCount").equals("1");
-      assert server.getAttribute(managerON, "RunningCacheCount").equals("0");
-      assert ComponentStatus.TERMINATED.toString().equals(server.getAttribute(defaultOn, "CacheStatus"));
+      ObjectName cacheObjectName = getCacheObjectName(JMX_DOMAIN, getDefaultCacheName() + "(local)");
+      ObjectName cacheManagerObjectName = getCacheManagerObjectName(JMX_DOMAIN);
+      MBeanServer server = mBeanServerLookup.getMBeanServer();
+      server.invoke(cacheManagerObjectName, "startCache", new Object[0], new String[0]);
+      assertEquals(ComponentStatus.RUNNING.toString(), server.getAttribute(cacheObjectName, "CacheStatus"));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "CreatedCacheCount"));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "RunningCacheCount"));
+      server.invoke(cacheObjectName, "stop", new Object[0], new String[0]);
+      assertFalse(cacheObjectName + " should NOT be registered", server.isRegistered(cacheObjectName));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "CreatedCacheCount"));
+      assertEquals("0", server.getAttribute(cacheManagerObjectName, "RunningCacheCount"));
+      server.invoke(cacheManagerObjectName, "startCache", new Object[]{getDefaultCacheName()}, new String[]{String.class.getName()});
+      assertEquals(ComponentStatus.RUNNING.toString(), server.getAttribute(cacheObjectName, "CacheStatus"));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "CreatedCacheCount"));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "RunningCacheCount"));
+      server.invoke(cacheObjectName, "stop", new Object[0], new String[0]);
+      assertFalse(cacheObjectName + " should NOT be registered", server.isRegistered(cacheObjectName));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "CreatedCacheCount"));
+      assertEquals("0", server.getAttribute(cacheManagerObjectName, "RunningCacheCount"));
+      server.invoke(cacheManagerObjectName, "startCache", new Object[]{getDefaultCacheName()}, new String[]{String.class.getName()});
+      assertEquals(ComponentStatus.RUNNING.toString(), server.getAttribute(cacheObjectName, "CacheStatus"));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "CreatedCacheCount"));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "RunningCacheCount"));
+      server.invoke(cacheObjectName, "stop", new Object[0], new String[0]);
+      assertFalse(cacheObjectName + " should NOT be registered", server.isRegistered(cacheObjectName));
+      assertEquals("1", server.getAttribute(cacheManagerObjectName, "CreatedCacheCount"));
+      assertEquals("0", server.getAttribute(cacheManagerObjectName, "RunningCacheCount"));
    }
 
    public void testManagerStopRemovesCacheMBean(Method m) throws Exception {
-      final String otherJmxDomain = getMethodSpecificJmxDomain(m, JMX_DOMAIN);
-      ObjectName defaultOn = getCacheObjectName(otherJmxDomain);
+      String otherJmxDomain = JMX_DOMAIN + "_" + m.getName();
+      ObjectName defaultOn = getCacheObjectName(otherJmxDomain, getDefaultCacheName() + "(local)");
       ObjectName galderOn = getCacheObjectName(otherJmxDomain, "galder(local)");
       ObjectName managerON = getCacheManagerObjectName(otherJmxDomain);
-      EmbeddedCacheManager otherContainer = createCacheManagerEnforceJmxDomain(otherJmxDomain);
+      GlobalConfigurationBuilder gc = new GlobalConfigurationBuilder();
+      gc.cacheContainer().statistics(true)
+            .globalJmxStatistics()
+            .jmxDomain(otherJmxDomain)
+            .mBeanServerLookup(mBeanServerLookup);
+      ConfigurationBuilder c = new ConfigurationBuilder();
+      c.jmxStatistics().enabled(true);
+      EmbeddedCacheManager otherContainer = TestCacheManagerFactory.createCacheManager(gc, c);
       otherContainer.defineConfiguration("galder", new ConfigurationBuilder().build());
       registerCacheManager(otherContainer);
-      server.invoke(managerON, "startCache", new Object[]{}, new String[]{});
+      MBeanServer server = mBeanServerLookup.getMBeanServer();
+      server.invoke(managerON, "startCache", new Object[0], new String[0]);
       server.invoke(managerON, "startCache", new Object[]{"galder"}, new String[]{String.class.getName()});
-      assert ComponentStatus.RUNNING.toString().equals(server.getAttribute(defaultOn, "CacheStatus"));
-      assert ComponentStatus.RUNNING.toString().equals(server.getAttribute(galderOn, "CacheStatus"));
+      assertEquals(ComponentStatus.RUNNING.toString(), server.getAttribute(defaultOn, "CacheStatus"));
+      assertEquals(ComponentStatus.RUNNING.toString(), server.getAttribute(galderOn, "CacheStatus"));
       otherContainer.stop();
       try {
          log.info(server.getMBeanInfo(managerON));
-         assert false : "Failure expected, " + managerON + " shouldn't be registered in mbean server";
+         fail("Failure expected, " + managerON + " shouldn't be registered in mbean server");
       } catch (InstanceNotFoundException e) {
       }
       try {
          log.info(server.getMBeanInfo(defaultOn));
-         assert false : "Failure expected, " + defaultOn + " shouldn't be registered in mbean server";
+         fail("Failure expected, " + defaultOn + " shouldn't be registered in mbean server");
       } catch (InstanceNotFoundException e) {
       }
       try {
          log.info(server.getMBeanInfo(galderOn));
-         assert false : "Failure expected, " + galderOn + " shouldn't be registered in mbean server";
+         fail("Failure expected, " + galderOn + " shouldn't be registered in mbean server");
       } catch (InstanceNotFoundException e) {
       }
    }
 
+   public void testDuplicateJmxDomainOnlyCacheExposesJmxStatistics() {
+      GlobalConfigurationBuilder gc = new GlobalConfigurationBuilder();
+      gc.cacheContainer().statistics(false)
+            .globalJmxStatistics()
+            .allowDuplicateDomains(false)
+            .jmxDomain(JMX_DOMAIN)
+            .mBeanServerLookup(mBeanServerLookup);
+      ConfigurationBuilder c = new ConfigurationBuilder();
+      c.jmxStatistics().enabled(true);
 
-   public void testDuplicateJmxDomainOnlyCacheExposesJmxStatistics() throws Exception {
       Exceptions.expectException(EmbeddedCacheManagerStartupException.class, JmxDomainConflictException.class,
-                                 () -> createCacheManagerEnforceJmxDomain(JMX_DOMAIN, false, true, false));
+            () -> TestCacheManagerFactory.createCacheManager(gc, c));
    }
 
    public void testAvoidLeakOfCacheMBeanWhenCacheStatisticsDisabled(Method m) {
-      final String jmxDomain = "jmx_" + m.getName();
-      withCacheManager(new CacheManagerCallable(
-            createCacheManagerEnforceJmxDomain(jmxDomain, false, false, true)) {
+      String otherJmxDomain = "jmx_" + m.getName();
+      GlobalConfigurationBuilder gc = new GlobalConfigurationBuilder();
+      gc.cacheContainer().statistics(false)
+            .globalJmxStatistics()
+            .jmxDomain(otherJmxDomain)
+            .mBeanServerLookup(mBeanServerLookup);
+      ConfigurationBuilder c = new ConfigurationBuilder();
+      c.jmxStatistics().available(false);
+
+      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.createCacheManager(gc, c)) {
          @Override
-         public void call() throws Exception {
+         public void call() {
             cm.getCache();
-            ObjectName cacheObjectName = getCacheObjectName(jmxDomain);
-            assertTrue(cacheObjectName + " should be registered",
-                  server.isRegistered(cacheObjectName));
+            MBeanServer server = mBeanServerLookup.getMBeanServer();
+            ObjectName cacheObjectName = getCacheObjectName(otherJmxDomain, getDefaultCacheName() + "(local)");
+            assertTrue(cacheObjectName + " should be registered", server.isRegistered(cacheObjectName));
             TestingUtil.killCacheManagers(cm);
-            assertFalse(cacheObjectName + " should NOT be registered",
-                  server.isRegistered(cacheObjectName));
+            assertFalse(cacheObjectName + " should NOT be registered", server.isRegistered(cacheObjectName));
          }
       });
    }
-
 }

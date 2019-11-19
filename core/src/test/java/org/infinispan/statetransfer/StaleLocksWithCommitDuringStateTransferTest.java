@@ -11,12 +11,11 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
-import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.interceptors.BaseAsyncInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
-import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.transaction.impl.TransactionCoordinator;
@@ -35,11 +34,9 @@ public class StaleLocksWithCommitDuringStateTransferTest extends MultipleCacheMa
       cb.clustering().cacheMode(CacheMode.DIST_SYNC)
             .remoteTimeout(5000)
             .transaction().transactionMode(TransactionMode.TRANSACTIONAL).cacheStopTimeout(100);
-      EmbeddedCacheManager cm1 = TestCacheManagerFactory.createClusteredCacheManager(cb);
-      EmbeddedCacheManager cm2 = TestCacheManagerFactory.createClusteredCacheManager(cb);
-      registerCacheManager(cm1, cm2);
-      c1 = cm1.getCache();
-      c2 = cm2.getCache();
+      createCluster(TestDataSCI.INSTANCE, cb, 2);
+      c1 = cache(0);
+      c2 = cache(1);
       waitForClusterToForm();
    }
 
@@ -159,15 +156,7 @@ public class StaleLocksWithCommitDuringStateTransferTest extends MultipleCacheMa
 
       // Delay the commit on the remote node. Can't used blockNewTransactions because we don't want a StateTransferInProgressException
       AsyncInterceptorChain c2ic = c2.getAdvancedCache().getAsyncInterceptorChain();
-      c2ic.addInterceptorBefore(new CommandInterceptor() {
-         @Override
-         protected Object handleDefault(InvocationContext ctx, VisitableCommand command) throws Throwable {
-            if (command instanceof CommitCommand) {
-               Thread.sleep(3000);
-            }
-            return super.handleDefault(ctx, command);
-         }
-      }, StateTransferInterceptor.class);
+      c2ic.addInterceptorBefore(new DelayCommandInterceptor(), StateTransferInterceptor.class);
 
       // Schedule the remote node to stop on another thread since the main thread will be busy with the commit call
       Thread worker = new Thread("RehasherSim,StaleLocksWithCommitDuringStateTransferTest") {
@@ -203,5 +192,15 @@ public class StaleLocksWithCommitDuringStateTransferTest extends MultipleCacheMa
       // test that we don't leak locks
       assertEventuallyNotLocked(c1, k1);
       assertEventuallyNotLocked(c1, k2);
+   }
+
+   static class DelayCommandInterceptor extends BaseAsyncInterceptor {
+      @Override
+      public Object visitCommand(InvocationContext ctx, VisitableCommand command) throws Throwable {
+         if (command instanceof CommitCommand) {
+            Thread.sleep(3000);
+         }
+         return invokeNext(ctx, command);
+      }
    }
 }

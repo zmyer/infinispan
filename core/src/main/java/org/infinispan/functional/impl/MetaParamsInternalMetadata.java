@@ -1,25 +1,24 @@
 package org.infinispan.functional.impl;
 
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
+import org.infinispan.commons.util.Experimental;
+import org.infinispan.container.versioning.EntryVersion;
+import org.infinispan.container.versioning.NumericVersion;
+import org.infinispan.container.versioning.SimpleClusteredVersion;
 import org.infinispan.functional.MetaParam;
 import org.infinispan.functional.MetaParam.MetaCreated;
 import org.infinispan.functional.MetaParam.MetaEntryVersion;
 import org.infinispan.functional.MetaParam.MetaLastUsed;
 import org.infinispan.functional.MetaParam.MetaLifespan;
 import org.infinispan.functional.MetaParam.MetaMaxIdle;
-import org.infinispan.commons.marshall.AbstractExternalizer;
-import org.infinispan.commons.util.Experimental;
-import org.infinispan.commons.util.Util;
-import org.infinispan.container.versioning.EntryVersion;
-import org.infinispan.marshall.core.Ids;
 import org.infinispan.metadata.InternalMetadata;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
 
 /**
  * Metadata parameters backed internal metadata representation.
@@ -27,6 +26,7 @@ import org.infinispan.metadata.Metadata;
  * @since 8.0
  */
 @Experimental
+@ProtoTypeId(ProtoStreamTypeIds.META_PARAMS_INTERNAL_METADATA)
 public final class MetaParamsInternalMetadata implements InternalMetadata, MetaParam.Lookup {
 
    final MetaParams params;
@@ -35,18 +35,45 @@ public final class MetaParamsInternalMetadata implements InternalMetadata, MetaP
       return new MetaParamsInternalMetadata(params);
    }
 
+   @ProtoFactory
+   MetaParamsInternalMetadata(NumericVersion numericVersion, SimpleClusteredVersion clusteredVersion,
+                              long created, long lastUsed, long lifespan, long maxIdle) {
+      this.params = new MetaParams(MetaParams.EMPTY_ARRAY, 0);
+      if (numericVersion != null || clusteredVersion != null) {
+         this.params.add(new MetaEntryVersion(numericVersion == null ? clusteredVersion : numericVersion));
+      }
+      if (created > -1) params.add(new MetaCreated(created));
+      if (lastUsed > -1) params.add(new MetaLastUsed(lastUsed));
+      if (lifespan > -1) params.add(new MetaLifespan(lifespan));
+      if (maxIdle > -1) params.add(new MetaMaxIdle(maxIdle));
+   }
+
    private MetaParamsInternalMetadata(MetaParams params) {
       this.params = params;
    }
 
-   @Override
-   public long created() {
-      return params.find(MetaCreated.class).map(mc -> mc.get()).orElse(0L);
+   @ProtoField(number = 1)
+   NumericVersion getNumericVersion() {
+      EntryVersion version = version();
+      return version instanceof NumericVersion ? (NumericVersion) version : null;
    }
 
+   @ProtoField(number = 2)
+   SimpleClusteredVersion getClusteredVersion() {
+      EntryVersion version = version();
+      return version instanceof SimpleClusteredVersion ? (SimpleClusteredVersion) version : null;
+   }
+
+   @ProtoField(number = 3, defaultValue = "-1")
+   @Override
+   public long created() {
+      return params.find(MetaCreated.class).map(MetaParam.MetaLong::get).orElse(0L);
+   }
+
+   @ProtoField(number = 4, defaultValue = "-1")
    @Override
    public long lastUsed() {
-      return params.find(MetaLastUsed.class).map(ml -> ml.get()).orElse(0L);
+      return params.find(MetaLastUsed.class).map(MetaParam.MetaLong::get).orElse(0L);
    }
 
    @Override
@@ -73,12 +100,14 @@ public final class MetaParamsInternalMetadata implements InternalMetadata, MetaP
       return deadline;
    }
 
+   @ProtoField(number = 5, defaultValue = "-1")
    @Override
    public long lifespan() {
       return params.find(MetaLifespan.class)
             .orElse(MetaLifespan.defaultValue()).get();
    }
 
+   @ProtoField(number = 6, defaultValue = "-1")
    @Override
    public long maxIdle() {
       return params.find(MetaMaxIdle.class)
@@ -102,9 +131,7 @@ public final class MetaParamsInternalMetadata implements InternalMetadata, MetaP
 
    @Override
    public String toString() {
-      return "MetaParamsInternalMetadata{" +
-         "params=" + params +
-         '}';
+      return "MetaParamsInternalMetadata{params=" + params + '}';
    }
 
    public static class Builder implements Metadata.Builder {
@@ -171,28 +198,4 @@ public final class MetaParamsInternalMetadata implements InternalMetadata, MetaP
          return this;
       }
    }
-
-   public static final class Externalizer extends AbstractExternalizer<MetaParamsInternalMetadata> {
-      @Override
-      public void writeObject(ObjectOutput oo, MetaParamsInternalMetadata o) throws IOException {
-         MetaParams.writeTo(oo, o.params);
-      }
-
-      @Override
-      public MetaParamsInternalMetadata readObject(ObjectInput input) throws IOException, ClassNotFoundException {
-         MetaParams params = MetaParams.readFrom(input);
-         return new MetaParamsInternalMetadata(params);
-      }
-
-      @Override
-      public Set<Class<? extends MetaParamsInternalMetadata>> getTypeClasses() {
-         return Util.<Class<? extends MetaParamsInternalMetadata>>asSet(MetaParamsInternalMetadata.class);
-      }
-
-      @Override
-      public Integer getId() {
-         return Ids.META_PARAMS_INTERNAL_METADATA;
-      }
-   }
-
 }

@@ -3,7 +3,6 @@ package org.infinispan.server.hotrod;
 import org.infinispan.AdvancedCache;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.logging.LogFactory;
-import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.context.Flag;
 import org.infinispan.server.hotrod.logging.Log;
 
@@ -100,22 +99,26 @@ public class HotRodHeader {
       }
    }
 
-   AdvancedCache<byte[], byte[]> getOptimizedCache(AdvancedCache<byte[], byte[]> c, Configuration cacheCfg) {
+   AdvancedCache<byte[], byte[]> getOptimizedCache(AdvancedCache<byte[], byte[]> c,
+                                                   boolean transactional, boolean clustered) {
+      AdvancedCache<byte[], byte[]> optCache = c;
+
+      if (hasFlag(ProtocolFlag.SkipListenerNotification)) {
+         optCache = c.withFlags(Flag.SKIP_LISTENER_NOTIFICATION);
+      }
+
       if (version < 20) {
          if (!hasFlag(ProtocolFlag.ForceReturnPreviousValue)) {
             switch (op) {
                case PUT:
                case PUT_IF_ABSENT:
-                  return c.withFlags(Flag.IGNORE_RETURN_VALUES);
+                  return optCache.withFlags(Flag.IGNORE_RETURN_VALUES);
             }
          }
-         return c;
+         return optCache;
       }
-      boolean isTransactional = cacheCfg.transaction().transactionMode().isTransactional();
-      boolean isClustered = cacheCfg.clustering().cacheMode().isClustered();
 
-      AdvancedCache<byte[], byte[]> optCache = c;
-      if (isClustered && !isTransactional && op.isConditional()) {
+      if (clustered && !transactional && op.isConditional()) {
          log.warnConditionalOperationNonTransactional(op.toString());
       }
 
@@ -130,7 +133,7 @@ public class HotRodHeader {
          if (op.isNotConditionalAndCanReturnPrevious()) {
             optCache = optCache.withFlags(Flag.IGNORE_RETURN_VALUES);
          }
-      } else if (!isTransactional && op.canReturnPreviousValue()) {
+      } else if (!transactional && op.canReturnPreviousValue()) {
          log.warnForceReturnPreviousNonTransactional(op.toString());
       }
       return optCache;

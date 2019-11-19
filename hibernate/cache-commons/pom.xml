@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-hibernate-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -14,7 +14,6 @@
    <description>Infinispan Hibernate Cache Commons module</description>
 
    <properties>
-      <module.skipComponentMetaDataProcessing>false</module.skipComponentMetaDataProcessing>
       <version.hibernate.core>5.1.10.Final</version.hibernate.core><!-- TODO remove this -->
    </properties>
 
@@ -65,10 +64,6 @@
       <plugins>
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-checkstyle-plugin</artifactId>
-         </plugin>
-         <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration combine.self="override">
                <skipTests>true</skipTests>
@@ -86,8 +81,7 @@
                   </Export-Package>
                   <Include-Resource>
                      {maven-resources},
-                     /META-INF/services=${project.basedir}/target/classes/META-INF/services,
-                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
+                     /META-INF/services=${project.basedir}/target/classes/META-INF/services
                   </Include-Resource>
                </instructions>
             </configuration>

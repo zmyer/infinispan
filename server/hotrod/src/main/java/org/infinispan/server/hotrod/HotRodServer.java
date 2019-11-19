@@ -1,75 +1,65 @@
 package org.infinispan.server.hotrod;
 
-import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JBOSS_MARSHALLING_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JBOSS_MARSHALLING;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT;
-import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_PROTOSTREAM_TYPE;
-import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_UNKNOWN_TYPE;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_PROTOSTREAM;
+import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_UNKNOWN;
 import static org.infinispan.counter.EmbeddedCounterManagerFactory.asCounterManager;
+import static org.infinispan.factories.KnownComponentNames.ASYNC_OPERATIONS_EXECUTOR;
 import static org.infinispan.query.remote.client.ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME;
 
+import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
-import java.io.Serializable;
-import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceLoader;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 
 import javax.security.auth.Subject;
-import javax.security.sasl.SaslServerFactory;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
-import org.infinispan.commons.CacheException;
+import org.infinispan.IllegalLifecycleStateException;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.marshall.Externalizer;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.SerializeWith;
 import org.infinispan.commons.marshall.WrappedByteArray;
-import org.infinispan.commons.util.CollectionFactory;
-import org.infinispan.commons.util.SaslUtils;
 import org.infinispan.commons.util.ServiceFinder;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Configurations;
-import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.container.versioning.VersionGenerator;
 import org.infinispan.context.Flag;
-import org.infinispan.distexec.DefaultExecutorService;
-import org.infinispan.distexec.DistributedCallable;
+import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.filter.AbstractKeyValueFilterConverter;
 import org.infinispan.filter.KeyValueFilterConverter;
 import org.infinispan.filter.KeyValueFilterConverterFactory;
 import org.infinispan.filter.NamedFactory;
 import org.infinispan.filter.ParamKeyValueFilterConverterFactory;
 import org.infinispan.lifecycle.ComponentStatus;
+import org.infinispan.manager.ClusterExecutor;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.EncoderRegistry;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.multimap.impl.EmbeddedMultimapCache;
 import org.infinispan.notifications.Listener;
-import org.infinispan.notifications.cachelistener.CacheEntryListenerInvocation;
-import org.infinispan.notifications.cachelistener.CacheNotifier;
-import org.infinispan.notifications.cachelistener.CacheNotifierImpl;
-import org.infinispan.notifications.cachelistener.annotation.CacheEntryCreated;
-import org.infinispan.notifications.cachelistener.annotation.CacheEntryExpired;
-import org.infinispan.notifications.cachelistener.annotation.CacheEntryModified;
-import org.infinispan.notifications.cachelistener.annotation.CacheEntryRemoved;
 import org.infinispan.notifications.cachelistener.annotation.TopologyChanged;
 import org.infinispan.notifications.cachelistener.event.TopologyChangedEvent;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverterFactory;
@@ -96,11 +86,10 @@ import org.infinispan.server.hotrod.transport.TimeoutEnabledChannelInitializer;
 import org.infinispan.upgrade.RollingUpgradeManager;
 import org.infinispan.util.KeyValuePair;
 
-import com.github.benmanes.caffeine.cache.Caffeine;
-
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOutboundHandler;
+import io.netty.util.concurrent.DefaultThreadFactory;
 
 /**
  * Hot Rod server, in charge of defining its encoder/decoder and, if clustered, update the topology information on
@@ -114,39 +103,33 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
 
    private static final long MILLISECONDS_IN_30_DAYS = TimeUnit.DAYS.toMillis(30);
 
-   private static final Flag[] LOCAL_NON_BLOCKING_GET = new Flag[]{Flag.CACHE_MODE_LOCAL, Flag.SKIP_CACHE_LOAD};
+   public static final int DEFAULT_HOTROD_PORT = 11222;
+   public static final int LISTENERS_CHECK_INTERVAL = 10;
 
-
-   public HotRodServer() {
-      super("HotRod");
-   }
-
-   private static Map<String, CacheInfo> expirationMap(long time, TimeUnit unit) {
-      com.github.benmanes.caffeine.cache.Cache<String, CacheInfo> cache = Caffeine.newBuilder()
-            .expireAfterWrite(time, unit).build();
-      return cache.asMap();
-   }
-
+   private boolean hasDefaultCache;
    private Address clusterAddress;
    private ServerAddress address;
    private Cache<Address, ServerAddress> addressCache;
-   private Map<String, AdvancedCache> knownCaches = CollectionFactory.makeConcurrentMap(4, 0.9f, 16);
-   private Map<String, Configuration> knownCacheConfigurations = CollectionFactory.makeConcurrentMap(4, 0.9f, 16);
-   private Map<String, ComponentRegistry> knownCacheRegistries = CollectionFactory.makeConcurrentMap(4, 0.9f, 16);
-   // This needs to be an expiration map so we can update knowledge about if sync listeners are registered
-   private final Map<String, CacheInfo> cacheInfo = expirationMap(10, TimeUnit.SECONDS);
+   private final Map<String, CacheInfo> knownCaches = new ConcurrentHashMap<>();
    private QueryFacade queryFacade;
-   private Map<String, SaslServerFactory> saslMechFactories = CollectionFactory.makeConcurrentMap(4, 0.9f, 16);
    private ClientListenerRegistry clientListenerRegistry;
    private Marshaller marshaller;
-   private DefaultExecutorService distributedExecutorService;
+   private ClusterExecutor clusterExecutor;
    private CrashedMemberDetectorListener viewChangeListener;
    private ReAddMyAddressListener topologyChangeListener;
    private IterationManager iterationManager;
    private RemoveCacheListener removeCacheListener;
    private ClientCounterManagerNotificationManager clientCounterNotificationManager;
    private HotRodAccessLogging accessLogging = new HotRodAccessLogging();
-   static final KeyValuePair<String, String> UNKNOWN_TYPES = new KeyValuePair<>(APPLICATION_UNKNOWN_TYPE, APPLICATION_UNKNOWN_TYPE);
+   private ScheduledExecutorService scheduledExecutor;
+
+   public HotRodServer() {
+      super("HotRod");
+   }
+
+   public boolean hasDefaultCache() {
+      return hasDefaultCache;
+   }
 
    public ServerAddress getAddress() {
       return address;
@@ -216,7 +199,8 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
          return null;
       }
 
-      public static final class ToEmptyBytesKeyValueFilterConverterExternalizer implements Externalizer<ToEmptyBytesKeyValueFilterConverter> {
+      public static final class ToEmptyBytesKeyValueFilterConverterExternalizer implements
+                                                                                Externalizer<ToEmptyBytesKeyValueFilterConverter> {
 
          @Override
          public void writeObject(ObjectOutput output, ToEmptyBytesKeyValueFilterConverter object) {
@@ -234,28 +218,32 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
       // These are also initialized by super.startInternal, but we need them before
       this.configuration = configuration;
       this.cacheManager = cacheManager;
-      this.iterationManager = new DefaultIterationManager();
-
-      // populate the sasl factories based on the required mechs
-      setupSasl();
+      GlobalComponentRegistry gcr = SecurityActions.getGlobalComponentRegistry(cacheManager);
+      this.iterationManager = new DefaultIterationManager(gcr.getTimeService());
+      this.hasDefaultCache = configuration.defaultCacheName() != null || cacheManager.getCacheManagerConfiguration().defaultCacheName().isPresent();
 
       // Initialize query-specific stuff
       List<QueryFacade> queryFacades = loadQueryFacades();
       queryFacade = queryFacades.size() > 0 ? queryFacades.get(0) : null;
-      clientListenerRegistry = new ClientListenerRegistry(cacheManager.getGlobalComponentRegistry().getComponent(EncoderRegistry.class));
+      clientListenerRegistry = new ClientListenerRegistry(gcr.getComponent(EncoderRegistry.class),
+            gcr.getComponent(ExecutorService.class, ASYNC_OPERATIONS_EXECUTOR));
       clientCounterNotificationManager = new ClientCounterManagerNotificationManager(asCounterManager(cacheManager));
 
       addKeyValueFilterConverterFactory(ToEmptyBytesKeyValueFilterConverter.class.getName(), new ToEmptyBytesFactory());
 
-      addCacheEventConverterFactory("key-value-with-previous-converter-factory", new KeyValueWithPreviousEventConverterFactory());
+      addCacheEventConverterFactory("key-value-with-previous-converter-factory",
+                                    new KeyValueWithPreviousEventConverterFactory());
       addCacheEventConverterFactory("___eager-key-value-version-converter", KeyValueVersionConverterFactory.SINGLETON);
       loadFilterConverterFactories(ParamKeyValueFilterConverterFactory.class, this::addKeyValueFilterConverterFactory);
       loadFilterConverterFactories(CacheEventFilterConverterFactory.class, this::addCacheEventFilterConverterFactory);
       loadFilterConverterFactories(CacheEventConverterFactory.class, this::addCacheEventConverterFactory);
       loadFilterConverterFactories(KeyValueFilterConverterFactory.class, this::addKeyValueFilterConverterFactory);
 
+      DefaultThreadFactory factory = new DefaultThreadFactory(getQualifiedName() + "-Scheduled");
+      scheduledExecutor = Executors.newSingleThreadScheduledExecutor(factory);
+
       removeCacheListener = new RemoveCacheListener();
-      cacheManager.addListener(removeCacheListener);
+      SecurityActions.addListener(cacheManager, removeCacheListener);
 
       // Start default cache and the endpoint before adding self to
       // topology in order to avoid topology updates being used before
@@ -263,7 +251,7 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
       super.startInternal(configuration, cacheManager);
 
       // Add self to topology cache last, after everything is initialized
-      if (Configurations.isClustered(cacheManager.getCacheManagerConfiguration())) {
+      if (Configurations.isClustered(SecurityActions.getCacheManagerConfiguration(cacheManager))) {
          defineTopologyCacheConfig(cacheManager);
          if (log.isDebugEnabled())
             log.debugf("Externally facing address is %s:%d", configuration.proxyHost(), configuration.proxyPort());
@@ -275,7 +263,8 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
    @Override
    public ChannelInitializer<Channel> getInitializer() {
       if (configuration.idleTimeout() > 0)
-         return new NettyInitializers(new NettyChannelInitializer(this, transport, getEncoder(), getDecoder()), new TimeoutEnabledChannelInitializer<>(this));
+         return new NettyInitializers(new NettyChannelInitializer(this, transport, getEncoder(), getDecoder()),
+                                      new TimeoutEnabledChannelInitializer<>(this));
       else // Idle timeout logic is disabled with -1 or 0 values
          return new NettyInitializers(new NettyChannelInitializer(this, transport, getEncoder(), getDecoder()));
    }
@@ -306,24 +295,27 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
 
    @Override
    protected void startDefaultCache() {
-      getCacheInstance(UNKNOWN_TYPES, null, configuration.defaultCacheName(), cacheManager, true, true);
+      if (hasDefaultCache) {
+         getCacheInfo("", (byte) 0, 0, false);
+      }
    }
 
    private void preStartCaches() {
-      // Start defined caches to avoid issues with lazily started caches. Skip internal caches if authorization is not
-      // enabled
-      InternalCacheRegistry icr = cacheManager.getGlobalComponentRegistry().getComponent(InternalCacheRegistry.class);
-      boolean authz = cacheManager.getCacheManagerConfiguration().security().authorization().enabled();
+      // Start defined caches to avoid issues with lazily started caches
+      // Skip internal caches
       for (String cacheName : cacheManager.getCacheNames()) {
-         getCacheInstance(UNKNOWN_TYPES, null, cacheName, cacheManager, false, (!icr.internalCacheHasFlag(cacheName, InternalCacheRegistry.Flag.PROTECTED) || authz));
+         getCacheInfo(cacheName, (byte) 0, 0, false);
       }
+
+      scheduledExecutor.scheduleWithFixedDelay(new CacheInfoUpdateTask(),
+                                               LISTENERS_CHECK_INTERVAL, LISTENERS_CHECK_INTERVAL, TimeUnit.SECONDS);
    }
 
    private void addSelfToTopologyView(EmbeddedCacheManager cacheManager) {
       addressCache = cacheManager.getCache(configuration.topologyCacheName());
       clusterAddress = cacheManager.getAddress();
       address = new ServerAddress(configuration.publicHost(), configuration.publicPort());
-      distributedExecutorService = new DefaultExecutorService(addressCache);
+      clusterExecutor = cacheManager.executor();
 
       viewChangeListener = new CrashedMemberDetectorListener(addressCache, this);
       cacheManager.addListener(viewChangeListener);
@@ -332,33 +324,34 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
 
       // Map cluster address to server endpoint address
       log.debugf("Map %s cluster address with %s server endpoint in address cache", clusterAddress, address);
-      // Guaranteed delivery required since if data is lost, there won't be
-      // any further cache calls, so negative acknowledgment can cause issues.
-      addressCache.getAdvancedCache().withFlags(Flag.SKIP_CACHE_LOAD, Flag.GUARANTEED_DELIVERY)
-            .put(clusterAddress, address);
+      addressCache.getAdvancedCache().withFlags(Flag.IGNORE_RETURN_VALUES)
+                  .put(clusterAddress, address);
    }
 
    private void defineTopologyCacheConfig(EmbeddedCacheManager cacheManager) {
-      InternalCacheRegistry internalCacheRegistry = cacheManager.getGlobalComponentRegistry().getComponent(InternalCacheRegistry.class);
+      InternalCacheRegistry internalCacheRegistry = SecurityActions.getGlobalComponentRegistry(cacheManager).getComponent(
+         InternalCacheRegistry.class);
       internalCacheRegistry.registerInternalCache(configuration.topologyCacheName(),
-            createTopologyCacheConfig(cacheManager.getCacheManagerConfiguration().transport().distributedSyncTimeout()).build(),
-            EnumSet.of(InternalCacheRegistry.Flag.EXCLUSIVE));
+                                                  createTopologyCacheConfig(
+                                                     cacheManager.getCacheManagerConfiguration().transport()
+                                                                 .distributedSyncTimeout()).build(),
+                                                  EnumSet.of(InternalCacheRegistry.Flag.EXCLUSIVE));
    }
 
    protected ConfigurationBuilder createTopologyCacheConfig(long distSyncTimeout) {
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.clustering().cacheMode(CacheMode.REPL_SYNC).remoteTimeout(configuration.topologyReplTimeout())
-            .locking().lockAcquisitionTimeout(configuration.topologyLockTimeout())
-            .clustering().partitionHandling().mergePolicy(null)
-            .expiration().lifespan(-1).maxIdle(-1);
+             .locking().lockAcquisitionTimeout(configuration.topologyLockTimeout())
+             .clustering().partitionHandling().mergePolicy(null)
+             .expiration().lifespan(-1).maxIdle(-1);
 
       if (configuration.topologyStateTransfer()) {
          builder
-               .clustering()
-               .stateTransfer()
-               .awaitInitialTransfer(configuration.topologyAwaitInitialTransfer())
-               .fetchInMemoryState(true)
-               .timeout(distSyncTimeout + configuration.topologyReplTimeout());
+            .clustering()
+            .stateTransfer()
+            .awaitInitialTransfer(configuration.topologyAwaitInitialTransfer())
+            .fetchInMemoryState(true)
+            .timeout(distSyncTimeout + configuration.topologyReplTimeout());
       } else {
          builder.persistence().addClusterLoader().remoteCallTimeout(configuration.topologyReplTimeout());
       }
@@ -366,139 +359,88 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
       return builder;
    }
 
-   public AdvancedCache<byte[], byte[]> cache(HotRodHeader header, Subject subject) throws RequestParsingException {
-      return cache(header, subject, header.cacheName);
-   }
-
-   public AdvancedCache<byte[], byte[]> cache(HotRodHeader header, Subject subject, String cacheName) throws RequestParsingException {
-      if (isCacheIgnored(cacheName)) {
-         throw new CacheUnavailableException();
-      }
-      // Try to avoid calling cacheManager.getCacheNames() if possible, since this creates a lot of unnecessary garbage
-      KeyValuePair<String, String> requestMediaTypes = getRequestMediaTypes(header, getCacheConfiguration(cacheName));
-      AdvancedCache<byte[], byte[]> cache = knownCaches.get(getDecoratedCacheKey(cacheName, requestMediaTypes));
-      if (cache == null) {
-         InternalCacheRegistry icr = cacheManager.getGlobalComponentRegistry().getComponent(InternalCacheRegistry.class);
-         if (icr.isPrivateCache(cacheName)) {
-            throw new RequestParsingException(
-                  String.format("Remote requests are not allowed to private caches. Do no send remote requests to cache '%s'", cacheName),
-                  header.version, header.messageId);
-         } else if (icr.internalCacheHasFlag(cacheName, InternalCacheRegistry.Flag.PROTECTED)) {
-            // We want to make sure the cache access is checked everytime, so don't store it as a "known" cache. More
-            // expensive, but these caches should not be accessed frequently
-            cache = getCacheInstance(requestMediaTypes, header, cacheName, cacheManager, true, false);
-         } else if (!cacheName.isEmpty() && !cacheManager.getCacheNames().contains(cacheName)) {
-            throw new CacheNotFoundException(
-                  String.format("Cache with name '%s' not found amongst the configured caches", cacheName),
-                  header.version, header.messageId);
-         } else {
-            cache = getCacheInstance(requestMediaTypes, header, cacheName, cacheManager, true, true);
-         }
-      }
-      cache = header.getOptimizedCache(cache, getCacheConfiguration(cacheName));
-      if (subject != null) {
-         cache = cache.withSubject(subject);
-      }
+   public AdvancedCache<byte[], byte[]> cache(CacheInfo cacheInfo, HotRodHeader header, Subject subject) {
+      KeyValuePair<MediaType, MediaType> requestMediaTypes = getRequestMediaTypes(header, cacheInfo.configuration);
+      AdvancedCache<byte[], byte[]> cache =
+         cacheInfo.getCache(requestMediaTypes, subject);
+      cache = header.getOptimizedCache(cache, cacheInfo.transactional, cacheInfo.clustered);
       return cache;
    }
 
    public EmbeddedMultimapCache<WrappedByteArray, WrappedByteArray> multimap(HotRodHeader header, Subject subject) {
-      return new EmbeddedMultimapCache(cache(header, subject));
+      return new EmbeddedMultimapCache(cache(getCacheInfo(header), header, subject));
    }
 
-   public void cacheStopped(String cacheName) {
-      cacheInfo.keySet().stream().filter(k -> k.startsWith(cacheName)).forEach(cacheInfo::remove);
+   public CacheInfo getCacheInfo(HotRodHeader header) {
+      return getCacheInfo(header.cacheName, header.version, header.messageId, true);
    }
 
-   boolean hasSyncListener(CacheNotifierImpl<?, ?> cacheNotifier) {
-      for (Class<? extends Annotation> annotation :
-            new Class[]{CacheEntryCreated.class, CacheEntryRemoved.class, CacheEntryExpired.class, CacheEntryModified.class}) {
-         for (CacheEntryListenerInvocation invocation : cacheNotifier.getListenerCollectionForAnnotation(annotation)) {
-            if (invocation.isSync()) {
-               return true;
-            }
-         }
+   public CacheInfo getCacheInfo(String cacheName, byte hotRodVersion, long messageId, boolean checkIgnored) {
+      if (checkIgnored && isCacheIgnored(cacheName)) {
+         throw new CacheUnavailableException();
       }
-      return false;
-   }
-
-   public CacheInfo getCacheInfo(AdvancedCache<byte[], byte[]> cache, HotRodHeader header) {
-      // Fetching persistence manager would require security action, and would be too expensive
-      CacheInfo info = cacheInfo.get(cache.getName() + header.getKeyMediaType().getTypeSubtype() + header.getValueMediaType().getTypeSubtype());
+      CacheInfo info = knownCaches.get(cacheName);
       if (info == null) {
-         AdvancedCache<byte[], byte[]> localNonBlocking = SecurityActions.anonymizeSecureCache(cache)
-               .noFlags().withFlags(LOCAL_NON_BLOCKING_GET);
-         if (cache.getStatus() != ComponentStatus.RUNNING) {
-            // stay on the safe side
-            return new CacheInfo(localNonBlocking, true, true, true);
-         }
-         ComponentRegistry cr = SecurityActions.getCacheComponentRegistry(cache);
+         boolean keep = checkCacheIsAvailable(cacheName, hotRodVersion, messageId);
 
-         PersistenceManager pm = cr.getComponent(PersistenceManager.class);
-         boolean hasIndexing = SecurityActions.getCacheConfiguration(cache).indexing().index().isEnabled();
-         CacheNotifierImpl cacheNotifier = (CacheNotifierImpl) cr.getComponent(CacheNotifier.class);
-         info = new CacheInfo(localNonBlocking, pm.isEnabled(), hasIndexing, hasSyncListener(cacheNotifier));
-         cacheInfo.put(cache.getName() + header.getKeyMediaType().getTypeSubtype() + header.getValueMediaType().getTypeSubtype(), info);
+         AdvancedCache<byte[], byte[]> cache = obtainAnonymizedCache(cacheName);
+         Configuration cacheCfg = SecurityActions.getCacheConfiguration(cache);
+         info = new CacheInfo(cache, cacheCfg);
+         updateCacheInfo(info);
+         if (keep) {
+            knownCaches.put(cacheName, info);
+         }
       }
       return info;
    }
 
-   AdvancedCache getCacheInstance(KeyValuePair<String, String> requestTypes, HotRodHeader header, String cacheName, EmbeddedCacheManager cacheManager, Boolean skipCacheCheck, Boolean addToKnownCaches) {
-      AdvancedCache cache = null;
-      String scopedCacheKey = getDecoratedCacheKey(cacheName, requestTypes);
-      if (!skipCacheCheck) cache = knownCaches.get(scopedCacheKey);
-
-      if (cache == null) {
-         String validCacheName = cacheName.isEmpty() ? configuration.defaultCacheName() : cacheName;
-         cache = SecurityActions.getCache(cacheManager, validCacheName).getAdvancedCache();
-         Configuration cacheConfiguration = SecurityActions.getCacheConfiguration(cache);
-         // We don't need synchronization as long as we store the cache last
-         knownCacheConfigurations.put(cacheName, cacheConfiguration);
-         knownCacheRegistries.put(cacheName, SecurityActions.getCacheComponentRegistry(cache.getAdvancedCache()));
-         cache = cache.withMediaType(requestTypes.getKey(), requestTypes.getValue());
-         if (addToKnownCaches) {
-            knownCaches.put(scopedCacheKey, cache);
-         }
-         // make sure we register a Migrator for this cache!
-         tryRegisterMigrationManager(cache);
+   private boolean checkCacheIsAvailable(String cacheName, byte hotRodVersion, long messageId) {
+      InternalCacheRegistry icr = SecurityActions.getGlobalComponentRegistry(cacheManager).getComponent(InternalCacheRegistry.class);
+      boolean keep;
+      if (icr.isPrivateCache(cacheName)) {
+         throw new RequestParsingException(
+            String.format("Remote requests are not allowed to private caches. Do no send remote requests to cache '%s'",
+                          cacheName),
+            hotRodVersion, messageId);
+      } else if (icr.internalCacheHasFlag(cacheName, InternalCacheRegistry.Flag.PROTECTED)) {
+         // We want to make sure the cache access is checked every time, so don't store it as a "known" cache.
+         // More expensive, but these caches should not be accessed frequently
+         keep = false;
+      } else if (!cacheName.isEmpty() && !cacheManager.getCacheNames().contains(cacheName)) {
+         throw new CacheNotFoundException(
+               String.format("Cache with name '%s' not found amongst the configured caches", cacheName),
+               hotRodVersion, messageId);
+      } else if (cacheName.isEmpty() && !hasDefaultCache) {
+         throw new CacheNotFoundException("Default cache requested but not configured", hotRodVersion, messageId);
+      } else {
+         keep = true;
       }
-
-      return cache;
+      return keep;
    }
 
-   Configuration getCacheConfiguration(String cacheName) {
-      return knownCacheConfigurations.get(cacheName);
+   public void updateCacheInfo(CacheInfo info) {
+      if (info.anonymizedCache.getStatus() != ComponentStatus.RUNNING)
+         return;
+
+      ComponentRegistry cr = SecurityActions.getCacheComponentRegistry(info.anonymizedCache);
+      PersistenceManager pm = cr.getComponent(PersistenceManager.class);
+      boolean hasIndexing = SecurityActions.getCacheConfiguration(info.anonymizedCache).indexing().index().isEnabled();
+      info.update(pm.isEnabled(), hasIndexing);
    }
 
-   ComponentRegistry getCacheRegistry(String cacheName) {
-      return knownCacheRegistries.get(cacheName);
+   private AdvancedCache<byte[], byte[]> obtainAnonymizedCache(String cacheName) {
+      String validCacheName = cacheName.isEmpty() ? defaultCacheName() : cacheName;
+      Cache<byte[], byte[]> cache = SecurityActions.getCache(cacheManager, validCacheName);
+      AdvancedCache<byte[], byte[]> advancedCache = cache.getAdvancedCache();
+      // make sure we register a Migrator for this cache!
+      tryRegisterMigrationManager(advancedCache);
+      return advancedCache;
    }
 
    private void tryRegisterMigrationManager(AdvancedCache<byte[], byte[]> cache) {
       ComponentRegistry cr = SecurityActions.getCacheComponentRegistry(cache.getAdvancedCache());
       RollingUpgradeManager migrationManager = cr.getComponent(RollingUpgradeManager.class);
       if (migrationManager != null) migrationManager.addSourceMigrator(new HotRodSourceMigrator(cache));
-   }
-
-   private void setupSasl() {
-      if (configuration.authentication().enabled()) {
-         Iterator<SaslServerFactory> saslFactories = SaslUtils.getSaslServerFactories(this.getClass().getClassLoader(), true);
-         while (saslFactories.hasNext()) {
-            SaslServerFactory saslFactory = saslFactories.next();
-            String[] saslFactoryMechs = saslFactory.getMechanismNames(configuration.authentication().mechProperties());
-            for (String supportedMech : saslFactoryMechs) {
-               for (String mech : configuration.authentication().allowedMechs()) {
-                  if (supportedMech.equals(mech)) {
-                     saslMechFactories.putIfAbsent(mech, saslFactory);
-                  }
-               }
-            }
-         }
-      }
-   }
-
-   SaslServerFactory getSaslServerFactory(String mech) {
-      return saslMechFactories.get(mech);
    }
 
    public Cache<Address, ServerAddress> getAddressCache() {
@@ -547,24 +489,21 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
       return iterationManager;
    }
 
-   static String getDecoratedCacheKey(String cacheName, KeyValuePair<String, String> mediaTypes) {
-      return cacheName + "|" + mediaTypes.getKey() + "|" + mediaTypes.getValue();
-   }
-
-   private static KeyValuePair<String, String> getRequestMediaTypes(HotRodHeader header, Configuration configuration) {
-      String keyRequestType = header == null ? APPLICATION_UNKNOWN_TYPE : header.getKeyMediaType().toString();
-      String valueRequestType = header == null ? APPLICATION_UNKNOWN_TYPE : header.getValueMediaType().toString();
+   private static KeyValuePair<MediaType, MediaType> getRequestMediaTypes(HotRodHeader header,
+                                                                          Configuration configuration) {
+      MediaType keyRequestType = header == null ? APPLICATION_UNKNOWN : header.getKeyMediaType();
+      MediaType valueRequestType = header == null ? APPLICATION_UNKNOWN : header.getValueMediaType();
       if (header != null && HotRodVersion.HOTROD_28.isOlder(header.version)) {
          // Pre-2.8 clients always send protobuf payload to the metadata cache
          if (header.cacheName.equals(PROTOBUF_METADATA_CACHE_NAME)) {
-            keyRequestType = APPLICATION_PROTOSTREAM_TYPE;
-            valueRequestType = APPLICATION_PROTOSTREAM_TYPE;
+            keyRequestType = APPLICATION_PROTOSTREAM;
+            valueRequestType = APPLICATION_PROTOSTREAM;
          } else {
             // Pre-2.8 clients always sent query encoded as protobuf unless object store is used.
             if (header.op == HotRodOperation.QUERY) {
                boolean objectStorage = APPLICATION_OBJECT.match(configuration.encoding().valueDataType().mediaType());
-               keyRequestType = objectStorage ? APPLICATION_JBOSS_MARSHALLING_TYPE : APPLICATION_PROTOSTREAM_TYPE;
-               valueRequestType = objectStorage ? APPLICATION_JBOSS_MARSHALLING_TYPE : APPLICATION_PROTOSTREAM_TYPE;
+               keyRequestType = objectStorage ? APPLICATION_JBOSS_MARSHALLING : APPLICATION_PROTOSTREAM;
+               valueRequestType = objectStorage ? APPLICATION_JBOSS_MARSHALLING : APPLICATION_PROTOSTREAM;
             }
          }
       }
@@ -582,13 +521,14 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
       if (topologyChangeListener != null) {
          SecurityActions.removeListener(addressCache, topologyChangeListener);
       }
-      if (Configurations.isClustered(cacheManager.getCacheManagerConfiguration())) {
-         InternalCacheRegistry internalCacheRegistry = cacheManager.getGlobalComponentRegistry().getComponent(InternalCacheRegistry.class);
+      if (cacheManager != null && Configurations.isClustered(SecurityActions.getCacheManagerConfiguration(cacheManager))) {
+         InternalCacheRegistry internalCacheRegistry =
+            SecurityActions.getGlobalComponentRegistry(cacheManager).getComponent(InternalCacheRegistry.class);
          if (internalCacheRegistry != null)
             internalCacheRegistry.unregisterInternalCache(configuration.topologyCacheName());
       }
-      if (distributedExecutorService != null) {
-         distributedExecutorService.shutdownNow();
+      if (scheduledExecutor != null) {
+         scheduledExecutor.shutdownNow();
       }
 
       if (clientListenerRegistry != null) clientListenerRegistry.stop();
@@ -600,22 +540,8 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
       return accessLogging;
    }
 
-   public Metadata buildMetadata(HotRodHeader header, long lifespan, TimeUnitValue lifespanUnit, long maxIdle, TimeUnitValue maxIdleUnit) {
+   public Metadata.Builder buildMetadata2x(long lifespan, TimeUnitValue lifespanUnit, long maxIdle, TimeUnitValue maxIdleUnit) {
       EmbeddedMetadata.Builder metadata = new EmbeddedMetadata.Builder();
-      ComponentRegistry cacheRegistry;
-      try {
-         cacheRegistry = getCacheRegistry(header.cacheName);
-         if (cacheRegistry == null) {
-            cache(header, null);
-            cacheRegistry = getCacheRegistry(header.cacheName);
-         }
-      } catch (Exception e) {
-         // Obtaining a protected/internal cache can result in an exception. However we have to finish reading
-         // the request and we can be sure that the exception will be thrown again once the request will be applied
-         // on given cache.
-         return null;
-      }
-      metadata.version(generateVersion(cacheRegistry));
       if (lifespan != ServerConstants.EXPIRATION_DEFAULT && lifespanUnit != TimeUnitValue.DEFAULT) {
          if (lifespanUnit == TimeUnitValue.INFINITE) {
             metadata.lifespan(ServerConstants.EXPIRATION_NONE);
@@ -630,12 +556,26 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
             metadata.maxIdle(toMillis(maxIdle, maxIdleUnit));
          }
       }
-      return metadata.build();
+      return metadata;
    }
 
-   private EntryVersion generateVersion(ComponentRegistry registry) {
-      VersionGenerator cacheVersionGenerator = registry.getVersionGenerator();
-      return cacheVersionGenerator.generateNew();
+   public Metadata.Builder buildMetadata(long lifespan, TimeUnitValue lifespanUnit, long maxIdle, TimeUnitValue maxIdleUnit) {
+      EmbeddedMetadata.Builder metadata = new EmbeddedMetadata.Builder();
+      if (lifespan != ServerConstants.EXPIRATION_DEFAULT && lifespanUnit != TimeUnitValue.DEFAULT) {
+         if (lifespanUnit == TimeUnitValue.INFINITE) {
+            metadata.lifespan(ServerConstants.EXPIRATION_NONE);
+         } else {
+            metadata.lifespan(lifespanUnit.toTimeUnit().toMillis(lifespan));
+         }
+      }
+      if (maxIdle != ServerConstants.EXPIRATION_DEFAULT && maxIdleUnit != TimeUnitValue.DEFAULT) {
+         if (maxIdleUnit == TimeUnitValue.INFINITE) {
+            metadata.maxIdle(ServerConstants.EXPIRATION_NONE);
+         } else {
+            metadata.maxIdle(maxIdleUnit.toTimeUnit().toMillis(maxIdle));
+         }
+      }
+      return metadata;
    }
 
    /**
@@ -660,11 +600,6 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
       }
    }
 
-   @Override
-   public int getWorkerThreads() {
-      return Integer.getInteger("infinispan.server.hotrod.workerThreads", configuration.workerThreads());
-   }
-
    public String toString() {
       return "HotRodServer[" +
             "configuration=" + configuration +
@@ -672,25 +607,49 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
    }
 
    public static class CacheInfo {
-      final AdvancedCache<byte[], byte[]> localNonBlocking;
-      final boolean persistence;
-      final boolean indexing;
-      final boolean syncListener;
+      final AdvancedCache<byte[], byte[]> anonymizedCache;
+      final Map<KeyValuePair<MediaType, MediaType>, AdvancedCache<byte[], byte[]>> encodedCaches =
+         new ConcurrentHashMap<>();
+      final DistributionManager distributionManager;
+      final VersionGenerator versionGenerator;
+      final Configuration configuration;
+      final boolean transactional;
+      final boolean clustered;
+      volatile boolean persistence;
+      volatile boolean indexing;
 
-      CacheInfo(AdvancedCache<byte[], byte[]> localNonBlocking, boolean persistence, boolean indexing,
-            boolean syncListener) {
-         this.localNonBlocking = localNonBlocking;
-         this.persistence = persistence;
-         this.indexing = indexing;
-         this.syncListener = syncListener;
+      CacheInfo(AdvancedCache<byte[], byte[]> cache, Configuration configuration) {
+         this.anonymizedCache = SecurityActions.anonymizeSecureCache(cache);
+         this.distributionManager = SecurityActions.getDistributionManager(cache);
+         ComponentRegistry componentRegistry = SecurityActions.getCacheComponentRegistry(cache);
+         this.versionGenerator = componentRegistry.getVersionGenerator();
+         this.configuration = configuration;
+         this.transactional = configuration.transaction().transactionMode().isTransactional();
+         this.clustered = configuration.clustering().cacheMode().isClustered();
+
+         // Start conservative and assume we have all the stuff that can cause operations to block
+         this.persistence = true;
+         this.indexing = true;
       }
 
-      AdvancedCache<byte[], byte[]> localNonBlocking(Subject subject) {
-         if (subject == null) {
-            return localNonBlocking;
-         } else {
-            return localNonBlocking.withSubject(subject);
+      AdvancedCache<byte[], byte[]> getCache(KeyValuePair<MediaType, MediaType> requestMediaTypes, Subject subject) {
+         AdvancedCache<byte[], byte[]> cache = encodedCaches.get(requestMediaTypes);
+         if (cache == null) {
+            // The client always sends byte[] keys and values
+            cache = (AdvancedCache<byte[], byte[]>) anonymizedCache.withMediaType(
+               requestMediaTypes.getKey().getTypeSubtype(), requestMediaTypes.getValue().getTypeSubtype());
+            encodedCaches.put(requestMediaTypes, cache);
          }
+         if (subject == null) {
+            return cache;
+         } else {
+            return cache.withSubject(subject);
+         }
+      }
+
+      public void update(boolean enabled, boolean indexing) {
+         this.persistence = enabled;
+         this.indexing = indexing;
       }
    }
 
@@ -708,30 +667,23 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
 
       @TopologyChanged
       public void topologyChanged(TopologyChangedEvent<Address, ServerAddress> event) {
-         boolean success = false;
-         while (!success && !distributedExecutorService.isShutdown() && addressCache.getStatus().allowInvocations()) {
-            try {
-               List<CompletableFuture<Boolean>> futures = distributedExecutorService.submitEverywhere(
-                     new CheckAddressTask(clusterAddress));
-               // No need for a timeout here, the distributed executor has a default task timeout
-               AtomicBoolean result = new AtomicBoolean(true);
-               futures.forEach(f -> {
-                  try {
-                     if (!f.get()) {
-                        result.set(false);
-                     }
-                  } catch (InterruptedException | ExecutionException e) {
-                     throw new CacheException(e);
-                  }
-               });
-               if (!result.get()) {
+         recursionTopologyChanged();
+      }
+
+      private void recursionTopologyChanged() {
+         // Check the manager status, not the address cache status, because it changes to STOPPING first
+         if (cacheManager.getStatus().allowInvocations()) {
+            // No need for a timeout here, the cluster executor has a default timeout
+            clusterExecutor.submitConsumer(new CheckAddressTask(addressCache.getName(), clusterAddress), (a, v, t) -> {
+               if (t != null && !(t instanceof IllegalLifecycleStateException)) {
+                  log.debug("Error re-adding address to topology cache, retrying", t);
+                  recursionTopologyChanged();
+               }
+               if (!v) {
                   log.debugf("Re-adding %s to the topology cache", clusterAddress);
                   addressCache.putAsync(clusterAddress, address);
                }
-               success = true;
-            } catch (Throwable e) {
-               log.debug("Error re-adding address to topology cache, retrying", e);
-            }
+            });
          }
       }
    }
@@ -740,29 +692,51 @@ public class HotRodServer extends AbstractProtocolServer<HotRodServerConfigurati
    class RemoveCacheListener {
       @CacheStopped
       public void cacheStopped(CacheStoppedEvent event) {
-         knownCaches.keySet().stream().filter(k -> k.startsWith(event.getCacheName() + "|")).forEach(knownCaches::remove);
-         knownCacheConfigurations.remove(event.getCacheName());
-         knownCacheRegistries.remove(event.getCacheName());
+         knownCaches.remove(event.getCacheName());
+      }
+   }
+
+   private class CacheInfoUpdateTask implements Runnable {
+      @Override
+      public void run() {
+         for (CacheInfo cacheInfo : knownCaches.values()) {
+            updateCacheInfo(cacheInfo);
+         }
       }
    }
 }
 
-class CheckAddressTask implements DistributedCallable<Address, ServerAddress, Boolean>, Serializable {
+@SerializeWith(value = CheckAddressTask.CheckAddressTaskExternalizer.class)
+class CheckAddressTask implements Function<EmbeddedCacheManager, Boolean> {
+   private final String cacheName;
    private final Address clusterAddress;
 
-   private volatile Cache<Address, ServerAddress> cache = null;
-
-   CheckAddressTask(Address clusterAddress) {
+   CheckAddressTask(String cacheName, Address clusterAddress) {
+      this.cacheName = cacheName;
       this.clusterAddress = clusterAddress;
    }
 
    @Override
-   public void setEnvironment(Cache<Address, ServerAddress> cache, Set<Address> inputKeys) {
-      this.cache = cache;
+   public Boolean apply(EmbeddedCacheManager embeddedCacheManager) {
+      if (embeddedCacheManager.isRunning(cacheName)) {
+         Cache<Address, ServerAddress> cache = embeddedCacheManager.getCache(cacheName);
+         return cache.containsKey(clusterAddress);
+      }
+      // If the cache isn't started just play like this node has the address in the cache - it will be added as it
+      // joins, so no worries
+      return true;
    }
 
-   @Override
-   public Boolean call() throws Exception {
-      return cache.containsKey(clusterAddress);
+   public static final class CheckAddressTaskExternalizer implements Externalizer<CheckAddressTask> {
+      @Override
+      public void writeObject(ObjectOutput output, CheckAddressTask object) throws IOException {
+         output.writeUTF(object.cacheName);
+         output.writeObject(object.clusterAddress);
+      }
+
+      @Override
+      public CheckAddressTask readObject(ObjectInput input) throws IOException, ClassNotFoundException {
+         return new CheckAddressTask(input.readUTF(), (Address) input.readObject());
+      }
    }
 }

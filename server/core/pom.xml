@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-server-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -13,11 +13,6 @@
    <packaging>bundle</packaging>
    <name>Infinispan Server - Core Components</name>
    <description>Infinispan Server - Core Components</description>
-
-
-   <properties>
-      <module.skipComponentMetaDataProcessing>false</module.skipComponentMetaDataProcessing>
-   </properties>
 
    <dependencies>
       <dependency>
@@ -36,7 +31,7 @@
        <dependency>
          <groupId>io.netty</groupId>
          <artifactId>netty-tcnative</artifactId>
-         <version>${version.netty-tcnative-boringssl-static}</version>
+         <version>${versionx.io.netty.netty-tcnative}</version>
          <classifier>${os.detected.classifier}</classifier>
          <optional>true</optional>
       </dependency>
@@ -62,12 +57,34 @@
          <artifactId>jackson-databind</artifactId>
       </dependency>
       <dependency>
+         <groupId>com.fasterxml.jackson.datatype</groupId>
+         <artifactId>jackson-datatype-jdk8</artifactId>
+      </dependency>
+      <dependency>
          <groupId>com.fasterxml.jackson.core</groupId>
          <artifactId>jackson-annotations</artifactId>
       </dependency>
       <dependency>
          <groupId>com.thoughtworks.xstream</groupId>
          <artifactId>xstream</artifactId>
+         <exclusions>
+            <exclusion>
+               <groupId>xmlpull</groupId>
+               <artifactId>xmlpull</artifactId>
+            </exclusion>
+            <exclusion>
+               <groupId>xpp3</groupId>
+               <artifactId>xpp3_min</artifactId>
+            </exclusion>
+         </exclusions>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-component-processor</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>protostream-processor</artifactId>
       </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
@@ -75,14 +92,13 @@
          <optional>true</optional>
       </dependency>
       <dependency>
-         <groupId>org.apache.logging.log4j</groupId>
-         <artifactId>log4j-core</artifactId>
-         <scope>runtime</scope>
+         <groupId>org.kohsuke.metainf-services</groupId>
+         <artifactId>metainf-services</artifactId>
       </dependency>
       <dependency>
-         <groupId>org.apache.logging.log4j</groupId>
-         <artifactId>log4j-slf4j-impl</artifactId>
-         <scope>runtime</scope>
+         <groupId>org.mockito</groupId>
+         <artifactId>mockito-core</artifactId>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.testng</groupId>
@@ -92,13 +108,6 @@
    </dependencies>
 
    <build>
-      <!-- Workaround for ISPN-8843 -->
-       <extensions>
-         <extension>
-            <groupId>kr.motd.maven</groupId>
-            <artifactId>os-maven-plugin</artifactId>
-         </extension>
-      </extensions>
       <plugins>
          <plugin>
             <groupId>org.apache.felix</groupId>
@@ -110,11 +119,34 @@
                   </Export-Package>
                   <Include-Resource>
                      {maven-resources},
-                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
+                     /proto=${project.basedir}/target/classes/proto,
+                     /META-INF/services=${project.basedir}/target/classes/META-INF/services
                   </Include-Resource>
                </instructions>
             </configuration>
          </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+               <dependenciesToScan>
+                  <!-- TestNGSuiteChecksTest -->
+                  <dependency>org.infinispan:infinispan-commons-test</dependency>
+               </dependenciesToScan>
+            </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.infinispan.maven-plugins</groupId>
+            <artifactId>proto-schema-compatibility</artifactId>
+            <executions>
+               <execution>
+                  <goals>
+                     <goal>proto-schema-compatibility-check</goal>
+                  </goals>
+               </execution>
+            </executions>
+         </plugin>
       </plugins>
    </build>
 </project>
+

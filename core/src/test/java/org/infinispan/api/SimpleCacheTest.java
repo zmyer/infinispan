@@ -15,8 +15,7 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
 import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.distexec.DefaultExecutorService;
-import org.infinispan.interceptors.base.BaseCustomInterceptor;
+import org.infinispan.interceptors.BaseCustomAsyncInterceptor;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
@@ -27,6 +26,7 @@ import org.testng.annotations.Test;
  */
 @Test(groups = "functional", testName = "api.SimpleCacheTest")
 public class SimpleCacheTest extends APINonTxTest {
+
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
       ConfigurationBuilder cb = new ConfigurationBuilder();
@@ -40,12 +40,8 @@ public class SimpleCacheTest extends APINonTxTest {
 
    @Test(expectedExceptions = UnsupportedOperationException.class)
    public void testAddInterceptor() {
-      cache().getAdvancedCache().addInterceptor(new CustomInterceptorConfigTest.DummyInterceptor(), 0);
-   }
-
-   @Test(expectedExceptions = CacheConfigurationException.class)
-   public void testDistributedExecutor() {
-      new DefaultExecutorService(cache()).submit(() -> null);
+      cache().getAdvancedCache().getAsyncInterceptorChain()
+             .addInterceptor(new CustomInterceptorConfigTest.DummyInterceptor(), 0);
    }
 
    @Test(expectedExceptions = CacheConfigurationException.class)
@@ -57,7 +53,8 @@ public class SimpleCacheTest extends APINonTxTest {
    @Test(expectedExceptions = CacheConfigurationException.class)
    public void testInterceptors() {
       new ConfigurationBuilder().simpleCache(true)
-            .customInterceptors().addInterceptor().interceptor(new BaseCustomInterceptor()).build();
+                                .customInterceptors().addInterceptor().interceptor(new BaseCustomAsyncInterceptor())
+                                .build();
    }
 
    @Test(expectedExceptions = CacheConfigurationException.class)
@@ -67,17 +64,12 @@ public class SimpleCacheTest extends APINonTxTest {
 
    @Test(expectedExceptions = CacheConfigurationException.class, expectedExceptionsMessageRegExp = "ISPN000381: This configuration is not supported for simple cache")
    public void testIndexing() {
-      new ConfigurationBuilder().simpleCache(true).indexing().index(Index.LOCAL).build();
+      new ConfigurationBuilder().simpleCache(true).indexing().index(Index.ALL).build();
    }
 
    @Test(expectedExceptions = CacheConfigurationException.class)
    public void testStoreAsBinary() {
       new ConfigurationBuilder().simpleCache(true).memory().storageType(StorageType.BINARY).build();
-   }
-
-   @Test(expectedExceptions = CacheConfigurationException.class)
-   public void testCompatibility() {
-      new ConfigurationBuilder().simpleCache(true).compatibility().enabled(true).build();
    }
 
    @Test(dataProvider = "lockedStreamActuallyLocks", expectedExceptions = UnsupportedOperationException.class)

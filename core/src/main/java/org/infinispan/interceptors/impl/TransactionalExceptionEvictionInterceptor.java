@@ -1,5 +1,7 @@
 package org.infinispan.interceptors.impl;
 
+import static org.infinispan.util.logging.Log.CONTAINER;
+
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -21,10 +23,12 @@ import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.container.impl.KeyValueMetadataSizeCalculator;
+import org.infinispan.container.offheap.OffHeapConcurrentMap;
 import org.infinispan.container.offheap.UnpooledOffHeapMemoryAllocator;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.eviction.EvictionType;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
@@ -89,8 +93,10 @@ public class TransactionalExceptionEvictionInterceptor extends DDAsyncIntercepto
 
    @Start
    public void start() {
-      if (memoryConfiguration.storageType() == StorageType.OFF_HEAP) {
-         minSize = UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(memoryConfiguration.addressCount() << 3);
+      if (memoryConfiguration.storageType() == StorageType.OFF_HEAP && memoryConfiguration.evictionType() == EvictionType.MEMORY) {
+         // TODO: this is technically not correct - as the underlying map can resize (also it doesn't take int account
+         // we have a different map for each segment when not in LOCAL mode
+         minSize = UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(OffHeapConcurrentMap.INITIAL_SIZE << 3);
          currentSize.set(minSize);
       }
 
@@ -218,10 +224,12 @@ public class TransactionalExceptionEvictionInterceptor extends DDAsyncIntercepto
       }
 
       if (changeAmount != 0 && !increaseSize(changeAmount)) {
-         throw log.containerFull(maxSize);
+         throw CONTAINER.containerFull(maxSize);
       }
 
-      pendingSize.put(ctx.getGlobalTransaction(), changeAmount);
+      if (!command.isOnePhaseCommit()) {
+         pendingSize.put(ctx.getGlobalTransaction(), changeAmount);
+      }
 
       return super.visitPrepareCommand(ctx, command);
    }
@@ -230,10 +238,10 @@ public class TransactionalExceptionEvictionInterceptor extends DDAsyncIntercepto
    public Object visitRollbackCommand(TxInvocationContext ctx, RollbackCommand command) throws Throwable {
       Long size = pendingSize.remove(ctx.getGlobalTransaction());
       if (size != null) {
+         long newSize = currentSize.addAndGet(-size);
          if (isTrace) {
-            log.tracef("Rollback encountered subtracting exception size by %d", size);
+            log.tracef("Rollback encountered subtracting exception size by %d to %d", size.longValue(), newSize);
          }
-         currentSize.addAndGet(-size);
       }
       return super.visitRollbackCommand(ctx, command);
    }

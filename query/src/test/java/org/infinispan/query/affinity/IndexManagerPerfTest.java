@@ -175,17 +175,12 @@ public class IndexManagerPerfTest extends BaseAffinityTest {
    protected EmbeddedCacheManager addClusterEnabledCacheManager(ConfigurationBuilder builder, TransportFlags flags) {
       GlobalConfigurationBuilder gc = GlobalConfigurationBuilder.defaultClusteredBuilder();
       EmbeddedCacheManager cm = TestCacheManagerFactory.newDefaultCacheManager(true,
-            gc, builder, false);
+            gc, builder);
       cm.defineConfiguration(DEFAULT_LOCKING_CACHENAME, getLockCacheConfig());
       cm.defineConfiguration(DEFAULT_INDEXESMETADATA_CACHENAME, getMetadataCacheConfig());
       cm.defineConfiguration(DEFAULT_INDEXESDATA_CACHENAME, getDataCacheConfig());
       cacheManagers.add(cm);
       return cm;
-   }
-
-   @AfterMethod
-   @Override
-   protected void clearContent() throws Throwable {
    }
 
    @Override

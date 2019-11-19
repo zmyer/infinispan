@@ -1,11 +1,11 @@
 package org.infinispan.notifications.cachelistener;
 
-import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 
 import org.infinispan.cache.impl.EncoderCache;
 import org.infinispan.commands.CancellationService;
@@ -17,6 +17,7 @@ import org.infinispan.commons.hash.MurmurHash3;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.impl.InternalEntryFactory;
@@ -32,17 +33,21 @@ import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
 import org.infinispan.encoding.DataConversion;
+import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.impl.BasicComponentRegistry;
+import org.infinispan.factories.impl.MockBasicComponentRegistry;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.lifecycle.ComponentStatus;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.notifications.cachelistener.cluster.ClusterEventManager;
 import org.infinispan.notifications.cachelistener.event.CacheEntryCreatedEvent;
 import org.infinispan.notifications.cachelistener.event.Event;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.test.MockBasicComponentRegistry;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.topology.CacheTopology;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
@@ -57,20 +62,24 @@ public class OnlyPrimaryOwnerTest {
    @BeforeMethod
    public void setUp() {
       n = new CacheNotifierImpl();
-      mockCache = mock(EncoderCache.class, RETURNS_DEEP_STUBS);
+      mockCache = mock(EncoderCache.class);
+      EmbeddedCacheManager cacheManager = mock(EmbeddedCacheManager.class);
+      when(mockCache.getCacheManager()).thenReturn(cacheManager);
       when(mockCache.getAdvancedCache()).thenReturn(mockCache);
       when(mockCache.getKeyDataConversion()).thenReturn(DataConversion.DEFAULT_KEY);
       when(mockCache.getValueDataConversion()).thenReturn(DataConversion.DEFAULT_VALUE);
-      Configuration config = mock(Configuration.class, RETURNS_DEEP_STUBS);
-      when(config.memory().storageType()).thenReturn(StorageType.OBJECT);
       when(mockCache.getStatus()).thenReturn(ComponentStatus.INITIALIZING);
-
+      ComponentRegistry componentRegistry = mock(ComponentRegistry.class);
+      when(mockCache.getComponentRegistry()).thenReturn(componentRegistry);
       MockBasicComponentRegistry mockRegistry = new MockBasicComponentRegistry();
-      when(mockCache.getComponentRegistry().getComponent(BasicComponentRegistry.class)).thenReturn(mockRegistry);
-      mockRegistry.registerMocks(RpcManager.class, StreamingMarshaller.class, CancellationService.class,
-                                 CommandsFactory.class, Encoder.class);
+      when(componentRegistry.getComponent(BasicComponentRegistry.class)).thenReturn(mockRegistry);
+      mockRegistry.registerMocks(RpcManager.class, CancellationService.class, CommandsFactory.class, Encoder.class);
+      mockRegistry.registerMock(KnownComponentNames.INTERNAL_MARSHALLER, StreamingMarshaller.class);
+      Configuration config = new ConfigurationBuilder().memory().storageType(StorageType.OBJECT).build();
+      ClusterEventManager cem = mock(ClusterEventManager.class);
+      when(cem.sendEvents()).thenReturn(CompletableFutures.completedNull());
       TestingUtil.inject(n, mockCache, cdl, config, mockRegistry,
-                         mock(InternalEntryFactory.class), mock(ClusterEventManager.class), mock(KeyPartitioner.class));
+                         mock(InternalEntryFactory.class), cem, mock(KeyPartitioner.class));
       cl = new PrimaryOwnerCacheListener();
       n.start();
       n.addListener(cl);
@@ -94,7 +103,7 @@ public class OnlyPrimaryOwnerTest {
       }
 
       @Override
-      public void commitEntry(CacheEntry entry, FlagAffectedCommand command, InvocationContext ctx,
+      public CompletionStage<Void> commitEntry(CacheEntry entry, FlagAffectedCommand command, InvocationContext ctx,
                               Flag trackFlag, boolean l1Invalidation) {
          throw new UnsupportedOperationException();
       }
@@ -105,13 +114,18 @@ public class OnlyPrimaryOwnerTest {
       }
 
       @Override
-      public EntryVersionsMap createNewVersionsAndCheckForWriteSkews(VersionGenerator versionGenerator, TxInvocationContext context, VersionedPrepareCommand prepareCommand) {
+      public CompletionStage<EntryVersionsMap> createNewVersionsAndCheckForWriteSkews(VersionGenerator versionGenerator, TxInvocationContext context, VersionedPrepareCommand prepareCommand) {
          throw new UnsupportedOperationException();
       }
 
       @Override
       public Address getAddress() {
          throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public void start() {
+
       }
    }
 

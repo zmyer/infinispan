@@ -17,18 +17,21 @@ import java.util.concurrent.TimeUnit;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.annotation.ClientCacheEntryCreated;
 import org.infinispan.client.hotrod.annotation.ClientListener;
-import org.infinispan.client.hotrod.marshall.ProtoStreamMarshaller;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.UserPB;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.MarshallerRegistration;
 import org.infinispan.client.hotrod.test.MultiHotRodServersTest;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.filter.NamedFactory;
-import org.infinispan.marshall.core.ExternalPojo;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilterFactory;
 import org.infinispan.notifications.cachelistener.filter.EventType;
+import org.infinispan.protostream.SerializationContextInitializer;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoName;
 import org.infinispan.query.dsl.embedded.testdomain.User;
 import org.infinispan.query.remote.impl.ProtobufMetadataManagerImpl;
 import org.testng.annotations.Test;
@@ -62,9 +65,14 @@ public class ClientListenerWithFilterAndRawProtobufTest extends MultiHotRodServe
       }
 
       //initialize client-side serialization context
-      MarshallerRegistration.registerMarshallers(ProtoStreamMarshaller.getSerializationContext(client(0)));
+      MarshallerRegistration.registerMarshallers(client(0));
 
       remoteCache = client(0).getCache();
+   }
+
+   @Override
+   protected SerializationContextInitializer contextInitializer() {
+      return ClientEventSCI.INSTANCE;
    }
 
    @Override
@@ -134,13 +142,17 @@ public class ClientListenerWithFilterAndRawProtobufTest extends MultiHotRodServe
       }
    }
 
-   public static class CustomEventFilter implements CacheEventFilter<byte[], byte[]>, Serializable, ExternalPojo {
+   @ProtoName("RawProtobufCustomEventFilter")
+   public static class CustomEventFilter implements CacheEventFilter<byte[], byte[]>, Serializable {
 
       private transient ProtoStreamMarshaller marshaller;
-      private String firstParam;
-      private String secondParam;
+      @ProtoField(number = 1)
+      final String firstParam;
+      @ProtoField(number = 2)
+      final String secondParam;
 
-      public CustomEventFilter(String firstParam, String secondParam) {
+      @ProtoFactory
+      CustomEventFilter(String firstParam, String secondParam) {
          this.firstParam = firstParam;
          this.secondParam = secondParam;
       }

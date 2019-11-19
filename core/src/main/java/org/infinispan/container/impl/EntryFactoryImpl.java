@@ -18,6 +18,8 @@ import org.infinispan.distribution.DistributionManager;
 import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.util.concurrent.IsolationLevel;
@@ -30,17 +32,18 @@ import org.infinispan.util.logging.LogFactory;
  * @author Mircea Markus
  * @since 5.1
  */
+@Scope(Scopes.NAMED_CACHE)
 public class EntryFactoryImpl implements EntryFactory {
 
    private static final Log log = LogFactory.getLog(EntryFactoryImpl.class);
    private final static boolean trace = log.isTraceEnabled();
 
-   @Inject private InternalDataContainer container;
-   @Inject private Configuration configuration;
-   @Inject private TimeService timeService;
-   @Inject private VersionGenerator versionGenerator;
-   @Inject private DistributionManager distributionManager;
-   @Inject private InternalExpirationManager expirationManager;
+   @Inject InternalDataContainer container;
+   @Inject Configuration configuration;
+   @Inject TimeService timeService;
+   @Inject VersionGenerator versionGenerator;
+   @Inject DistributionManager distributionManager;
+   @Inject InternalExpirationManager expirationManager;
 
    private boolean isL1Enabled;
    private boolean useRepeatableRead;

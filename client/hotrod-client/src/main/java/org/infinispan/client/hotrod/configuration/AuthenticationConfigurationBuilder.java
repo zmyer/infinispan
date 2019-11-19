@@ -1,5 +1,7 @@
 package org.infinispan.client.hotrod.configuration;
 
+import static org.infinispan.client.hotrod.logging.Log.HOTROD;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -11,8 +13,6 @@ import javax.security.auth.callback.CallbackHandler;
 import javax.security.sasl.Sasl;
 
 import org.infinispan.client.hotrod.impl.ConfigurationProperties;
-import org.infinispan.client.hotrod.logging.Log;
-import org.infinispan.client.hotrod.logging.LogFactory;
 import org.infinispan.client.hotrod.security.BasicCallbackHandler;
 import org.infinispan.client.hotrod.security.VoidCallbackHandler;
 import org.infinispan.commons.configuration.Builder;
@@ -27,8 +27,6 @@ import org.infinispan.commons.util.Util;
  * @since 7.0
  */
 public class AuthenticationConfigurationBuilder extends AbstractSecurityConfigurationChildBuilder implements Builder<AuthenticationConfiguration> {
-   private static final Log log = LogFactory.getLog(AuthenticationConfigurationBuilder.class);
-
    public static final String DEFAULT_REALM = "ApplicationRealm";
    private CallbackHandler callbackHandler;
    private boolean enabled = false;
@@ -186,13 +184,13 @@ public class AuthenticationConfigurationBuilder extends AbstractSecurityConfigur
    @Override
    public AuthenticationConfiguration create() {
       String mech = saslMechanism == null ? "DIGEST-MD5" : saslMechanism;
-      CallbackHandler cbh;
-      if (username != null) {
-         cbh = new BasicCallbackHandler(username, realm != null ? realm : DEFAULT_REALM, password);
-      } else if ("EXTERNAL".equals(mech) && callbackHandler == null) {
-         cbh = new VoidCallbackHandler();
-      } else {
-         cbh = callbackHandler;
+      CallbackHandler cbh = callbackHandler;
+      if (cbh == null) {
+         if (username != null) {
+            cbh = new BasicCallbackHandler(username, realm != null ? realm : DEFAULT_REALM, password);
+         } else if ("EXTERNAL".equals(mech) || "GSSAPI".equals(mech) || "GS2-KRB5".equals(mech)) {
+            cbh = new VoidCallbackHandler();
+         }
       }
       return new AuthenticationConfiguration(cbh, clientSubject, enabled, mech, saslProperties, serverName);
    }
@@ -212,13 +210,10 @@ public class AuthenticationConfigurationBuilder extends AbstractSecurityConfigur
    public void validate() {
       if (enabled) {
          if (callbackHandler == null && clientSubject == null && username == null && !"EXTERNAL".equals(saslMechanism)) {
-            throw log.invalidCallbackHandler();
+            throw HOTROD.invalidCallbackHandler();
          }
          if (callbackHandler != null && username != null) {
-            throw log.callbackHandlerAndUsernameMutuallyExclusive();
-         }
-         if (saslMechanism == null) {
-            throw log.invalidSaslMechanism(saslMechanism);
+            throw HOTROD.callbackHandlerAndUsernameMutuallyExclusive();
          }
       }
    }

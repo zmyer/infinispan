@@ -77,12 +77,12 @@ public class SinglePortEndpointRouter extends AbstractProtocolServer<SinglePortR
 
       RestServer restServer = routingTable.streamRoutes(SinglePortRouteSource.class, RestServerRouteDestination.class)
             .findFirst()
-            .map(r -> r.getRouteDesitnation().getRestServer())
+            .map(r -> r.getRouteDestination().getRestServer())
             .orElseThrow(() -> new IllegalStateException("There must be a REST route!"));
 
       routingTable.streamRoutes(SinglePortRouteSource.class, HotRodServerRouteDestination.class)
             .findFirst()
-            .ifPresent(r -> upgradeServers.put("HR", r.getRouteDesitnation().getHotrodServer()));
+            .ifPresent(r -> upgradeServers.put("HR", r.getRouteDestination().getHotrodServer()));
 
       SinglePortChannelInitializer restChannelInitializer = new SinglePortChannelInitializer(this, transport, restServer, upgradeServers);
       return new NettyInitializers(restChannelInitializer);
@@ -92,10 +92,4 @@ public class SinglePortEndpointRouter extends AbstractProtocolServer<SinglePortR
    public Protocol getProtocol() {
       return Protocol.SINGLE_PORT;
    }
-
-   @Override
-   public int getWorkerThreads() {
-      return 1;
-   }
-
 }

@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -17,19 +16,20 @@ import java.util.function.Function;
 
 import javax.transaction.xa.Xid;
 
-import org.infinispan.atomic.Delta;
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.functional.Mutation;
 import org.infinispan.commands.functional.ReadOnlyKeyCommand;
 import org.infinispan.commands.functional.ReadOnlyManyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
 import org.infinispan.commands.functional.ReadWriteManyCommand;
 import org.infinispan.commands.functional.ReadWriteManyEntriesCommand;
+import org.infinispan.commands.functional.TxReadOnlyKeyCommand;
+import org.infinispan.commands.functional.TxReadOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyKeyCommand;
 import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
 import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
-import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
@@ -58,7 +58,6 @@ import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.BackupAckCommand;
 import org.infinispan.commands.write.BackupMultiKeyAckCommand;
 import org.infinispan.commands.write.ClearCommand;
@@ -77,6 +76,7 @@ import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.encoding.DataConversion;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.functional.EntryView.ReadEntryView;
@@ -84,8 +84,13 @@ import org.infinispan.functional.EntryView.ReadWriteEntryView;
 import org.infinispan.functional.EntryView.WriteEntryView;
 import org.infinispan.functional.impl.Params;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.notifications.cachelistener.cluster.ClusterEvent;
+import org.infinispan.notifications.cachelistener.cluster.MultiClusterEventCommand;
 import org.infinispan.reactive.publisher.impl.DeliveryGuarantee;
-import org.infinispan.reactive.publisher.impl.PublisherRequestCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.CancelPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.InitialPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.NextPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.reduction.ReductionPublisherRequestCommand;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.StateChunk;
 import org.infinispan.statetransfer.StateRequestCommand;
@@ -106,8 +111,18 @@ import org.reactivestreams.Publisher;
 
 /**
  * A factory to build commands, initializing and injecting dependencies accordingly.  Commands built for a specific,
- * named cache instance cannot be reused on a different cache instance since most commands contain the cache name it
- * was built for along with references to other named-cache scoped components.
+ * named cache instance cannot be reused on a different cache instance since most commands contain the cache name it was
+ * built for along with references to other named-cache scoped components.
+ * <p>
+ * Commands returned by the various build*Command methods should be initialised sufficiently for local execution via the
+ * interceptor chain, with no calls to  {@link #initializeReplicableCommand(ReplicableCommand, boolean)} required.
+ * However, for remote execution, it's assumed that a command will be initialized via {@link
+ * #initializeReplicableCommand(ReplicableCommand, boolean)} before being invoked.
+ * <p>
+ * Note, {@link InitializableCommand} implementations should not rely on access to the {@link
+ * org.infinispan.factories.ComponentRegistry} in their constructors for local execution initialization as this leads to
+ * duplicated code. Instead implementations of this interface should call {@link InitializableCommand#init(ComponentRegistry,
+ * boolean)} before returning the created command.
  *
  * @author Manik Surtani
  * @author Mircea.Markus@jboss.com
@@ -432,16 +447,6 @@ public interface CommandsFactory {
    TxCompletionNotificationCommand buildTxCompletionNotificationCommand(Xid xid, GlobalTransaction globalTransaction);
 
    /**
-    * Builds a DistributedExecuteCommand used for migration and execution of distributed Callables and Runnables.
-    *
-    * @param callable the callable task
-    * @param sender sender's Address
-    * @param keys keys used in Callable
-    * @return a DistributedExecuteCommand
-    */
-   <T> DistributedExecuteCommand<T> buildDistributedExecuteCommand(Callable<T> callable, Address sender, Collection keys);
-
-   /**
     * @see GetInDoubtTxInfoCommand
     */
    GetInDoubtTxInfoCommand buildGetInDoubtTxInfoCommand();
@@ -459,18 +464,6 @@ public interface CommandsFactory {
     */
    TxCompletionNotificationCommand buildTxCompletionNotificationCommand(long internalId);
 
-
-   /**
-    * Builds a ApplyDeltaCommand used for applying Delta objects to DeltaAware containers stored in cache
-    *
-    * @return ApplyDeltaCommand instance
-    * @see ApplyDeltaCommand
-    * @deprecated since 9.1
-    */
-   @Deprecated
-   default ApplyDeltaCommand buildApplyDeltaCommand(Object deltaAwareValueKey, Delta delta, Collection keys) {
-      throw new UnsupportedOperationException();
-   }
 
    /**
     * Same as {@code buildCreateCacheCommand(cacheName, cacheConfigurationName, false, 0)}.
@@ -586,6 +579,15 @@ public interface CommandsFactory {
 
    <K, V, T, R> ReadWriteManyEntriesCommand<K, V, T, R> buildReadWriteManyEntriesCommand(Map<?, ?> entries, BiFunction<T, ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion);
 
+   <K, V, R> TxReadOnlyKeyCommand<K, V, R> buildTxReadOnlyKeyCommand(Object key, Function<ReadEntryView<K, V>, R> f,
+                                                                    List<Mutation<K, V, ?>> mutations, int segment,
+                                                                    Params params, DataConversion keyDataConversion,
+                                                                    DataConversion valueDataConversion);
+
+   <K, V, R> TxReadOnlyManyCommand<K, V, R> buildTxReadOnlyManyCommand(Collection<?> keys, List<List<Mutation<K,V,?>>> mutations,
+                                                                       Params params, DataConversion keyDataConversion,
+                                                                       DataConversion valueDataConversion);
+
    BackupAckCommand buildBackupAckCommand(long id, int topologyId);
 
    BackupMultiKeyAckCommand buildBackupMultiKeyAckCommand(long id, int segment, int topologyId);
@@ -608,13 +610,23 @@ public interface CommandsFactory {
 
    MultiKeyFunctionalBackupWriteCommand buildMultiKeyFunctionalBackupWriteCommand();
 
-   <K, R> PublisherRequestCommand<K> buildKeyPublisherCommand(boolean parallelStream, DeliveryGuarantee deliveryGuarantee,
+   <K, R> ReductionPublisherRequestCommand<K> buildKeyReductionPublisherCommand(boolean parallelStream, DeliveryGuarantee deliveryGuarantee,
          IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader,
          Function<? super Publisher<K>, ? extends CompletionStage<R>> transformer,
          Function<? super Publisher<R>, ? extends CompletionStage<R>> finalizer);
 
-   <K, V, R> PublisherRequestCommand<K> buildEntryPublisherCommand(boolean parallelStream, DeliveryGuarantee deliveryGuarantee,
+   <K, V, R> ReductionPublisherRequestCommand<K> buildEntryReductionPublisherCommand(boolean parallelStream, DeliveryGuarantee deliveryGuarantee,
          IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader,
          Function<? super Publisher<CacheEntry<K, V>>, ? extends CompletionStage<R>> transformer,
          Function<? super Publisher<R>, ? extends CompletionStage<R>> finalizer);
+
+   <K, I, R> InitialPublisherCommand<K, I, R> buildInitialPublisherCommand(Object requestId, DeliveryGuarantee deliveryGuarantee,
+         int batchSize, IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader, boolean entryStream,
+         boolean trackKeys, Function<? super Publisher<I>, ? extends Publisher<R>> transformer);
+
+   NextPublisherCommand buildNextPublisherCommand(Object requestId);
+
+   CancelPublisherCommand buildCancelPublisherCommand(Object requestId);
+
+   <K, V> MultiClusterEventCommand<K, V> buildMultiClusterEventCommand(Map<UUID, Collection<ClusterEvent<K, V>>> events);
 }

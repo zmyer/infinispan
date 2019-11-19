@@ -6,7 +6,6 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.spy;
 import static org.testng.AssertJUnit.assertEquals;
-import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -25,11 +24,13 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.reactive.publisher.PublisherReducers;
+import org.infinispan.reactive.publisher.impl.commands.reduction.ReductionPublisherRequestCommand;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.ExceptionRunnable;
 import org.infinispan.test.Mocks;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CheckPoint;
 import org.infinispan.util.ControlledConsistentHashFactory;
@@ -56,7 +57,7 @@ public class RehashClusterPublisherManagerTest extends MultipleCacheManagersTest
       ConfigurationBuilder builderUsed = new ConfigurationBuilder();
       factory = new ControlledConsistentHashFactory.Default(START_SEGMENT_OWNERS);
       builderUsed.clustering().cacheMode(CacheMode.DIST_SYNC).hash().consistentHashFactory(factory).numSegments(4);
-      createClusteredCaches(4, builderUsed);
+      createClusteredCaches(4, TestDataSCI.INSTANCE, builderUsed);
    }
 
    @BeforeMethod
@@ -65,6 +66,11 @@ public class RehashClusterPublisherManagerTest extends MultipleCacheManagersTest
       factory.setOwnerIndexes(START_SEGMENT_OWNERS);
       factory.triggerRebalance(cache(0));
       TestingUtil.waitForNoRebalance(caches());
+
+      Cache cache2 = cache(2);
+      LocalPublisherManager lpm = TestingUtil.extractComponent(cache2, LocalPublisherManager.class);
+      // Our tests mess with replacing the DataContainer - which is cached
+      ((LocalPublisherManagerImpl) lpm).resetKeyAndEntrySet();
    }
 
    @DataProvider(name = "GuaranteeParallelEntry")
@@ -121,7 +127,7 @@ public class RehashClusterPublisherManagerTest extends MultipleCacheManagersTest
       }
 
       runCommand(deliveryGuarantee, parallel, isEntry, expectedAmount, () -> {
-         assertTrue(checkPoint.await(Mocks.BEFORE_INVOCATION, 10, TimeUnit.SECONDS));
+         checkPoint.awaitStrict(Mocks.BEFORE_INVOCATION, 10, TimeUnit.SECONDS);
 
          triggerRebalanceSegment2MovesToNode0();
 
@@ -151,8 +157,8 @@ public class RehashClusterPublisherManagerTest extends MultipleCacheManagersTest
       checkPoint.triggerForever(Mocks.AFTER_RELEASE);
 
       // Block on about to send the remote command to node2
-      Mocks.blockingMock(checkPoint, RpcManager.class, cache0,
-            (stub, m) -> stub.when(m).invokeCommand(eq(cache2Address), isA(PublisherRequestCommand.class), any(), any()));
+      RpcManager original = Mocks.blockingMock(checkPoint, RpcManager.class, cache0,
+            (stub, m) -> stub.when(m).invokeCommand(eq(cache2Address), isA(ReductionPublisherRequestCommand.class), any(), any()));
 
       int expectedAmount = caches().size();
       // If it is at most once, we don't retry the segment so the count will be off by 1
@@ -165,13 +171,19 @@ public class RehashClusterPublisherManagerTest extends MultipleCacheManagersTest
          expectedAmount--;
       }
 
-      runCommand(deliveryGuarantee, parallel, isEntry, expectedAmount, () -> {
-         assertTrue(checkPoint.await(Mocks.BEFORE_INVOCATION, 10, TimeUnit.SECONDS));
+      try {
+         runCommand(deliveryGuarantee, parallel, isEntry, expectedAmount, () -> {
+            checkPoint.awaitStrict(Mocks.BEFORE_INVOCATION, 10, TimeUnit.SECONDS);
 
-         triggerRebalanceSegment2MovesToNode0();
+            triggerRebalanceSegment2MovesToNode0();
 
-         checkPoint.triggerForever(Mocks.BEFORE_RELEASE);
-      }, toKeys(useKeys));
+            checkPoint.triggerForever(Mocks.BEFORE_RELEASE);
+         }, toKeys(useKeys));
+      } finally {
+         if (original != null) {
+            TestingUtil.replaceComponent(cache0, RpcManager.class, original, true);
+         }
+      }
    }
 
    @Test(dataProvider = "GuaranteeParallelEntry")
@@ -202,7 +214,7 @@ public class RehashClusterPublisherManagerTest extends MultipleCacheManagersTest
 
       runCommand(deliveryGuarantee, parallel, isEntry, expectedAmount, () -> {
          // Wait until after the publisher completes - but don't let it just yet
-         assertTrue(checkPoint.await(Mocks.AFTER_INVOCATION, 10, TimeUnit.SECONDS));
+         checkPoint.awaitStrict(Mocks.AFTER_INVOCATION, 10, TimeUnit.SECONDS);
 
          triggerRebalanceSegment2MovesToNode0();
 
@@ -234,18 +246,18 @@ public class RehashClusterPublisherManagerTest extends MultipleCacheManagersTest
          CompletionStage<Long> stageCount;
          if (isEntry) {
             stageCount = cpm.entryReduction(parallel, null, keys, null, false, deliveryGuarantee,
-                  PublisherReducers.sumReducer(), PublisherReducers.sumFinalizer());
+                  PublisherReducers.count(), PublisherReducers.add());
          } else {
             stageCount = cpm.keyReduction(parallel, null, keys, null, false, deliveryGuarantee,
-                  PublisherReducers.sumReducer(), PublisherReducers.sumFinalizer());
+                  PublisherReducers.count(), PublisherReducers.add());
          }
          return stageCount;
       });
 
       performOperation.run();
 
-      Long actualCount = future.get(10, TimeUnit.MINUTES)
-            .toCompletableFuture().get(10, TimeUnit.MINUTES);
+      Long actualCount = future.get(10, TimeUnit.SECONDS)
+            .toCompletableFuture().get(10, TimeUnit.SECONDS);
       // Should be 1 entry per node
       assertEquals(expectedAmount, actualCount.intValue());
    }

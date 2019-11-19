@@ -2,9 +2,8 @@
 
 <server xmlns="urn:jboss:domain:8.0">
     <extensions>
-        <extension module="org.infinispan.extension:ispn-${infinispan.core.schema.version}"/>
-        <extension module="org.infinispan.server.endpoint:ispn-${infinispan.core.schema.version}"/>
-        <extension module="org.jgroups.extension:ispn-${infinispan.core.schema.version}"/>
+        <extension module="org.infinispan.extension:${infinispan.module.slot}"/>
+        <extension module="org.jgroups.extension:${infinispan.module.slot}"/>
 
         <extension module="org.jboss.as.clustering.infinispan"/>
         <extension module="org.jboss.as.clustering.jgroups"/>
@@ -336,42 +335,31 @@
             </channels>
             <stacks default="${jboss.default.jgroups.stack:udp}">
                 <stack name="udp">
-                    <transport type="UDP" socket-binding="jgroups-udp" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="PING" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="MERGE3" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="FD_SOCK" socket-binding="jgroups-udp-fd" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="FD_ALL" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="VERIFY_SUSPECT" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="pbcast.NAKACK2" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="UNICAST3" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="pbcast.STABLE" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="pbcast.GMS" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="UFC" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="MFC" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
-                    <protocol type="FRAG2" module="org.jgroups:ispn-${infinispan.core.schema.version}"/>
+                    <transport type="UDP" socket-binding="jgroups-udp" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="PING" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="MERGE3" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="FD_SOCK" socket-binding="jgroups-udp-fd" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="FD_ALL" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="VERIFY_SUSPECT" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="pbcast.NAKACK2" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="UNICAST3" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="pbcast.STABLE" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="pbcast.GMS" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="UFC_NB" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="MFC_NB" module="org.jgroups:${infinispan.module.slot}"/>
+                    <protocol type="FRAG2" module="org.jgroups:${infinispan.module.slot}"/>
                 </stack>
             </stacks>
         </subsystem>
         <subsystem xmlns="urn:infinispan:server:core:${infinispan.core.schema.version}">
-            <cache-container module="org.infinispan.extension:ispn-${infinispan.core.schema.version}" name="infinispan_container" default-cache="default">
+            <cache-container module="org.infinispan.extension:${infinispan.module.slot}" name="infinispan_container" default-cache="default">
                 <transport initial-cluster-size="2"/>
                 <global-state/>
                 <distributed-cache name="default"/>
                 <local-cache name="localCache"/>
                 <replicated-cache name="replicatedCache"/>
-                <counters>
-                    <strong-counter />
-                    <weak-counter />
-                </counters>
+                <counters />
             </cache-container>
-        </subsystem>
-        <subsystem xmlns="urn:infinispan:server:endpoint:${infinispan.core.schema.version}">
-            <hotrod-connector socket-binding="hotrod" cache-container="infinispan_container">
-                    <topology-state-transfer lazy-retrieval="false" lock-timeout="1000" replication-timeout="5000"/>
-            </hotrod-connector>
-            <rest-connector socket-binding="rest" cache-container="infinispan_container">
-                <authentication security-realm="ApplicationRealm" auth-method="BASIC"/>
-            </rest-connector>
         </subsystem>
         <subsystem xmlns="urn:jboss:domain:infinispan:4.0">
             <cache-container name="server" default-cache="default" module="org.wildfly.clustering.server">

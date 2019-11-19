@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -19,7 +21,7 @@ import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.BaseAsyncInterceptor;
 import org.infinispan.interceptors.impl.InvocationContextInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -142,30 +144,16 @@ public class DistStateTransferOnJoinConsistencyTest extends MultipleCacheManager
 
       final CountDownLatch applyStateProceedLatch = new CountDownLatch(1);
       final CountDownLatch applyStateStartedLatch = new CountDownLatch(1);
-      builder.customInterceptors().addInterceptor().before(InvocationContextInterceptor.class).interceptor(new CommandInterceptor() {
-         @Override
-         protected Object handleDefault(InvocationContext ctx, VisitableCommand cmd) throws Throwable {
-            // if this 'put' command is caused by state transfer we delay it to ensure other cache operations
-            // are performed first and create opportunity for inconsistencies
-            if (cmd instanceof PutKeyValueCommand && ((PutKeyValueCommand) cmd).hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER)) {
-               // signal we encounter a state transfer PUT
-               applyStateStartedLatch.countDown();
-               // wait until it is ok to apply state
-               if (!applyStateProceedLatch.await(15, TimeUnit.SECONDS)) {
-                  throw new TimeoutException();
-               }
-            }
-            return super.handleDefault(ctx, cmd);
-         }
-      });
+      builder.customInterceptors().addInterceptor().before(InvocationContextInterceptor.class)
+             .interceptor(new LatchInterceptor(applyStateStartedLatch, applyStateProceedLatch));
 
       log.info("Adding a new node ..");
       addClusterEnabledCacheManager(builder);
       log.info("Added a new node");
 
-      DataContainer dc0 = advancedCache(0).getDataContainer();
-      DataContainer dc1 = advancedCache(1).getDataContainer();
-      DataContainer dc2 = advancedCache(2).getDataContainer();
+      DataContainer<Object, Object> dc0 = advancedCache(0).getDataContainer();
+      DataContainer<Object, Object> dc1 = advancedCache(1).getDataContainer();
+      DataContainer<Object, Object> dc2 = advancedCache(2).getDataContainer();
 
       // wait for state transfer on node C to progress to the point where data segments are about to be applied
       if (!applyStateStartedLatch.await(15, TimeUnit.SECONDS)) {
@@ -223,9 +211,9 @@ public class DistStateTransferOnJoinConsistencyTest extends MultipleCacheManager
       TestingUtil.waitForNoRebalance(cache(0), cache(1), cache(2));
 
       // at this point state transfer is fully done
-      log.infof("Data container of NodeA has %d keys: %s", dc0.size(), dc0.entrySet());
-      log.infof("Data container of NodeB has %d keys: %s", dc1.size(), dc1.entrySet());
-      log.infof("Data container of NodeC has %d keys: %s", dc2.size(), dc2.entrySet());
+      log.tracef("Data container of NodeA has %d keys: %s", dc0.size(), StreamSupport.stream(dc0.spliterator(), false).map(ice -> ice.getKey().toString()).collect(Collectors.joining(",")));
+      log.tracef("Data container of NodeB has %d keys: %s", dc1.size(), StreamSupport.stream(dc1.spliterator(), false).map(ice -> ice.getKey().toString()).collect(Collectors.joining(",")));
+      log.tracef("Data container of NodeC has %d keys: %s", dc2.size(), StreamSupport.stream(dc2.spliterator(), false).map(ice -> ice.getKey().toString()).collect(Collectors.joining(",")));
 
       if (op == Operation.CLEAR || op == Operation.REMOVE) {
          // caches should be empty. check that no keys were revived by an inconsistent state transfer
@@ -258,5 +246,30 @@ public class DistStateTransferOnJoinConsistencyTest extends MultipleCacheManager
       assertNotNull("Found null on cache " + cacheIndex, ice);
       assertEquals("Did not find the expected value on cache " + cacheIndex, expectedValue, ice.getValue());
       assertEquals("Did not find the expected value on cache " + cacheIndex, expectedValue, cache(cacheIndex).get(key));
+   }
+
+   static class LatchInterceptor extends BaseAsyncInterceptor {
+      private final CountDownLatch applyStateStartedLatch;
+      private final CountDownLatch applyStateProceedLatch;
+
+      public LatchInterceptor(CountDownLatch applyStateStartedLatch, CountDownLatch applyStateProceedLatch) {
+         this.applyStateStartedLatch = applyStateStartedLatch;
+         this.applyStateProceedLatch = applyStateProceedLatch;
+      }
+
+      @Override
+      public Object visitCommand(InvocationContext ctx, VisitableCommand cmd) throws Throwable {
+         // if this 'put' command is caused by state transfer we delay it to ensure other cache operations
+         // are performed first and create opportunity for inconsistencies
+         if (cmd instanceof PutKeyValueCommand && ((PutKeyValueCommand) cmd).hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER)) {
+            // signal we encounter a state transfer PUT
+            applyStateStartedLatch.countDown();
+            // wait until it is ok to apply state
+            if (!applyStateProceedLatch.await(15, TimeUnit.SECONDS)) {
+               throw new TimeoutException();
+            }
+         }
+         return invokeNext(ctx, cmd);
+      }
    }
 }

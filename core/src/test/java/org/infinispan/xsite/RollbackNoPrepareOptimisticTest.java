@@ -4,6 +4,8 @@ import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertNull;
 
+import java.util.concurrent.CompletionStage;
+
 import javax.transaction.TransactionManager;
 
 import org.infinispan.commands.VisitableCommand;
@@ -11,7 +13,6 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
-import org.infinispan.manager.CacheContainer;
 import org.testng.annotations.Test;
 
 @Test(groups = "xsite", testName = "xsite.RollbackNoPrepareOptimisticTest")
@@ -22,45 +23,45 @@ public class RollbackNoPrepareOptimisticTest extends AbstractTwoSitesTest {
    }
 
    public void testRollbackNoCommit() throws Throwable {
-      String key = key("LON");
-      String val = val("LON");
+      String key = key(LON);
+      String val = val(LON);
 
-      ComponentRegistry cr = backup("LON").getAdvancedCache().getComponentRegistry();
+      ComponentRegistry cr = backup(LON).getAdvancedCache().getComponentRegistry();
       GlobalComponentRegistry gcr = cr.getGlobalComponentRegistry();
       BackupReceiverRepositoryImpl brr = (BackupReceiverRepositoryImpl) gcr.getComponent(BackupReceiverRepository.class);
-      BackupReceiver backupCacheManager = brr.getBackupReceiver("LON", CacheContainer.DEFAULT_CACHE_NAME);
+      BackupReceiver backupCacheManager = brr.getBackupReceiver(LON, getDefaultCacheName());
       BackupReceiverWrapper brWrapper = new BackupReceiverWrapper(backupCacheManager);
-      brr.replace("LON", CacheContainer.DEFAULT_CACHE_NAME, brWrapper);
+      brr.replace(LON, getDefaultCacheName(), brWrapper);
 
       assertNull(brWrapper.received);
-      cache("LON", 0).put(key, val);
+      cache(LON, 0).put(key, val);
       assertNotNull(brWrapper.received);
-      assertEquals(backup("LON").get(key), val);
+      assertEquals(backup(LON).get(key), val);
 
       brWrapper.received = null;
 
-      TransactionManager tmLon0 = cache("LON", 0).getAdvancedCache().getTransactionManager();
+      TransactionManager tmLon0 = cache(LON, 0).getAdvancedCache().getTransactionManager();
 
       assertNull(brWrapper.received);
       tmLon0.begin();
-      cache("LON", 0).put(key, val);
+      cache(LON, 0).put(key, val);
       log.trace("Before rollback!");
       tmLon0.rollback();
       assertNull(brWrapper.received);
    }
 
-   public class BackupReceiverWrapper extends BackupReceiverDelegator {
+   public static class BackupReceiverWrapper extends BackupReceiverDelegator {
 
       volatile VisitableCommand received;
 
-      public BackupReceiverWrapper(BackupReceiver br) {
+      BackupReceiverWrapper(BackupReceiver br) {
          super(br);
       }
 
       @Override
-      public Object handleRemoteCommand(VisitableCommand command) throws Throwable {
+      public CompletionStage<Void> handleRemoteCommand(VisitableCommand command, boolean preserveOrder) {
          received = command;
-         return super.handleRemoteCommand(command);
+         return super.handleRemoteCommand(command, preserveOrder);
       }
    }
 

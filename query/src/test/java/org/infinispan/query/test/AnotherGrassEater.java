@@ -6,11 +6,11 @@ import org.hibernate.search.annotations.Field;
 import org.hibernate.search.annotations.Indexed;
 import org.hibernate.search.annotations.SortableField;
 import org.hibernate.search.annotations.Store;
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.annotations.ProtoField;
 
 @Indexed(index = "anotherclass")
-public class AnotherGrassEater implements Serializable, ExternalPojo {
-   private static final long serialVersionUID = -5685487467005726138L;
+public class AnotherGrassEater implements Serializable {
+
    @Field(store = Store.YES)
    private String name;
    @Field(store = Store.YES)
@@ -28,6 +28,7 @@ public class AnotherGrassEater implements Serializable, ExternalPojo {
       this.blurb = blurb;
    }
 
+   @ProtoField(number = 1)
    public String getName() {
       return name;
    }
@@ -36,6 +37,7 @@ public class AnotherGrassEater implements Serializable, ExternalPojo {
       this.name = name;
    }
 
+   @ProtoField(number = 2)
    public String getBlurb() {
       return blurb;
    }

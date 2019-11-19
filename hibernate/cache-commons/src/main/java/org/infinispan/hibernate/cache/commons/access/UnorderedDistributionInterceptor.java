@@ -7,6 +7,7 @@
 package org.infinispan.hibernate.cache.commons.access;
 
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.write.DataWriteCommand;
@@ -35,7 +36,7 @@ import org.infinispan.util.logging.LogFactory;
 public class UnorderedDistributionInterceptor extends NonTxDistributionInterceptor {
 	private static Log log = LogFactory.getLog(UnorderedDistributionInterceptor.class);
 
-	@Inject private DistributionManager distributionManager;
+	@Inject DistributionManager distributionManager;
 	private boolean isReplicated;
 
 	@Start
@@ -67,14 +68,24 @@ public class UnorderedDistributionInterceptor extends NonTxDistributionIntercept
 
 		if (isReplicated) {
 			// local result is always ignored
-			return invokeNextAndHandle(ctx, command, (rCtx, rCommand, rv, throwable) ->
-					invokeRemotelyAsync(null, rCtx, (WriteCommand) rCommand));
+         return invokeNextAndHandle(ctx, command, (rCtx, rCommand, rv, throwable) -> {
+            CompletionStage<?> remoteInvocation = invokeRemotelyAsync(null, rCtx, rCommand);
+            if (remoteInvocation != null) {
+               return remoteInvocation.thenApply(responses -> rv);
+            }
+            return rv;
+         });
 		}
 		else {
 			List<Address> owners = cacheTopology.getDistribution(command.getKey()).writeOwners();
 			if (owners.contains(rpcManager.getAddress())) {
-				return invokeNextAndHandle( ctx, command, (rCtx, rCommand, rv, throwable) ->
-                  invokeRemotelyAsync(owners, rCtx, (WriteCommand) rCommand));
+            return invokeNextAndHandle( ctx, command, (rCtx, rCommand, rv, throwable) -> {
+               CompletionStage<?> remoteInvocation = invokeRemotelyAsync(owners, rCtx, rCommand);
+               if (remoteInvocation != null) {
+                  return remoteInvocation.thenApply(responses -> rv);
+               }
+               return rv;
+            });
 			}
 			else {
 				log.tracef("Not invoking %s on %s since it is not an owner", command, rpcManager.getAddress());
@@ -95,7 +106,7 @@ public class UnorderedDistributionInterceptor extends NonTxDistributionIntercept
 
 	}
 
-   public Object invokeRemotelyAsync(List<Address> finalOwners, InvocationContext rCtx, WriteCommand writeCmd) {
+   private CompletionStage<?> invokeRemotelyAsync(List<Address> finalOwners, InvocationContext rCtx, WriteCommand writeCmd) {
       if (rCtx.isOriginLocal() && writeCmd.isSuccessful()) {
          // This is called with the entry locked. In order to avoid deadlocks we must not wait for RPC while
          // holding the lock, therefore we'll return a future and wait for it in LockingInterceptor after

@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -19,8 +18,7 @@ import javax.transaction.xa.Xid;
 
 import org.infinispan.Cache;
 import org.infinispan.commands.control.LockControlCommand;
-import org.infinispan.commands.functional.AbstractWriteKeyCommand;
-import org.infinispan.commands.functional.AbstractWriteManyCommand;
+import org.infinispan.commands.functional.Mutation;
 import org.infinispan.commands.functional.ReadOnlyKeyCommand;
 import org.infinispan.commands.functional.ReadOnlyManyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
@@ -34,7 +32,6 @@ import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
 import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
 import org.infinispan.commands.module.ModuleCommandInitializer;
-import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
@@ -89,20 +86,11 @@ import org.infinispan.commons.marshall.Externalizer;
 import org.infinispan.commons.marshall.LambdaExternalizer;
 import org.infinispan.commons.marshall.SerializeFunctionWith;
 import org.infinispan.commons.marshall.StreamingMarshaller;
-import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.conflict.impl.StateReceiver;
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.container.impl.InternalDataContainer;
-import org.infinispan.container.impl.InternalEntryFactory;
-import org.infinispan.container.versioning.VersionGenerator;
-import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.context.impl.FlagBitSets;
-import org.infinispan.distribution.DistributionManager;
-import org.infinispan.distribution.ch.KeyPartitioner;
-import org.infinispan.distribution.group.impl.GroupManager;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.KnownComponentNames;
@@ -110,56 +98,42 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.impl.ComponentRef;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.functional.EntryView.ReadEntryView;
 import org.infinispan.functional.EntryView.ReadWriteEntryView;
 import org.infinispan.functional.EntryView.WriteEntryView;
 import org.infinispan.functional.impl.Params;
-import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.GlobalMarshaller;
 import org.infinispan.metadata.Metadata;
-import org.infinispan.notifications.cachelistener.CacheNotifier;
-import org.infinispan.persistence.manager.OrderedUpdatesManager;
+import org.infinispan.notifications.cachelistener.cluster.ClusterEvent;
+import org.infinispan.notifications.cachelistener.cluster.MultiClusterEventCommand;
 import org.infinispan.reactive.publisher.impl.DeliveryGuarantee;
-import org.infinispan.reactive.publisher.impl.LocalPublisherManager;
-import org.infinispan.reactive.publisher.impl.PublisherRequestCommand;
-import org.infinispan.remoting.rpc.RpcManager;
+import org.infinispan.reactive.publisher.impl.commands.batch.CancelPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.InitialPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.NextPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.reduction.ReductionPublisherRequestCommand;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.scattered.BiasManager;
 import org.infinispan.statetransfer.StateChunk;
-import org.infinispan.statetransfer.StateConsumer;
-import org.infinispan.statetransfer.StateProvider;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
-import org.infinispan.statetransfer.StateTransferLock;
-import org.infinispan.statetransfer.StateTransferManager;
-import org.infinispan.stream.impl.ClusterStreamManager;
-import org.infinispan.stream.impl.IteratorHandler;
-import org.infinispan.stream.impl.LocalStreamManager;
 import org.infinispan.stream.impl.StreamIteratorCloseCommand;
 import org.infinispan.stream.impl.StreamIteratorNextCommand;
 import org.infinispan.stream.impl.StreamIteratorRequestCommand;
 import org.infinispan.stream.impl.StreamRequestCommand;
 import org.infinispan.stream.impl.StreamResponseCommand;
 import org.infinispan.stream.impl.intops.IntermediateOperation;
-import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.transaction.xa.GlobalTransaction;
-import org.infinispan.transaction.xa.recovery.RecoveryManager;
 import org.infinispan.util.ByteString;
-import org.infinispan.util.concurrent.CommandAckCollector;
-import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-import org.infinispan.xsite.BackupSender;
 import org.infinispan.xsite.SingleXSiteRpcCommand;
 import org.infinispan.xsite.XSiteAdminCommand;
 import org.infinispan.xsite.statetransfer.XSiteState;
-import org.infinispan.xsite.statetransfer.XSiteStateConsumer;
-import org.infinispan.xsite.statetransfer.XSiteStateProvider;
 import org.infinispan.xsite.statetransfer.XSiteStatePushCommand;
 import org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand;
-import org.infinispan.xsite.statetransfer.XSiteStateTransferManager;
 import org.reactivestreams.Publisher;
 
 /**
@@ -168,49 +142,20 @@ import org.reactivestreams.Publisher;
  * @author Sanne Grinovero &lt;sanne@hibernate.org&gt; (C) 2011 Red Hat Inc.
  * @since 4.0
  */
+@Scope(Scopes.NAMED_CACHE)
 public class CommandsFactoryImpl implements CommandsFactory {
    private static final Log log = LogFactory.getLog(CommandsFactoryImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private InternalDataContainer dataContainer;
-   @Inject private CacheNotifier<Object, Object> notifier;
-   @Inject private EmbeddedCacheManager cacheManager;
-   @Inject private ComponentRef<Cache<Object, Object>> cache;
-   @Inject private ComponentRef<AsyncInterceptorChain> interceptorChain;
-   @Inject private DistributionManager distributionManager;
-   @Inject private ComponentRef<InvocationContextFactory> icf;
-   @Inject private ComponentRef<TransactionTable> txTable;
-   @Inject private Configuration configuration;
-   @Inject private ComponentRef<RecoveryManager> recoveryManager;
-   @Inject private ComponentRef<StateProvider> stateProvider;
-   @Inject private ComponentRef<StateConsumer> stateConsumer;
-   @Inject private LockManager lockManager;
-   @Inject private InternalEntryFactory entryFactory;
-   @Inject private ComponentRef<StateTransferManager> stateTransferManager;
-   @Inject private ComponentRef<BackupSender> backupSender;
-   @Inject private CancellationService cancellationService;
-   @Inject private ComponentRef<XSiteStateProvider> xSiteStateProvider;
-   @Inject private ComponentRef<XSiteStateConsumer> xSiteStateConsumer;
-   @Inject private ComponentRef<XSiteStateTransferManager> xSiteStateTransferManager;
-   @Inject private GroupManager groupManager;
-   @Inject private ComponentRef<LocalStreamManager> localStreamManager;
-   @Inject private ComponentRef<LocalPublisherManager> localPublisherManager;
-   @Inject private IteratorHandler iteratorHandler;
-   @Inject private ComponentRef<ClusterStreamManager> clusterStreamManager;
-   @Inject private ClusteringDependentLogic clusteringDependentLogic;
-   @Inject private CommandAckCollector commandAckCollector;
-   @Inject private ComponentRef<StateReceiver> stateReceiver;
-   @Inject private ComponentRegistry componentRegistry;
-   @Inject private OrderedUpdatesManager orderedUpdatesManager;
-   @Inject private StateTransferLock stateTransferLock;
-   @Inject private StreamingMarshaller marshaller;
-   @Inject private ComponentRef<BiasManager> biasManager;
-   @Inject private RpcManager rpcManager;
+   @Inject ClusteringDependentLogic clusteringDependentLogic;
+   @Inject Configuration configuration;
+   @Inject ComponentRef<Cache<Object, Object>> cache;
+   @Inject ComponentRegistry componentRegistry;
+   @Inject EmbeddedCacheManager cacheManager;
+   @Inject @ComponentName(KnownComponentNames.INTERNAL_MARSHALLER)
+   StreamingMarshaller marshaller;
    @Inject @ComponentName(KnownComponentNames.MODULE_COMMAND_INITIALIZERS)
-   private Map<Byte, ModuleCommandInitializer> moduleCommandInitializers;
-   @Inject private VersionGenerator versionGenerator;
-   @Inject private KeyPartitioner keyPartitioner;
-   @Inject private TimeService timeService;
+   Map<Byte, ModuleCommandInitializer> moduleCommandInitializers;
 
    private ByteString cacheName;
    private boolean transactional;
@@ -274,7 +219,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
 
    @Override
    public UpdateLastAccessCommand buildUpdateLastAccessCommand(Object key, int segment, long accessTime) {
-      return new UpdateLastAccessCommand(cacheName, key, segment, accessTime);
+      return init(new UpdateLastAccessCommand(cacheName, key, segment, accessTime));
    }
 
    @Override
@@ -284,12 +229,12 @@ public class CommandsFactoryImpl implements CommandsFactory {
 
    @Override
    public ComputeCommand buildComputeCommand(Object key, BiFunction mappingFunction, boolean computeIfPresent, int segment, Metadata metadata, long flagsBitSet) {
-      return new ComputeCommand(key, mappingFunction, computeIfPresent, segment, flagsBitSet, generateUUID(transactional), metadata, componentRegistry);
+      return init(new ComputeCommand(key, mappingFunction, computeIfPresent, segment, flagsBitSet, generateUUID(transactional), metadata));
    }
 
    @Override
    public ComputeIfAbsentCommand buildComputeIfAbsentCommand(Object key, Function mappingFunction, int segment, Metadata metadata, long flagsBitSet) {
-      return new ComputeIfAbsentCommand(key, mappingFunction, segment, flagsBitSet, generateUUID(transactional), metadata, componentRegistry);
+      return init(new ComputeIfAbsentCommand(key, mappingFunction, segment, flagsBitSet, generateUUID(transactional), metadata));
    }
 
    @Override
@@ -377,206 +322,20 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Override
    public void initializeReplicableCommand(ReplicableCommand c, boolean isRemote) {
       if (c == null) return;
-      switch (c.getCommandId()) {
-         case ComputeCommand.COMMAND_ID:
-            ((ComputeCommand)c).init(componentRegistry);
-            break;
-         case ComputeIfAbsentCommand.COMMAND_ID:
-            ((ComputeIfAbsentCommand)c).init(componentRegistry);
-            break;
-         case SingleRpcCommand.COMMAND_ID:
-            SingleRpcCommand src = (SingleRpcCommand) c;
-            src.init(interceptorChain.running(), icf.running());
-            if (src.getCommand() != null)
-               initializeReplicableCommand(src.getCommand(), false);
-            break;
-         case PrepareCommand.COMMAND_ID:
-         case VersionedPrepareCommand.COMMAND_ID:
-         case TotalOrderNonVersionedPrepareCommand.COMMAND_ID:
-         case TotalOrderVersionedPrepareCommand.COMMAND_ID:
-            PrepareCommand pc = (PrepareCommand) c;
-            pc.init(interceptorChain.running(), icf.running(), txTable.running());
-            pc.initialize(notifier, recoveryManager.running());
-            if (pc.getModifications() != null)
-               for (ReplicableCommand nested : pc.getModifications())  {
-                  initializeReplicableCommand(nested, false);
-               }
-            pc.markTransactionAsRemote(isRemote);
-            break;
-         case CommitCommand.COMMAND_ID:
-         case VersionedCommitCommand.COMMAND_ID:
-         case TotalOrderCommitCommand.COMMAND_ID:
-         case TotalOrderVersionedCommitCommand.COMMAND_ID:
-            CommitCommand commitCommand = (CommitCommand) c;
-            commitCommand.init(interceptorChain.running(), icf.running(), txTable.running());
-            commitCommand.markTransactionAsRemote(isRemote);
-            break;
-         case RollbackCommand.COMMAND_ID:
-         case TotalOrderRollbackCommand.COMMAND_ID:
-            RollbackCommand rollbackCommand = (RollbackCommand) c;
-            rollbackCommand.init(interceptorChain.running(), icf.running(), txTable.running());
-            rollbackCommand.markTransactionAsRemote(isRemote);
-            break;
-         case ClusteredGetCommand.COMMAND_ID:
-            ClusteredGetCommand clusteredGetCommand = (ClusteredGetCommand) c;
-            clusteredGetCommand.initialize(icf.running(), this, entryFactory,
-                                           interceptorChain.running());
-            break;
-         case LockControlCommand.COMMAND_ID:
-            LockControlCommand lcc = (LockControlCommand) c;
-            lcc.init(interceptorChain.running(), icf.running(), txTable.running());
-            lcc.markTransactionAsRemote(isRemote);
-            break;
-         case StateRequestCommand.COMMAND_ID:
-            ((StateRequestCommand) c).init(stateProvider.running(), biasManager.running());
-            break;
-         case StateResponseCommand.COMMAND_ID:
-            ((StateResponseCommand) c).init(stateConsumer.running(), stateReceiver.running());
-            break;
-         case GetInDoubtTransactionsCommand.COMMAND_ID:
-            GetInDoubtTransactionsCommand gptx = (GetInDoubtTransactionsCommand) c;
-            gptx.init(recoveryManager.running());
-            break;
-         case TxCompletionNotificationCommand.COMMAND_ID:
-            TxCompletionNotificationCommand ftx = (TxCompletionNotificationCommand) c;
-            ftx.init(txTable.running(), lockManager, recoveryManager.running(), stateTransferManager.wired());
-            break;
-         case DistributedExecuteCommand.COMMAND_ID:
-            DistributedExecuteCommand dec = (DistributedExecuteCommand)c;
-            dec.init(cache.wired());
-            break;
-         case GetInDoubtTxInfoCommand.COMMAND_ID:
-            GetInDoubtTxInfoCommand gidTxInfoCommand = (GetInDoubtTxInfoCommand)c;
-            gidTxInfoCommand.init(recoveryManager.running());
-            break;
-         case CompleteTransactionCommand.COMMAND_ID:
-            CompleteTransactionCommand ccc = (CompleteTransactionCommand)c;
-            ccc.init(recoveryManager.running());
-            break;
-         case CreateCacheCommand.COMMAND_ID:
-            CreateCacheCommand createCacheCommand = (CreateCacheCommand)c;
-            createCacheCommand.init(cacheManager);
-            break;
-         case XSiteAdminCommand.COMMAND_ID:
-            XSiteAdminCommand xSiteAdminCommand = (XSiteAdminCommand)c;
-            xSiteAdminCommand.init(backupSender.running());
-            break;
-         case CancelCommand.COMMAND_ID:
-            CancelCommand cancelCommand = (CancelCommand)c;
-            cancelCommand.init(cancellationService);
-            break;
-         case XSiteStateTransferControlCommand.COMMAND_ID:
-            XSiteStateTransferControlCommand xSiteStateTransferControlCommand = (XSiteStateTransferControlCommand) c;
-            xSiteStateTransferControlCommand.initialize(xSiteStateProvider.running(), xSiteStateConsumer.running(), xSiteStateTransferManager.running());
-            break;
-         case XSiteStatePushCommand.COMMAND_ID:
-            XSiteStatePushCommand xSiteStatePushCommand = (XSiteStatePushCommand) c;
-            xSiteStatePushCommand.initialize(xSiteStateConsumer.running());
-            break;
-         case ClusteredGetAllCommand.COMMAND_ID:
-            ClusteredGetAllCommand clusteredGetAllCommand = (ClusteredGetAllCommand) c;
-            clusteredGetAllCommand.init(icf.running(), this, entryFactory, interceptorChain.running(), txTable.running());
-            break;
-         case StreamRequestCommand.COMMAND_ID:
-            StreamRequestCommand streamRequestCommand = (StreamRequestCommand) c;
-            streamRequestCommand.inject(localStreamManager.running());
-            break;
-         case StreamResponseCommand.COMMAND_ID:
-            StreamResponseCommand streamResponseCommand = (StreamResponseCommand) c;
-            streamResponseCommand.inject(clusterStreamManager.running());
-            break;
-         case StreamIteratorRequestCommand.COMMAND_ID:
-            StreamIteratorRequestCommand streamIteratorRequestCommand = (StreamIteratorRequestCommand) c;
-            streamIteratorRequestCommand.inject(localStreamManager.running());
-            break;
-         case StreamIteratorNextCommand.COMMAND_ID:
-            StreamIteratorNextCommand streamIteratorNextCommand = (StreamIteratorNextCommand) c;
-            streamIteratorNextCommand.inject(localStreamManager.running());
-            break;
-         case StreamIteratorCloseCommand.COMMAND_ID:
-            StreamIteratorCloseCommand streamIteratorCloseCommand = (StreamIteratorCloseCommand) c;
-            streamIteratorCloseCommand.inject(iteratorHandler);
-            break;
-         case RetrieveLastAccessCommand.COMMAND_ID:
-            RetrieveLastAccessCommand retrieveLastAccessCommand = (RetrieveLastAccessCommand) c;
-            retrieveLastAccessCommand.inject(dataContainer, timeService);
-            break;
-         case UpdateLastAccessCommand.COMMAND_ID:
-            UpdateLastAccessCommand updateLastAccessCommand = (UpdateLastAccessCommand) c;
-            updateLastAccessCommand.inject(dataContainer);
-            break;
-         case BackupAckCommand.COMMAND_ID:
-            BackupAckCommand command = (BackupAckCommand) c;
-            command.setCommandAckCollector(commandAckCollector);
-            break;
-         case SingleKeyBackupWriteCommand.COMMAND_ID:
-            ((SingleKeyBackupWriteCommand) c).init(icf.running(), interceptorChain.running(), componentRegistry);
-            break;
-         case SingleKeyFunctionalBackupWriteCommand.COMMAND_ID:
-            ((SingleKeyFunctionalBackupWriteCommand) c).init(icf.running(), interceptorChain.running(), componentRegistry);
-            break;
-         case PutMapBackupWriteCommand.COMMAND_ID:
-            ((PutMapBackupWriteCommand) c).init(icf.running(), interceptorChain.running());
-            break;
-         case MultiEntriesFunctionalBackupWriteCommand.COMMAND_ID:
-            ((MultiEntriesFunctionalBackupWriteCommand) c).init(icf.running(), interceptorChain.running(), componentRegistry);
-            break;
-         case MultiKeyFunctionalBackupWriteCommand.COMMAND_ID:
-            ((MultiKeyFunctionalBackupWriteCommand) c).init(icf.running(), interceptorChain.running(), componentRegistry);
-            break;
-         case BackupMultiKeyAckCommand.COMMAND_ID:
-            ((BackupMultiKeyAckCommand) c).setCommandAckCollector(commandAckCollector);
-            break;
-         case ExceptionAckCommand.COMMAND_ID:
-            ((ExceptionAckCommand) c).setCommandAckCollector(commandAckCollector);
-            break;
-         case InvalidateVersionsCommand.COMMAND_ID:
-            InvalidateVersionsCommand invalidateVersionsCommand = (InvalidateVersionsCommand) c;
-            invalidateVersionsCommand.init(dataContainer, orderedUpdatesManager, stateTransferLock, distributionManager, biasManager.running());
-            break;
-         case PublisherRequestCommand.COMMAND_ID:
-            PublisherRequestCommand publisherRequestCommand = (PublisherRequestCommand) c;
-            publisherRequestCommand.inject(localPublisherManager.running());
-            break;
 
-         // === Functional commands ====
-         case ReadOnlyKeyCommand.COMMAND_ID:
-         case TxReadOnlyKeyCommand.COMMAND_ID:
-            ((ReadOnlyKeyCommand) c).init(componentRegistry);
-            break;
-
-         case ReadOnlyManyCommand.COMMAND_ID:
-         case TxReadOnlyManyCommand.COMMAND_ID:
-            ((ReadOnlyManyCommand) c).init(componentRegistry);
-            break;
-
-         case ReadWriteKeyCommand.COMMAND_ID:
-         case ReadWriteKeyValueCommand.COMMAND_ID:
-         case WriteOnlyKeyCommand.COMMAND_ID:
-         case WriteOnlyKeyValueCommand.COMMAND_ID:
-            ((AbstractWriteKeyCommand) c).init(componentRegistry);
-            break;
-
-         case ReadWriteManyCommand.COMMAND_ID:
-         case ReadWriteManyEntriesCommand.COMMAND_ID:
-         case WriteOnlyManyCommand.COMMAND_ID:
-         case WriteOnlyManyEntriesCommand.COMMAND_ID:
-            ((AbstractWriteManyCommand) c).init(componentRegistry);
-            break;
-         case RevokeBiasCommand.COMMAND_ID:
-            ((RevokeBiasCommand) c).init(biasManager.running(), this, rpcManager);
-            break;
-         case RenewBiasCommand.COMMAND_ID:
-            ((RenewBiasCommand) c).init(biasManager.running());
-            break;
-         default:
-            ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());
-            if (mci != null) {
-               mci.initializeReplicableCommand(c, isRemote);
-            } else {
-               if (trace) log.tracef("Nothing to initialize for command: %s", c);
-            }
+      if (c instanceof InitializableCommand) {
+         ((InitializableCommand) c).init(componentRegistry, isRemote);
+      } else {
+         ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());
+         if (mci != null)
+            mci.initializeReplicableCommand(c, isRemote);
       }
+   }
+
+   @SuppressWarnings("unchecked")
+   private <T> T init(InitializableCommand cmd) {
+      cmd.init(componentRegistry, false);
+      return (T) cmd;
    }
 
    @Override
@@ -622,11 +381,6 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Override
    public TxCompletionNotificationCommand buildTxCompletionNotificationCommand(long internalId) {
       return new TxCompletionNotificationCommand(internalId, cacheName);
-   }
-
-   @Override
-   public <T> DistributedExecuteCommand<T> buildDistributedExecuteCommand(Callable<T> callable, Address sender, Collection keys) {
-      return  new DistributedExecuteCommand<>(cacheName, keys, callable);
    }
 
    @Override
@@ -735,36 +489,36 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Override
    public <K, V, R> ReadOnlyKeyCommand<K, V, R> buildReadOnlyKeyCommand(Object key, Function<ReadEntryView<K, V>, R> f,
          int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new ReadOnlyKeyCommand<>(key, f, segment, params, keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new ReadOnlyKeyCommand<>(key, f, segment, params, keyDataConversion, valueDataConversion));
    }
 
    @Override
    public <K, V, R> ReadOnlyManyCommand<K, V, R> buildReadOnlyManyCommand(Collection<?> keys, Function<ReadEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new ReadOnlyManyCommand<>(keys, f, params, keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new ReadOnlyManyCommand<>(keys, f, params, keyDataConversion, valueDataConversion));
    }
 
    @Override
    public <K, V, T, R> ReadWriteKeyValueCommand<K, V, T, R> buildReadWriteKeyValueCommand(Object key, Object argument,
          BiFunction<T, ReadWriteEntryView<K, V>, R> f, int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new ReadWriteKeyValueCommand(key, argument, f, segment, generateUUID(transactional), getValueMatcher(f),
-            params, keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new ReadWriteKeyValueCommand<>(key, argument, f, segment, generateUUID(transactional), getValueMatcher(f),
+            params, keyDataConversion, valueDataConversion));
    }
 
    @Override
    public <K, V, R> ReadWriteKeyCommand<K, V, R> buildReadWriteKeyCommand(Object key,
          Function<ReadWriteEntryView<K, V>, R> f, int segment, Params params, DataConversion keyDataConversion,
          DataConversion valueDataConversion) {
-      return new ReadWriteKeyCommand<>(key, f, segment, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new ReadWriteKeyCommand<>(key, f, segment, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion));
    }
 
    @Override
    public <K, V, R> ReadWriteManyCommand<K, V, R> buildReadWriteManyCommand(Collection<?> keys, Function<ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new ReadWriteManyCommand<>(keys, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new ReadWriteManyCommand<>(keys, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion));
    }
 
    @Override
    public <K, V, T, R> ReadWriteManyEntriesCommand<K, V, T, R> buildReadWriteManyEntriesCommand(Map<?, ?> entries, BiFunction<T, ReadWriteEntryView<K, V>, R> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new ReadWriteManyEntriesCommand<>(entries, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new ReadWriteManyEntriesCommand<>(entries, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion));
    }
 
    @Override
@@ -775,24 +529,36 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Override
    public <K, V> WriteOnlyKeyCommand<K, V> buildWriteOnlyKeyCommand(
          Object key, Consumer<WriteEntryView<K, V>> f, int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new WriteOnlyKeyCommand<>(key, f, segment, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new WriteOnlyKeyCommand<>(key, f, segment, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion));
    }
 
    @Override
    public <K, V, T> WriteOnlyKeyValueCommand<K, V, T> buildWriteOnlyKeyValueCommand(Object key, Object argument, BiConsumer<T, WriteEntryView<K, V>> f,
          int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new WriteOnlyKeyValueCommand<>(key, argument, f, segment, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new WriteOnlyKeyValueCommand<>(key, argument, f, segment, generateUUID(transactional), getValueMatcher(f), params, keyDataConversion, valueDataConversion));
    }
 
    @Override
    public <K, V> WriteOnlyManyCommand<K, V> buildWriteOnlyManyCommand(Collection<?> keys, Consumer<WriteEntryView<K, V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new WriteOnlyManyCommand<>(keys, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new WriteOnlyManyCommand<>(keys, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion));
    }
 
    @Override
    public <K, V, T> WriteOnlyManyEntriesCommand<K, V, T> buildWriteOnlyManyEntriesCommand(
          Map<?, ?> arguments, BiConsumer<T, WriteEntryView<K, V>> f, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
-      return new WriteOnlyManyEntriesCommand<>(arguments, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion, componentRegistry);
+      return init(new WriteOnlyManyEntriesCommand<>(arguments, f, params, generateUUID(transactional), keyDataConversion, valueDataConversion));
+   }
+
+   @Override
+   public <K, V, R> TxReadOnlyKeyCommand<K, V, R> buildTxReadOnlyKeyCommand(Object key, Function<ReadEntryView<K, V>, R> f, List<Mutation<K, V, ?>> mutations, int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return init(new TxReadOnlyKeyCommand<>(key, f, mutations, segment, params, keyDataConversion, valueDataConversion));
+   }
+
+   @Override
+   public <K, V, R> TxReadOnlyManyCommand<K, V, R> buildTxReadOnlyManyCommand(Collection<?> keys, List<List<Mutation<K, V, ?>>> mutations,
+                                                                              Params params, DataConversion keyDataConversion,
+                                                                              DataConversion valueDataConversion) {
+      return init(new TxReadOnlyManyCommand<K, V, R>(keys, mutations, params, keyDataConversion, valueDataConversion));
    }
 
    @Override
@@ -816,7 +582,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
          return ValueMatcher.valueOf(ann.valueMatcher().toString());
 
       Externalizer ext = ((GlobalMarshaller) marshaller).findExternalizerFor(o);
-      if (ext != null && ext instanceof LambdaExternalizer)
+      if (ext instanceof LambdaExternalizer)
          return ValueMatcher.valueOf(((LambdaExternalizer) ext).valueMatcher(o).toString());
 
       return ValueMatcher.MATCH_ALWAYS;
@@ -858,20 +624,43 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
-   public <K, R> PublisherRequestCommand<K> buildKeyPublisherCommand(boolean parallelStream,
+   public <K, R> ReductionPublisherRequestCommand<K> buildKeyReductionPublisherCommand(boolean parallelStream,
          DeliveryGuarantee deliveryGuarantee, IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader,
          Function<? super Publisher<K>, ? extends CompletionStage<R>> transformer,
          Function<? super Publisher<R>, ? extends CompletionStage<R>> finalizer) {
-      return new PublisherRequestCommand<>(cacheName, parallelStream, deliveryGuarantee, segments, keys, excludedKeys,
+      return new ReductionPublisherRequestCommand<>(cacheName, parallelStream, deliveryGuarantee, segments, keys, excludedKeys,
             includeLoader, false, transformer, finalizer);
    }
 
    @Override
-   public <K, V, R> PublisherRequestCommand<K> buildEntryPublisherCommand(boolean parallelStream,
+   public <K, V, R> ReductionPublisherRequestCommand<K> buildEntryReductionPublisherCommand(boolean parallelStream,
          DeliveryGuarantee deliveryGuarantee, IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader,
          Function<? super Publisher<CacheEntry<K, V>>, ? extends CompletionStage<R>> transformer,
          Function<? super Publisher<R>, ? extends CompletionStage<R>> finalizer) {
-      return new PublisherRequestCommand<>(cacheName, parallelStream, deliveryGuarantee, segments, keys, excludedKeys,
+      return new ReductionPublisherRequestCommand<>(cacheName, parallelStream, deliveryGuarantee, segments, keys, excludedKeys,
             includeLoader, true, transformer, finalizer);
+   }
+
+   @Override
+   public <K, I, R> InitialPublisherCommand<K, I, R> buildInitialPublisherCommand(Object requestId, DeliveryGuarantee deliveryGuarantee,
+         int batchSize, IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader, boolean entryStream,
+         boolean trackKeys, Function<? super Publisher<I>, ? extends Publisher<R>> transformer) {
+      return init(new InitialPublisherCommand<>(cacheName, requestId, deliveryGuarantee, batchSize, segments, keys,
+            excludedKeys, includeLoader, entryStream, trackKeys, transformer));
+   }
+
+   @Override
+   public NextPublisherCommand buildNextPublisherCommand(Object requestId) {
+      return new NextPublisherCommand(cacheName, requestId);
+   }
+
+   @Override
+   public CancelPublisherCommand buildCancelPublisherCommand(Object requestId) {
+      return new CancelPublisherCommand(cacheName, requestId);
+   }
+
+   @Override
+   public <K, V> MultiClusterEventCommand<K, V> buildMultiClusterEventCommand(Map<UUID, Collection<ClusterEvent<K, V>>> events) {
+      return new MultiClusterEventCommand<>(cacheName, events);
    }
 }

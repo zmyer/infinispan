@@ -24,11 +24,12 @@ import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.Search;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
 import org.infinispan.client.hotrod.impl.query.RemoteQueryFactory;
-import org.infinispan.client.hotrod.marshall.ProtoStreamMarshaller;
+import org.infinispan.client.hotrod.marshall.MarshallerUtil;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.ModelFactoryPB;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.MarshallerRegistration;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.NotIndexedMarshaller;
 import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
@@ -58,7 +59,6 @@ import org.testng.annotations.Test;
 public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
 
    private static final String NOT_INDEXED_PROTO_SCHEMA = "package sample_bank_account;\n" +
-         "/* @Indexed(false) */\n" +
          "message NotIndexed {\n" +
          "\toptional string notIndexedField = 1;\n" +
          "}\n";
@@ -103,7 +103,7 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
 
       hotRodServer = HotRodClientTestingUtil.startHotRodServer(manager(0));
 
-      org.infinispan.client.hotrod.configuration.ConfigurationBuilder clientBuilder = new org.infinispan.client.hotrod.configuration.ConfigurationBuilder();
+      org.infinispan.client.hotrod.configuration.ConfigurationBuilder clientBuilder = HotRodClientTestingUtil.newRemoteConfigurationBuilder();
       clientBuilder.addServer().host("127.0.0.1").port(hotRodServer.getPort());
       clientBuilder.marshaller(new ProtoStreamMarshaller());
       clientBuilder.version(getProtocolVersion());
@@ -120,7 +120,7 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
       RemoteQueryTestUtils.checkSchemaErrors(metadataCache);
 
       //initialize client-side serialization context
-      SerializationContext serCtx = ProtoStreamMarshaller.getSerializationContext(remoteCacheManager);
+      SerializationContext serCtx = MarshallerUtil.getSerializationContext(remoteCacheManager);
       MarshallerRegistration.registerMarshallers(serCtx);
       serCtx.registerProtoFiles(FileDescriptorSource.fromString("not_indexed.proto", NOT_INDEXED_PROTO_SCHEMA));
       serCtx.registerMarshaller(new NotIndexedMarshaller());

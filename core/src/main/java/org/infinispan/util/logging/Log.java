@@ -9,6 +9,7 @@ import static org.jboss.logging.Logger.Level.WARN;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.security.Permission;
 import java.util.Collection;
 import java.util.List;
@@ -21,7 +22,7 @@ import javax.transaction.TransactionManager;
 import javax.transaction.xa.XAResource;
 import javax.xml.namespace.QName;
 
-import org.infinispan.IllegalLifecycleStateException;
+import org.infinispan.commons.IllegalLifecycleStateException;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
@@ -40,7 +41,6 @@ import org.infinispan.jmx.JmxDomainConflictException;
 import org.infinispan.partitionhandling.AvailabilityException;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.persistence.spi.PersistenceException;
-import org.infinispan.persistence.support.SingletonCacheWriter;
 import org.infinispan.remoting.RemoteException;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.transport.Address;
@@ -56,6 +56,7 @@ import org.infinispan.transaction.xa.recovery.RecoveryAwareRemoteTransaction;
 import org.infinispan.transaction.xa.recovery.RecoveryAwareTransaction;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.jboss.logging.BasicLogger;
+import org.jboss.logging.Logger;
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
@@ -98,6 +99,13 @@ import org.jgroups.View;
  */
 @MessageLogger(projectCode = "ISPN")
 public interface Log extends BasicLogger {
+   String LOG_ROOT = "org.infinispan.";
+   Log CONFIG = Logger.getMessageLogger(Log.class, LOG_ROOT + "CONFIG");
+   Log CLUSTER = Logger.getMessageLogger(Log.class, LOG_ROOT + "CLUSTER");
+   Log CONTAINER = Logger.getMessageLogger(Log.class, LOG_ROOT + "CONTAINER");
+   Log PERSISTENCE = Logger.getMessageLogger(Log.class, LOG_ROOT + "PERSISTENCE");
+   Log SECURITY = Logger.getMessageLogger(Log.class, LOG_ROOT + "SECURITY");
+   Log XSITE = Logger.getMessageLogger(Log.class, LOG_ROOT + "XSITE");
 
 //   @LogMessage(level = WARN)
 //   @Message(value = "Unable to load %s from cache loader", id = 1)
@@ -111,25 +119,25 @@ public interface Log extends BasicLogger {
 //   @Message(value = "Property %s could not be replaced as intended!", id = 3)
 //   void propertyCouldNotBeReplaced(String line);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Unexpected error reading properties", id = 4)
-   void errorReadingProperties(@Cause IOException e);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Unexpected error reading properties", id = 4)
+//   void errorReadingProperties(@Cause IOException e);
+//
+//   @LogMessage(level = WARN)
+//   @Message(value = "Detected write skew on key [%s]. Another process has changed the entry since we last read it! Unable to copy entry for update.", id = 5)
+//   void unableToCopyEntryForUpdate(Object key);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Detected write skew on key [%s]. Another process has changed the entry since we last read it! Unable to copy entry for update.", id = 5)
-   void unableToCopyEntryForUpdate(Object key);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Failed remote execution on node %s", id = 6)
+//   void remoteExecutionFailed(Address address, @Cause Throwable t);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Failed remote execution on node %s", id = 6)
-   void remoteExecutionFailed(Address address, @Cause Throwable t);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Failed local execution ", id = 7)
+//   void localExecutionFailed(@Cause Throwable t);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Failed local execution ", id = 7)
-   void localExecutionFailed(@Cause Throwable t);
-
-   @LogMessage(level = WARN)
-   @Message(value = "Can not select %s random members for %s", id = 8)
-   void cannotSelectRandomMembers(int numNeeded, List<Address> members);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Can not select %s random members for %s", id = 8)
+//   void cannotSelectRandomMembers(int numNeeded, List<Address> members);
 
 //   @LogMessage(level = INFO)
 //   @Message(value = "DistributionManager not yet joined the cluster. Cannot do anything about other concurrent joiners.", id = 14)
@@ -139,7 +147,7 @@ public interface Log extends BasicLogger {
 //   @Message(value = "DistributionManager not started after waiting up to 5 minutes! Not rehashing!", id = 15)
 //   void distributionManagerNotStarted();
 
-   @LogMessage(level = WARN)
+   @LogMessage(level = ERROR)
    @Message(value = "Problem %s encountered when applying state for key %s!", id = 16)
    void problemApplyingStateForKey(String msg, Object key, @Cause Throwable t);
 
@@ -161,7 +169,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = WARN)
    @Message(value = "Caught exception purging data container!", id = 26)
-   void exceptionPurgingDataContainer(@Cause Exception e);
+   void exceptionPurgingDataContainer(@Cause Throwable e);
 
 //   @LogMessage(level = WARN)
 //   @Message(value = "Could not acquire lock for eviction of %s", id = 27)
@@ -169,7 +177,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = WARN)
    @Message(value = "Unable to passivate entry under %s", id = 28)
-   void unableToPassivateEntry(Object key, @Cause Exception e);
+   void unableToPassivateEntry(Object key, @Cause Throwable e);
 
    @LogMessage(level = INFO)
    @Message(value = "Passivating all entries to disk", id = 29)
@@ -179,19 +187,19 @@ public interface Log extends BasicLogger {
    @Message(value = "Passivated %d entries in %s", id = 30)
    void passivatedEntries(long numEntries, String duration);
 
-   @LogMessage(level = TRACE)
-   @Message(value = "MBeans were successfully registered to the platform MBean server.", id = 31)
-   void mbeansSuccessfullyRegistered();
+//   @LogMessage(level = TRACE)
+//   @Message(value = "MBeans were successfully registered to the platform MBean server.", id = 31)
+//   void mbeansSuccessfullyRegistered();
 
-   @LogMessage(level = WARN)
-   @Message(value = "Problems un-registering MBeans", id = 32)
-   void problemsUnregisteringMBeans(@Cause Exception e);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Problems un-registering MBeans", id = 32)
+//   void problemsUnregisteringMBeans(@Cause Exception e);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Unable to unregister Cache MBeans with pattern %s", id = 33)
-   void unableToUnregisterMBeanWithPattern(String pattern, @Cause Throwable e);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Unable to unregister MBean %s", id = 33)
+//   void unableToUnregisterMBean(String name, @Cause Exception e);
 
-   @Message(value = "There's already a JMX MBean instance %s already registered under " +
+   @Message(value = "There's already a JMX MBean instance %s registered under " +
          "'%s' JMX domain. If you want to allow multiple instances configured " +
          "with same JMX domain enable 'allowDuplicateDomains' attribute in " +
          "'globalJmxStatistics' config element", id = 34)
@@ -270,10 +278,10 @@ public interface Log extends BasicLogger {
    @Message(value = "Unexpected error in AsyncStoreCoordinator thread. AsyncCacheWriter is dead!", id = 55)
    void unexpectedErrorInAsyncStoreCoordinator(@Cause Throwable t);
 
-   @SuppressWarnings("deprecation")
-   @LogMessage(level = ERROR)
-   @Message(value = "Exception reported changing cache active status", id = 58)
-   void errorChangingSingletonStoreStatus(@Cause SingletonCacheWriter.PushStateException e);
+//   @SuppressWarnings("deprecation")
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Exception reported changing cache active status", id = 58)
+//   void errorChangingSingletonStoreStatus(@Cause SingletonCacheWriter.PushStateException e);
 
 //   @LogMessage(level = WARN)
 //   @Message(value = "Had problems removing file %s", id = 59)
@@ -299,9 +307,9 @@ public interface Log extends BasicLogger {
 //   @Message(value = "Exception while marshalling object: %s", id = 65)
 //   void errorMarshallingObject(@Cause Throwable ioe, Object obj);
 
-   @LogMessage(level = ERROR)
-   @Message(value = "Unable to read version id from first two bytes of stream, barfing.", id = 66)
-   void unableToReadVersionId();
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Unable to read version id from first two bytes of stream, barfing.", id = 66)
+//   void unableToReadVersionId();
 
 //   @LogMessage(level = INFO)
 //   @Message(value = "Will try and wait for the cache %s to start", id = 67)
@@ -409,18 +417,18 @@ public interface Log extends BasicLogger {
 //   @Message(value = "A remote transaction with the given id was already registered!!!", id = 103)
 //   void remoteTxAlreadyRegistered();
 
-   @LogMessage(level = WARN)
-   @Message(value = "Falling back to EmbeddedTransactionManager from Infinispan", id = 104)
+   @LogMessage(level = INFO)
+   @Message(value = "Using EmbeddedTransactionManager", id = 104)
    void fallingBackToEmbeddedTm();
 
    @LogMessage(level = ERROR)
    @Message(value = "Failed creating initial JNDI context", id = 105)
    void failedToCreateInitialCtx(@Cause Throwable e);
 
-   @LogMessage(level = ERROR)
-   @Message(value = "Found WebSphere TransactionManager factory class [%s], but " +
-         "couldn't invoke its static 'getTransactionManager' method", id = 106)
-   void unableToInvokeWebsphereStaticGetTmMethod(@Cause Exception ex, String className);
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Found WebSphere TransactionManager factory class [%s], but " +
+//         "couldn't invoke its static 'getTransactionManager' method", id = 106)
+//   void unableToInvokeWebsphereStaticGetTmMethod(@Cause Exception ex, String className);
 
    @LogMessage(level = INFO)
    @Message(value = "Retrieving transaction manager %s", id = 107)
@@ -514,9 +522,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Infinispan version: %s", id = 128)
    void version(String version);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Received a remote call but the cache is not in STARTED state - ignoring call.", id = 129)
-   void cacheNotStarted();
+//   @LogMessage(level = WARN)
+//   @Message(value = "Received a remote call but the cache is not in STARTED state - ignoring call.", id = 129)
+//   void cacheNotStarted();
 
 //   @LogMessage(level = ERROR)
 //   @Message(value = "Caught exception! Aborting join.", id = 130)
@@ -546,16 +554,16 @@ public interface Log extends BasicLogger {
    void unableToLockToInvalidate(Object key, Address address);
 
    @LogMessage(level = ERROR)
-   @Message(value = "Error executing command %s, writing keys %s", id = 136)
-   void executionError(String commandType, String affectedKeys, @Cause Throwable t);
+   @Message(value = "Error executing command %s on %s, writing keys %s", id = 136)
+   void executionError(String commandType, String cacheName, String affectedKeys, @Cause Throwable t);
 
    @LogMessage(level = INFO)
    @Message(value = "Failed invalidating remote cache", id = 137)
    void failedInvalidatingRemoteCache(@Cause Throwable e);
 
-   @LogMessage(level = INFO)
-   @Message(value = "Could not register object with name: %s", id = 138)
-   void couldNotRegisterObjectName(Object objectName, @Cause Throwable e);
+//   @LogMessage(level = INFO)
+//   @Message(value = "Could not register object with name: %s", id = 138)
+//   void couldNotRegisterObjectName(Object objectName, @Cause Throwable e);
 
 //   @LogMessage(level = WARN)
 //   @Message(value = "Infinispan configuration schema could not be resolved locally nor fetched from URL. Local path=%s, schema path=%s, schema URL=%s", id = 139)
@@ -636,9 +644,9 @@ public interface Log extends BasicLogger {
 //   @Message(value = "Strict peer-to-peer is enabled but the JGroups channel was started externally - this is very likely to result in RPC timeout errors on startup", id = 171)
 //   void warnStrictPeerToPeerWithInjectedChannel();
 
-   @LogMessage(level = ERROR)
-   @Message(value = "Custom interceptor %s has used @Inject, @Start or @Stop. These methods will not be processed. Please extend org.infinispan.interceptors.base.BaseCustomInterceptor instead, and your custom interceptor will have access to a cache and cacheManager.  Override stop() and start() for lifecycle methods.", id = 173)
-   void customInterceptorExpectsInjection(String customInterceptorFQCN);
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Custom interceptor %s has used @Inject, @Start or @Stop. These methods will not be processed. Please extend org.infinispan.interceptors.base.BaseCustomInterceptor instead, and your custom interceptor will have access to a cache and cacheManager.  Override stop() and start() for lifecycle methods.", id = 173)
+//   void customInterceptorExpectsInjection(String customInterceptorFQCN);
 
 //   @LogMessage(level = WARN)
 //   @Message(value = "Unexpected error reading configuration", id = 174)
@@ -714,17 +722,17 @@ public interface Log extends BasicLogger {
    @Message(value = "When indexing locally a cache with shared cache loader, preload must be enabled", id = 191)
    void localIndexingWithSharedCacheLoaderRequiresPreload();
 
-   @LogMessage(level = WARN)
-   @Message(value = "hash's 'numVirtualNodes' attribute has been deprecated. Please use hash.numSegments instead", id = 192)
-   void hashNumVirtualNodesDeprecated();
+//   @LogMessage(level = WARN)
+//   @Message(value = "hash's 'numVirtualNodes' attribute has been deprecated. Please use hash.numSegments instead", id = 192)
+//   void hashNumVirtualNodesDeprecated();
 
-   @LogMessage(level = WARN)
-   @Message(value = "hash's 'consistentHash' attribute has been deprecated. Please use hash.consistentHashFactory instead", id = 193)
-   void consistentHashDeprecated();
+//   @LogMessage(level = WARN)
+//   @Message(value = "hash's 'consistentHash' attribute has been deprecated. Please use hash.consistentHashFactory instead", id = 193)
+//   void consistentHashDeprecated();
 
    @LogMessage(level = WARN)
    @Message(value = "Failed loading keys from cache store", id = 194)
-   void failedLoadingKeysFromCacheStore(@Cause Exception e);
+   void failedLoadingKeysFromCacheStore(@Cause Throwable t);
 
    @LogMessage(level = ERROR)
    @Message(value = "Error during rebalance for cache %s on node %s, topology id = %d", id = 195)
@@ -738,17 +746,17 @@ public interface Log extends BasicLogger {
    @Message(value = "Error updating cluster member list for view %d, waiting for next view", id = 197)
    void errorUpdatingMembersList(int viewId, @Cause Throwable cause);
 
-   @LogMessage(level = INFO)
-   @Message(value = "Unable to register MBeans for default cache", id = 198)
-   void unableToRegisterMBeans();
+//   @LogMessage(level = INFO)
+//   @Message(value = "Unable to register MBeans for default cache", id = 198)
+//   void unableToRegisterMBeans();
 
-   @LogMessage(level = INFO)
-   @Message(value = "Unable to register MBeans for named cache %s", id = 199)
-   void unableToRegisterMBeans(String cacheName);
+//   @LogMessage(level = INFO)
+//   @Message(value = "Unable to register MBeans for named cache %s", id = 199)
+//   void unableToRegisterMBeans(String cacheName);
 
-   @LogMessage(level = INFO)
-   @Message(value = "Unable to register MBeans for cache manager", id = 200)
-   void unableToRegisterCacheManagerMBeans();
+//   @LogMessage(level = INFO)
+//   @Message(value = "Unable to register MBeans for cache manager", id = 200)
+//   void unableToRegisterCacheManagerMBeans();
 
    @LogMessage(level = TRACE)
    @Message(value = "This cache is configured to backup to its own site (%s).", id = 201)
@@ -770,9 +778,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Trying to bring back an non-existent site (%s)!", id = 205)
    void tryingToBringOnlineNonexistentSite(String siteName);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Could not execute cancellation command locally", id = 206)
-   void couldNotExecuteCancellationLocally(@Cause Throwable e);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Could not execute cancellation command locally", id = 206)
+//   void couldNotExecuteCancellationLocally(@Cause Throwable e);
 
    @LogMessage(level = WARN)
    @Message(value = "Could not interrupt as no thread found for command uuid %s", id = 207)
@@ -796,7 +804,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = WARN)
    @Message(value = "Unable to remove entry under %s from cache store after activation", id = 214)
-   void unableToRemoveEntryAfterActivation(Object key, @Cause Exception e);
+   void unableToRemoveEntryAfterActivation(Object key, @Cause Throwable e);
 
    @Message(value = "Unknown migrator %s", id = 215)
    Exception unknownMigrator(String migratorName);
@@ -841,9 +849,9 @@ public interface Log extends BasicLogger {
 //   @Message(value = "Error while initializing SSL context", id = 226)
 //   CacheConfigurationException sslInitializationException(@Cause Throwable e);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Support for concurrent updates can no longer be configured (it is always enabled by default)", id = 227)
-   void warnConcurrentUpdateSupportCannotBeConfigured();
+//   @LogMessage(level = WARN)
+//   @Message(value = "Support for concurrent updates can no longer be configured (it is always enabled by default)", id = 227)
+//   void warnConcurrentUpdateSupportCannotBeConfigured();
 
    @LogMessage(level = ERROR)
    @Message(value = "Failed to recover cache %s state after the current node became the coordinator", id = 228)
@@ -925,25 +933,25 @@ public interface Log extends BasicLogger {
 //   @Message(value = "Invalid Cache Loader class: %s", id = 253)
 //   CacheConfigurationException invalidCacheLoaderClass(String name);
 
-   @LogMessage(level = WARN)
-   @Message(value = "The transport element's 'strictPeerToPeer' attribute is no longer in use.", id = 254)
-   void strictPeerToPeerDeprecated();
+//   @LogMessage(level = WARN)
+//   @Message(value = "The transport element's 'strictPeerToPeer' attribute is no longer in use.", id = 254)
+//   void strictPeerToPeerDeprecated();
 
    @LogMessage(level = ERROR)
    @Message(value = "Error while processing prepare", id = 255)
    void errorProcessingPrepare(@Cause Throwable e);
 
-   @LogMessage(level = ERROR)
-   @Message(value = "Configurator SAXParse error", id = 256)
-   void configuratorSAXParseError(@Cause Exception e);
-
-   @LogMessage(level = ERROR)
-   @Message(value = "Configurator SAX error", id = 257)
-   void configuratorSAXError(@Cause Exception e);
-
-   @LogMessage(level = ERROR)
-   @Message(value = "Configurator general error", id = 258)
-   void configuratorError(@Cause Exception e);
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Configurator SAXParse error", id = 256)
+//   void configuratorSAXParseError(@Cause Exception e);
+//
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Configurator SAX error", id = 257)
+//   void configuratorSAXError(@Cause Exception e);
+//
+//   @LogMessage(level = ERROR)
+//   @Message(value = "Configurator general error", id = 258)
+//   void configuratorError(@Cause Exception e);
 
    @LogMessage(level = ERROR)
    @Message(value = "Async store executor did not stop properly", id = 259)
@@ -961,9 +969,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Failed to enlist TransactionXaAdapter to transaction", id = 262)
    void failedToEnlistTransactionXaAdapter(@Cause Throwable e);
 
-   @LogMessage(level = WARN)
-   @Message(value = "FIFO strategy is deprecated, LRU will be used instead", id = 263)
-   void warnFifoStrategyIsDeprecated();
+//   @LogMessage(level = WARN)
+//   @Message(value = "FIFO strategy is deprecated, LRU will be used instead", id = 263)
+//   void warnFifoStrategyIsDeprecated();
 
    @LogMessage(level = WARN)
    @Message(value = "Not using an L1 invalidation reaper thread. This could lead to memory leaks as the requestors map may grow indefinitely!", id = 264)
@@ -974,8 +982,8 @@ public interface Log extends BasicLogger {
    void unableToCreateInterceptor(Class type, @Cause Exception e);
 
    @LogMessage(level = WARN)
-   @Message(value = "Unable to broadcast evicts as a part of the prepare phase. Rolling back.", id = 268)
-   void unableToRollbackEvictionsDuringPrepare(@Cause Throwable e);
+   @Message(value = "Unable to broadcast invalidations as a part of the prepare phase. Rolling back.", id = 268)
+   void unableToRollbackInvalidationsDuringPrepare(@Cause Throwable e);
 
    @LogMessage(level = WARN)
    @Message(value = "Cache used for Grid metadata should be synchronous.", id = 269)
@@ -1004,8 +1012,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Persistence enabled without any CacheWriteInterceptor in InterceptorChain!", id = 275)
    void persistenceWithoutCacheWriteInterceptor();
 
-   @Message(value = "Could not find migration data in cache %s", id = 276)
-   CacheException missingMigrationData(String name);
+//   @Message(value = "Could not find migration data in cache %s", id = 276)
+//   CacheException missingMigrationData(String name);
 
    @LogMessage(level = WARN)
    @Message(value = "Could not migrate key %s", id = 277)
@@ -1064,12 +1072,12 @@ public interface Log extends BasicLogger {
    void unrecognizedAttribute(String property);
 
    @LogMessage(level = INFO)
-   @Message(value = "Ignoring XML attribute %s, please remove from configuration file", id = 293)
-   void ignoreXmlAttribute(Object attribute);
+   @Message(value = "Ignoring XML attribute %s at [%d,%d], please remove from configuration file", id = 293)
+   void ignoreXmlAttribute(Object attribute, int line, int column);
 
    @LogMessage(level = INFO)
-   @Message(value = "Ignoring XML element %s, please remove from configuration file", id = 294)
-   void ignoreXmlElement(Object element);
+   @Message(value = "Ignoring XML element %s at [%d,%d], please remove from configuration file", id = 294)
+   void ignoreXmlElement(Object element, int line, int column);
 
    @Message(value = "No thread pool with name %s found", id = 295)
    CacheConfigurationException undefinedThreadPoolName(String name);
@@ -1158,9 +1166,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Unable to read rebalancing status from coordinator %s", id = 329)
    void errorReadingRebalancingStatus(Address coordinator, @Cause Exception e);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Distributed task failed at %s. The task is failing over to be executed at %s", id = 330)
-   void distributedTaskFailover(Address failedAtAddress, Address failoverTarget, @Cause Exception e);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Distributed task failed at %s. The task is failing over to be executed at %s", id = 330)
+//   void distributedTaskFailover(Address failedAtAddress, Address failoverTarget, @Cause Exception e);
 
    @LogMessage(level = WARN)
    @Message(value = "Unable to invoke method %s on Object instance %s ", id = 331)
@@ -1197,8 +1205,8 @@ public interface Log extends BasicLogger {
 //   @Message(value = "Cannot configure async properties for an sync cache. Set the cache mode to async first.", id = 341)
 //   IllegalStateException asyncPropertiesConfigOnSyncCache();
 
-   @Message(value = "Cannot configure sync properties for an async cache. Set the cache mode to sync first.", id = 342)
-   IllegalStateException syncPropertiesConfigOnAsyncCache();
+//   @Message(value = "Cannot configure sync properties for an async cache. Set the cache mode to sync first.", id = 342)
+//   IllegalStateException syncPropertiesConfigOnAsyncCache();
 
    @Message(value = "Must have a transport set in the global configuration in " +
          "order to define a clustered cache", id = 343)
@@ -1237,8 +1245,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Unable to instantiate loader/writer instance for StoreConfiguration %s", id = 355)
    CacheConfigurationException unableToInstantiateClass(Class<?> storeConfigurationClass);
 
-   @Message(value = "Maximum data container size is currently 2^48 - 1, the number provided was %s", id = 356)
-   CacheConfigurationException evictionSizeTooLarge(long value);
+//   @Message(value = "Maximum data container size is currently 2^48 - 1, the number provided was %s", id = 356)
+//   CacheConfigurationException evictionSizeTooLarge(long value);
 
    @LogMessage(level = ERROR)
    @Message(value = "end() failed for %s", id = 357)
@@ -1277,16 +1285,16 @@ public interface Log extends BasicLogger {
 //   @Message(value = "There was an issue with topology update for topology: %s", id = 367)
 //   void topologyUpdateError(int topologyId, @Cause Throwable t);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Memory approximation calculation for eviction is unsupported for the '%s' Java VM", id = 368)
-   void memoryApproximationUnsupportedVM(String javaVM);
+//   @LogMessage(level = WARN)
+//   @Message(value = "Memory approximation calculation for eviction is unsupported for the '%s' Java VM", id = 368)
+//   void memoryApproximationUnsupportedVM(String javaVM);
 
 //   @LogMessage(level = WARN)
 //   @Message(value = "Ignoring asyncMarshalling configuration", id = 369)
 //   void ignoreAsyncMarshalling();
 
-   @Message(value = "Cache name '%s' cannot be used as it is a reserved, internal name", id = 370)
-   IllegalArgumentException illegalCacheName(String name);
+//   @Message(value = "Cache name '%s' cannot be used as it is a reserved, internal name", id = 370)
+//   IllegalArgumentException illegalCacheName(String name);
 
    @Message(value = "Cannot remove cache configuration '%s' because it is in use", id = 371)
    IllegalStateException configurationInUse(String configurationName);
@@ -1312,8 +1320,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Invocation batching not enabled in current configuration! Please enable it.", id = 378)
    CacheConfigurationException invocationBatchingNotEnabled();
 
-   @Message(value = "Distributed Executors Framework is not supported in simple cache", id = 380)
-   CacheConfigurationException distributedExecutorsNotSupported();
+//   @Message(value = "Distributed Executors Framework is not supported in simple cache", id = 380)
+//   CacheConfigurationException distributedExecutorsNotSupported();
 
    @Message(value = "This configuration is not supported for simple cache", id = 381)
    CacheConfigurationException notSupportedInSimpleCache();
@@ -1322,16 +1330,16 @@ public interface Log extends BasicLogger {
    @Message(value = "Global state persistence was enabled without specifying a location", id = 382)
    void missingGlobalStatePersistentLocation();
 
-   @LogMessage(level = WARN)
-   @Message(value = "The eviction max-entries attribute has been deprecated. Please use the size attribute instead", id = 383)
-   void evictionMaxEntriesDeprecated();
+//   @LogMessage(level = WARN)
+//   @Message(value = "The eviction max-entries attribute has been deprecated. Please use the size attribute instead", id = 383)
+//   void evictionMaxEntriesDeprecated();
 
    @Message(value = "Unable to broadcast invalidation messages", id = 384)
    RuntimeException unableToBroadcastInvalidation(@Cause Throwable e);
 
-   @LogMessage(level = WARN)
-   @Message(value = "The data container class configuration has been deprecated.  This has no current replacement", id = 385)
-   void dataContainerConfigurationDeprecated();
+//   @LogMessage(level = WARN)
+//   @Message(value = "The data container class configuration has been deprecated.  This has no current replacement", id = 385)
+//   void dataContainerConfigurationDeprecated();
 
    @Message(value = "Failed to read persisted state from file %s. Aborting.", id = 386)
    CacheConfigurationException failedReadingPersistentState(@Cause IOException e, File stateFile);
@@ -1398,7 +1406,7 @@ public interface Log extends BasicLogger {
 
    @LogMessage(level = ERROR)
    @Message(value = "Caught exception while invoking a cache manager listener!", id = 405)
-   void failedInvokingCacheManagerListener(@Cause Exception e);
+   void failedInvokingCacheManagerListener(@Cause Throwable e);
 
    @LogMessage(level = WARN)
    @Message(value = "The replication queue is no longer supported since version 9.0. Attribute %s on line %d will be ignored.", id = 406)
@@ -1416,9 +1424,9 @@ public interface Log extends BasicLogger {
    @Message(value = "Node %s attempting to join cache %s with incompatible state", id = 410)
    CacheJoinException nodeWithIncompatibleStateJoiningCache(Address joiner, String cacheName);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Classpath does not look correct. Make sure you are not mixing uber and jars", id = 411)
-   void warnAboutUberJarDuplicates();
+//   @LogMessage(level = WARN)
+//   @Message(value = "Classpath does not look correct. Make sure you are not mixing uber and jars", id = 411)
+//   void warnAboutUberJarDuplicates();
 
    @Message(value = "Cannot determine a synthetic transaction configuration from mode=%s, xaEnabled=%s, recoveryEnabled=%s, batchingEnabled=%s", id = 412)
    CacheConfigurationException unknownTransactionConfiguration(org.infinispan.transaction.TransactionMode mode, boolean xaEnabled, boolean recoveryEnabled, boolean batchingEnabled);
@@ -1463,8 +1471,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Eviction size value cannot be less than or equal to zero if eviction is enabled", id = 424)
    CacheConfigurationException invalidEvictionSize();
 
-   @Message(value = "Eviction cannot use memory-based approximation with LIRS", id = 425)
-   CacheConfigurationException memoryEvictionInvalidStrategyLIRS();
+//   @Message(value = "Eviction cannot use memory-based approximation with LIRS", id = 425)
+//   CacheConfigurationException memoryEvictionInvalidStrategyLIRS();
 
    //removed unused message (id=426)
 
@@ -1491,13 +1499,12 @@ public interface Log extends BasicLogger {
    @Message(value = "A default cache has been requested, but no cache has been set as default for this container", id = 433)
    CacheConfigurationException noDefaultCache();
 
-   @LogMessage(level = WARN)
-   @Message(value = "Direct usage of the ___defaultcache name to retrieve the default cache is deprecated", id = 434)
-   void deprecatedDefaultCache();
+//   @LogMessage(level = WARN)
+//   @Message(value = "Direct usage of the ___defaultcache name to retrieve the default cache is deprecated", id = 434)
+//   void deprecatedDefaultCache();
 
-   @LogMessage(level = WARN)
    @Message(value = "Cache manager initialized with a default cache configuration but without a name for it. Set it in the GlobalConfiguration.", id = 435)
-   void defaultCacheConfigurationWithoutName();
+   CacheConfigurationException defaultCacheConfigurationWithoutName();
 
    @Message(value = "Cache '%s' has been requested, but no cache configuration exists with that name and no default cache has been set for this container", id = 436)
    CacheConfigurationException noSuchCacheConfiguration(String name);
@@ -1520,8 +1527,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Unsupported async cache mode '%s' for transactional caches", id = 441)
    CacheConfigurationException unsupportedAsyncCacheMode(CacheMode cacheMode);
 
-   @Message(value = "Invalid cache loader configuration for '%s'.  If a cache loader is configured as a singleton, the cache loader cannot be shared in a cluster!", id = 442)
-   CacheConfigurationException singletonStoreCannotBeShared(String name);
+//   @Message(value = "Invalid cache loader configuration for '%s'.  If a cache loader is configured as a singleton  , the cache loader cannot be shared in a cluster!", id = 442)
+//   CacheConfigurationException singletonStoreCannotBeShared(String name);
 
    @Message(value = "Invalid cache loader configuration for '%s'. In order for a cache loader to be transactional, it must also be shared.", id = 443)
    CacheConfigurationException clusteredTransactionalStoreMustBeShared(String simpleName);
@@ -1565,20 +1572,20 @@ public interface Log extends BasicLogger {
    @Message(value = "Failure during leaver transactions cleanup", id = 455)
    void transactionCleanupError(@Cause Throwable e);
 
-   @Message(value = "Cache does not contain the atomic map.", id = 456)
-   IllegalStateException atomicMapDoesNotExist();
+//   @Message(value = "Cache does not contain the atomic map.", id = 456)
+//   IllegalStateException atomicMapDoesNotExist();
 
-   @Message(value = "Cache contains %s which is not of expected type %s", id = 457)
-   IllegalStateException atomicMapHasWrongType(Object value, Class<?> type);
+//   @Message(value = "Cache contains %s which is not of expected type %s", id = 457)
+//   IllegalStateException atomicMapHasWrongType(Object value, Class<?> type);
 
-   @Message(value = "Fine grained maps require clustering.hash.groups enabled.", id = 458)
-   IllegalStateException atomicFineGrainedNeedsGroups();
+//   @Message(value = "Fine grained maps require clustering.hash.groups enabled.", id = 458)
+//   IllegalStateException atomicFineGrainedNeedsGroups();
 
-   @Message(value = "Fine grained maps require transactional cache.", id = 459)
-   IllegalStateException atomicFineGrainedNeedsTransactions();
+//   @Message(value = "Fine grained maps require transactional cache.", id = 459)
+//   IllegalStateException atomicFineGrainedNeedsTransactions();
 
-   @Message(value = "Fine grained maps require explict transaction or auto-commit enabled", id = 460)
-   IllegalStateException atomicFineGrainedNeedsExplicitTxOrAutoCommit();
+//   @Message(value = "Fine grained maps require explict transaction or auto-commit enabled", id = 460)
+//   IllegalStateException atomicFineGrainedNeedsExplicitTxOrAutoCommit();
 
    @Message(value = "Class %s should be a subclass of %s", id = 461)
    CacheException invalidEncodingClass(Class<?> configured, Class<?> required);
@@ -1655,8 +1662,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Cannot create remote transaction %s, already completed", id = 482)
    CacheException remoteTransactionAlreadyCompleted(GlobalTransaction gtx);
 
-   @Message(value = "Class %s not found", id = 483)
-   CacheConfigurationException classNotFound(String name);
+//   @Message(value = "Class %s not found", id = 483)
+//   CacheConfigurationException classNotFound(String name);
 
    @Message(value = "Wildcards not allowed in cache names: '%s'", id = 484)
    CacheConfigurationException wildcardsNotAllowedInCacheNames(String name);
@@ -1688,17 +1695,17 @@ public interface Log extends BasicLogger {
 //   @Message(value = "Invalid text format: '%s'", id = 493)
 //   EncodingException invalidTextFormat(Object content);
 
-   @Message(value = "Invalid binary format: '%s'", id = 494)
-   EncodingException invalidBinaryFormat(Object content);
+//   @Message(value = "Invalid binary format: '%s'", id = 494)
+//   EncodingException invalidBinaryFormat(Object content);
 
-   @Message(value = "Error transcoding content", id = 495)
-   EncodingException errorTranscoding(@Cause Throwable cause);
+   @Message(value = "%s encountered error transcoding content", id = 495)
+   EncodingException errorTranscoding(String transcoderName, @Cause Throwable cause);
 
-   @Message(value = "Error transcoding content '%s'", id = 496)
-   EncodingException errorTranscodingContent(@Cause Throwable cause, Object content);
+//   @Message(value = "Error transcoding content '%s'", id = 496)
+//   EncodingException errorTranscodingContent(@Cause Throwable cause, Object content);
 
-   @Message(value = "Unsupported content '%s' during transcoding", id = 497)
-   EncodingException unsupportedContent(Object content);
+   @Message(value = "%s encountered unsupported content '%s' during transcoding", id = 497)
+   EncodingException unsupportedContent(String transcoderName, Object content);
 
 
    @LogMessage(level = WARN)
@@ -1716,9 +1723,6 @@ public interface Log extends BasicLogger {
 
    @Message(value = "Error while persisting global configuration state", id = 502)
    CacheConfigurationException errorPersistingGlobalConfiguration(@Cause Throwable cause);
-
-   @Message(value = "Compatibility mode requires OBJECT storage type but was: %s", id = 503)
-   CacheConfigurationException compatibilityModeOnlyCompatibleWithObjectStorage(StorageType storageType);
 
    @Message(value = "MEMORY based eviction is not supported with OBJECT storage", id = 504)
    CacheConfigurationException offHeapMemoryEvictionNotSupportedWithObject();
@@ -1822,10 +1826,6 @@ public interface Log extends BasicLogger {
    @Message(value = "Grouping requires OBJECT storage type but was: %s", id = 534)
    CacheConfigurationException groupingOnlyCompatibleWithObjectStorage(StorageType storageType);
 
-   @LogMessage(level = WARN)
-   @Message(value = "Cache '%s' uses the deprecated compatibility mode configuration. See 'Embedded/Remote Interoperability' in the user guide for a replacement", id = 536)
-   void warnCompatibilityDeprecated(String cacheName);
-
    @Message(value = "Factory doesn't know how to construct component %s", id = 537)
    CacheConfigurationException factoryCannotConstructComponent(String componentName);
 
@@ -1862,4 +1862,68 @@ public interface Log extends BasicLogger {
 
    @Message(value = "JGroups stack '%s' has a RELAY2 protocol without remote sites", id = 548)
    CacheConfigurationException jgroupsRelayWithoutRemoteSites(String name);
+
+   @Message(value = "A store cannot be shared when utilised with a local cache.", id = 549)
+   CacheConfigurationException sharedStoreWithLocalCache();
+
+   @Message(value = "Invalidation mode only supports when-split=ALLOW_READ_WRITES", id = 550)
+   CacheConfigurationException invalidationPartitionHandlingNotSuported();
+
+   @LogMessage(level = WARN)
+   @Message(value = "The custom interceptors configuration has been deprecated and will be ignored in the future", id = 551)
+   void customInterceptorsDeprecated();
+
+   @LogMessage(level = WARN)
+   @Message(value = "Module '%s' provides an instance of the deprecated ModuleCommandInitializer. Commands that require initialization should implement the InitializableCommand interface", id = 552)
+   void warnModuleCommandInitializerDeprecated(String module);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Ignoring 'marshaller' attribute. Common marshallers are already available at runtime, and to deploy a custom marshaller, consult the 'Encoding' section in the user guide", id = 553)
+   void marshallersNotSupported();
+
+   @LogMessage(level = WARN)
+   @Message(value = "infinispan-boss-marshalling dependency detected, jboss-marshalling has been deprecated and will be removed in the future", id = 554)
+   void jbossMarshallingDetected();
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Unable to set method %s accessible", id = 555)
+   void unableToSetAccessible(Method m, @Cause Exception e);
+
+   @LogMessage(level = INFO)
+   @Message(value = "Starting user marshaller '%s'", id = 556)
+   void startingUserMarshaller(String marshallerClass);
+
+   @Message(value = "Unable to configure JGroups Stack '%s'", id = 557)
+   CacheConfigurationException unableToAddJGroupsStack(String name, @Cause Exception e);
+
+   @Message(value = "The store location '%s' is not a child of the global persistent location '%s'", id = 558)
+   CacheConfigurationException forbiddenStoreLocation(Path location, Path global);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Cannot marshall '%s'", id = 559)
+   void cannotMarshall(Class<?> aClass, @Cause Throwable t);
+
+   @LogMessage(level = WARN)
+   @Message(value = "The AdvancedExternalizer configuration has been deprecated and will be removed in the future", id = 560)
+   void advancedExternalizerDeprecated();
+
+   @Message(value = "Chunk size must be positive, got %d", id = 561)
+   CacheConfigurationException invalidChunkSize(int chunkSize);
+
+   @Message(value = "Invalid cache loader configuration for '%s'.  If a cache loader is configured with purgeOnStartup, the cache loader cannot be shared in a cluster!", id = 562)
+   CacheConfigurationException sharedStoreShouldNotBePurged(String name);
+
+   @Message(value = "Invalid cache loader configuration for '%s'.  This implementation does not support being segmented!", id = 563)
+   CacheConfigurationException storeDoesNotSupportBeingSegmented(String name);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Configured store '%s' is segmented and may use a large number of file descriptors", id = 564)
+   void segmentedStoreUsesManyFileDescriptors(String storeName);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Index.LOCAL is no longer supported since version 10.0. Deprecated usages are automatically converted to Index.PRIMARY_OWNER. Please update your configuration!", id = 565)
+   void indexLocalIsNotSupported();
+
+   @Message(value = "Thread Pool Factory %s is blocking, but this pool requires non blocking threads", id = 566)
+   CacheConfigurationException threadPoolFactoryIsBlocking(String name);
 }

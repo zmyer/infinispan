@@ -2,8 +2,8 @@ package org.infinispan.statetransfer;
 
 import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
-import org.infinispan.distribution.DistributionManager;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.remoting.transport.Address;
@@ -17,11 +17,6 @@ import org.infinispan.topology.CacheTopology;
  */
 @Scope(Scopes.NAMED_CACHE)
 public interface StateConsumer {
-   /**
-    * @deprecated Since 9.3, please use {@link DistributionManager#getCacheTopology()} instead.
-    */
-   @Deprecated
-   CacheTopology getCacheTopology();
 
    boolean isStateTransferInProgress();
 
@@ -36,7 +31,7 @@ public interface StateConsumer {
     */
    CompletableFuture<Void> onTopologyUpdate(CacheTopology cacheTopology, boolean isRebalance);
 
-   void applyState(Address sender, int topologyId, boolean pushTransfer, Collection<StateChunk> stateChunks);
+   CompletionStage<?> applyState(Address sender, int topologyId, boolean pushTransfer, Collection<StateChunk> stateChunks);
 
    /**
     * Cancels all incoming state transfers. The already received data is not discarded.

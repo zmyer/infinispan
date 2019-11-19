@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <infinispan
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} http://www.infinispan.org/schemas/infinispan-config:${infinispan.core.schema.version}
+      xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} https://infinispan.org/schemas/infinispan-config:${infinispan.core.schema.version}
                           urn:infinispan:config:store:jdbc:${infinispan.core.schema.version} http://docs.jboss.org/infinispan/schemas/infinispan-cachestore-jdbc-config:${infinispan.core.schema.version}"
       xmlns="urn:infinispan:config:${infinispan.core.schema.version}">
 
    <cache-container default-cache="JDBCBased_LocalIndex">
+      <serialization>
+         <context-initializer class="org.infinispan.query.test.QueryTestSCIImpl"/>
+      </serialization>
       <transport cluster="MyCluster"/>
       <replicated-cache name="JDBCBased_LocalIndex" mode="SYNC" remote-timeout="20000">
          <transaction mode="NON_XA" />
@@ -36,6 +39,7 @@
                   <id-column name="ID_COLUMN" type="VARCHAR(255)" />
                   <data-column name="DATA_COLUMN" type="BINARY" />
                   <timestamp-column name="TIMESTAMP_COLUMN" type="BIGINT" />
+                  <segment-column name="SEGMENT_COLUMN" type="BIGINT" />
                </string-keyed-table>
                <write-behind modification-queue-size="1024" thread-pool-size="1"/>
             </string-keyed-jdbc-store>
@@ -58,6 +62,7 @@
                   <id-column name="ID_COLUMN" type="VARCHAR(255)" />
                   <data-column name="DATA_COLUMN" type="BINARY" />
                   <timestamp-column name="TIMESTAMP_COLUMN" type="BIGINT" />
+                  <segment-column name="SEGMENT_COLUMN" type="BIGINT" />
                </string-keyed-table>
             </string-keyed-jdbc-store>
          </persistence>
@@ -79,6 +84,7 @@
                   <id-column name="ID_COLUMN" type="VARCHAR(255)" />
                   <data-column name="DATA_COLUMN" type="BINARY" />
                   <timestamp-column name="TIMESTAMP_COLUMN" type="BIGINT" />
+                  <segment-column name="SEGMENT_COLUMN" type="BIGINT" />
                </string-keyed-table>
                <write-behind modification-queue-size="1024" thread-pool-size="1"/>
             </string-keyed-jdbc-store>

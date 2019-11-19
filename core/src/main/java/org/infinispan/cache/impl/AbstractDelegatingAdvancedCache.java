@@ -2,14 +2,12 @@ package org.infinispan.cache.impl;
 
 import java.util.Collection;
 import java.util.EnumSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-
 import javax.security.auth.Subject;
 import javax.transaction.TransactionManager;
 import javax.transaction.xa.XAResource;
@@ -17,7 +15,6 @@ import javax.transaction.xa.XAResource;
 import org.infinispan.AdvancedCache;
 import org.infinispan.CacheSet;
 import org.infinispan.LockedStream;
-import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.dataconversion.Encoder;
@@ -26,16 +23,13 @@ import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
-import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.eviction.EvictionManager;
 import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.partitionhandling.AvailabilityMode;
@@ -52,7 +46,6 @@ import org.infinispan.util.concurrent.locks.LockManager;
  * @author Tristan Tarrant
  * @see org.infinispan.cache.impl.AbstractDelegatingCache
  */
-@MBean(objectName = CacheImpl.OBJECT_NAME, description = "Component that represents an individual cache instance.")
 public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCache<K, V> implements AdvancedCache<K, V> {
 
    protected final AdvancedCache<K, V> cache;
@@ -68,34 +61,13 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
       this.wrapper = wrapper;
    }
 
-   @Override
-   public void addInterceptor(CommandInterceptor i, int position) {
-      cache.getAsyncInterceptorChain().addInterceptor(i, position);
-   }
-
+   /**
+    * @deprecated Since 10.0, will be removed without a replacement
+    */
+   @Deprecated
    @Override
    public AsyncInterceptorChain getAsyncInterceptorChain() {
       return cache.getAsyncInterceptorChain();
-   }
-
-   @Override
-   public boolean addInterceptorAfter(CommandInterceptor i, Class<? extends CommandInterceptor> afterInterceptor) {
-      return cache.getAsyncInterceptorChain().addInterceptorAfter(i, afterInterceptor);
-   }
-
-   @Override
-   public boolean addInterceptorBefore(CommandInterceptor i, Class<? extends CommandInterceptor> beforeInterceptor) {
-      return cache.getAsyncInterceptorChain().addInterceptorBefore(i, beforeInterceptor);
-   }
-
-   @Override
-   public void removeInterceptor(int position) {
-      cache.getAsyncInterceptorChain().removeInterceptor(position);
-   }
-
-   @Override
-   public void removeInterceptor(Class<? extends CommandInterceptor> interceptorType) {
-      cache.getAsyncInterceptorChain().removeInterceptor(interceptorType);
    }
 
    @Override
@@ -103,11 +75,6 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
       //We need to override the super implementation which returns to the decorated cache;
       //otherwise the current operation breaks out of the selected ClassLoader.
       return this;
-   }
-
-   @Override
-   public List<CommandInterceptor> getInterceptorChain() {
-      return cache.getInterceptorChain();
    }
 
    @Override
@@ -153,11 +120,6 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    @Override
    public BatchContainer getBatchContainer() {
       return cache.getBatchContainer();
-   }
-
-   @Override
-   public InvocationContextContainer getInvocationContextContainer() {
-      return cache.getInvocationContextContainer();
    }
 
    @Override
@@ -289,11 +251,6 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    @Override
    public boolean lock(Collection<? extends K> keys) {
       return cache.lock(keys);
-   }
-
-   @Override
-   public void applyDelta(K deltaAwareValueKey, Delta delta, Object... locksToAcquire) {
-      cache.applyDelta(deltaAwareValueKey, delta, locksToAcquire);
    }
 
    @Override

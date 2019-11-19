@@ -4,16 +4,17 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.util.concurrent.CompletionStages;
 
 /**
  * Separate the preload into its own component
  */
 @Scope(Scopes.NAMED_CACHE)
 public class PreloadManager {
-   @Inject private PersistenceManager persistenceManager;
+   @Inject PersistenceManager persistenceManager;
 
    @Start
    public void start() {
-      persistenceManager.preload();
+      CompletionStages.join(persistenceManager.preload());
    }
 }

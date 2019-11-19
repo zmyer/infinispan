@@ -1,13 +1,9 @@
 package org.infinispan.lucene;
 
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
-import java.util.Collections;
-import java.util.Set;
-
-import org.infinispan.commons.io.UnsignedNumeric;
-import org.infinispan.commons.marshall.AbstractExternalizer;
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
 
 /**
  * Used as a key to distinguish file chunk in cache.
@@ -16,24 +12,23 @@ import org.infinispan.commons.marshall.AbstractExternalizer;
  * @author Lukasz Moren
  * @author Sanne Grinovero
  */
-public final class ChunkCacheKey implements IndexScopedKey {
+@ProtoTypeId(ProtoStreamTypeIds.CHUNK_CACHE_KEY)
+public final class ChunkCacheKey extends AbstractIndexScopedKey {
 
    private final int chunkId;
-   private final String indexName;
-   private final String fileName;
-   private final int bufferSize;
-   private final int hashCode;
-   private final int affinitySegmentId;
 
-   public ChunkCacheKey(final String indexName, final String fileName, final int chunkId, final int bufferSize, final int affinitySegmentId) {
+   private final String fileName;
+
+   private final int bufferSize;
+
+   @ProtoFactory
+   public ChunkCacheKey(String indexName, String fileName, int chunkId, int bufferSize, int affinitySegmentId) {
+      super(indexName, affinitySegmentId);
       if (fileName == null)
-         throw new IllegalArgumentException("filename must not be null");
-      this.indexName = indexName;
+         throw new IllegalArgumentException("File name must not be null");
       this.fileName = fileName;
       this.chunkId = chunkId;
       this.bufferSize = bufferSize;
-      this.affinitySegmentId = affinitySegmentId;
-      this.hashCode = generatedHashCode();
    }
 
    /**
@@ -41,8 +36,19 @@ public final class ChunkCacheKey implements IndexScopedKey {
     *
     * @return the chunkId.
     */
+   @ProtoField(number = 3, defaultValue = "0")
    public int getChunkId() {
       return chunkId;
+   }
+
+   /**
+    * Get the file name.
+    *
+    * @return the file name.
+    */
+   @ProtoField(number = 4)
+   public String getFileName() {
+      return fileName;
    }
 
    /**
@@ -50,45 +56,18 @@ public final class ChunkCacheKey implements IndexScopedKey {
     *
     * @return the bufferSize.
     */
+   @ProtoField(number = 5, defaultValue = "1024")
    public int getBufferSize() {
       return bufferSize;
    }
 
-   /**
-    * Get the indexName.
-    *
-    * @return the indexName.
-    */
    @Override
-   public String getIndexName() {
-      return indexName;
-   }
-
-   @Override
-   public int getAffinitySegmentId() {
-      return affinitySegmentId;
-   }
-
-   @Override
-   public Object accept(KeyVisitor visitor) throws Exception {
+   public <T> T accept(KeyVisitor<T> visitor) throws Exception {
       return visitor.visit(this);
-   }
-
-   /**
-    * Get the fileName.
-    *
-    * @return the fileName.
-    */
-   public String getFileName() {
-      return fileName;
    }
 
    @Override
    public int hashCode() {
-      return hashCode;
-   }
-
-   private int generatedHashCode() {
       //bufferSize and indexName excluded from computation: not very relevant
       final int prime = 31;
       int result = prime + fileName.hashCode();
@@ -99,9 +78,7 @@ public final class ChunkCacheKey implements IndexScopedKey {
    public boolean equals(Object obj) {
       if (this == obj)
          return true;
-      if (obj == null)
-         return false;
-      if (ChunkCacheKey.class != obj.getClass())
+      if (obj == null || ChunkCacheKey.class != obj.getClass())
          return false;
       ChunkCacheKey other = (ChunkCacheKey) obj;
       if (chunkId != other.chunkId)
@@ -112,7 +89,7 @@ public final class ChunkCacheKey implements IndexScopedKey {
    }
 
    /**
-    * Changing the encoding could break backwards compatibility
+    * Changing the encoding could break backwards compatibility.
     *
     * @see LuceneKey2StringMapper#getKeyMapping(String)
     */
@@ -120,38 +97,4 @@ public final class ChunkCacheKey implements IndexScopedKey {
    public String toString() {
       return "C|" + fileName + "|" + chunkId + "|" + bufferSize + "|" + indexName + "|" + affinitySegmentId;
    }
-
-   public static final class Externalizer extends AbstractExternalizer<ChunkCacheKey> {
-
-      @Override
-      public void writeObject(final ObjectOutput output, final ChunkCacheKey key) throws IOException {
-         output.writeUTF(key.indexName);
-         output.writeUTF(key.fileName);
-         UnsignedNumeric.writeUnsignedInt(output, key.chunkId);
-         UnsignedNumeric.writeUnsignedInt(output, key.bufferSize);
-         UnsignedNumeric.writeUnsignedInt(output, key.affinitySegmentId);
-      }
-
-      @Override
-      public ChunkCacheKey readObject(final ObjectInput input) throws IOException {
-         final String indexName = input.readUTF();
-         final String fileName = input.readUTF();
-         final int chunkId = UnsignedNumeric.readUnsignedInt(input);
-         final int bufferSize = UnsignedNumeric.readUnsignedInt(input);
-         final int affinitySegmentId = UnsignedNumeric.readUnsignedInt(input);
-         return new ChunkCacheKey(indexName, fileName, chunkId, bufferSize, affinitySegmentId);
-      }
-
-      @Override
-      public Integer getId() {
-         return ExternalizerIds.CHUNK_CACHE_KEY;
-      }
-
-      @Override
-      public Set<Class<? extends ChunkCacheKey>> getTypeClasses() {
-         return Collections.singleton(ChunkCacheKey.class);
-      }
-
-   }
-
 }

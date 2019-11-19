@@ -1,18 +1,24 @@
 package org.infinispan.cache.impl;
 
+import static org.infinispan.util.logging.Log.CONFIG;
+import static org.infinispan.util.logging.Log.CONTAINER;
+
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -30,22 +36,18 @@ import org.infinispan.CacheCollection;
 import org.infinispan.CacheSet;
 import org.infinispan.CacheStream;
 import org.infinispan.LockedStream;
-import org.infinispan.Version;
-import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.commons.dataconversion.Encoder;
 import org.infinispan.commons.dataconversion.Wrapper;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.ByRef;
 import org.infinispan.commons.util.CloseableIterator;
-import org.infinispan.commons.util.CloseableIteratorCollectionAdapter;
-import org.infinispan.commons.util.CloseableIteratorSetAdapter;
 import org.infinispan.commons.util.CloseableSpliterator;
 import org.infinispan.commons.util.Closeables;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.IteratorMapper;
 import org.infinispan.commons.util.SpliteratorMapper;
 import org.infinispan.commons.util.Util;
+import org.infinispan.commons.util.Version;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.format.PropertyFormatter;
 import org.infinispan.container.DataContainer;
@@ -54,7 +56,6 @@ import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.context.Flag;
-import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.context.impl.ImmutableContext;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.encoding.DataConversion;
@@ -63,12 +64,12 @@ import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.EmptyAsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
@@ -94,8 +95,9 @@ import org.infinispan.stream.impl.local.EntryStreamSupplier;
 import org.infinispan.stream.impl.local.KeyStreamSupplier;
 import org.infinispan.stream.impl.local.LocalCacheStream;
 import org.infinispan.util.DataContainerRemoveIterator;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.util.concurrent.AggregateCompletionStage;
 import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -107,6 +109,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 @MBean(objectName = CacheImpl.OBJECT_NAME, description = "Component that represents a simplified cache instance.")
+@Scope(Scopes.NAMED_CACHE)
 public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    private final static Log log = LogFactory.getLog(SimpleCacheImpl.class);
 
@@ -122,12 +125,12 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    private DataConversion keyDataConversion;
    private DataConversion valueDataConversion;
 
-   @Inject private ComponentRegistry componentRegistry;
-   @Inject private Configuration configuration;
-   @Inject private EmbeddedCacheManager cacheManager;
-   @Inject private InternalDataContainer<K, V> dataContainer;
-   @Inject private CacheNotifier<K, V> cacheNotifier;
-   @Inject private TimeService timeService;
+   @Inject ComponentRegistry componentRegistry;
+   @Inject Configuration configuration;
+   @Inject EmbeddedCacheManager cacheManager;
+   @Inject InternalDataContainer<K, V> dataContainer;
+   @Inject CacheNotifier<K, V> cacheNotifier;
+   @Inject TimeService timeService;
 
    private Metadata defaultMetadata;
 
@@ -208,7 +211,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          // entry cannot be marked for removal in DC but it compute does not deal with expiration
          if (isNull(oldEntry)) {
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryCreated(k, value, metadata, true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(k, value, metadata, true, ImmutableContext.INSTANCE, null));
             }
             isCreatedRef.set(true);
             return factory.create(k, value, metadata);
@@ -217,7 +220,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          }
       });
       if (hasListeners && isCreatedRef.get()) {
-         cacheNotifier.notifyCacheEntryCreated(key, value, metadata, false, ImmutableContext.INSTANCE, null);
+         CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(key, value, metadata, false, ImmutableContext.INSTANCE, null));
       }
    }
 
@@ -228,20 +231,28 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public Map<K, V> getAll(Set<?> keys) {
-      Map<K, V> map = CollectionFactory
-            .makeMap(CollectionFactory.computeCapacity(keys.size()));
+      Map<K, V> map = new HashMap<>(keys.size());
+      AggregateCompletionStage<Void> aggregateCompletionStage = null;
+      if (hasListeners && cacheNotifier.hasListener(CacheEntryVisited.class)) {
+         aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
+      }
       for (Object k : keys) {
          Objects.requireNonNull(k, NULL_KEYS_NOT_SUPPORTED);
          InternalCacheEntry<K, V> entry = getDataContainer().get(k);
          if (entry != null) {
             K key = entry.getKey();
             V value = entry.getValue();
-            if (hasListeners) {
-               cacheNotifier.notifyCacheEntryVisited(key, value, true, ImmutableContext.INSTANCE, null);
-               cacheNotifier.notifyCacheEntryVisited(key, value, false, ImmutableContext.INSTANCE, null);
+            if (aggregateCompletionStage != null) {
+               // Notify each key in parallel, but each key must be notified of the post after the pre completes
+               aggregateCompletionStage.dependsOn(
+                     cacheNotifier.notifyCacheEntryVisited(key, value, true, ImmutableContext.INSTANCE, null)
+                           .thenCompose(ignore -> cacheNotifier.notifyCacheEntryVisited(key, value, false, ImmutableContext.INSTANCE, null)));
             }
             map.put(key, value);
          }
+      }
+      if (aggregateCompletionStage != null) {
+         CompletionStages.join(aggregateCompletionStage.freeze());
       }
       return map;
    }
@@ -258,8 +269,8 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          K key = entry.getKey();
          V value = entry.getValue();
          if (hasListeners) {
-            cacheNotifier.notifyCacheEntryVisited(key, value, true, ImmutableContext.INSTANCE, null);
-            cacheNotifier.notifyCacheEntryVisited(key, value, false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryVisited(key, value, true, ImmutableContext.INSTANCE, null));
+            CompletionStages.join(cacheNotifier.notifyCacheEntryVisited(key, value, false, ImmutableContext.INSTANCE, null));
          }
       }
       return entry;
@@ -272,19 +283,25 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public Map<K, CacheEntry<K, V>> getAllCacheEntries(Set<?> keys) {
-      Map<K, CacheEntry<K, V>> map = CollectionFactory
-            .makeMap(CollectionFactory.computeCapacity(keys.size()));
+      Map<K, CacheEntry<K, V>> map = new HashMap<>(keys.size());
+      AggregateCompletionStage<Void> aggregateCompletionStage = null;
+      if (hasListeners && cacheNotifier.hasListener(CacheEntryVisited.class)) {
+         aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
+      }
       for (Object key : keys) {
          Objects.requireNonNull(key, NULL_KEYS_NOT_SUPPORTED);
          InternalCacheEntry<K, V> entry = getDataContainer().get(key);
          if (entry != null) {
             V value = entry.getValue();
-            if (hasListeners) {
-               cacheNotifier.notifyCacheEntryVisited((K) key, value, true, ImmutableContext.INSTANCE, null);
-               cacheNotifier.notifyCacheEntryVisited((K) key, value, false, ImmutableContext.INSTANCE, null);
+            if (aggregateCompletionStage != null) {
+               aggregateCompletionStage.dependsOn(cacheNotifier.notifyCacheEntryVisited((K) key, value, true, ImmutableContext.INSTANCE, null));
+               aggregateCompletionStage.dependsOn(cacheNotifier.notifyCacheEntryVisited((K) key, value, false, ImmutableContext.INSTANCE, null));
             }
             map.put(entry.getKey(), entry);
          }
+      }
+      if (aggregateCompletionStage != null) {
+         CompletionStages.join(aggregateCompletionStage.freeze());
       }
       return map;
    }
@@ -399,7 +416,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       });
       InternalCacheEntry<K, V> oldEntry = oldEntryRef.get();
       if (hasListeners && oldEntry != null) {
-         cacheNotifier.notifyCacheEntriesEvicted(Collections.singleton(oldEntry), ImmutableContext.INSTANCE, null);
+         CompletionStages.join(cacheNotifier.notifyCacheEntriesEvicted(Collections.singleton(oldEntry), ImmutableContext.INSTANCE, null));
       }
    }
 
@@ -426,8 +443,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache status",
          displayName = "Cache status",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public String getCacheStatus() {
       return getStatus().toString();
@@ -438,7 +454,8 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          // we have to check the expiration under lock
          return null == dataContainer.compute(entry.getKey(), (key, oldEntry, factory) -> {
             if (entry.isExpired(now)) {
-               cacheNotifier.notifyCacheEntryExpired(key, oldEntry.getValue(), oldEntry.getMetadata(), ImmutableContext.INSTANCE);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryExpired(key, oldEntry.getValue(),
+                     oldEntry.getMetadata(), ImmutableContext.INSTANCE));
                return null;
             }
             return oldEntry;
@@ -473,6 +490,25 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
+   public CompletableFuture<Long> sizeAsync() {
+      // we have to iterate in order to provide precise result in case of expiration
+      long now = Long.MIN_VALUE;
+      long size = 0;
+      DataContainer<K, V> dataContainer = getDataContainer();
+      for (InternalCacheEntry<K, V> entry : dataContainer) {
+         if (entry.canExpire()) {
+            if (now == Long.MIN_VALUE) now = timeService.wallClockTime();
+            if (!checkExpiration(entry, now)) {
+               ++size;
+            }
+         } else {
+            ++size;
+         }
+      }
+      return CompletableFuture.completedFuture(size);
+   }
+
+   @Override
    public boolean isEmpty() {
       long now = Long.MIN_VALUE;
       DataContainer<K, V> dataContainer = getDataContainer();
@@ -497,8 +533,8 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    @Override
    public boolean containsValue(Object value) {
       Objects.requireNonNull(value, NULL_VALUES_NOT_SUPPORTED);
-      for (V v : getDataContainer().values()) {
-         if (Objects.equals(v, value)) return true;
+      for (InternalCacheEntry<K, V> ice : getDataContainer()) {
+         if (Objects.equals(ice.getValue(), value)) return true;
       }
       return false;
    }
@@ -511,8 +547,8 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          return null;
       } else {
          if (hasListeners) {
-            cacheNotifier.notifyCacheEntryVisited(entry.getKey(), entry.getValue(), true, ImmutableContext.INSTANCE, null);
-            cacheNotifier.notifyCacheEntryVisited(entry.getKey(), entry.getValue(), false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryVisited(entry.getKey(), entry.getValue(), true, ImmutableContext.INSTANCE, null));
+            CompletionStages.join(cacheNotifier.notifyCacheEntryVisited(entry.getKey(), entry.getValue(), false, ImmutableContext.INSTANCE, null));
          }
          return entry.getValue();
       }
@@ -627,19 +663,19 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       DataContainer<K, V> dataContainer = getDataContainer();
       boolean hasListeners = this.hasListeners;
       ArrayList<InternalCacheEntry<K, V>> copyEntries;
-      if (hasListeners) {
+      if (hasListeners && cacheNotifier.hasListener(CacheEntryRemoved.class)) {
          copyEntries = new ArrayList<>(dataContainer.sizeIncludingExpired());
          dataContainer.forEach(entry -> {
             copyEntries.add(entry);
-            cacheNotifier.notifyCacheEntryRemoved(entry.getKey(), entry.getValue(), entry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(entry.getKey(), entry.getValue(), entry.getMetadata(), true, ImmutableContext.INSTANCE, null));
          });
       } else {
          copyEntries = null;
       }
       dataContainer.clear();
-      if (hasListeners) {
+      if (copyEntries != null) {
          for (InternalCacheEntry<K, V> entry : copyEntries) {
-            cacheNotifier.notifyCacheEntryRemoved(entry.getKey(), entry.getValue(), entry.getMetadata(), false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(entry.getKey(), entry.getValue(), entry.getMetadata(), false, ImmutableContext.INSTANCE, null));
          }
       }
    }
@@ -652,20 +688,17 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache name",
          displayName = "Cache name",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public String getCacheName() {
-      String name = getName().equals(BasicCacheContainer.DEFAULT_CACHE_NAME) ? "Default Cache" : getName();
-      return name + "(" + getCacheConfiguration().clustering().cacheMode().toString().toLowerCase() + ")";
+      return getName() + "(" + getCacheConfiguration().clustering().cacheMode().toString().toLowerCase() + ")";
    }
 
    @Override
    @ManagedAttribute(
          description = "Returns the version of Infinispan",
          displayName = "Infinispan version",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public String getVersion() {
       return Version.getVersion();
@@ -674,8 +707,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache configuration in form of properties",
          displayName = "Cache configuration properties",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public Properties getConfigurationAsProperties() {
       return new PropertyFormatter().format(configuration);
@@ -700,12 +732,12 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       getDataContainer().compute(key, (k, oldEntry, factory) -> {
          if (isNull(oldEntry)) {
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryCreated(key, value, metadata, true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(key, value, metadata, true, ImmutableContext.INSTANCE, null));
             }
          } else {
             oldRef.set(oldEntry.getValue(), oldEntry.getMetadata());
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldEntry.getValue(), oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldEntry.getValue(), oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
             }
          }
          if (oldEntry == null) {
@@ -717,9 +749,9 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       V oldValue = oldRef.getValue();
       if (hasListeners) {
          if (oldValue == null) {
-            cacheNotifier.notifyCacheEntryCreated(key, value, metadata, false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(key, value, metadata, false, ImmutableContext.INSTANCE, null));
          } else {
-            cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldValue, oldRef.getMetadata(), false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldValue, oldRef.getMetadata(), false, ImmutableContext.INSTANCE, null));
          }
       }
       return oldValue;
@@ -744,7 +776,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       getDataContainer().compute(key, (k, oldEntry, factory) -> {
          if (isNull(oldEntry)) {
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryCreated(key, value, metadata, true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(key, value, metadata, true, ImmutableContext.INSTANCE, null));
             }
             return factory.create(k, value, metadata);
          } else {
@@ -754,7 +786,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       });
       V oldValue = oldValueRef.get();
       if (hasListeners && oldValue == null) {
-         cacheNotifier.notifyCacheEntryCreated(key, value, metadata, false, ImmutableContext.INSTANCE, null);
+         CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(key, value, metadata, false, ImmutableContext.INSTANCE, null));
       }
       return oldValue;
    }
@@ -785,7 +817,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       getDataContainer().compute(key, (k, oldEntry, factory) -> {
          if (!isNull(oldEntry)) {
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldEntry.getValue(), oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldEntry.getValue(), oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
             }
             oldRef.set(oldEntry.getValue(), oldEntry.getMetadata());
             return factory.update(oldEntry, value, metadata);
@@ -795,7 +827,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       });
       V oldValue = oldRef.getValue();
       if (hasListeners && oldValue != null) {
-         cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldValue, oldRef.getMetadata(), false, ImmutableContext.INSTANCE, null);
+         CompletionStages.join(cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldValue, oldRef.getMetadata(), false, ImmutableContext.INSTANCE, null));
       }
       return oldValue;
    }
@@ -845,7 +877,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          if (Objects.equals(prevValue, oldValue)) {
             oldRef.set(prevValue, oldEntry.getMetadata());
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryModified(key, value, metadata, prevValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryModified(key, value, metadata, prevValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
             }
             return factory.update(oldEntry, value, metadata);
          } else {
@@ -854,7 +886,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       });
       if (oldRef.getValue() != null) {
          if (hasListeners) {
-            cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldRef.getValue(), oldRef.getMetadata(), false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryModified(key, value, metadata, oldRef.getValue(), oldRef.getMetadata(), false, ImmutableContext.INSTANCE, null));
          }
          return true;
       } else {
@@ -870,7 +902,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       getDataContainer().compute((K) key, (k, oldEntry, factory) -> {
          if (!isNull(oldEntry)) {
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryRemoved(oldEntry.getKey(), oldEntry.getValue(), oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(oldEntry.getKey(), oldEntry.getValue(), oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
             }
             oldEntryRef.set(oldEntry);
          }
@@ -879,7 +911,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       InternalCacheEntry<K, V> oldEntry = oldEntryRef.get();
       if (oldEntry != null) {
          if (hasListeners) {
-            cacheNotifier.notifyCacheEntryRemoved(oldEntry.getKey(), oldEntry.getValue(), oldEntry.getMetadata(), false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(oldEntry.getKey(), oldEntry.getValue(), oldEntry.getMetadata(), false, ImmutableContext.INSTANCE, null));
          }
          return oldEntry.getValue();
       } else {
@@ -1015,13 +1047,13 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    @Override
    public boolean startBatch() {
       // invocation batching implies CacheImpl
-      throw log.invocationBatchingNotEnabled();
+      throw CONFIG.invocationBatchingNotEnabled();
    }
 
    @Override
    public void endBatch(boolean successful) {
       // invocation batching implies CacheImpl
-      throw log.invocationBatchingNotEnabled();
+      throw CONFIG.invocationBatchingNotEnabled();
    }
 
    @Override
@@ -1039,7 +1071,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          V oldValue = getValue(oldEntry);
          if (Objects.equals(oldValue, value)) {
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryRemoved(oldEntry.getKey(), oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(oldEntry.getKey(), oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
             }
             oldEntryRef.set(oldEntry);
             return null;
@@ -1050,7 +1082,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       InternalCacheEntry<K, V> oldEntry = oldEntryRef.get();
       if (oldEntry != null) {
          if (hasListeners) {
-            cacheNotifier.notifyCacheEntryRemoved(oldEntry.getKey(), oldEntry.getValue(), oldEntry.getMetadata(), false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(oldEntry.getKey(), oldEntry.getValue(), oldEntry.getMetadata(), false, ImmutableContext.INSTANCE, null));
          }
          return true;
       } else {
@@ -1070,50 +1102,51 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public void addListener(Object listener, KeyFilter<? super K> filter) {
+      if (!hasListeners && canFire(listener)) {
+         hasListeners = true;
+      }
       cacheNotifier.addListener(listener, filter);
-      if (!hasListeners && canFire(listener)) {
-         hasListeners = true;
-      }
    }
 
    @Override
-   public <C> void addListener(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter) {
-      cacheNotifier.addListener(listener, filter, converter);
+   public <C> CompletionStage<Void> addListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter) {
       if (!hasListeners && canFire(listener)) {
          hasListeners = true;
       }
+      return cacheNotifier.addListenerAsync(listener, filter, converter);
    }
 
    @Override
-   public void addListener(Object listener) {
-      cacheNotifier.addListener(listener);
+   public CompletionStage<Void> addListenerAsync(Object listener) {
       if (!hasListeners && canFire(listener)) {
          hasListeners = true;
       }
+      return cacheNotifier.addListenerAsync(listener);
    }
 
    @Override
-   public void removeListener(Object listener) {
-      cacheNotifier.removeListener(listener);
+   public CompletionStage<Void> removeListenerAsync(Object listener) {
+      return cacheNotifier.removeListenerAsync(listener);
    }
 
+   @Deprecated
    @Override
    public Set<Object> getListeners() {
       return cacheNotifier.getListeners();
    }
 
    @Override
-   public <C> void addFilteredListener(Object listener,
+   public <C> CompletionStage<Void> addFilteredListenerAsync(Object listener,
                                        CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter,
                                        Set<Class<? extends Annotation>> filterAnnotations) {
-      cacheNotifier.addFilteredListener(listener, filter, converter, filterAnnotations);
       if (!hasListeners && canFire(listener)) {
          hasListeners = true;
       }
+      return cacheNotifier.addFilteredListenerAsync(listener, filter, converter, filterAnnotations);
    }
 
    @Override
-   public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+   public <C> CompletionStage<Void> addStorageFormatFilteredListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
       throw new UnsupportedOperationException();
    }
 
@@ -1170,39 +1203,13 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       return this; // NO-OP
    }
 
-   @Override
-   public void addInterceptor(CommandInterceptor i, int position) {
-      throw log.interceptorStackNotSupported();
-   }
-
+   /**
+    * @deprecated Since 10.0, will be removed without a replacement
+    */
+   @Deprecated
    @Override
    public AsyncInterceptorChain getAsyncInterceptorChain() {
       return EmptyAsyncInterceptorChain.INSTANCE;
-   }
-
-   @Override
-   public boolean addInterceptorAfter(CommandInterceptor i, Class<? extends CommandInterceptor> afterInterceptor) {
-      throw log.interceptorStackNotSupported();
-   }
-
-   @Override
-   public boolean addInterceptorBefore(CommandInterceptor i, Class<? extends CommandInterceptor> beforeInterceptor) {
-      throw log.interceptorStackNotSupported();
-   }
-
-   @Override
-   public void removeInterceptor(int position) {
-      throw log.interceptorStackNotSupported();
-   }
-
-   @Override
-   public void removeInterceptor(Class<? extends CommandInterceptor> interceptorType) {
-      throw log.interceptorStackNotSupported();
-   }
-
-   @Override
-   public List<CommandInterceptor> getInterceptorChain() {
-      return Collections.emptyList();
    }
 
    @Override
@@ -1237,17 +1244,12 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public boolean lock(K... keys) {
-      throw log.lockOperationsNotSupported();
+      throw CONTAINER.lockOperationsNotSupported();
    }
 
    @Override
    public boolean lock(Collection<? extends K> keys) {
-      throw log.lockOperationsNotSupported();
-   }
-
-   @Override
-   public void applyDelta(K deltaAwareValueKey, Delta delta, Object... locksToAcquire) {
-      throw new UnsupportedOperationException();
+      throw CONTAINER.lockOperationsNotSupported();
    }
 
    @Override
@@ -1261,21 +1263,16 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
    }
 
    @Override
-   public InvocationContextContainer getInvocationContextContainer() {
-      return null;
-   }
-
-   @Override
    public DataContainer<K, V> getDataContainer() {
       DataContainer<K, V> dataContainer = this.dataContainer;
       if (dataContainer == null) {
          ComponentStatus status = getStatus();
          switch (status) {
             case STOPPING:
-               throw log.cacheIsStopping(name);
+               throw CONTAINER.cacheIsStopping(name);
             case TERMINATED:
             case FAILED:
-               throw log.cacheIsTerminated(name, status.toString());
+               throw CONTAINER.cacheIsTerminated(name, status.toString());
             default:
                throw new IllegalStateException("Status: " + status);
          }
@@ -1379,7 +1376,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
                return null;
             } else {
                if (hasListeners) {
-                  cacheNotifier.notifyCacheEntryCreated(k, newValue, metadata, true, ImmutableContext.INSTANCE, null);
+                  CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(k, newValue, metadata, true, ImmutableContext.INSTANCE, null));
                }
                newValueRef.set(newValue);
                return factory.create(k, newValue, metadata);
@@ -1390,7 +1387,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       });
       V newValue = newValueRef.get();
       if (hasListeners && newValue != null) {
-         cacheNotifier.notifyCacheEntryCreated(key, newValueRef.get(), metadata, false, ImmutableContext.INSTANCE, null);
+         CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(key, newValueRef.get(), metadata, false, ImmutableContext.INSTANCE, null));
       }
       return returnEntry == null ? null : returnEntry.getValue();
    }
@@ -1434,13 +1431,13 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
             V newValue = remappingFunction.apply(k, oldValue);
             if (newValue == null) {
                if (hasListeners) {
-                  cacheNotifier.notifyCacheEntryRemoved(k, oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+                  CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(k, oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
                }
                ref.set(k, null, oldValue, oldEntry.getMetadata());
                return null;
             } else {
                if (hasListeners) {
-                  cacheNotifier.notifyCacheEntryModified(k, newValue, metadata, oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+                  CompletionStages.join(cacheNotifier.notifyCacheEntryModified(k, newValue, metadata, oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
                }
                ref.set(k, newValue, oldValue, oldEntry.getMetadata());
                return factory.update(oldEntry, newValue, metadata);
@@ -1452,9 +1449,9 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       V newValue = ref.getNewValue();
       if (hasListeners) {
          if (newValue != null) {
-            cacheNotifier.notifyCacheEntryModified(ref.getKey(), newValue, metadata, ref.getOldValue(), ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryModified(ref.getKey(), newValue, metadata, ref.getOldValue(), ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null));
          } else {
-            cacheNotifier.notifyCacheEntryRemoved(ref.getKey(), ref.getOldValue(), ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(ref.getKey(), ref.getOldValue(), ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null));
          }
       }
       return newValue;
@@ -1539,11 +1536,11 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          V oldValue = ref.getOldValue();
          if (hasListeners) {
             if (newValue == null) {
-               cacheNotifier.notifyCacheEntryRemoved(key, oldValue, ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(key, oldValue, ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null));
             } else if (oldValue == null) {
-               cacheNotifier.notifyCacheEntryCreated(key, newValue, metadata, false, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(key, newValue, metadata, false, ImmutableContext.INSTANCE, null));
             } else {
-               cacheNotifier.notifyCacheEntryModified(key, newValue, metadata, oldValue, ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryModified(key, newValue, metadata, oldValue, ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null));
             }
          }
       }
@@ -1554,14 +1551,14 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       if (newValue == null) {
          if (oldValue != null) {
             if (hasListeners) {
-               cacheNotifier.notifyCacheEntryRemoved(k, oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+               CompletionStages.join(cacheNotifier.notifyCacheEntryRemoved(k, oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
             }
             ref.set(k, null, oldValue, oldEntry.getMetadata());
          }
          return null;
       } else if (oldValue == null) {
          if (hasListeners) {
-            cacheNotifier.notifyCacheEntryCreated(k, newValue, defaultMetadata, true, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryCreated(k, newValue, defaultMetadata, true, ImmutableContext.INSTANCE, null));
          }
          ref.set(k, newValue, null, null);
          return factory.create(k, newValue, defaultMetadata);
@@ -1569,7 +1566,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          return oldEntry;
       } else {
          if (hasListeners) {
-            cacheNotifier.notifyCacheEntryModified(k, newValue, defaultMetadata, oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryModified(k, newValue, defaultMetadata, oldValue, oldEntry.getMetadata(), true, ImmutableContext.INSTANCE, null));
          }
          ref.set(k, newValue, oldValue, oldEntry.getMetadata());
          return factory.update(oldEntry, newValue, defaultMetadata);
@@ -1583,7 +1580,10 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          return true;
       } else if (entry.canExpire()) {
          if (entry.isExpired(timeService.wallClockTime())) {
-            cacheNotifier.notifyCacheEntryExpired(entry.getKey(), entry.getValue(), entry.getMetadata(), ImmutableContext.INSTANCE);
+            if (cacheNotifier.hasListener(CacheEntryExpired.class)) {
+               CompletionStages.join(cacheNotifier.notifyCacheEntryExpired(entry.getKey(), entry.getValue(),
+                     entry.getMetadata(), ImmutableContext.INSTANCE));
+            }
             return true;
          }
       }
@@ -1605,7 +1605,13 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
    @Override
    public void replaceAll(BiFunction<? super K, ? super V, ? extends V> function) {
-      boolean hasListeners = this.hasListeners;
+
+      AggregateCompletionStage<Void> aggregateCompletionStage;
+      if (hasListeners && cacheNotifier.hasListener(CacheEntryModified.class)) {
+         aggregateCompletionStage = CompletionStages.aggregateCompletionStage();
+      } else {
+         aggregateCompletionStage = null;
+      }
       CacheEntryChange<K, V> ref = new CacheEntryChange<>();
       for (Iterator<InternalCacheEntry<K, V>> it = dataContainer.iterator(); it.hasNext(); ) {
          InternalCacheEntry<K, V> ice = it.next();
@@ -1614,9 +1620,9 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
             if (oldValue != null) {
                V newValue = function.apply(k, oldValue);
                Objects.requireNonNull(newValue, NULL_VALUES_NOT_SUPPORTED);
-               if (hasListeners) {
-                  cacheNotifier.notifyCacheEntryModified(k, newValue, defaultMetadata, oldValue, oldEntry.getMetadata(),
-                        true, ImmutableContext.INSTANCE, null);
+               if (aggregateCompletionStage != null) {
+                  aggregateCompletionStage.dependsOn(cacheNotifier.notifyCacheEntryModified(k, newValue, defaultMetadata, oldValue, oldEntry.getMetadata(),
+                        true, ImmutableContext.INSTANCE, null));
                }
                ref.set(k, newValue, oldValue, oldEntry.getMetadata());
                return factory.update(oldEntry, newValue, defaultMetadata);
@@ -1624,10 +1630,13 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
                return null;
             }
          });
-         if (hasListeners) {
-            cacheNotifier.notifyCacheEntryModified(ref.getKey(), ref.getNewValue(), defaultMetadata, ref.getOldValue(),
-                  ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null);
+         if (aggregateCompletionStage != null) {
+            aggregateCompletionStage.dependsOn(cacheNotifier.notifyCacheEntryModified(ref.getKey(), ref.getNewValue(), defaultMetadata, ref.getOldValue(),
+                  ref.getOldMetadata(), false, ImmutableContext.INSTANCE, null));
          }
+      }
+      if (aggregateCompletionStage != null) {
+         CompletionStages.join(aggregateCompletionStage.freeze());
       }
    }
 
@@ -1679,8 +1688,8 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       }
    }
 
-   protected abstract class EntrySetBase<T extends Entry<K, V>> implements CacheSet<T> {
-      private final Set<? extends Entry<K, V>> delegate = getDataContainer().entrySet();
+   protected abstract class EntrySetBase<T extends Entry<K, V>> extends AbstractSet<T> implements CacheSet<T> {
+      private final DataContainer<K, V> delegate = getDataContainer();
 
       @Override
       public int size() {
@@ -1694,17 +1703,12 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
 
       @Override
       public boolean contains(Object o) {
-         return delegate.contains(o);
+         return delegate.get(o) != null;
       }
 
       @Override
       public Object[] toArray() {
-         return delegate.toArray();
-      }
-
-      @Override
-      public <U> U[] toArray(U[] a) {
-         return delegate.toArray(a);
+         return StreamSupport.stream(delegate.spliterator(), false).toArray();
       }
 
       @Override
@@ -1714,11 +1718,6 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
             return SimpleCacheImpl.this.remove(entry.getKey(), entry.getValue());
          }
          return false;
-      }
-
-      @Override
-      public boolean containsAll(Collection<?> c) {
-         return delegate.containsAll(c);
       }
 
       @Override
@@ -1825,14 +1824,10 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       }
    }
 
-   protected class Values extends CloseableIteratorCollectionAdapter<V> implements CacheCollection<V> {
-      public Values() {
-         super(getDataContainer().values());
-      }
-
+   protected class Values extends AbstractSet<V> implements CacheCollection<V> {
       @Override
       public boolean retainAll(Collection<?> c) {
-         Set<Object> retained = CollectionFactory.makeSet(c.size());
+         Set<Object> retained = new HashSet<>(c.size());
          retained.addAll(c);
          boolean changed = false;
          for (InternalCacheEntry<K, V> entry : getDataContainer()) {
@@ -1851,7 +1846,7 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
          } else if (removeSize == 1) {
             return remove(c.iterator().next());
          }
-         Set<Object> removed = CollectionFactory.makeSet(removeSize);
+         Set<Object> removed = new HashSet<>(removeSize);
          removed.addAll(c);
          boolean changed = false;
          for (InternalCacheEntry<K, V> entry : getDataContainer()) {
@@ -1885,6 +1880,11 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       }
 
       @Override
+      public CloseableSpliterator<V> spliterator() {
+         return Closeables.spliterator(new SpliteratorMapper<>(getDataContainer().spliterator(), Map.Entry::getValue));
+      }
+
+      @Override
       public int size() {
          return SimpleCacheImpl.this.size();
       }
@@ -1915,14 +1915,10 @@ public class SimpleCacheImpl<K, V> implements AdvancedCache<K, V> {
       return () -> StreamSupport.stream(spliterator, parallel);
    }
 
-   protected class KeySet extends CloseableIteratorSetAdapter<K> implements CacheSet<K> {
-      public KeySet() {
-         super(getDataContainer().keySet());
-      }
-
+   protected class KeySet extends AbstractSet<K> implements CacheSet<K> {
       @Override
       public boolean retainAll(Collection<?> c) {
-         Set<Object> retained = CollectionFactory.makeSet(c.size());
+         Set<Object> retained = new HashSet<>(c.size());
          retained.addAll(c);
          boolean changed = false;
          for (InternalCacheEntry<K, V> entry : getDataContainer()) {

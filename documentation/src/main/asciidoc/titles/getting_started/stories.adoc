@@ -1,0 +1,4 @@
+//Reference user stories or topics.
+//Please review authoring guidelines in the Contributors Guide.
+
+include::{stories}/assembly_getting_started.adoc[leveloffset=+1]

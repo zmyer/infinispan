@@ -4,6 +4,7 @@ import static org.infinispan.util.logging.events.Messages.MESSAGES;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -11,8 +12,13 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.function.LongConsumer;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.transaction.Transaction;
 
@@ -40,7 +46,6 @@ import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.time.TimeService;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.BackupConfiguration;
 import org.infinispan.configuration.cache.BackupFailurePolicy;
@@ -55,10 +60,16 @@ import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.impl.ComponentRef;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.interceptors.InvocationStage;
+import org.infinispan.interceptors.SyncInvocationStage;
+import org.infinispan.interceptors.impl.SimpleAsyncInvocationStage;
+import org.infinispan.remoting.CacheUnreachableException;
 import org.infinispan.remoting.rpc.RpcManager;
-import org.infinispan.remoting.transport.AggregateBackupResponse;
-import org.infinispan.remoting.transport.BackupResponse;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.remoting.transport.XSiteResponse;
+import org.infinispan.remoting.transport.jgroups.SuspectException;
 import org.infinispan.transaction.impl.AbstractCacheTransaction;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.transaction.impl.TransactionTable;
@@ -68,31 +79,47 @@ import org.infinispan.util.logging.events.EventLogCategory;
 import org.infinispan.util.logging.events.EventLogManager;
 import org.infinispan.util.logging.events.EventLogger;
 import org.infinispan.xsite.notification.SiteStatusListener;
+import org.jgroups.UnreachableException;
+
+import net.jcip.annotations.GuardedBy;
 
 /**
  * @author Mircea Markus
  * @since 5.2
  */
+@Scope(Scopes.NAMED_CACHE)
 public class BackupSenderImpl implements BackupSender {
 
    private static Log log = LogFactory.getLog(BackupSenderImpl.class);
-   private static final BackupResponse EMPTY_RESPONSE = new EmptyBackupResponse();
+   private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private ComponentRef<Cache> cache;
-   @Inject private RpcManager rpcManager;
-   @Inject private Transport transport;
-   @Inject private Configuration config;
-   @Inject private TransactionTable txTable;
-   @Inject private TimeService timeService;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private EventLogManager eventLogManager;
-   @Inject private GlobalConfiguration globalConfig;
-   @Inject private KeyPartitioner keyPartitioner;
+   @Inject ComponentRef<Cache> cache;
+   @Inject RpcManager rpcManager;
+   @Inject Transport transport;
+   @Inject Configuration config;
+   @Inject TransactionTable txTable;
+   @Inject TimeService timeService;
+   @Inject CommandsFactory commandsFactory;
+   @Inject EventLogManager eventLogManager;
+   @Inject GlobalConfiguration globalConfig;
+   @Inject KeyPartitioner keyPartitioner;
 
    private final Map<String, CustomFailurePolicy> siteFailurePolicy = new HashMap<>();
-   private final ConcurrentMap<String, OfflineStatus> offlineStatus = CollectionFactory.makeConcurrentMap();
+   private final ConcurrentMap<String, OfflineStatus> offlineStatus = new ConcurrentHashMap<>();
    private final String localSiteName;
    private String cacheName;
+
+   private static boolean isCommunicationError(Throwable throwable) {
+      Throwable error = throwable;
+      if (throwable instanceof ExecutionException) {
+         error = throwable.getCause();
+      }
+      return error instanceof TimeoutException ||
+            error instanceof org.infinispan.util.concurrent.TimeoutException ||
+            error instanceof UnreachableException ||
+            error instanceof CacheUnreachableException ||
+            error instanceof SuspectException;
+   }
 
    private enum BackupFilter {KEEP_1PC_ONLY, KEEP_2PC_ONLY, KEEP_ALL}
 
@@ -131,69 +158,41 @@ public class BackupSenderImpl implements BackupSender {
    }
 
    @Override
-   public BackupResponse backupPrepare(PrepareCommand command, AbstractCacheTransaction cacheTransaction) throws Exception {
-      List<WriteCommand> modifications = filterModifications(command.getModifications(), cacheTransaction.getLookedUpEntries());
+   public InvocationStage backupPrepare(PrepareCommand command, AbstractCacheTransaction cacheTransaction,
+         Transaction transaction) {
+      List<WriteCommand> modifications = filterModifications(command.getModifications(),
+            cacheTransaction.getLookedUpEntries());
       if (modifications.isEmpty()) {
-         return EMPTY_RESPONSE;
+         return SyncInvocationStage.completedNullStage();
       }
       PrepareCommand prepare = commandsFactory.buildPrepareCommand(command.getGlobalTransaction(), modifications,
-                                                                   command.isOnePhaseCommit());
+            command.isOnePhaseCommit());
       //if we run a 2PC then filter out 1PC prepare backup calls as they will happen during the local commit phase.
       BackupFilter filter = !prepare.isOnePhaseCommit() ? BackupFilter.KEEP_2PC_ONLY : BackupFilter.KEEP_ALL;
       List<XSiteBackup> backups = calculateBackupInfo(filter);
-      return backupCommand(prepare, backups);
+      return backupCommand(prepare, command, backups, transaction);
    }
 
    @Override
-   public void processResponses(BackupResponse backupResponse, VisitableCommand command) throws Throwable {
-      processResponses(backupResponse, command, null);
-   }
-
-   @Override
-   public void processResponses(BackupResponse backupResponse, VisitableCommand command, Transaction transaction) throws Throwable {
-      log.tracef("Processing backup response %s for command %s", backupResponse, command);
-      backupResponse.waitForBackupToFinish();
-      updateOfflineSites(backupResponse);
-      processFailedResponses(backupResponse, command, transaction);
-   }
-
-   private void updateOfflineSites(BackupResponse backupResponse) {
-      if (offlineStatus.isEmpty() || backupResponse.isEmpty()) return;
-      Set<String> communicationErrors = backupResponse.getCommunicationErrors();
-      for (Map.Entry<String, OfflineStatus> statusEntry : offlineStatus.entrySet()) {
-         OfflineStatus status = statusEntry.getValue();
-         if (!status.isEnabled()) {
-            continue;
-         }
-         if (communicationErrors.contains(statusEntry.getKey())) {
-            status.updateOnCommunicationFailure(backupResponse.getSendTimeMillis());
-            log.tracef("OfflineStatus updated %s", status);
-         } else if (!status.isOffline()) {
-            status.reset();
-         }
-      }
-   }
-
-   @Override
-   public BackupResponse backupWrite(WriteCommand command) throws Exception {
+   public InvocationStage backupWrite(WriteCommand command, VisitableCommand originalCommand) {
       List<XSiteBackup> xSiteBackups = calculateBackupInfo(BackupFilter.KEEP_ALL);
-      return backupCommand(command, xSiteBackups);
+      return backupCommand(command, originalCommand, xSiteBackups, null);
    }
 
    @Override
-   public BackupResponse backupCommit(CommitCommand command) throws Exception {
+   public InvocationStage backupCommit(CommitCommand command, Transaction transaction) {
+      ResponseAggregator aggregator = new ResponseAggregator(command, transaction);
+
       //we have a 2PC: we didn't backup the 1PC stuff during prepare, we need to do it now.
-      BackupResponse onePcResponse = sendTo1PCBackups(command);
-      List<XSiteBackup> xSiteBackups = calculateBackupInfo(BackupFilter.KEEP_2PC_ONLY);
-      BackupResponse twoPcResponse = backupCommand(command, xSiteBackups);
-      return new AggregateBackupResponse(onePcResponse, twoPcResponse);
+      sendTo1PCBackups(command, aggregator);
+      sendTo2PCBackups(command, aggregator);
+      return aggregator.freeze();
    }
 
    @Override
-   public BackupResponse backupRollback(RollbackCommand command) throws Exception {
+   public InvocationStage backupRollback(RollbackCommand command, Transaction transaction) {
       List<XSiteBackup> xSiteBackups = calculateBackupInfo(BackupFilter.KEEP_2PC_ONLY);
-      log.tracef("Backing up rollback command to: %s", xSiteBackups);
-      return backupCommand(command, xSiteBackups);
+      return backupCommand(command, command, xSiteBackups, transaction);
    }
 
 
@@ -219,48 +218,69 @@ public class BackupSenderImpl implements BackupSender {
       }
    }
 
-   private BackupResponse backupCommand(VisitableCommand command, List<XSiteBackup> xSiteBackups) throws Exception {
-      XSiteReplicateCommand xsiteCommand = commandsFactory.buildSingleXSiteRpcCommand(command);
-      //RpcManager is null for local caches.
-      //TODO does it make sense to have xsite replication in a local cache?
-      //TODO probably is better to create a LocalRpcManager implementation with xsite support only...
-      return rpcManager == null ?
-             transport.backupRemotely(xSiteBackups, xsiteCommand):
-             rpcManager.invokeXSite(xSiteBackups, xsiteCommand);
+   private void updateOfflineSites(String siteName, long sendTimeMillis, Throwable throwable) {
+      OfflineStatus status = offlineStatus.get(siteName);
+      if (status != null && status.isEnabled()) {
+         if (isCommunicationError(throwable)) {
+            status.updateOnCommunicationFailure(sendTimeMillis);
+         } else if (!status.isOffline()) {
+            status.reset();
+         }
+      }
    }
 
-   private BackupResponse sendTo1PCBackups(CommitCommand command) throws Exception {
+   private InvocationStage backupCommand(VisitableCommand command, VisitableCommand originalCommand,
+         List<XSiteBackup> xSiteBackups, Transaction transaction) {
+      XSiteReplicateCommand xsiteCommand = commandsFactory.buildSingleXSiteRpcCommand(command);
+      ResponseAggregator aggregator = new ResponseAggregator(originalCommand, transaction);
+      sendTo(xsiteCommand, xSiteBackups, aggregator);
+      return aggregator.freeze();
+   }
+
+   private void sendTo(XSiteReplicateCommand command, Collection<XSiteBackup> xSiteBackups,
+         ResponseAggregator aggregator) {
+      //RpcManager is null for local caches.
+      if (rpcManager == null) {
+         for (XSiteBackup backup : xSiteBackups) {
+            XSiteResponse cs = transport.backupRemotely(backup, command);
+            aggregator.addResponse(backup, cs);
+         }
+      } else {
+         for (XSiteBackup backup : xSiteBackups) {
+            XSiteResponse cs = rpcManager.invokeXSite(backup, command);
+            aggregator.addResponse(backup, cs);
+         }
+      }
+   }
+
+   private long sendTimeMillis() {
+      return TimeUnit.NANOSECONDS.toMillis(timeService.time());
+   }
+
+
+   private void sendTo1PCBackups(CommitCommand command, ResponseAggregator aggregator) {
       final LocalTransaction localTx = txTable.getLocalTransaction(command.getGlobalTransaction());
       List<WriteCommand> modifications = filterModifications(localTx.getModifications(), localTx.getLookedUpEntries());
       if (modifications.isEmpty()) {
-         return EMPTY_RESPONSE;
+         return; //nothing to send
       }
-      List<XSiteBackup> backups = calculateBackupInfo(BackupFilter.KEEP_1PC_ONLY);
+      List<XSiteBackup> xSiteBackups = calculateBackupInfo(BackupFilter.KEEP_1PC_ONLY);
+      if (xSiteBackups.isEmpty()) {
+         return; //avoid creating garbage
+      }
       PrepareCommand prepare = commandsFactory.buildPrepareCommand(command.getGlobalTransaction(),
                                                                    modifications, true);
-      return backupCommand(prepare, backups);
+      XSiteReplicateCommand xsiteCommand = commandsFactory.buildSingleXSiteRpcCommand(prepare);
+      sendTo(xsiteCommand, xSiteBackups, aggregator);
    }
 
-   private void processFailedResponses(BackupResponse backupResponse, VisitableCommand command, Transaction transaction) throws Throwable {
-      SitesConfiguration sitesConfiguration = config.sites();
-      Map<String, Throwable> failures = backupResponse.getFailedBackups();
-      BackupFailureException backupException = null;
-      for (Map.Entry<String, Throwable> failure : failures.entrySet()) {
-         BackupFailurePolicy policy = sitesConfiguration.getFailurePolicy(failure.getKey());
-         if (policy == BackupFailurePolicy.CUSTOM) {
-            CustomFailurePolicy customFailurePolicy = siteFailurePolicy.get(failure.getKey());
-            command.acceptVisitor(null, new CustomBackupPolicyInvoker(failure.getKey(), customFailurePolicy, transaction));
-         }
-         if (policy == BackupFailurePolicy.WARN) {
-            log.warnXsiteBackupFailed(cacheName, failure.getKey(), failure.getValue());
-         } else if (policy == BackupFailurePolicy.FAIL) {
-            if (backupException == null)
-               backupException = new BackupFailureException(cacheName);
-            backupException.addFailure(failure.getKey(), failure.getValue());
-         }
+   private void sendTo2PCBackups(CommitCommand command, ResponseAggregator aggregator) {
+      List<XSiteBackup> xSiteBackups = calculateBackupInfo(BackupFilter.KEEP_2PC_ONLY);
+      if (xSiteBackups.isEmpty()) {
+         return; //avoid creating garbage
       }
-      if (backupException != null)
-         throw backupException;
+      XSiteReplicateCommand xsiteCommand = commandsFactory.buildSingleXSiteRpcCommand(command);
+      sendTo(xsiteCommand, xSiteBackups, aggregator);
    }
 
    private List<XSiteBackup> calculateBackupInfo(BackupFilter backupFilter) {
@@ -356,6 +376,93 @@ public class BackupSenderImpl implements BackupSender {
 
    private EventLogger getEventLogger() {
       return eventLogManager.getEventLogger().context(cacheName).scope(rpcManager.getAddress());
+   }
+
+   private class ResponseAggregator extends CompletableFuture<Void> implements XSiteResponse.XSiteResponseCompleted {
+
+      private final VisitableCommand command;
+      private final Transaction transaction;
+      private final AtomicInteger counter;
+      @GuardedBy("this")
+      private BackupFailureException exception;
+      private volatile boolean frozen;
+
+      private ResponseAggregator(VisitableCommand command, Transaction transaction) {
+         this.command = command;
+         this.transaction = transaction;
+         this.counter = new AtomicInteger();
+      }
+
+      @Override
+      public void onCompleted(XSiteBackup backup, long sendTimeNanos, long durationNanos, Throwable throwable) {
+         if (trace) {
+            log.tracef("Backup response from site %s completed for command %s. throwable=%s", command, backup,
+                  throwable);
+         }
+
+         updateOfflineSites(backup.getSiteName(), TimeUnit.NANOSECONDS.toMillis(sendTimeNanos), throwable);
+
+         if (backup.isSync()) {
+            if (throwable != null) {
+               handleException(backup.getSiteName(), throwable);
+            }
+            if (counter.decrementAndGet() == 0 && frozen) {
+               onRequestCompleted();
+            }
+         }
+      }
+
+      void addResponse(XSiteBackup backup, XSiteResponse response) {
+         assert !frozen;
+         response.whenCompleted(this);
+         if (backup.isSync()) {
+            counter.incrementAndGet();
+         }
+      }
+
+      InvocationStage freeze() {
+         frozen = true;
+         if (counter.get() == 0) {
+            onRequestCompleted();
+         }
+         return new SimpleAsyncInvocationStage(this);
+      }
+
+      void handleException(String siteName, Throwable throwable) {
+         switch (config.sites().getFailurePolicy(siteName)) {
+            case FAIL:
+               addException(siteName, throwable);
+               break;
+            case CUSTOM:
+               CustomFailurePolicy failurePolicy = siteFailurePolicy.get(siteName);
+               try {
+                  command.acceptVisitor(null, new CustomBackupPolicyInvoker(siteName, failurePolicy, transaction));
+               } catch (Throwable t) {
+                  addException(siteName, t);
+               }
+               break;
+            case WARN:
+               log.warnXsiteBackupFailed(cacheName, siteName, throwable);
+               //fallthrough
+            default:
+               break;
+         }
+      }
+
+      synchronized void addException(String siteName, Throwable throwable) {
+         if (exception == null) {
+            exception = new BackupFailureException();
+         }
+         exception.addFailure(siteName, throwable);
+      }
+
+      private synchronized void onRequestCompleted() {
+         if (exception != null) {
+            completeExceptionally(exception);
+         } else {
+            complete(null);
+         }
+      }
    }
 
    private static final class CustomBackupPolicyInvoker extends AbstractVisitor {
@@ -497,41 +604,5 @@ public class BackupSenderImpl implements BackupSender {
          result.put(os.getKey(), !os.getValue().isOffline());
       }
       return result;
-   }
-
-   private static class EmptyBackupResponse implements BackupResponse {
-
-      @Override
-      public void waitForBackupToFinish() throws Exception {
-         //no-op, nothing was sent
-      }
-
-      @Override
-      public Map<String, Throwable> getFailedBackups() {
-         //no-op, nothing was sent
-         return Collections.emptyMap();
-      }
-
-      @Override
-      public Set<String> getCommunicationErrors() {
-         //no-op, nothing was sent
-         return Collections.emptySet();
-      }
-
-      @Override
-      public long getSendTimeMillis() {
-         //no-op, this should never be invoked
-         return 0;
-      }
-
-      @Override
-      public boolean isEmpty() {
-         return true;
-      }
-
-      @Override
-      public void notifyFinish(LongConsumer timeElapsedConsumer) {
-         //nothing
-      }
    }
 }

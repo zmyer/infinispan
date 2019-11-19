@@ -5,10 +5,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import org.infinispan.Cache;
+import org.infinispan.configuration.ConfigurationManager;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
@@ -22,14 +25,16 @@ import org.infinispan.util.logging.LogFactory;
  * @since 5.2
  */
 @Listener
+@Scope(Scopes.GLOBAL)
 public class BackupReceiverRepositoryImpl implements BackupReceiverRepository {
 
    private static Log log = LogFactory.getLog(BackupReceiverRepositoryImpl.class);
 
    private final ConcurrentMap<SiteCachePair, BackupReceiver> backupReceivers = new ConcurrentHashMap<>();
 
-   @Inject public EmbeddedCacheManager cacheManager;
-   @Inject public CacheManagerNotifier cacheManagerNotifier;
+   @Inject EmbeddedCacheManager cacheManager;
+   @Inject CacheManagerNotifier cacheManagerNotifier;
+   @Inject ConfigurationManager configurationManager;
 
    @Start
    public void start() {
@@ -66,18 +71,9 @@ public class BackupReceiverRepositoryImpl implements BackupReceiverRepository {
       BackupReceiver backupManager = backupReceivers.get(toLookFor);
       if (backupManager != null) return backupManager;
 
-      //check the default cache first
-      Configuration dcc = cacheManager.getDefaultCacheConfiguration();
-      if (dcc != null && isBackupForRemoteCache(remoteSite, remoteCache, dcc, EmbeddedCacheManager.DEFAULT_CACHE_NAME)) {
-         Cache<Object, Object> cache = cacheManager.getCache();
-         backupReceivers.putIfAbsent(toLookFor, createBackupReceiver(cache));
-         toLookFor.setLocalCacheName(EmbeddedCacheManager.DEFAULT_CACHE_NAME);
-         return backupReceivers.get(toLookFor);
-      }
-
       Set<String> cacheNames = cacheManager.getCacheNames();
       for (String name : cacheNames) {
-         Configuration cacheConfiguration = cacheManager.getCacheConfiguration(name);
+         Configuration cacheConfiguration = configurationManager.getConfiguration(name, false);
          if (cacheConfiguration != null && isBackupForRemoteCache(remoteSite, remoteCache, cacheConfiguration, name)) {
             Cache<Object, Object> cache = cacheManager.getCache(name);
             toLookFor.setLocalCacheName(name);

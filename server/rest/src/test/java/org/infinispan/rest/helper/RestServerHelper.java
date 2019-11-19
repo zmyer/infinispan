@@ -1,16 +1,17 @@
 package org.infinispan.rest.helper;
 
+import java.net.URISyntaxException;
+import java.nio.file.Paths;
+
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.global.GlobalConfigurationBuilder;
-import org.infinispan.configuration.internal.PrivateGlobalConfigurationBuilder;
-import org.infinispan.manager.DefaultCacheManager;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.rest.RestServer;
 import org.infinispan.rest.TestClass;
 import org.infinispan.rest.authentication.Authenticator;
-import org.infinispan.rest.authentication.impl.VoidAuthenticator;
+import org.infinispan.rest.configuration.RestServerConfiguration;
 import org.infinispan.rest.configuration.RestServerConfigurationBuilder;
+import org.infinispan.test.fwk.TestCacheManagerFactory;
 
 /**
  * A small utility class which helps managing REST server.
@@ -23,22 +24,26 @@ public class RestServerHelper {
    private final RestServer restServer = new RestServer();
    private final RestServerConfigurationBuilder restServerConfigurationBuilder = new RestServerConfigurationBuilder();
 
-   private Authenticator authenticator = new VoidAuthenticator();
-
    public RestServerHelper(EmbeddedCacheManager cacheManager) {
       this.cacheManager = cacheManager;
-      restServerConfigurationBuilder.host("localhost").corsAllowForLocalhost("http", 80).port(0).maxContentLength(1_000_000);
+      try {
+         restServerConfigurationBuilder.host("localhost").port(0).maxContentLength(1_000_000)
+               .staticResources(Paths.get(this.getClass().getResource("/static-test").toURI()));
+      } catch (URISyntaxException ignored) {
+      }
    }
 
    public static RestServerHelper defaultRestServer(String... cachesDefined) {
       return defaultRestServer(new ConfigurationBuilder(), cachesDefined);
    }
 
+   public RestServerHelper withConfiguration(RestServerConfiguration configuration) {
+      restServerConfigurationBuilder.read(configuration);
+      return this;
+   }
+
    public static RestServerHelper defaultRestServer(ConfigurationBuilder configuration, String... cachesDefined) {
-      GlobalConfigurationBuilder globalConfigurationBuilder = new GlobalConfigurationBuilder();
-      globalConfigurationBuilder.addModule(PrivateGlobalConfigurationBuilder.class).serverMode(true);
-      GlobalConfigurationBuilder globalConfiguration = globalConfigurationBuilder.nonClusteredDefault();
-      DefaultCacheManager cacheManager = new DefaultCacheManager(globalConfiguration.build(), configuration.build());
+      EmbeddedCacheManager cacheManager = TestCacheManagerFactory.createCacheManager(configuration);
       cacheManager.getClassWhiteList().addClasses(TestClass.class);
       for (String cacheConfiguration : cachesDefined) {
          cacheManager.defineConfiguration(cacheConfiguration, configuration.build());
@@ -48,17 +53,12 @@ public class RestServerHelper {
    }
 
    public RestServerHelper withAuthenticator(Authenticator authenticator) {
-      this.authenticator = authenticator;
+      restServerConfigurationBuilder.authentication().authenticator(authenticator);
       return this;
-   }
-
-   public void defineCache(String cacheName, ConfigurationBuilder configurationBuilder) {
-      cacheManager.defineConfiguration(cacheName, configurationBuilder.build());
    }
 
    public RestServerHelper start(String name) {
       restServerConfigurationBuilder.name(name);
-      restServer.setAuthenticator(authenticator);
       restServer.start(restServerConfigurationBuilder.build(), cacheManager);
       return this;
    }
@@ -80,8 +80,16 @@ public class RestServerHelper {
       return restServer.getPort();
    }
 
+   public RestServerConfiguration getConfiguration() {
+      return restServer.getConfiguration();
+   }
+
    public EmbeddedCacheManager getCacheManager() {
       return cacheManager;
+   }
+
+   public String getBasePath() {
+      return String.format("/%s/%s", restServer.getConfiguration().contextPath(), cacheManager.getCacheManagerConfiguration().defaultCacheName().get());
    }
 
    public RestServerHelper withKeyStore(String keyStorePath, String secret, String type) {
@@ -113,10 +121,10 @@ public class RestServerHelper {
    }
 
    public void ignoreCache(String cacheName) {
-      restServer.ignoreCache(cacheName);
+      restServer.getCacheIgnore().ignoreCache(cacheName);
    }
 
    public void unignoreCache(String cacheName) {
-      restServer.unignore(cacheName);
+      restServer.getCacheIgnore().unignoreCache(cacheName);
    }
 }

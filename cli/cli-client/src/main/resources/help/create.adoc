@@ -1,0 +1,62 @@
+CREATE(1)
+========
+:doctype: manpage
+
+
+NAME
+----
+create - creates caches and counters on ${infinispan.brand.name} servers.
+
+
+SYNOPSIS
+--------
+*create cache* ['OPTIONS'] `CACHE_NAME`
+
+*create counter* ['OPTIONS'] `COUNTER_NAME`
+
+
+CREATE CACHE OPTIONS
+--------------------
+*-f, --file*='FILE'::
+Specifies a configuration file in JSON or XML format.
+
+*-t, --template*='TEMPLATE'::
+Specifies a configuration template. Use tab autocompletion to see available templates.
+
+*-v, --volatile*='[true|false]'::
+Specifies whether the cache is persistent or volatile. The default is false.
+
+
+CREATE COUNTER OPTIONS
+----------------------
+*-t, --type*='[weak|strong]'::
+Specifies if the counter is weak or strong.
+
+*-s, --storage*='[PERSISTENT|VOLATILE]'::
+Specifies whether the counter is persistent or volatile.
+
+*-c, --concurrency-level*='nnn'::
+Sets the concurrency level of the counter.
+
+*-i, --initial-value*='nnn'::
+Sets the initial value of the counter.
+
+*-l, --lower-bound*='nnn'::
+Sets the lower bound of a *strong* counter.
+
+*-u, --upper-bound*='nnn'::
+Sets the upper bound of a *strong* counter.
+
+
+EXAMPLES
+--------
+`create cache --template=org.infinispan.DIST_SYNC mycache` +
+Creates a cache named `mycache` from the `DIST_SYNC` template.
+
+`create counter --initial-value=3 --storage=PERSISTENT --type=strong cnt_a` +
+Creates a strong counter named `cnt_a`.
+
+
+SEE ALSO
+--------
+drop(1)

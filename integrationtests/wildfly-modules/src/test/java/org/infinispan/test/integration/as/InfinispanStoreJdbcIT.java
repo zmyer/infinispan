@@ -5,7 +5,7 @@ import static org.junit.Assert.assertEquals;
 import java.io.IOException;
 
 import org.infinispan.Cache;
-import org.infinispan.Version;
+import org.infinispan.commons.util.Version;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.DefaultCacheManager;
@@ -58,7 +58,7 @@ public class InfinispanStoreJdbcIT {
    @Test
    public void testCacheManager() {
       GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder();
-
+      gcb.defaultCacheName("default");
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.persistence().addStore(JdbcStringBasedStoreConfigurationBuilder.class)
             .table()
@@ -69,6 +69,8 @@ public class InfinispanStoreJdbcIT {
             .dataColumnType("BLOB")
             .timestampColumnName("T")
             .timestampColumnType("BIGINT")
+            .segmentColumnName("S")
+            .segmentColumnType("BIGINT")
             .dataSource().jndiUrl("java:jboss/datasources/ExampleDS");
 
       cm = new DefaultCacheManager(gcb.build(), builder.build());

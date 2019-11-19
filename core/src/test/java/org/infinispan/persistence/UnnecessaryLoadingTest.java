@@ -3,17 +3,18 @@ package org.infinispan.persistence;
 import static org.testng.Assert.assertEquals;
 
 import java.util.concurrent.Executor;
+import java.util.function.Predicate;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.configuration.BuiltBy;
 import org.infinispan.commons.configuration.ConfigurationFor;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.configuration.cache.AbstractStoreConfiguration;
 import org.infinispan.configuration.cache.AbstractStoreConfigurationBuilder;
 import org.infinispan.configuration.cache.AsyncStoreConfiguration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
-import org.infinispan.configuration.cache.SingletonStoreConfiguration;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.InvocationContextFactory;
@@ -27,11 +28,14 @@ import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
+import org.infinispan.persistence.spi.SegmentedAdvancedLoadWriteStore;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.concurrent.IsolationLevel;
+import org.reactivestreams.Publisher;
 import org.testng.annotations.Test;
 
 /**
@@ -121,7 +125,7 @@ public class UnnecessaryLoadingTest extends SingleCacheManagerTest {
       //and verify that the put operation updated the store too:
       InvocationContextFactory icf = TestingUtil.extractComponent(cache, InvocationContextFactory.class);
       InvocationContext context = icf.createSingleKeyNonTxInvocationContext();
-      assert "v2-second".equals(persistenceManager.loadFromAllStores("k2", context.isOriginLocal(), true).getValue());
+      assert "v2-second".equals(CompletionStages.join(persistenceManager.loadFromAllStores("k2", context.isOriginLocal(), true)).getValue());
       assertEquals(countingCS.numLoads,2, "Expected 2, was " + countingCS.numLoads);
 
       assert countingCS.numContains == 0 : "Expected 0, was " + countingCS.numContains;
@@ -177,7 +181,7 @@ public class UnnecessaryLoadingTest extends SingleCacheManagerTest {
       countingCS.numContains = 0;
    }
 
-   public static class CountingStore implements AdvancedLoadWriteStore {
+   public static class CountingStore implements SegmentedAdvancedLoadWriteStore {
       public int numLoads, numContains;
 
       @Override
@@ -235,14 +239,29 @@ public class UnnecessaryLoadingTest extends SingleCacheManagerTest {
       private void incrementLoads() {
          numLoads++;
       }
+
+      @Override
+      public int size(IntSet segments) {
+         return 0;
+      }
+
+      @Override
+      public Publisher publishKeys(IntSet segments, Predicate filter) {
+         return null;
+      }
+
+      @Override
+      public void clear(IntSet segments) {
+
+      }
    }
 
    @BuiltBy(CountingStoreConfigurationBuilder.class)
    @ConfigurationFor(CountingStore.class)
    public static class CountingStoreConfiguration extends AbstractStoreConfiguration {
 
-      public CountingStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore) {
-         super(attributes, async, singletonStore);
+      public CountingStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async) {
+         super(attributes, async);
       }
    }
 
@@ -254,7 +273,7 @@ public class UnnecessaryLoadingTest extends SingleCacheManagerTest {
 
       @Override
       public CountingStoreConfiguration create() {
-         return new CountingStoreConfiguration(attributes.protect(), async.create(), singletonStore.create());
+         return new CountingStoreConfiguration(attributes.protect(), async.create());
       }
 
       @Override

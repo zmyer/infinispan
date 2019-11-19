@@ -24,6 +24,7 @@ import static org.infinispan.stats.impl.StatKeys.TIME_SINCE_START;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.impl.CacheMgmtInterceptor;
 import org.infinispan.stats.Stats;
@@ -39,19 +40,58 @@ import net.jcip.annotations.Immutable;
 @Immutable
 public class StatsImpl implements Stats {
 
-   private static String[] Attributes = new String[]{TIME_SINCE_RESET, TIME_SINCE_START, NUMBER_OF_ENTRIES, NUMBER_OF_ENTRIES_IN_MEMORY,
+   private static final String[] ATTRIBUTES = {TIME_SINCE_RESET, TIME_SINCE_START, NUMBER_OF_ENTRIES, NUMBER_OF_ENTRIES_IN_MEMORY,
          OFF_HEAP_MEMORY_USED, DATA_MEMORY_USED, RETRIEVALS, STORES, HITS, MISSES, REMOVE_HITS, REMOVE_MISSES, EVICTIONS, AVERAGE_READ_TIME,
          AVERAGE_REMOVE_TIME, AVERAGE_WRITE_TIME, AVERAGE_READ_TIME_NANOS, AVERAGE_REMOVE_TIME_NANOS, AVERAGE_WRITE_TIME_NANOS, REQUIRED_MIN_NODES};
 
    private final Map<String, Long> statsMap = new HashMap<>();
-   final CacheMgmtInterceptor mgmtInterceptor;
-   final Stats source;
 
-   public StatsImpl(AsyncInterceptorChain chain) {
-      mgmtInterceptor = chain.findInterceptorExtending(CacheMgmtInterceptor.class);
-      source = null;
+   // mgmtInterceptor and source cannot be both non-null
+   private final CacheMgmtInterceptor mgmtInterceptor;
 
-      if (mgmtInterceptor.getStatisticsEnabled()) {
+   private final Stats source;
+
+   /**
+    * Use this factory to create Stats object from configuration and the interceptor chain.
+    *
+    * @param configuration
+    * @param chain
+    * @return Stats object
+    */
+   public static Stats create(Configuration configuration, AsyncInterceptorChain chain) {
+      if (!configuration.jmxStatistics().available()) {
+         return new StatsImpl();
+      }
+      return new StatsImpl(chain.findInterceptorExtending(CacheMgmtInterceptor.class));
+   }
+
+   /**
+    * Use this factory to create Stats object from {@link StatsCollector}.
+    *
+    * @param collector
+    * @return
+    */
+   public static Stats create(StatsCollector collector) {
+      if (collector == null || !collector.getStatisticsEnabled()) {
+         return new StatsImpl();
+      }
+      return new StatsImpl(collector);
+   }
+
+   /**
+    * Empty stats.
+    */
+   private StatsImpl() {
+      this.source = null;
+      this.mgmtInterceptor = null;
+      emptyStats();
+   }
+
+   private StatsImpl(CacheMgmtInterceptor mgmtInterceptor) {
+      this.source = null;
+      this.mgmtInterceptor = mgmtInterceptor;
+
+      if (mgmtInterceptor != null && mgmtInterceptor.getStatisticsEnabled()) {
          statsMap.put(TIME_SINCE_RESET, mgmtInterceptor.getTimeSinceReset());
          statsMap.put(TIME_SINCE_START, mgmtInterceptor.getTimeSinceStart());
          statsMap.put(NUMBER_OF_ENTRIES, (long) mgmtInterceptor.getNumberOfEntries());
@@ -73,39 +113,39 @@ public class StatsImpl implements Stats {
          statsMap.put(AVERAGE_WRITE_TIME_NANOS, mgmtInterceptor.getAverageWriteTimeNanos());
          statsMap.put(REQUIRED_MIN_NODES, (long) mgmtInterceptor.getRequiredMinimumNumberOfNodes());
       } else {
-         for (String key : Attributes)
-            statsMap.put(key, -1L);
+         emptyStats();
       }
    }
 
-   public StatsImpl(Stats other) {
-      mgmtInterceptor = null;
-      source = other;
-      if (other != null) {
-         statsMap.put(TIME_SINCE_RESET, other.getTimeSinceReset());
-         statsMap.put(TIME_SINCE_START, other.getTimeSinceStart());
-         statsMap.put(NUMBER_OF_ENTRIES, (long) other.getCurrentNumberOfEntries());
-         statsMap.put(NUMBER_OF_ENTRIES_IN_MEMORY, (long) other.getCurrentNumberOfEntriesInMemory());
-         statsMap.put(DATA_MEMORY_USED, other.getDataMemoryUsed());
-         statsMap.put(OFF_HEAP_MEMORY_USED, other.getOffHeapMemoryUsed());
-         statsMap.put(RETRIEVALS, other.getHits() + other.getMisses());
-         statsMap.put(STORES, other.getStores());
-         statsMap.put(HITS, other.getHits());
-         statsMap.put(MISSES, other.getMisses());
-         statsMap.put(REMOVE_HITS, other.getRemoveHits());
-         statsMap.put(REMOVE_MISSES, other.getRemoveMisses());
-         statsMap.put(EVICTIONS, other.getEvictions());
-         statsMap.put(AVERAGE_READ_TIME, other.getAverageReadTime());
-         statsMap.put(AVERAGE_REMOVE_TIME, other.getAverageRemoveTime());
-         statsMap.put(AVERAGE_WRITE_TIME, other.getAverageWriteTime());
-         statsMap.put(AVERAGE_READ_TIME_NANOS, other.getAverageReadTimeNanos());
-         statsMap.put(AVERAGE_REMOVE_TIME_NANOS, other.getAverageRemoveTimeNanos());
-         statsMap.put(AVERAGE_WRITE_TIME_NANOS, other.getAverageWriteTimeNanos());
-         statsMap.put(REQUIRED_MIN_NODES, (long) other.getRequiredMinimumNumberOfNodes());
-      } else {
-         for (String key : Attributes)
-            statsMap.put(key, -1L);
-      }
+   private StatsImpl(Stats other) {
+      this.source = other;
+      this.mgmtInterceptor = null;
+
+      statsMap.put(TIME_SINCE_RESET, other.getTimeSinceReset());
+      statsMap.put(TIME_SINCE_START, other.getTimeSinceStart());
+      statsMap.put(NUMBER_OF_ENTRIES, (long) other.getCurrentNumberOfEntries());
+      statsMap.put(NUMBER_OF_ENTRIES_IN_MEMORY, (long) other.getCurrentNumberOfEntriesInMemory());
+      statsMap.put(DATA_MEMORY_USED, other.getDataMemoryUsed());
+      statsMap.put(OFF_HEAP_MEMORY_USED, other.getOffHeapMemoryUsed());
+      statsMap.put(RETRIEVALS, other.getHits() + other.getMisses());
+      statsMap.put(STORES, other.getStores());
+      statsMap.put(HITS, other.getHits());
+      statsMap.put(MISSES, other.getMisses());
+      statsMap.put(REMOVE_HITS, other.getRemoveHits());
+      statsMap.put(REMOVE_MISSES, other.getRemoveMisses());
+      statsMap.put(EVICTIONS, other.getEvictions());
+      statsMap.put(AVERAGE_READ_TIME, other.getAverageReadTime());
+      statsMap.put(AVERAGE_REMOVE_TIME, other.getAverageRemoveTime());
+      statsMap.put(AVERAGE_WRITE_TIME, other.getAverageWriteTime());
+      statsMap.put(AVERAGE_READ_TIME_NANOS, other.getAverageReadTimeNanos());
+      statsMap.put(AVERAGE_REMOVE_TIME_NANOS, other.getAverageRemoveTimeNanos());
+      statsMap.put(AVERAGE_WRITE_TIME_NANOS, other.getAverageWriteTimeNanos());
+      statsMap.put(REQUIRED_MIN_NODES, (long) other.getRequiredMinimumNumberOfNodes());
+   }
+
+   private void emptyStats() {
+      for (String key : ATTRIBUTES)
+         statsMap.put(key, -1L);
    }
 
    @Override

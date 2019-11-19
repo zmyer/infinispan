@@ -1,7 +1,12 @@
 package org.infinispan.rest.authentication;
 
-import org.infinispan.rest.NettyRestRequest;
-import org.infinispan.rest.RestResponseException;
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.concurrent.CompletionStage;
+
+import org.infinispan.rest.RestServer;
+import org.infinispan.rest.framework.RestRequest;
+import org.infinispan.rest.framework.RestResponse;
 
 import io.netty.channel.ChannelHandlerContext;
 
@@ -10,15 +15,32 @@ import io.netty.channel.ChannelHandlerContext;
  *
  * @author Sebastian Łaskawiec
  */
-public interface Authenticator {
+public interface Authenticator extends Closeable {
 
    /**
-    * Challenges specific {@link NettyRestRequest} for authentication.
+    * Challenges specific {@link RestRequest} for authentication.
     *
     * @param request Request to be challenged.
-    * @throws RestResponseException Thrown on error.
-    * @throws AuthenticationException Thrown if authentication fails.
+    * @return a {@link RestResponse} wrapped in a {@link CompletionStage}
     */
-   void challenge(NettyRestRequest request, ChannelHandlerContext ctx) throws RestResponseException;
+   CompletionStage<RestResponse> challenge(RestRequest request, ChannelHandlerContext ctx);
 
+   /**
+    * Invoked by the {@link RestServer} on startup. Can perform additional configuration
+    * @param restServer
+    */
+   default void init(RestServer restServer) {}
+
+   /**
+    * Returns whether the realm backing this authenticator is ready to authenticate users
+    * @return a boolean indicating whether the real is empty (i.e. has no users)
+    */
+   default boolean isReadyForHttpChallenge() {
+      return true;
+   }
+
+   @Override
+   default void close() throws IOException {
+      // No-op
+   }
 }

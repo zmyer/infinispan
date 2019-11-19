@@ -27,29 +27,18 @@ abstract class AbstractConfigurationChildBuilder implements ConfigurationChildBu
       return builder.clustering();
    }
 
+   /**
+    * @deprecated Since 10.0, custom interceptors support will be removed and only modules will be able to define interceptors
+    */
+   @Deprecated
    @Override
    public CustomInterceptorsConfigurationBuilder customInterceptors() {
       return builder.customInterceptors();
    }
 
    @Override
-   public DataContainerConfigurationBuilder dataContainer() {
-      return builder.dataContainer();
-   }
-
-   @Override
-   public DeadlockDetectionConfigurationBuilder deadlockDetection() {
-      return builder.deadlockDetection();
-   }
-
-   @Override
    public EncodingConfigurationBuilder encoding() {
       return builder.encoding();
-   }
-
-   @Override
-   public EvictionConfigurationBuilder eviction() {
-      return builder.eviction();
    }
 
    @Override
@@ -88,19 +77,8 @@ abstract class AbstractConfigurationChildBuilder implements ConfigurationChildBu
    }
 
    @Override
-   @Deprecated
-   public StoreAsBinaryConfigurationBuilder storeAsBinary() {
-      return builder.storeAsBinary();
-   }
-
-   @Override
    public TransactionConfigurationBuilder transaction() {
       return builder.transaction();
-   }
-
-   @Override
-   public VersioningConfigurationBuilder versioning() {
-     return builder.versioning();
    }
 
    @Override
@@ -111,12 +89,6 @@ abstract class AbstractConfigurationChildBuilder implements ConfigurationChildBu
    @Override
    public SitesConfigurationBuilder sites() {
       return builder.sites();
-   }
-
-   @Override
-   @Deprecated
-   public CompatibilityModeConfigurationBuilder compatibility() {
-      return builder.compatibility();
    }
 
    @Override

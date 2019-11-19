@@ -6,13 +6,12 @@ import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
 
 /**
- * ModuleLifecycle is an internal API hook for delegating lifecycle events to Infinispan sub-modules.
+ * ModuleLifecycle is an API hook for delegating lifecycle events to Infinispan sub-modules.
  * <p>
- * For example, the 'tree' module needs to register specific types with the StreamingMarshaller. The 'query' module
- * needs to register an interceptor with the Cache if the Cache has enabled querying etc etc.
+ * For example the 'query' module needs to register an interceptor with the Cache if the Cache has querying enabled etc.
  * <p>
- * To use this hook, you would need to implement this interface and take the necessary steps to make it discoverable by
- * the {@link java.util.ServiceLoader} mechanism.
+ * To use this hook, you would need to implement this interface and annotate it with
+ * {@link org.infinispan.factories.annotations.InfinispanModule}.
  * <p>
  * Modules who also have their own configuration (see {@see org.infinispan.configuration}), can access their
  * configuration beans via {@link Configuration#module(Class)}

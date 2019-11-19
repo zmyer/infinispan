@@ -1,6 +1,5 @@
 package org.infinispan.notifications.cachelistener;
 
-import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -9,22 +8,27 @@ import org.infinispan.commands.CancellationService;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.NonTxInvocationContext;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.encoding.DataConversion;
+import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.impl.BasicComponentRegistry;
+import org.infinispan.factories.impl.MockBasicComponentRegistry;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.lifecycle.ComponentStatus;
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.notifications.cachelistener.cluster.ClusterEventManager;
 import org.infinispan.notifications.cachelistener.event.CacheEntryCreatedEvent;
 import org.infinispan.notifications.cachelistener.event.Event;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.test.AbstractInfinispanTest;
-import org.infinispan.test.MockBasicComponentRegistry;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
@@ -40,20 +44,26 @@ public class KeyFilterTest extends AbstractInfinispanTest {
       KeyFilter kf = key -> key.toString().equals("accept");
 
       n = new CacheNotifierImpl();
-      mockCache = mock(EncoderCache.class, RETURNS_DEEP_STUBS);
+      mockCache = mock(EncoderCache.class);
+      EmbeddedCacheManager cacheManager = mock(EmbeddedCacheManager.class);
+      when(mockCache.getCacheManager()).thenReturn(cacheManager);
       when(mockCache.getAdvancedCache()).thenReturn(mockCache);
       when(mockCache.getKeyDataConversion()).thenReturn(DataConversion.DEFAULT_KEY);
       when(mockCache.getValueDataConversion()).thenReturn(DataConversion.DEFAULT_VALUE);
       when(mockCache.getStatus()).thenReturn(ComponentStatus.RUNNING);
-      Configuration config = mock(Configuration.class, RETURNS_DEEP_STUBS);
+      ComponentRegistry componentRegistry = mock(ComponentRegistry.class);
+      when(mockCache.getComponentRegistry()).thenReturn(componentRegistry);
       MockBasicComponentRegistry mockRegistry = new MockBasicComponentRegistry();
-      when(mockCache.getComponentRegistry().getComponent(BasicComponentRegistry.class)).thenReturn(mockRegistry);
-      mockRegistry.registerMocks(RpcManager.class, StreamingMarshaller.class, CancellationService.class,
-                                 CommandsFactory.class);
+      when(componentRegistry.getComponent(BasicComponentRegistry.class)).thenReturn(mockRegistry);
+      mockRegistry.registerMocks(RpcManager.class, CancellationService.class, CommandsFactory.class);
+      mockRegistry.registerMock(KnownComponentNames.INTERNAL_MARSHALLER, StreamingMarshaller.class);
       ClusteringDependentLogic.LocalLogic cdl = new ClusteringDependentLogic.LocalLogic();
+      Configuration config = new ConfigurationBuilder().build();
       cdl.init(null, config, mock(KeyPartitioner.class));
+      ClusterEventManager cem = mock(ClusterEventManager.class);
+      when(cem.sendEvents()).thenReturn(CompletableFutures.completedNull());
       TestingUtil.inject(n, mockCache, cdl, config, mockRegistry,
-                         mock(InternalEntryFactory.class), mock(ClusterEventManager.class), mock(KeyPartitioner.class));
+                         mock(InternalEntryFactory.class), cem, mock(KeyPartitioner.class));
       cl = new CacheListener();
       n.start();
       n.addListener(cl, kf);

@@ -2,18 +2,21 @@ package org.infinispan.marshall;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
 import java.io.OutputStream;
 
+import org.infinispan.commons.configuration.ClassWhiteList;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.io.ByteBuffer;
-import org.infinispan.commons.marshall.AbstractMarshaller;
+import org.infinispan.commons.marshall.BufferSizePredictor;
+import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.marshall.persistence.PersistenceMarshaller;
+import org.infinispan.marshall.persistence.impl.PersistenceMarshallerImpl;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.logging.Log;
@@ -26,52 +29,50 @@ import org.infinispan.util.logging.LogFactory;
  * @author Manik Surtani
  */
 @Scope(Scopes.GLOBAL)
-public class TestObjectStreamMarshaller extends AbstractMarshaller implements StreamingMarshaller {
+public class TestObjectStreamMarshaller implements PersistenceMarshaller {
 
    private static Log log = LogFactory.getLog(TestObjectStreamMarshaller.class);
 
-   private final StreamingMarshaller marshaller;
+   private final PersistenceMarshallerImpl marshaller;
 
    public final EmbeddedCacheManager cacheManager;
 
    public TestObjectStreamMarshaller() {
-      cacheManager = TestCacheManagerFactory.createCacheManager();
-      marshaller = cacheManager.getCache().getAdvancedCache().getComponentRegistry().getCacheMarshaller();
+      this(null);
+   }
+
+   public TestObjectStreamMarshaller(SerializationContextInitializer sci) {
+      cacheManager = TestCacheManagerFactory.createCacheManager(sci);
+      marshaller = (PersistenceMarshallerImpl) cacheManager.getCache().getAdvancedCache().getComponentRegistry().getPersistenceMarshaller();
+   }
+
+   public ClassWhiteList getWhiteList() {
+      return cacheManager.getClassWhiteList();
    }
 
    @Override
-   public ObjectOutput startObjectOutput(OutputStream os, boolean isReentrant, int expectedByteSize) throws IOException {
-      return marshaller.startObjectOutput(os, isReentrant, expectedByteSize);
+   public byte[] objectToByteBuffer(Object obj, int estimatedSize) throws IOException, InterruptedException {
+      return marshaller.objectToByteBuffer(obj, estimatedSize);
    }
 
    @Override
-   public void finishObjectOutput(ObjectOutput oo) {
-      marshaller.finishObjectOutput(oo);
+   public byte[] objectToByteBuffer(Object obj) throws IOException, InterruptedException {
+      return marshaller.objectToByteBuffer(obj);
    }
 
    @Override
-   public void objectToObjectStream(Object obj, ObjectOutput out) throws IOException {
-      marshaller.objectToObjectStream(obj, out);
+   public Object objectFromByteBuffer(byte[] buf) throws IOException, ClassNotFoundException {
+      return marshaller.objectFromByteBuffer(buf);
    }
 
    @Override
-   public Object objectFromObjectStream(ObjectInput in) throws IOException, ClassNotFoundException, InterruptedException {
-      return marshaller.objectFromObjectStream(in);
-   }
-
-   @Override
-   public ObjectInput startObjectInput(InputStream is, boolean isReentrant) throws IOException {
-      return marshaller.startObjectInput(is, isReentrant);
-   }
-
-   @Override
-   public void finishObjectInput(ObjectInput oi) {
-      marshaller.finishObjectInput(oi);
-   }
-
-   @Override
-   protected ByteBuffer objectToBuffer(Object o, int estimatedSize) throws IOException, InterruptedException {
+   public ByteBuffer objectToBuffer(Object o) throws IOException, InterruptedException {
       return marshaller.objectToBuffer(o);
+   }
+
+   @Override
+   public BufferSizePredictor getBufferSizePredictor(Object o) {
+      return marshaller.getBufferSizePredictor(o);
    }
 
    @Override
@@ -80,7 +81,17 @@ public class TestObjectStreamMarshaller extends AbstractMarshaller implements St
    }
 
    @Override
-   public boolean isMarshallable(Object o) throws Exception {
+   public void writeObject(Object o, OutputStream out) throws IOException {
+      marshaller.writeObject(o, out);
+   }
+
+   @Override
+   public Object readObject(InputStream in) throws ClassNotFoundException, IOException {
+      return marshaller.readObject(in);
+   }
+
+   @Override
+   public boolean isMarshallable(Object o) {
       return marshaller.isMarshallable(o);
    }
 
@@ -98,5 +109,20 @@ public class TestObjectStreamMarshaller extends AbstractMarshaller implements St
    @Override
    public MediaType mediaType() {
       return marshaller.mediaType();
+   }
+
+   @Override
+   public void register(SerializationContextInitializer initializer) {
+      marshaller.register(initializer);
+   }
+
+   @Override
+   public Marshaller getUserMarshaller() {
+      return marshaller.getUserMarshaller();
+   }
+
+   @Override
+   public int sizeEstimate(Object o) {
+      return marshaller.sizeEstimate(o);
    }
 }

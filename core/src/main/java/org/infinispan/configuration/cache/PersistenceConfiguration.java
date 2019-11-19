@@ -117,6 +117,18 @@ public class PersistenceConfiguration implements Matchable<PersistenceConfigurat
       return false;
    }
 
+   /**
+    * Returns if any store is {@link StoreConfiguration#segmented()}
+    * @return true if any configured store is segmented, otherwise false
+    */
+   public boolean usingSegmentedStore() {
+      for (StoreConfiguration c : stores) {
+         if (c.segmented())
+            return true;
+      }
+      return false;
+   }
+
    public AttributeSet attributes() {
       return attributes;
    }

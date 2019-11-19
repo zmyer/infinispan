@@ -1,0 +1,1 @@
+HEAD /rest/v2/cache-managers/{cacheManagerName}/health

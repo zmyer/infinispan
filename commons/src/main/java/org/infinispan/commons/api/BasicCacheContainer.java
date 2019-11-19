@@ -3,12 +3,8 @@ package org.infinispan.commons.api;
 import java.util.Set;
 
 /**
- * <tt>BasicCacheContainer</tt> defines the methods used to obtain a {@link org.infinispan.api.BasicCache}.
+ * <tt>BasicCacheContainer</tt> defines the methods used to obtain a {@link org.infinispan.commons.api.BasicCache}.
  * <p/>
- *
- *
- * @see org.infinispan.manager.EmbeddedCacheManager
- * @see org.infinispan.client.hotrod.RemoteCacheManager
  *
  * @author Manik Surtani (<a href="mailto:manik@jboss.org">manik@jboss.org</a>)
  * @author Galder Zamarreño
@@ -16,9 +12,6 @@ import java.util.Set;
  * @since 4.0
  */
 public interface BasicCacheContainer extends Lifecycle {
-   @Deprecated
-   String DEFAULT_CACHE_NAME = "___defaultcache";
-
    /**
     * Retrieves the default cache associated with this cache container.
     * <p/>

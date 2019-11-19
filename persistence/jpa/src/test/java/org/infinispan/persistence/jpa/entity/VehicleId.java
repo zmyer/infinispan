@@ -4,7 +4,7 @@ import java.io.Serializable;
 
 import javax.persistence.Embeddable;
 
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.annotations.ProtoField;
 
 /**
  *
@@ -12,14 +12,13 @@ import org.infinispan.marshall.core.ExternalPojo;
  *
  */
 @Embeddable
-public class VehicleId implements Serializable, ExternalPojo {
-   /**
-    *
-    */
-   private static final long serialVersionUID = 3684882454815768434L;
+public class VehicleId implements Serializable {
 
-   private String state;
-   private String licensePlate;
+   @ProtoField(number = 1)
+   String state;
+
+   @ProtoField(number = 2)
+   String licensePlate;
 
    public VehicleId() {
    }

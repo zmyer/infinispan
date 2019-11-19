@@ -74,8 +74,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Factory '%s' not found in server", id = 6016)
    IllegalStateException missingKeyValueFilterConverterFactory(String name);
 
-   @Message(value = "Unauthorized operation", id = 6017)
-   SecurityException unauthorizedOperation();
+   @Message(value = "Unauthorized '%s' operation", id = 6017)
+   SecurityException unauthorizedOperation(String op);
 
    @Message(value = "EXTERNAL SASL mechanism not allowed without SSL client certificate", id = 6018)
    SecurityException externalMechNotAllowedWithoutSSLClientCert();
@@ -98,4 +98,8 @@ public interface Log extends BasicLogger {
 
    @Message(value = "Error serializing script response '%s'", id = 28025)
    EncodingException errorSerializingResponse(Object o);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Removed unclosed iterator '%s'", id = 28026)
+   void removedUnclosedIterator(String iteratorId);
 }

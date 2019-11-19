@@ -2,8 +2,8 @@ package org.infinispan.marshall.core;
 
 import java.io.EOFException;
 import java.io.IOException;
-
-import org.jboss.marshalling.util.IdentityIntMap;
+import java.util.HashMap;
+import java.util.Map;
 
 final class Primitives {
 
@@ -40,7 +40,7 @@ final class Primitives {
    static final int MEDIUM_ARRAY_MIN               = 0x101;
    static final int MEDIUM_ARRAY_MAX               = 0x10100;
 
-   static final IdentityIntMap<Class<?>> PRIMITIVES = new IdentityIntMap<>(0x0.6p0f);
+   static final Map<Class<?>, Integer> PRIMITIVES = new HashMap<>(18);
 
    static {
       PRIMITIVES.put(String.class, ID_STRING);
@@ -374,7 +374,7 @@ final class Primitives {
       return new byte[len];
    }
 
-   private static byte[] readFully(byte[] arr, BytesObjectInput in) {
+   private static byte[] readFully(byte[] arr, BytesObjectInput in) throws EOFException {
       in.readFully(arr);
       return arr;
    }
@@ -456,7 +456,7 @@ final class Primitives {
       return new char[len];
    }
 
-   private static char[] readChars(char[] arr, BytesObjectInput in) {
+   private static char[] readChars(char[] arr, BytesObjectInput in) throws EOFException {
       final int len = arr.length;
       for (int i = 0; i < len; i ++) arr[i] = in.readChar();
       return arr;
@@ -478,7 +478,7 @@ final class Primitives {
       }
    }
 
-   private static double[] readDoubles(double[] arr, BytesObjectInput in) {
+   private static double[] readDoubles(double[] arr, BytesObjectInput in) throws EOFException {
       final int len = arr.length;
       for (int i = 0; i < len; i ++) arr[i] = in.readDouble();
       return arr;
@@ -500,7 +500,7 @@ final class Primitives {
       }
    }
 
-   private static float[] readFloats(float[] arr, BytesObjectInput in) {
+   private static float[] readFloats(float[] arr, BytesObjectInput in) throws EOFException {
       final int len = arr.length;
       for (int i = 0; i < len; i ++) arr[i] = in.readFloat();
       return arr;
@@ -522,7 +522,7 @@ final class Primitives {
       }
    }
 
-   private static int[] readInts(int[] arr, BytesObjectInput in) {
+   private static int[] readInts(int[] arr, BytesObjectInput in) throws EOFException {
       final int len = arr.length;
       for (int i = 0; i < len; i ++) arr[i] = in.readInt();
       return arr;
@@ -544,7 +544,7 @@ final class Primitives {
       }
    }
 
-   private static long[] readLongs(long[] arr, BytesObjectInput in) {
+   private static long[] readLongs(long[] arr, BytesObjectInput in) throws EOFException {
       final int len = arr.length;
       for (int i = 0; i < len; i ++) arr[i] = in.readLong();
       return arr;
@@ -566,7 +566,7 @@ final class Primitives {
       }
    }
 
-   private static short[] readShorts(short[] arr, BytesObjectInput in) {
+   private static short[] readShorts(short[] arr, BytesObjectInput in) throws EOFException {
       final int len = arr.length;
       for (int i = 0; i < len; i ++) arr[i] = in.readShort();
       return arr;

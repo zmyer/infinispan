@@ -1,0 +1,33 @@
+DESCRIBE(1)
+===========
+:doctype: manpage
+
+
+NAME
+----
+describe - displays information about resources.
+
+
+SYNOPSIS
+--------
+*describe* ['PATH']
+
+
+EXAMPLES
+--------
+`describe //containers/default` +
+Displays information about the default container.
+
+`describe //containers/default/caches/mycache` +
+Displays information about the `mycache` cache.
+
+`describe //containers/default/caches/mycache/k1` +
+Displays information about the `k1` key.
+
+`describe //containers/default/counters/cnt1` +
+Displays information about the `cnt1` counter.
+
+
+SEE ALSO
+--------
+cd(1), ls(1)

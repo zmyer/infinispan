@@ -31,6 +31,7 @@ import org.infinispan.remoting.rpc.RpcOptions;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.ResponseCollector;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.concurrent.StateSequencer;
 import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
 import org.infinispan.util.AbstractDelegatingRpcManager;
@@ -48,6 +49,7 @@ import org.testng.annotations.Test;
  */
 @Test(groups = "functional", testName = "statetransfer.TxReplay3Test")
 public class TxReplay3Test extends MultipleCacheManagersTest {
+   private static final Log log = LogFactory.getLog(TxReplay3Test.class);
 
    private static final String VALUE_1 = "v1";
    private static final String VALUE_2 = "v2";
@@ -99,7 +101,7 @@ public class TxReplay3Test extends MultipleCacheManagersTest {
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      createClusteredCaches(3, config());
+      createClusteredCaches(3, TestDataSCI.INSTANCE, config());
    }
 
    private static ConfigurationBuilder config() {
@@ -119,7 +121,6 @@ public class TxReplay3Test extends MultipleCacheManagersTest {
 
    private static class UnsureResponseRpcManager extends AbstractDelegatingRpcManager {
 
-      private static final Log log = LogFactory.getLog(UnsureResponseRpcManager.class);
       private final StateSequencer sequencer;
       private volatile boolean triggered = false;
 
@@ -157,7 +158,6 @@ public class TxReplay3Test extends MultipleCacheManagersTest {
 
    private static class Handler extends AbstractDelegatingHandler {
 
-      private static final Log log = LogFactory.getLog(Handler.class);
       private final StateSequencer sequencer;
       private volatile boolean triggered = false;
       private volatile Address origin;

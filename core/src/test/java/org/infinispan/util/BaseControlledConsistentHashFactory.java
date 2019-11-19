@@ -2,7 +2,6 @@ package org.infinispan.util;
 
 import static org.testng.AssertJUnit.assertEquals;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -16,7 +15,7 @@ import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.ConsistentHashFactory;
 import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
 import org.infinispan.distribution.ch.impl.ScatteredConsistentHash;
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.annotations.ProtoField;
 import org.infinispan.remoting.transport.Address;
 
 /**
@@ -26,10 +25,13 @@ import org.infinispan.remoting.transport.Address;
  * @since 6.0
  */
 @SuppressWarnings("unchecked")
-public abstract class BaseControlledConsistentHashFactory<CH extends ConsistentHash> implements ConsistentHashFactory<CH>,
-                                                                    Serializable, ExternalPojo {
-   protected final Trait<CH> trait;
-   protected final int numSegments;
+public abstract class BaseControlledConsistentHashFactory<CH extends ConsistentHash> implements ConsistentHashFactory<CH> {
+   protected Trait<CH> trait;
+
+   @ProtoField(number = 1, defaultValue = "0")
+   public int numSegments;
+
+   protected BaseControlledConsistentHashFactory() {}
 
    protected BaseControlledConsistentHashFactory(Trait<CH> trait, int numSegments) {
       this.trait = trait;
@@ -103,7 +105,7 @@ public abstract class BaseControlledConsistentHashFactory<CH extends ConsistentH
       assertEquals("Wrong number of segments.", this.numSegments, numSegments);
    }
 
-   protected interface Trait<CH extends ConsistentHash> extends Serializable {
+   protected interface Trait<CH extends ConsistentHash> {
       CH create(Hash hashFunction, int numOwners, int numSegments, List<Address> members, Map<Address, Float> capacityFactors, List<Address>[] segmentOwners, boolean rebalanced);
       CH union(CH ch1, CH ch2);
 
@@ -151,12 +153,6 @@ public abstract class BaseControlledConsistentHashFactory<CH extends ConsistentH
    public static abstract class Default extends BaseControlledConsistentHashFactory<DefaultConsistentHash> {
       protected Default(int numSegments) {
          super(new DefaultTrait(), numSegments);
-      }
-   }
-
-   public static abstract class Scattered extends BaseControlledConsistentHashFactory<ScatteredConsistentHash> {
-      protected Scattered(int numSegments) {
-         super(new ScatteredTrait(), numSegments);
       }
    }
 }

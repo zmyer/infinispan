@@ -13,8 +13,6 @@ import org.infinispan.commands.module.ModuleCommandFactory;
 import org.infinispan.commands.module.ModuleCommandInitializer;
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commons.util.ServiceFinder;
-import org.infinispan.factories.components.ModuleMetadataFileFinder;
-import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -25,7 +23,9 @@ import org.infinispan.util.logging.LogFactory;
  * @author Sanne Grinovero
  * @author Galder Zamarreño
  * @since 4.0
+ * @deprecated Since 10.0, without replacement. To be removed very soon.
  */
+@Deprecated
 public final class ModuleProperties {
 
    private static final Log log = LogFactory.getLog(ModuleProperties.class);
@@ -33,19 +33,6 @@ public final class ModuleProperties {
    private Map<Byte, ModuleCommandFactory> commandFactories;
    private Map<Byte, ModuleCommandInitializer> commandInitializers;
    private Collection<Class<? extends ReplicableCommand>> moduleCommands;
-
-   public static Collection<ModuleLifecycle> resolveModuleLifecycles(ClassLoader cl) {
-      return ServiceFinder.load(ModuleLifecycle.class, cl);
-   }
-
-   /**
-    * Retrieves an Iterable containing metadata file finders declared by each module.
-    * @param cl class loader to use
-    * @return an Iterable of ModuleMetadataFileFinders
-    */
-   public static Iterable<ModuleMetadataFileFinder> getModuleMetadataFiles(ClassLoader cl) {
-      return ServiceFinder.load(ModuleMetadataFileFinder.class, cl);
-   }
 
    public void loadModuleCommandHandlers(ClassLoader cl) {
       Collection<ModuleCommandExtensions> moduleCmdExtLoader = ServiceFinder.load(ModuleCommandExtensions.class, cl);
@@ -59,7 +46,6 @@ public final class ModuleProperties {
             ModuleCommandFactory cmdFactory = extension.getModuleCommandFactory();
             Objects.requireNonNull(cmdFactory);
             ModuleCommandInitializer cmdInitializer = extension.getModuleCommandInitializer();
-            Objects.requireNonNull(cmdInitializer);
             for (Map.Entry<Byte, Class<? extends ReplicableCommand>> command : cmdFactory.getModuleCommands().entrySet()) {
                byte id = command.getKey();
                if (commandFactories.containsKey(id))
@@ -69,7 +55,10 @@ public final class ModuleProperties {
 
                commandFactories.put(id, cmdFactory);
                moduleCommands.add(command.getValue());
-               commandInitializers.put(id, cmdInitializer);
+               if (cmdInitializer != null) {
+                  log.warnModuleCommandInitializerDeprecated(extension.getClass().getName());
+                  commandInitializers.put(id, cmdInitializer);
+               }
             }
          }
       } else {

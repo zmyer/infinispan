@@ -1,12 +1,16 @@
 package org.infinispan.configuration.parsing;
 
+import static org.infinispan.util.logging.Log.CONFIG;
+
 import java.lang.ref.WeakReference;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Stack;
 
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.configuration.global.JGroupsConfigurationBuilder;
 import org.infinispan.remoting.transport.jgroups.EmbeddedJGroupsChannelConfigurator;
 import org.infinispan.remoting.transport.jgroups.FileJGroupsChannelConfigurator;
 import org.infinispan.remoting.transport.jgroups.JGroupsChannelConfigurator;
@@ -18,8 +22,8 @@ public class ConfigurationBuilderHolder {
    private ConfigurationBuilder currentConfigurationBuilder;
    private final Map<Class<? extends ConfigurationParser>, ParserContext> parserContexts;
    private final WeakReference<ClassLoader> classLoader;
-   private final Stack<String> scope;
-   private final Map<String, JGroupsChannelConfigurator> jgroupsStacks;
+   private final Deque<String> scope;
+   private JGroupsConfigurationBuilder jgroupsBuilder;
 
    public ConfigurationBuilderHolder() {
       this(Thread.currentThread().getContextClassLoader());
@@ -29,10 +33,10 @@ public class ConfigurationBuilderHolder {
       this.globalConfigurationBuilder = new GlobalConfigurationBuilder();
       this.namedConfigurationBuilders = new HashMap<>();
       this.parserContexts = new HashMap<>();
+      this.jgroupsBuilder = globalConfigurationBuilder.transport().jgroups();
       this.classLoader = new WeakReference<>(classLoader);
-      scope = new Stack<>();
+      scope = new ArrayDeque<>();
       scope.push(ParserScope.GLOBAL.name());
-      this.jgroupsStacks = new HashMap<>();
    }
 
    public GlobalConfigurationBuilder getGlobalConfigurationBuilder() {
@@ -106,40 +110,40 @@ public class ConfigurationBuilderHolder {
    public void validate() {
       globalConfigurationBuilder.defaultCacheName().ifPresent(name -> {
          if (!namedConfigurationBuilders.containsKey(name))
-            throw Parser.log.missingDefaultCacheDeclaration(name);
+            throw CONFIG.missingDefaultCacheDeclaration(name);
       });
    }
 
    public void addJGroupsStack(FileJGroupsChannelConfigurator stack) {
       String name = stack.getName();
-      if (jgroupsStacks.containsKey(name)) {
-         throw Parser.log.duplicateJGroupsStack(name);
+      if (jgroupsBuilder.getStack(name) != null) {
+         throw CONFIG.duplicateJGroupsStack(name);
       }
-      jgroupsStacks.put(name, stack);
+      jgroupsBuilder.addStackFile(name).fileChannelConfigurator(stack);
    }
 
    public void addJGroupsStack(EmbeddedJGroupsChannelConfigurator stack, String extend) {
       String name = stack.getName();
-      if (jgroupsStacks.containsKey(name)) {
-         throw Parser.log.duplicateJGroupsStack(name);
+      if (jgroupsBuilder.getStack(name) != null) {
+         throw CONFIG.duplicateJGroupsStack(name);
       }
 
       if (extend == null) {
          // Add as is
-         jgroupsStacks.put(stack.getName(), stack);
+         jgroupsBuilder.addStack(stack.getName()).channelConfigurator(stack);
       } else {
          // See if the parent exists
-         if (!jgroupsStacks.containsKey(extend)) {
-            throw Parser.log.missingJGroupsStack(extend);
+         if (jgroupsBuilder.getStack(extend) == null) {
+            throw CONFIG.missingJGroupsStack(extend);
          } else {
-            JGroupsChannelConfigurator baseStack = jgroupsStacks.get(extend);
-            jgroupsStacks.put(stack.getName(), EmbeddedJGroupsChannelConfigurator.combine(baseStack, stack));
+            JGroupsChannelConfigurator baseStack = jgroupsBuilder.getStack(extend);
+            jgroupsBuilder.addStack(stack.getName()).channelConfigurator(EmbeddedJGroupsChannelConfigurator.combine(baseStack, stack));
          }
       }
    }
 
-   public JGroupsChannelConfigurator getJGroupsStack(String name) {
-      return jgroupsStacks.get(name);
+   JGroupsChannelConfigurator getJGroupsStack(String name) {
+      return jgroupsBuilder.getStack(name);
    }
 
 }

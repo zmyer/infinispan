@@ -1,0 +1,24 @@
+//Directory attributes
+:stories: ../../stories
+:topics: ../topics
+:images_dir: ../{topics}/images
+
+//Community doc attributes
+include::../{topics}/attributes/community-attributes.adoc[]
+
+//Community title attributes
+:toc2:
+:icons: font
+:toclevels: 3
+:numbered:
+:stem: asciimath
+
+//Title
+= Contributing to {brandname}
+
+Feel like contributing to {brandname}?  This guide will help you set up your
+environment, walk you through best practices, and help you debug, improve
+and add features to {brandname}.
+
+//User stories
+include::stories.adoc[]

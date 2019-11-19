@@ -5,14 +5,13 @@ import static org.infinispan.configuration.cache.XSiteStateTransferConfiguration
 import static org.infinispan.configuration.cache.XSiteStateTransferConfiguration.MAX_RETRIES;
 import static org.infinispan.configuration.cache.XSiteStateTransferConfiguration.TIMEOUT;
 import static org.infinispan.configuration.cache.XSiteStateTransferConfiguration.WAIT_TIME;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.configuration.ConfigurationBuilderInfo;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
 import org.infinispan.configuration.global.GlobalConfiguration;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * Configuration Builder to configure the state transfer between sites.
@@ -22,7 +21,6 @@ import org.infinispan.util.logging.LogFactory;
  */
 public class XSiteStateTransferConfigurationBuilder extends AbstractConfigurationChildBuilder
       implements Builder<XSiteStateTransferConfiguration>, ConfigurationBuilderInfo {
-   private static final Log log = LogFactory.getLog(XSiteStateTransferConfigurationBuilder.class);
    private final BackupConfigurationBuilder backupConfigurationBuilder;
    private final AttributeSet attributes;
 
@@ -35,11 +33,15 @@ public class XSiteStateTransferConfigurationBuilder extends AbstractConfiguratio
 
    @Override
    public void validate() {
+      int chunkSize = attributes.attribute(StateTransferConfiguration.CHUNK_SIZE).get();
+      if (chunkSize <= 0) {
+         throw CONFIG.invalidChunkSize(chunkSize);
+      }
       if (attributes.attribute(TIMEOUT).get() <= 0) {
-         throw log.invalidXSiteStateTransferTimeout();
+         throw CONFIG.invalidXSiteStateTransferTimeout();
       }
       if (attributes.attribute(WAIT_TIME).get() <= 0) {
-         throw log.invalidXSiteStateTransferWaitTime();
+         throw CONFIG.invalidXSiteStateTransferWaitTime();
       }
    }
 
@@ -76,7 +78,7 @@ public class XSiteStateTransferConfigurationBuilder extends AbstractConfiguratio
    }
 
    /**
-    * The maximum number of retries when a push state command fails. A value <= 0 (zero) mean that the command will not
+    * The maximum number of retries when a push state command fails. A value &le; 0 (zero) mean that the command will not
     * retry. Default value is 30.
     */
    public final XSiteStateTransferConfigurationBuilder maxRetries(int maxRetries) {
@@ -85,7 +87,7 @@ public class XSiteStateTransferConfigurationBuilder extends AbstractConfiguratio
    }
 
    /**
-    * The waiting time (in milliseconds) between each retry. The value should be > 0 (zero). Default value is 2 seconds.
+    * The waiting time (in milliseconds) between each retry. The value should be &gt; 0 (zero). Default value is 2 seconds.
     */
    public final XSiteStateTransferConfigurationBuilder waitTime(long waitingTimeBetweenRetries) {
       attributes.attribute(WAIT_TIME).set(waitingTimeBetweenRetries);

@@ -1,11 +1,14 @@
 package org.infinispan.tools.store.migrator;
 
 import static org.infinispan.tools.store.migrator.Element.CACHE_NAME;
+import static org.infinispan.tools.store.migrator.Element.MARSHALLER;
 import static org.infinispan.tools.store.migrator.Element.TARGET;
 import static org.infinispan.tools.store.migrator.Element.TYPE;
+import static org.infinispan.tools.store.migrator.Element.VERSION;
 
 import java.util.Properties;
 
+import org.infinispan.commons.util.Version;
 import org.infinispan.commons.CacheConfigurationException;
 
 public class StoreProperties{
@@ -14,6 +17,7 @@ public class StoreProperties{
    private final Properties properties;
    private final StoreType storeType;
    private final String cacheName;
+   private final int majorVersion;
 
    public StoreProperties(Element root, Properties properties) {
       this.root = root;
@@ -21,10 +25,27 @@ public class StoreProperties{
       validate();
       this.storeType = StoreType.valueOf(get(TYPE).toUpperCase());
       this.cacheName = get(CACHE_NAME);
+      this.majorVersion = majorVersion();
+   }
+
+   private int majorVersion() {
+      String version = get(VERSION);
+      if (version != null)
+         return Integer.parseInt(version);
+
+      return Integer.parseInt(Version.getMajor());
    }
 
    public boolean isTargetStore() {
       return root == TARGET;
+   }
+
+   public int getMajorVersion() {
+      return majorVersion;
+   }
+
+   public boolean isCurrentMajorVersion() {
+      return Integer.parseInt(Version.getMajor()) == majorVersion;
    }
 
    public String cacheName() {
@@ -70,5 +91,10 @@ public class StoreProperties{
    private void validate() {
       required(TYPE);
       required(CACHE_NAME);
+
+      if (get(MARSHALLER, TYPE) != null) {
+         throw new CacheConfigurationException(String.format("Property '%s' has been removed, please specify %s instead.",
+               key(MARSHALLER, TYPE), key(VERSION)));
+      }
    }
 }

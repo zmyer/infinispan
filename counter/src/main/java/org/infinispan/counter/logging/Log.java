@@ -6,6 +6,7 @@ import org.infinispan.counter.exception.CounterConfigurationException;
 import org.infinispan.counter.exception.CounterException;
 import org.infinispan.util.ByteString;
 import org.jboss.logging.BasicLogger;
+import org.jboss.logging.Logger;
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageLogger;
@@ -18,6 +19,8 @@ import org.jboss.logging.annotations.MessageLogger;
  */
 @MessageLogger(projectCode = "ISPN")
 public interface Log extends BasicLogger {
+   String LOG_ROOT = "org.infinispan.";
+   Log CONTAINER = Logger.getMessageLogger(Log.class, LOG_ROOT + "CONTAINER");
 
    //29501 is in commons log
 
@@ -104,4 +107,7 @@ public interface Log extends BasicLogger {
 
    @Message(value = "CounterManager hasn't started yet or has been stopped.", id = 29528)
    CounterException managerNotStarted();
+
+   @Message(value = "MBean registration failed", id = 29529)
+   CounterException jmxRegistrationFailed(@Cause Throwable cause);
 }

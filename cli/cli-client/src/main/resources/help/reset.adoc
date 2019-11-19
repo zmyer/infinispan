@@ -1,0 +1,24 @@
+RESET(1)
+========
+:doctype: manpage
+
+
+NAME
+----
+reset - restores the initial values of counters.
+
+
+SYNOPSIS
+--------
+*reset* ['COUNTER_NAME']
+
+
+EXAMPLE
+-------
+`reset cnt_a` +
+Resets the `cnt_a` counter.
+
+
+SEE ALSO
+--------
+add(1), cas(1), drop(1)

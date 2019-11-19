@@ -1,5 +1,7 @@
 package org.infinispan.persistence.remote.configuration;
 
+import static org.infinispan.persistence.remote.logging.Log.CONFIG;
+
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 
@@ -140,7 +142,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
             case AUTH_EXTERNAL: {
                if (hasMech)
                   throw ParseUtils.unexpectedElement(reader);
-               parseAuthenticationDigest(reader, authentication);
+               parseAuthenticationExternal(reader, authentication);
                hasMech = true;
                break;
             }
@@ -305,12 +307,8 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
                builder.maxActive(Integer.parseInt(value));
                break;
             }
-            case MAX_IDLE: {
-               builder.maxIdle(Integer.parseInt(value));
-               break;
-            }
-            case MAX_TOTAL: {
-               builder.maxTotal(Integer.parseInt(value));
+            case MAX_PENDING_REQUESTS: {
+               builder.maxPendingRequests(Integer.parseInt(value));
                break;
             }
             case MIN_EVICTABLE_IDLE_TIME: {
@@ -321,12 +319,19 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
                builder.minIdle(Integer.parseInt(value));
                break;
             }
-            case TEST_WHILE_IDLE: {
-               builder.testWhileIdle(Boolean.parseBoolean(value));
+            case MAX_WAIT: {
+               builder.maxWait(Integer.parseInt(value));
                break;
             }
+            case MAX_IDLE:
+            case MAX_TOTAL:
+            case TEST_WHILE_IDLE:
             case TIME_BETWEEN_EVICTION_RUNS: {
-               builder.timeBetweenEvictionRuns(Long.parseLong(value));
+               if (reader.getSchema().since(10, 0)) {
+                  throw ParseUtils.unexpectedAttribute(reader, i);
+               } else {
+                  CONFIG.ignoreXmlAttribute(attribute.getLocalName());
+               }
                break;
             }
             default: {
@@ -351,7 +356,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
                builder.port(Integer.parseInt(value));
                break;
             case OUTBOUND_SOCKET_BINDING:
-               log.ignoreXmlAttribute(attribute);
+               CONFIG.ignoreXmlAttribute(attribute);
                break;
             default:
                throw ParseUtils.unexpectedAttribute(reader, i);
@@ -396,7 +401,7 @@ public class RemoteStoreConfigurationParser implements ConfigurationParser {
                if (!reader.getSchema().since(9, 1)) {
                   throw ParseUtils.unexpectedAttribute(reader, i);
                } else {
-                  log.ignoreXmlAttribute(attribute);
+                  CONFIG.ignoreXmlAttribute(attribute);
                }
                break;
             }

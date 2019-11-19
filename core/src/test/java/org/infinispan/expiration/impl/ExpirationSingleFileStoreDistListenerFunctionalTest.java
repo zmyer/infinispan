@@ -3,6 +3,7 @@ package org.infinispan.expiration.impl;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -10,7 +11,6 @@ import org.infinispan.configuration.cache.SingleFileStoreConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
-import org.infinispan.commons.time.TimeService;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.Factory;
 import org.testng.annotations.Test;
@@ -25,13 +25,8 @@ public class ExpirationSingleFileStoreDistListenerFunctionalTest extends Expirat
    public Object[] factory() {
       return new Object[]{
             // Test is for single file store with a listener in a dist cache and we don't care about memory storage types
-            new ExpirationSingleFileStoreDistListenerFunctionalTest(),
+            new ExpirationSingleFileStoreDistListenerFunctionalTest().cacheMode(CacheMode.DIST_SYNC),
       };
-   }
-
-   @Override
-   protected String parameters() {
-      return null;
    }
 
    @Override
@@ -39,7 +34,7 @@ public class ExpirationSingleFileStoreDistListenerFunctionalTest extends Expirat
       config
               // Prevent the reaper from running, reaperEnabled(false) doesn't work when a store is present
               .expiration().wakeUpInterval(Long.MAX_VALUE)
-              .clustering().cacheMode(CacheMode.DIST_SYNC)
+              .clustering().cacheMode(cacheMode)
               .persistence().addSingleFileStore().location(TestingUtil.tmpDirectory(this.getClass()));
    }
 
@@ -52,6 +47,14 @@ public class ExpirationSingleFileStoreDistListenerFunctionalTest extends Expirat
    protected void removeFromContainer(String key) {
       super.removeFromContainer(key);
       extraCache.getAdvancedCache().getDataContainer().remove(key);
+   }
+
+   @Override
+   protected void processExpiration() {
+      // Invoking process expiration only removes primary owned entries - so we need to invoke it on the extra cache
+      // in addition to the original cache
+      super.processExpiration();
+      TestingUtil.extractComponent(extraCache, InternalExpirationManager.class).processExpiration();
    }
 
    @Override

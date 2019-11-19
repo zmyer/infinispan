@@ -1,5 +1,7 @@
 package org.infinispan.eviction;
 
+import java.util.concurrent.CompletionStage;
+
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 
@@ -13,22 +15,29 @@ import org.infinispan.factories.scopes.Scopes;
 public interface ActivationManager {
 
    /**
-    * Remove key and associated value from cache store and update the activation counter.
-    *
-    * @param key      Key to remove
-    * @param newEntry {@code true} if the entry does not exists in-memory
+    * This method should no longer be used - please use {@link #activateAsync(Object, int)} instead.
+    * @deprecated since 10.0
     */
+   @Deprecated
    void onUpdate(Object key, boolean newEntry);
 
    /**
-    * Remove key and associated value from cache store and update the activation counter.
-    * <p/>
-    * The key is also removed from the shared configured stores.
-    *
-    * @param key      Key to activate
-    * @param newEntry {@code true} if the entry does not exists in-memory
+    * This method should no longer be used - please use {@link #activateAsync(Object, int)} instead.
+    * @deprecated since 10.0
     */
+   @Deprecated
    void onRemove(Object key, boolean newEntry);
+
+   /**
+    * Activates an entry, effectively removing it from the underlying persistence store. Note that the removal may
+    * be done asynchronously and when the returned Stage is complete the removal is also completed.
+    * @param key key to activate
+    * @param segment segment the key maps to
+    * @return stage that when complete the entry has been activated
+    */
+   CompletionStage<Void> activateAsync(Object key, int segment);
+
+   long getPendingActivationCount();
 
    /**
     * Get number of activations executed.

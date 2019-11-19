@@ -1,7 +1,9 @@
 package org.infinispan.remoting.transport.jgroups;
 
 import static org.infinispan.remoting.transport.jgroups.JGroupsAddressCache.fromJGroupsAddress;
-import static org.infinispan.util.logging.LogFactory.CLUSTER;
+import static org.infinispan.util.logging.Log.CLUSTER;
+import static org.infinispan.util.logging.Log.CONTAINER;
+import static org.infinispan.util.logging.Log.XSITE;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -22,7 +24,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
@@ -30,19 +31,14 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import javax.management.MBeanServer;
-import javax.management.ObjectName;
 
-import org.infinispan.IllegalLifecycleStateException;
-import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commons.IllegalLifecycleStateException;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.jmx.JmxUtil;
-import org.infinispan.configuration.global.GlobalJmxStatisticsConfiguration;
-import org.infinispan.util.logging.TraceException;
 import org.infinispan.commons.io.ByteBuffer;
 import org.infinispan.commons.marshall.StreamingMarshaller;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.FileLookup;
 import org.infinispan.commons.util.FileLookupFactory;
 import org.infinispan.commons.util.TypedProperties;
@@ -50,12 +46,14 @@ import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.TransportConfiguration;
 import org.infinispan.configuration.global.TransportConfigurationBuilder;
-import org.infinispan.configuration.parsing.XmlConfigHelper;
-import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.jmx.CacheManagerJmxRegistration;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.InboundInvocationHandler;
@@ -72,6 +70,7 @@ import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.BackupResponse;
 import org.infinispan.remoting.transport.ResponseCollector;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.remoting.transport.XSiteResponse;
 import org.infinispan.remoting.transport.impl.FilterMapResponseCollector;
 import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.remoting.transport.impl.MultiTargetRequest;
@@ -80,10 +79,12 @@ import org.infinispan.remoting.transport.impl.RequestRepository;
 import org.infinispan.remoting.transport.impl.SingleResponseCollector;
 import org.infinispan.remoting.transport.impl.SingleTargetRequest;
 import org.infinispan.remoting.transport.impl.SingletonMapResponseCollector;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.remoting.transport.impl.XSiteResponseImpl;
 import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+import org.infinispan.util.logging.TraceException;
 import org.infinispan.xsite.XSiteBackup;
 import org.infinispan.xsite.XSiteReplicateCommand;
 import org.jgroups.AnycastAddress;
@@ -92,6 +93,7 @@ import org.jgroups.Header;
 import org.jgroups.JChannel;
 import org.jgroups.MergeView;
 import org.jgroups.Message;
+import org.jgroups.PhysicalAddress;
 import org.jgroups.UpHandler;
 import org.jgroups.View;
 import org.jgroups.blocks.RequestCorrelator;
@@ -123,6 +125,7 @@ import org.jgroups.util.MessageBatch;
  * @author Galder Zamarreño
  * @since 4.0
  */
+@Scope(Scopes.GLOBAL)
 public class JGroupsTransport implements Transport {
    public static final String CONFIGURATION_STRING = "configurationString";
    public static final String CONFIGURATION_XML = "configurationXml";
@@ -143,7 +146,8 @@ public class JGroupsTransport implements Transport {
    private static final byte SINGLE_MESSAGE = 2;
 
    @Inject protected GlobalConfiguration configuration;
-   @Inject protected StreamingMarshaller marshaller;
+   @Inject @ComponentName(KnownComponentNames.INTERNAL_MARSHALLER)
+   protected StreamingMarshaller marshaller;
    @Inject protected CacheManagerNotifier notifier;
    @Inject protected TimeService timeService;
    @Inject protected InboundInvocationHandler invocationHandler;
@@ -151,6 +155,7 @@ public class JGroupsTransport implements Transport {
    protected ScheduledExecutorService timeoutExecutor;
    @Inject @ComponentName(KnownComponentNames.REMOTE_COMMAND_EXECUTOR)
    protected ExecutorService remoteExecutor;
+   @Inject protected CacheManagerJmxRegistration jmxRegistration;
 
    private final Lock viewUpdateLock = new ReentrantLock();
    private final Condition viewUpdateCondition = viewUpdateLock.newCondition();
@@ -173,8 +178,6 @@ public class JGroupsTransport implements Transport {
    // Lifecycle and setup stuff
    // ------------------------------------------------------------------------------------------------------------------
    private boolean globalStatsEnabled;
-   private MBeanServer mbeanServer;
-   private String domain;
    private boolean running;
 
    /**
@@ -223,7 +226,6 @@ public class JGroupsTransport implements Transport {
       boolean totalOrder = deliverOrder == DeliverOrder.TOTAL;
       boolean sendStaggeredRequest = mode == ResponseMode.WAIT_FOR_VALID_RESPONSE &&
             deliverOrder == DeliverOrder.NONE && recipients != null && recipients.size() > 1 && timeout > 0;
-      boolean rsvp = isRsvpCommand(command);
       // ISPN-6997: Never allow a switch from anycast -> broadcast and broadcast -> unicast
       // We're still keeping the option to switch for a while in case forcing a broadcast in a 2-node replicated cache
       // impacts performance significantly. If that is the case, we may need to use UNICAST3.closeConnection() instead.
@@ -244,7 +246,7 @@ public class JGroupsTransport implements Transport {
 
       if (mode.isAsynchronous()) {
          // Asynchronous RPC. Send the message, but don't wait for responses.
-         return performAsyncRemoteInvocation(recipients, command, deliverOrder, rsvp, broadcast, singleTarget);
+         return performAsyncRemoteInvocation(recipients, command, deliverOrder, broadcast, singleTarget);
       }
 
       Collection<Address> actualTargets = broadcast ? localMembers : recipients;
@@ -260,17 +262,17 @@ public class JGroupsTransport implements Transport {
          return;
       }
       logCommand(command, destination);
-      sendCommand(destination, command, Request.NO_REQUEST_ID, deliverOrder, isRsvpCommand(command), true, true);
+      sendCommand(destination, command, Request.NO_REQUEST_ID, deliverOrder, true, true);
    }
 
    @Override
    public void sendToMany(Collection<Address> targets, ReplicableCommand command, DeliverOrder deliverOrder) {
       if (targets == null) {
          logCommand(command, "all");
-         sendCommandToAll(command, Request.NO_REQUEST_ID, deliverOrder, false);
+         sendCommandToAll(command, Request.NO_REQUEST_ID, deliverOrder);
       } else {
          logCommand(command, targets);
-         sendCommand(targets, command, Request.NO_REQUEST_ID, deliverOrder, false, true);
+         sendCommand(targets, command, Request.NO_REQUEST_ID, deliverOrder, true);
       }
    }
 
@@ -302,7 +304,7 @@ public class JGroupsTransport implements Transport {
          commands.forEach(
                (a, command) -> {
                   logCommand(command, a);
-                  sendCommand(a, command, Request.NO_REQUEST_ID, deliverOrder, isRsvpCommand(command), true, true);
+                  sendCommand(a, command, Request.NO_REQUEST_ID, deliverOrder, true, true);
                });
          return Collections.emptyMap();
       }
@@ -312,33 +314,54 @@ public class JGroupsTransport implements Transport {
    public BackupResponse backupRemotely(Collection<XSiteBackup> backups, XSiteReplicateCommand command) {
       if (trace)
          log.tracef("About to send to backups %s, command %s", backups, command);
-      boolean rsvp = isRsvpCommand(command);
-      Map<XSiteBackup, Future<ValidResponse>> syncBackupCalls = new HashMap<>(backups.size());
+      Map<XSiteBackup, CompletableFuture<ValidResponse>> backupCalls = new HashMap<>(backups.size());
       for (XSiteBackup xsb : backups) {
          Address recipient = JGroupsAddressCache.fromJGroupsAddress(new SiteMaster(xsb.getSiteName()));
-         if (xsb.isSync()) {
-            long timeout = xsb.getTimeout();
-            long requestId = requests.newRequestId();
-            logRequest(requestId, command, recipient);
-            SingleSiteRequest<ValidResponse> request =
-                  new SingleSiteRequest<>(SingleResponseCollector.validOnly(), requestId, requests, xsb.getSiteName());
-            addRequest(request);
+         long requestId = requests.newRequestId();
+         logRequest(requestId, command, recipient, "backup");
+         SingleSiteRequest<ValidResponse> request =
+               new SingleSiteRequest<>(SingleResponseCollector.validOnly(), requestId, requests, xsb.getSiteName());
+         addRequest(request);
+         backupCalls.put(xsb, request);
 
-            try {
-               sendCommand(recipient, command, request.getRequestId(), DeliverOrder.NONE, rsvp, false, false);
-               if (timeout > 0) {
-                  request.setTimeout(timeoutExecutor, timeout, TimeUnit.MILLISECONDS);
-               }
-            } catch (Throwable t) {
-               request.cancel(true);
-               throw t;
+         DeliverOrder order = xsb.isSync() ? DeliverOrder.NONE : DeliverOrder.PER_SENDER;
+         long timeout = xsb.getTimeout();
+         try {
+            sendCommand(recipient, command, request.getRequestId(), order, false, false);
+            if (timeout > 0) {
+               request.setTimeout(timeoutExecutor, timeout, TimeUnit.MILLISECONDS);
             }
-            syncBackupCalls.put(xsb, request);
-         } else {
-            sendCommand(recipient, command, Request.NO_REQUEST_ID, DeliverOrder.PER_SENDER, false, false, false);
+         } catch (Throwable t) {
+            request.cancel(true);
+            throw t;
          }
       }
-      return new JGroupsBackupResponse(syncBackupCalls, timeService);
+      return new JGroupsBackupResponse(backupCalls, timeService);
+   }
+
+   @Override
+   public XSiteResponse backupRemotely(XSiteBackup backup, XSiteReplicateCommand rpcCommand) {
+      Address recipient = JGroupsAddressCache.fromJGroupsAddress(new SiteMaster(backup.getSiteName()));
+      long requestId = requests.newRequestId();
+      logRequest(requestId, rpcCommand, recipient, "backup");
+      SingleSiteRequest<ValidResponse> request =
+            new SingleSiteRequest<>(SingleResponseCollector.validOnly(), requestId, requests, backup.getSiteName());
+      addRequest(request);
+
+      DeliverOrder order = backup.isSync() ? DeliverOrder.NONE : DeliverOrder.PER_SENDER;
+      long timeout = backup.getTimeout();
+      XSiteResponseImpl xSiteResponse = new XSiteResponseImpl(timeService, backup);
+      try {
+         sendCommand(recipient, rpcCommand, request.getRequestId(), order, false, false);
+         if (timeout > 0) {
+            request.setTimeout(timeoutExecutor, timeout, TimeUnit.MILLISECONDS);
+         }
+         request.whenComplete(xSiteResponse);
+      } catch (Throwable t) {
+         request.cancel(true);
+         xSiteResponse.completeExceptionally(t);
+      }
+      return xSiteResponse;
    }
 
    @Override
@@ -375,18 +398,34 @@ public class JGroupsTransport implements Transport {
    }
 
    @Override
+   public List<Address> getMembersPhysicalAddresses() {
+      if (channel != null) {
+         View v = channel.getView();
+         org.jgroups.Address[] rawMembers = v.getMembersRaw();
+         List<Address> addresses = new ArrayList<>(rawMembers.length);
+         for(org.jgroups.Address rawMember : rawMembers) {
+            PhysicalAddress physical_addr = (PhysicalAddress)channel.down(new Event(Event.GET_PHYSICAL_ADDRESS, rawMember));
+            addresses.add(new JGroupsAddress(physical_addr));
+         }
+         return addresses;
+      } else {
+         return Collections.emptyList();
+      }
+   }
+
+   @Override
    public boolean isMulticastCapable() {
       return channel.getProtocolStack().getTransport().supportsMulticasting();
    }
 
+   @Start
    @Override
    public void start() {
       probeHandler.updateThreadPool(remoteExecutor);
       props = TypedProperties.toTypedProperties(configuration.transport().properties());
       requests = new RequestRepository();
 
-      if (log.isInfoEnabled())
-         log.startingJGroupsChannel(configuration.transport().clusterName());
+      CLUSTER.startingJGroupsChannel(configuration.transport().clusterName());
 
       initChannel();
 
@@ -459,7 +498,11 @@ public class JGroupsTransport implements Transport {
       }
    }
 
-   private void startJGroupsChannelIfNeeded() {
+   /**
+    * When overwriting this method, it allows third-party libraries to create a new behavior like:
+    * After {@link JChannel} has been created and before it is connected.
+    */
+   protected void startJGroupsChannelIfNeeded() {
       String clusterName = configuration.transport().clusterName();
       if (connectChannel) {
          try {
@@ -472,13 +515,10 @@ public class JGroupsTransport implements Transport {
             // Normally this would be done by CacheManagerJmxRegistration but
             // the channel is not started when the cache manager starts but
             // when first cache starts, so it's safer to do it here.
-            GlobalJmxStatisticsConfiguration jmxConfig = configuration.globalJmxStatistics();
-            globalStatsEnabled = jmxConfig.enabled();
+            globalStatsEnabled = configuration.statistics();
             if (globalStatsEnabled) {
-               String groupName = String.format("type=channel,cluster=%s", ObjectName.quote(clusterName));
-               mbeanServer = JmxUtil.lookupMBeanServer(jmxConfig.mbeanServerLookup(), jmxConfig.properties());
-               domain = JmxUtil.buildJmxDomain(jmxConfig.domain(), mbeanServer, groupName);
-               JmxConfigurator.registerChannel(channel, mbeanServer, domain, clusterName, true);
+               // TODO Use the overloaded variant when available: https://issues.jboss.org/browse/JGRP-2394
+               JmxConfigurator.registerChannel(channel, jmxRegistration.getMBeanServer(), jmxRegistration.getDomain(), clusterName, true);
             }
          } catch (Exception e) {
             throw new CacheException("Channel connected, but unable to register MBeans", e);
@@ -488,8 +528,7 @@ public class JGroupsTransport implements Transport {
          // the channel was already started externally, we need to initialize our member list
          receiveClusterView(channel.getView());
       }
-      if (log.isInfoEnabled())
-         log.localAndPhysicalAddress(clusterName, getAddress(), getPhysicalAddresses());
+      CLUSTER.localAndPhysicalAddress(clusterName, getAddress(), getPhysicalAddresses());
    }
 
    private void waitForInitialNodes() {
@@ -508,14 +547,14 @@ public class JGroupsTransport implements Transport {
             remainingNanos = viewUpdateCondition.awaitNanos(remainingNanos);
          }
       } catch (InterruptedException e) {
-         log.interruptedWaitingForCoordinator(e);
+         CLUSTER.interruptedWaitingForCoordinator(e);
          Thread.currentThread().interrupt();
       } finally {
          viewUpdateLock.unlock();
       }
 
       if (remainingNanos <= 0) {
-         throw log.timeoutWaitingForInitialNodes(initialClusterSize, channel.getView().getMembers());
+         throw CLUSTER.timeoutWaitingForInitialNodes(initialClusterSize, channel.getView().getMembers());
       }
 
       log.debugf("Initial cluster size of %d nodes reached", initialClusterSize);
@@ -540,10 +579,10 @@ public class JGroupsTransport implements Transport {
                disconnectChannel = lookup.shouldDisconnect();
                closeChannel = lookup.shouldClose();
             } catch (ClassCastException e) {
-               log.wrongTypeForJGroupsChannelLookup(channelLookupClassName, e);
+               CLUSTER.wrongTypeForJGroupsChannelLookup(channelLookupClassName, e);
                throw new CacheException(e);
             } catch (Exception e) {
-               log.errorInstantiatingJGroupsChannelLookup(channelLookupClassName, e);
+               CLUSTER.errorInstantiatingJGroupsChannelLookup(channelLookupClassName, e);
                throw new CacheException(e);
             }
          }
@@ -553,7 +592,7 @@ public class JGroupsTransport implements Transport {
             try {
                channel = configurator.createChannel();
             } catch (Exception e) {
-               throw log.errorCreatingChannelFromConfigurator(configurator.getProtocolStackString(), e);
+               throw CLUSTER.errorCreatingChannelFromConfigurator(configurator.getProtocolStackString(), e);
             }
          }
 
@@ -566,23 +605,24 @@ public class JGroupsTransport implements Transport {
                //ignore, we check confs later for various states
             }
             if (confs.isEmpty()) {
-               throw log.jgroupsConfigurationNotFound(cfg);
+               throw CLUSTER.jgroupsConfigurationNotFound(cfg);
             } else if (confs.size() > 1) {
-               log.ambiguousConfigurationFiles(Util.toStr(confs));
+               CLUSTER.ambiguousConfigurationFiles(Util.toStr(confs));
             }
             try {
-               channel = new JChannel(confs.iterator().next());
+               URL url = confs.iterator().next();
+               channel = new JChannel(url.openStream());
             } catch (Exception e) {
-               throw log.errorCreatingChannelFromConfigFile(cfg, e);
+               throw CLUSTER.errorCreatingChannelFromConfigFile(cfg, e);
             }
          }
 
          if (channel == null && props.containsKey(CONFIGURATION_XML)) {
             cfg = props.getProperty(CONFIGURATION_XML);
             try {
-               channel = new JChannel(XmlConfigHelper.stringToElement(cfg));
+               channel = new JChannel(new ByteArrayInputStream(cfg.getBytes()));
             } catch (Exception e) {
-               throw log.errorCreatingChannelFromXML(cfg, e);
+               throw CLUSTER.errorCreatingChannelFromXML(cfg, e);
             }
          }
 
@@ -591,18 +631,18 @@ public class JGroupsTransport implements Transport {
             try {
                channel = new JChannel(new ByteArrayInputStream(cfg.getBytes()));
             } catch (Exception e) {
-               throw log.errorCreatingChannelFromConfigString(cfg, e);
+               throw CLUSTER.errorCreatingChannelFromConfigString(cfg, e);
             }
          }
       }
 
       if (channel == null) {
-         log.unableToUseJGroupsPropertiesProvided(props);
+         CLUSTER.unableToUseJGroupsPropertiesProvided(props);
          try {
-            channel = new JChannel(
-                  fileLookup.lookupFileLocation(DEFAULT_JGROUPS_CONFIGURATION_FILE, configuration.classLoader()));
+            URL url = fileLookup.lookupFileLocation(DEFAULT_JGROUPS_CONFIGURATION_FILE, configuration.classLoader());
+            channel = new JChannel(url.openStream());
          } catch (Exception e) {
-            throw log.errorCreatingChannelFromConfigFile(DEFAULT_JGROUPS_CONFIGURATION_FILE, e);
+            throw CLUSTER.errorCreatingChannelFromConfigFile(DEFAULT_JGROUPS_CONFIGURATION_FILE, e);
          }
       }
    }
@@ -677,9 +717,9 @@ public class JGroupsTransport implements Transport {
       if (hasNotifier) {
          if (!subGroups.isEmpty()) {
             final Address address1 = getAddress();
-            notifier.notifyMerge(members, oldView.getMembers(), address1, (int) viewId, subGroups);
+            CompletionStages.join(notifier.notifyMerge(members, oldView.getMembers(), address1, (int) viewId, subGroups));
          } else {
-            notifier.notifyViewChange(members, oldView.getMembers(), getAddress(), (int) viewId);
+            CompletionStages.join(notifier.notifyViewChange(members, oldView.getMembers(), getAddress(), (int) viewId));
          }
       }
 
@@ -700,7 +740,7 @@ public class JGroupsTransport implements Transport {
                                               .collect(Collectors.toList()));
    }
 
-   @Stop(priority = 120)
+   @Stop
    @Override
    public void stop() {
       running = false;
@@ -711,12 +751,12 @@ public class JGroupsTransport implements Transport {
       String clusterName = configuration.transport().clusterName();
       try {
          if (disconnectChannel && channel != null && channel.isConnected()) {
-            log.disconnectJGroups(clusterName);
+            CLUSTER.disconnectJGroups(clusterName);
 
             // Unregistering before disconnecting/closing because
             // after that the cluster name is null
             if (globalStatsEnabled) {
-               JmxConfigurator.unregisterChannel(channel, mbeanServer, domain, channel.getClusterName());
+               JmxConfigurator.unregisterChannel(channel, jmxRegistration.getMBeanServer(), jmxRegistration.getDomain(), channel.getClusterName());
             }
 
             channel.disconnect();
@@ -725,11 +765,11 @@ public class JGroupsTransport implements Transport {
             channel.close();
          }
       } catch (Exception toLog) {
-         log.problemClosingChannel(toLog, clusterName);
+         CLUSTER.problemClosingChannel(toLog, clusterName);
       }
 
       if (requests != null) {
-         requests.forEach(request -> request.cancel(log.cacheManagerIsStopping()));
+         requests.forEach(request -> request.cancel(CONTAINER.cacheManagerIsStopping()));
       }
 
       // Don't keep a reference to the channel, but keep the address and physical address
@@ -830,12 +870,12 @@ public class JGroupsTransport implements Transport {
          return CompletableFuture.completedFuture(collector.finish());
       }
       long requestId = requests.newRequestId();
-      logRequest(requestId, command, target);
+      logRequest(requestId, command, target, "single");
       SingleTargetRequest<T> request = new SingleTargetRequest<>(collector, requestId, requests, target);
       addRequest(request);
       boolean invalidTarget = request.onNewView(clusterView.getMembersSet());
       if (!invalidTarget) {
-         sendCommand(target, command, requestId, deliverOrder, isRsvpCommand(command), true, false);
+         sendCommand(target, command, requestId, deliverOrder, true, false);
       }
       if (timeout > 0) {
          request.setTimeout(timeoutExecutor, timeout, unit);
@@ -848,7 +888,7 @@ public class JGroupsTransport implements Transport {
                                                ResponseCollector<T> collector, DeliverOrder deliverOrder,
                                                long timeout, TimeUnit unit) {
       long requestId = requests.newRequestId();
-      logRequest(requestId, command, targets);
+      logRequest(requestId, command, targets, "multi");
       if (targets.isEmpty()) {
          return CompletableFuture.completedFuture(collector.finish());
       }
@@ -862,7 +902,7 @@ public class JGroupsTransport implements Transport {
       try {
          addRequest(request);
          boolean checkView = request.onNewView(clusterView.getMembersSet());
-         sendCommand(targets, command, requestId, deliverOrder, isRsvpCommand(command), checkView);
+         sendCommand(targets, command, requestId, deliverOrder, checkView);
       } catch (Throwable t) {
          request.cancel(true);
          throw t;
@@ -877,7 +917,7 @@ public class JGroupsTransport implements Transport {
    public <T> CompletionStage<T> invokeCommandOnAll(ReplicableCommand command, ResponseCollector<T> collector,
                                                     DeliverOrder deliverOrder, long timeout, TimeUnit unit) {
       long requestId = requests.newRequestId();
-      logRequest(requestId, command, "all");
+      logRequest(requestId, command, null, "broadcast");
       Address excludedTarget = deliverOrder == DeliverOrder.TOTAL ? null : getAddress();
       MultiTargetRequest<T> request =
             new MultiTargetRequest<>(collector, requestId, requests, clusterView.getMembers(), excludedTarget);
@@ -888,7 +928,7 @@ public class JGroupsTransport implements Transport {
       try {
          addRequest(request);
          request.onNewView(clusterView.getMembersSet());
-         sendCommandToAll(command, requestId, deliverOrder, isRsvpCommand(command));
+         sendCommandToAll(command, requestId, deliverOrder);
       } catch (Throwable t) {
          request.cancel(true);
          throw t;
@@ -904,7 +944,7 @@ public class JGroupsTransport implements Transport {
                                                     ResponseCollector<T> collector, DeliverOrder deliverOrder,
                                                     long timeout, TimeUnit unit) {
       long requestId = requests.newRequestId();
-      logRequest(requestId, command, "all-required");
+      logRequest(requestId, command, requiredTargets, "broadcast");
       Address excludedTarget = deliverOrder == DeliverOrder.TOTAL ? null : getAddress();
       MultiTargetRequest<T> request =
          new MultiTargetRequest<>(collector, requestId, requests, requiredTargets, excludedTarget);
@@ -915,7 +955,7 @@ public class JGroupsTransport implements Transport {
       try {
          addRequest(request);
          request.onNewView(clusterView.getMembersSet());
-         sendCommandToAll(command, requestId, deliverOrder, isRsvpCommand(command));
+         sendCommandToAll(command, requestId, deliverOrder);
       } catch (Throwable t) {
          request.cancel(true);
          throw t;
@@ -931,7 +971,7 @@ public class JGroupsTransport implements Transport {
                                                         ResponseCollector<T> collector, DeliverOrder deliverOrder,
                                                         long timeout, TimeUnit unit) {
       long requestId = requests.newRequestId();
-      logRequest(requestId, command, "staggered " + targets);
+      logRequest(requestId, command, targets, "staggered");
       StaggeredRequest<T> request =
             new StaggeredRequest<>(collector, requestId, requests, targets, getAddress(), command, deliverOrder,
                                    timeout, unit, this);
@@ -965,9 +1005,8 @@ public class JGroupsTransport implements Transport {
       try {
          for (Address target : targets) {
             ReplicableCommand command = commandGenerator.apply(target);
-            boolean rsvp = isRsvpCommand(command);
-            logRequest(requestId, command, target);
-            sendCommand(target, command, requestId, deliverOrder, rsvp, true, checkView);
+            logRequest(requestId, command, target, "mixed");
+            sendCommand(target, command, requestId, deliverOrder, true, checkView);
          }
       } catch (Throwable t) {
          request.cancel(true);
@@ -984,7 +1023,7 @@ public class JGroupsTransport implements Transport {
       try {
          requests.addRequest(request);
          if (!running) {
-            request.cancel(log.cacheManagerIsStopping());
+            request.cancel(CONTAINER.cacheManagerIsStopping());
          }
       } catch (Throwable t) {
          // Removes the request and the scheduled task, if necessary
@@ -994,20 +1033,15 @@ public class JGroupsTransport implements Transport {
    }
 
    void sendCommand(Address target, ReplicableCommand command, long requestId, DeliverOrder deliverOrder,
-                    boolean rsvp, boolean noRelay, boolean checkView) {
+                    boolean noRelay, boolean checkView) {
       if (checkView && !clusterView.contains(target))
          return;
 
       Message message = new Message(toJGroupsAddress(target));
       marshallRequest(message, command, requestId);
-      setMessageFlags(message, deliverOrder, rsvp, noRelay);
+      setMessageFlags(message, deliverOrder, noRelay);
 
       send(message);
-   }
-
-   private static boolean isRsvpCommand(ReplicableCommand command) {
-      return command instanceof FlagAffectedCommand &&
-            ((FlagAffectedCommand) command).hasAnyFlag(FlagBitSets.GUARANTEED_DELIVERY);
    }
 
    private static org.jgroups.Address toJGroupsAddress(Address address) {
@@ -1026,7 +1060,7 @@ public class JGroupsTransport implements Transport {
       }
    }
 
-   private static void setMessageFlags(Message message, DeliverOrder deliverOrder, boolean rsvp, boolean noRelay) {
+   private static void setMessageFlags(Message message, DeliverOrder deliverOrder, boolean noRelay) {
       if (noRelay) {
          message.setFlag(Message.Flag.NO_RELAY.value());
       }
@@ -1035,9 +1069,6 @@ public class JGroupsTransport implements Transport {
       // Only the commands in total order must be received by the originator.
       if (deliverOrder != DeliverOrder.TOTAL) {
          message.setTransientFlag(Message.TransientFlag.DONT_LOOPBACK.value());
-      }
-      if (rsvp) {
-         message.setFlag(Message.Flag.RSVP.value());
       }
    }
 
@@ -1051,7 +1082,7 @@ public class JGroupsTransport implements Transport {
          if (running) {
             throw new CacheException(e);
          } else {
-            throw log.cacheManagerIsStopping();
+            throw CONTAINER.cacheManagerIsStopping();
          }
       }
    }
@@ -1102,17 +1133,17 @@ public class JGroupsTransport implements Transport {
    private CompletableFuture<Map<Address, Response>> performAsyncRemoteInvocation(Collection<Address> recipients,
                                                                                   ReplicableCommand command,
                                                                                   DeliverOrder deliverOrder,
-                                                                                  boolean rsvp, boolean broadcast,
+                                                                                  boolean broadcast,
                                                                                   Address singleTarget) {
       if (broadcast) {
          logCommand(command, "all");
-         sendCommandToAll(command, Request.NO_REQUEST_ID, deliverOrder, rsvp);
+         sendCommandToAll(command, Request.NO_REQUEST_ID, deliverOrder);
       } else if (singleTarget != null) {
          logCommand(command, singleTarget);
-         sendCommand(singleTarget, command, Request.NO_REQUEST_ID, deliverOrder, rsvp, true, true);
+         sendCommand(singleTarget, command, Request.NO_REQUEST_ID, deliverOrder, true, true);
       } else {
          logCommand(command, recipients);
-         sendCommand(recipients, command, Request.NO_REQUEST_ID, deliverOrder, rsvp, true);
+         sendCommand(recipients, command, Request.NO_REQUEST_ID, deliverOrder, true);
       }
       return EMPTY_RESPONSES_FUTURE;
    }
@@ -1151,7 +1182,7 @@ public class JGroupsTransport implements Transport {
 
    public void sendToAll(ReplicableCommand command, DeliverOrder deliverOrder) {
       logCommand(command, "all");
-      sendCommandToAll(command, Request.NO_REQUEST_ID, deliverOrder, false);
+      sendCommandToAll(command, Request.NO_REQUEST_ID, deliverOrder);
    }
 
    /**
@@ -1159,10 +1190,10 @@ public class JGroupsTransport implements Transport {
     *
     * Doesn't send the command to itself unless {@code deliverOrder == TOTAL}.
     */
-   private void sendCommandToAll(ReplicableCommand command, long requestId, DeliverOrder deliverOrder, boolean rsvp) {
+   private void sendCommandToAll(ReplicableCommand command, long requestId, DeliverOrder deliverOrder) {
       Message message = new Message();
       marshallRequest(message, command, requestId);
-      setMessageFlags(message, deliverOrder, rsvp, true);
+      setMessageFlags(message, deliverOrder, true);
 
       if (deliverOrder == DeliverOrder.TOTAL) {
          message.dest(new AnycastAddress());
@@ -1171,9 +1202,9 @@ public class JGroupsTransport implements Transport {
       send(message);
    }
 
-   private void logRequest(long requestId, ReplicableCommand command, Object targets) {
+   private void logRequest(long requestId, ReplicableCommand command, Object targets, String type) {
       if (trace)
-         log.tracef("%s sending request %d to %s: %s", address, requestId, targets, command);
+         log.tracef("%s sending %s request %d to %s: %s", address, type, requestId, targets, command);
    }
 
    private void logCommand(ReplicableCommand command, Object targets) {
@@ -1192,7 +1223,7 @@ public class JGroupsTransport implements Transport {
          reachableSites.addAll(sitesUp);
          reachableSites.removeAll(sitesDown);
          log.tracef("Sites view changed: up %s, down %s, new view is %s", sitesUp, sitesDown, reachableSites);
-         log.receivedXSiteClusterView(reachableSites);
+         XSITE.receivedXSiteClusterView(reachableSites);
          sitesView = Collections.unmodifiableSet(reachableSites);
       } finally {
          viewUpdateLock.unlock();
@@ -1213,11 +1244,11 @@ public class JGroupsTransport implements Transport {
     * Doesn't send the command to itself unless {@code deliverOrder == TOTAL}.
     */
    private void sendCommand(Collection<Address> targets, ReplicableCommand command, long requestId,
-                            DeliverOrder deliverOrder, boolean rsvp, boolean checkView) {
+                            DeliverOrder deliverOrder, boolean checkView) {
       Objects.requireNonNull(targets);
       Message message = new Message();
       marshallRequest(message, command, requestId);
-      setMessageFlags(message, deliverOrder, rsvp, true);
+      setMessageFlags(message, deliverOrder, true);
 
       if (deliverOrder == DeliverOrder.TOTAL) {
          message.dest(new AnycastAddress(toJGroupsAddressList(targets)));
@@ -1285,7 +1316,7 @@ public class JGroupsTransport implements Transport {
             processResponse(src, buffer, offset, length, requestId);
             break;
          default:
-            log.invalidMessageType(type, src);
+            CLUSTER.invalidMessageType(type, src);
       }
    }
 
@@ -1307,7 +1338,7 @@ public class JGroupsTransport implements Transport {
             bytes = marshaller.objectToBuffer(new ExceptionResponse(e));
          } catch (Throwable tt) {
             if (channel.isConnected()) {
-               log.errorSendingResponse(requestId, target, command);
+               CLUSTER.errorSendingResponse(requestId, target, command);
             }
             return;
          }
@@ -1323,7 +1354,7 @@ public class JGroupsTransport implements Transport {
          channel.send(message);
       } catch (Throwable t) {
          if (channel.isConnected()) {
-            log.errorSendingResponse(requestId, target, command);
+            CLUSTER.errorSendingResponse(requestId, target, command);
          }
       }
    }
@@ -1358,7 +1389,7 @@ public class JGroupsTransport implements Transport {
             invocationHandler.handleFromCluster(fromJGroupsAddress(src), command, reply, deliverOrder);
          }
       } catch (Throwable t) {
-         log.errorProcessingRequest(requestId, src);
+         CLUSTER.errorProcessingRequest(requestId, src);
          Exception e = t instanceof Exception ? ((Exception) t) : new CacheException(t);
          sendResponse(src, new ExceptionResponse(e), requestId, null);
       }
@@ -1381,7 +1412,7 @@ public class JGroupsTransport implements Transport {
          Address address = fromJGroupsAddress(src);
          requests.addResponse(requestId, address, response);
       } catch (Throwable t) {
-         log.errorProcessingResponse(requestId, src);
+         CLUSTER.errorProcessingResponse(requestId, src);
       }
    }
 

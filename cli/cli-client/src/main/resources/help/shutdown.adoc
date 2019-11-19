@@ -1,0 +1,30 @@
+SHUTDOWN(1)
+===========
+:doctype: manpage
+
+
+NAME
+----
+shutdown - stops individual servers or performs orderly shutdowns for entire
+clusters.
+
+
+SYNOPSIS
+--------
+*shutdown server* ['SERVERS']
+
+*shutdown cluster*
+
+
+EXAMPLES
+--------
+`shutdown server my_server01` +
+Stops the server with hostname `my_server01`.
+
+`shutdown cluster` +
+Performs an orderly shutdown of all servers joined to the cluster.
+
+
+SEE ALSO
+--------
+connect(1), disconnect(1), quit(1)

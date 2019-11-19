@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-hibernate-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -13,15 +13,14 @@
    <name>Infinispan Hibernate Cache SPI</name>
    <description>Infinispan Hibernate Cache SPI module</description>
 
-   <properties>
-      <module.skipComponentMetaDataProcessing>true</module.skipComponentMetaDataProcessing>
-   </properties>
-
    <build>
       <plugins>
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-checkstyle-plugin</artifactId>
+            <configuration>
+               <configLocation>checkstyle.xml</configLocation>
+            </configuration>
          </plugin>
          <plugin>
             <groupId>org.apache.felix</groupId>

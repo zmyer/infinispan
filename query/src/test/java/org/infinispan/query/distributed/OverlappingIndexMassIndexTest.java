@@ -7,13 +7,15 @@ import java.util.List;
 
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.infinispan.Cache;
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
 import org.infinispan.query.CacheQuery;
 import org.infinispan.query.Search;
 import org.infinispan.query.SearchManager;
+import org.infinispan.query.test.Block;
+import org.infinispan.query.test.QueryTestSCI;
+import org.infinispan.query.test.Transaction;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.testng.annotations.Test;
 
@@ -42,9 +44,9 @@ public class OverlappingIndexMassIndexTest extends MultipleCacheManagersTest {
             .addProperty("error_handler", "org.infinispan.query.helper.StaticTestingErrorHandler")
             .addProperty("lucene_version", "LUCENE_CURRENT");
 
-      List<Cache<String, Object>> cacheList = createClusteredCaches(NUM_NODES, cacheCfg);
+      List<Cache<String, Object>> cacheList = createClusteredCaches(NUM_NODES, QueryTestSCI.INSTANCE, cacheCfg);
 
-      waitForClusterToForm(BasicCacheContainer.DEFAULT_CACHE_NAME);
+      waitForClusterToForm(getDefaultCacheName());
 
       for (Cache cache : cacheList) {
          caches.add(cache);
@@ -89,7 +91,7 @@ public class OverlappingIndexMassIndexTest extends MultipleCacheManagersTest {
       }
    }
 
-   protected void runMassIndexer() throws Exception {
+   protected void runMassIndexer() {
       Cache cache = caches.get(0);
       SearchManager searchManager = Search.getSearchManager(cache);
       searchManager.getMassIndexer().start();

@@ -1,15 +1,19 @@
 package org.infinispan.persistence.rocksdb;
 
+import static org.infinispan.persistence.PersistenceUtil.getQualifiedLocation;
+
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.PrimitiveIterator;
 import java.util.Properties;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -23,7 +27,9 @@ import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.configuration.ConfiguredBy;
 import org.infinispan.commons.io.ByteBuffer;
-import org.infinispan.commons.io.ByteBufferImpl;
+import org.infinispan.commons.marshall.MarshallUtil;
+import org.infinispan.commons.marshall.Marshaller;
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
 import org.infinispan.commons.persistence.Store;
 import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.AbstractIterator;
@@ -31,16 +37,21 @@ import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IntSets;
 import org.infinispan.commons.util.Util;
 import org.infinispan.distribution.ch.KeyPartitioner;
-import org.infinispan.factories.ComponentRegistry;
-import org.infinispan.metadata.InternalMetadata;
+import org.infinispan.marshall.persistence.impl.MarshallableEntryImpl;
+import org.infinispan.metadata.Metadata;
 import org.infinispan.persistence.internal.PersistenceUtil;
 import org.infinispan.persistence.rocksdb.configuration.RocksDBStoreConfiguration;
 import org.infinispan.persistence.rocksdb.logging.Log;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.persistence.spi.MarshallableEntryFactory;
+import org.infinispan.persistence.spi.MarshalledValue;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.spi.SegmentedAdvancedLoadWriteStore;
-import org.infinispan.util.KeyValuePair;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
+import org.infinispan.reactive.RxJavaInterop;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.LogFactory;
 import org.reactivestreams.Publisher;
 import org.rocksdb.BuiltinComparator;
@@ -59,15 +70,14 @@ import org.rocksdb.WriteOptions;
 
 import io.reactivex.Flowable;
 import io.reactivex.Scheduler;
-import io.reactivex.internal.functions.Functions;
 import io.reactivex.schedulers.Schedulers;
 
 @Store
 @ConfiguredBy(RocksDBStoreConfiguration.class)
 public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
     private static final Log log = LogFactory.getLog(RocksDBStore.class, Log.class);
-    static final String databasePropertyNameWithSuffix = "database.";
-    static final String columnFamilyPropertyNameWithSuffix = "data.";
+    static final String DATABASE_PROPERTY_NAME_WITH_SUFFIX = "database.";
+    static final String COLUMN_FAMILY_PROPERTY_NAME_WITH_SUFFIX = "data.";
 
     private RocksDBStoreConfiguration configuration;
     private BlockingQueue<ExpiryEntry> expiryEntryQueue;
@@ -81,6 +91,8 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
     private RocksDBHandler handler;
     private Properties databaseProperties;
     private Properties columnFamilyProperties;
+    private Marshaller marshaller;
+    private MarshallableEntryFactory<K, V> entryFactory;
     private volatile boolean stopped = true;
 
     @Override
@@ -89,7 +101,10 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         this.ctx = ctx;
         this.scheduler = Schedulers.from(ctx.getExecutor());
         this.timeService = ctx.getTimeService();
+        this.marshaller = ctx.getPersistenceMarshaller();
         this.semaphore = new Semaphore(Integer.MAX_VALUE, true);
+        this.entryFactory = ctx.getMarshallableEntryFactory();
+        ctx.getPersistenceMarshaller().register(new PersistenceContextInitializerImpl());
     }
 
     @Override
@@ -97,8 +112,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         expiryEntryQueue = new LinkedBlockingQueue<>(configuration.expiryQueueSize());
 
         AdvancedCache cache = ctx.getCache().getAdvancedCache();
-        ComponentRegistry registry = cache.getComponentRegistry();
-        KeyPartitioner keyPartitioner = registry.getComponent(KeyPartitioner.class);
+        KeyPartitioner keyPartitioner = cache.getComponentRegistry().getComponent(KeyPartitioner.class);
         if (configuration.segmented()) {
             handler = new SegmentedRocksDBHandler(cache.getCacheConfiguration().clustering().hash().numSegments(),
                   keyPartitioner);
@@ -110,38 +124,34 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         Properties allProperties = configuration.properties();
         for (Map.Entry<Object, Object> entry : allProperties.entrySet()) {
             String key = entry.getKey().toString();
-            if (key.startsWith(databasePropertyNameWithSuffix)) {
+            if (key.startsWith(DATABASE_PROPERTY_NAME_WITH_SUFFIX)) {
                 if (databaseProperties == null) {
                     databaseProperties = new Properties();
                 }
-                databaseProperties.setProperty(key.substring(databasePropertyNameWithSuffix.length()), entry.getValue().toString());
-            } else if (key.startsWith(columnFamilyPropertyNameWithSuffix)) {
+                databaseProperties.setProperty(key.substring(DATABASE_PROPERTY_NAME_WITH_SUFFIX.length()), entry.getValue().toString());
+            } else if (key.startsWith(COLUMN_FAMILY_PROPERTY_NAME_WITH_SUFFIX)) {
                 if (columnFamilyProperties == null) {
                     columnFamilyProperties = new Properties();
                 }
-                columnFamilyProperties.setProperty(key.substring(columnFamilyPropertyNameWithSuffix.length()), entry.getValue().toString());
+                columnFamilyProperties.setProperty(key.substring(COLUMN_FAMILY_PROPERTY_NAME_WITH_SUFFIX.length()), entry.getValue().toString());
             }
         }
 
         try {
-            db = handler.open(getQualifiedLocation(), dataDbOptions());
-            expiredDb = openDatabase(getQualifiedExpiredLocation(), expiredDbOptions());
+            db = handler.open(getLocation(), dataDbOptions());
+            expiredDb = openDatabase(getExpirationLocation(), expiredDbOptions());
             stopped = false;
         } catch (Exception e) {
             throw new CacheConfigurationException("Unable to open database", e);
         }
     }
 
-    private String sanitizedCacheName() {
-        return ctx.getCache().getName().replaceAll("[^a-zA-Z0-9-_\\.]", "_");
+    private Path getLocation() {
+        return getQualifiedLocation(ctx.getGlobalConfiguration(), configuration.location(), ctx.getCache().getName(), "data");
     }
 
-    private String getQualifiedLocation() {
-        return configuration.location() + sanitizedCacheName();
-    }
-
-    private String getQualifiedExpiredLocation() {
-        return configuration.expiredLocation() + sanitizedCacheName();
+    private Path getExpirationLocation() {
+        return getQualifiedLocation(ctx.getGlobalConfiguration(), configuration.expiredLocation(), ctx.getCache().getName(), "expired");
     }
 
     private WriteOptions dataWriteOptions() {
@@ -178,10 +188,10 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
     /**
      * Creates database if it doesn't exist.
      */
-    protected RocksDB openDatabase(String location, Options options) throws IOException, RocksDBException {
-        File dir = new File(location);
+    protected RocksDB openDatabase(Path location, Options options) throws RocksDBException {
+        File dir = location.toFile();
         dir.mkdirs();
-        return RocksDB.open(options, location);
+        return RocksDB.open(options, location.toString());
     }
 
     @Override
@@ -203,15 +213,13 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
     @Override
     public void destroy() {
         stop();
-
-        Util.recursiveFileRemove(new File(getQualifiedLocation()));
-
-        Util.recursiveFileRemove(new File(getQualifiedExpiredLocation()));
+        Util.recursiveFileRemove(getLocation().toFile());
+        Util.recursiveFileRemove(getExpirationLocation().toFile());
     }
 
     @Override
     public boolean isAvailable() {
-        return new File(getQualifiedLocation()).exists() && new File(getQualifiedExpiredLocation()).exists();
+        return getLocation().toFile().exists() && getExpirationLocation().toFile().exists();
     }
 
     @Override
@@ -313,7 +321,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         } catch (InterruptedException e) {
             throw new PersistenceException("Cannot acquire semaphore: CacheStore is likely stopped.", e);
         }
-        try {
+        try (ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
             if (stopped) {
                 throw new PersistenceException("RocksDB is stopped");
             }
@@ -322,43 +330,47 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             expiryEntryQueue.drainTo(entries);
             for (ExpiryEntry entry : entries) {
                 final byte[] expiryBytes = marshall(entry.expiry);
-                final byte[] keyBytes = marshall(entry.key);
                 final byte[] existingBytes = expiredDb.get(expiryBytes);
 
                 if (existingBytes != null) {
                     // in the case of collision make the key a List ...
                     final Object existing = unmarshall(existingBytes);
-                    if (existing instanceof List) {
-                        ((List<Object>) existing).add(entry.key);
+                    if (existing instanceof ExpiryBucket) {
+                        ((ExpiryBucket) existing).entries.add(entry.keyBytes);
                         expiredDb.put(expiryBytes, marshall(existing));
                     } else {
-                        List<Object> al = new ArrayList<>(2);
-                        al.add(existing);
-                        al.add(entry.key);
-                        expiredDb.put(expiryBytes, marshall(al));
+                        ExpiryBucket bucket = new ExpiryBucket(existingBytes, entry.keyBytes);
+                        expiredDb.put(expiryBytes, marshall(bucket));
                     }
                 } else {
-                    expiredDb.put(expiryBytes, keyBytes);
+                    expiredDb.put(expiryBytes, entry.keyBytes);
                 }
             }
 
-            List<Long> times = new ArrayList<>();
-            List<Object> keys = new ArrayList<>();
-
             long now = ctx.getTimeService().wallClockTime();
-            RocksIterator iterator = expiredDb.newIterator(new ReadOptions().setFillCache(false));
+            RocksIterator iterator = expiredDb.newIterator(readOptions);
             if (iterator != null) {
                 try (RocksIterator it = iterator) {
+                    List<Long> times = new ArrayList<>();
+                    List<Object> keys = new ArrayList<>();
+                    List<byte[]> marshalledKeys = new ArrayList<>();
+
                     for (it.seekToFirst(); it.isValid(); it.next()) {
                         Long time = (Long) unmarshall(it.key());
                         if (time > now)
                             break;
                         times.add(time);
-                        Object key = unmarshall(it.value());
-                        if (key instanceof List)
-                            keys.addAll((List<?>) key);
-                        else
+                        byte[] marshalledKey = it.value();
+                        Object key = unmarshall(marshalledKey);
+                        if (key instanceof ExpiryBucket) {
+                            for (byte[] bytes : ((ExpiryBucket) key).entries) {
+                                marshalledKeys.add(bytes);
+                                keys.add(unmarshall(bytes));
+                            }
+                        } else {
                             keys.add(key);
+                            marshalledKeys.add(marshalledKey);
+                        }
                     }
 
                     for (Long time : times) {
@@ -368,27 +380,34 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                     if (!keys.isEmpty())
                         log.debugf("purge (up to) %d entries", keys.size());
                     int count = 0;
-                    for (Object key : keys) {
+                    for (int i = 0; i < keys.size(); i++) {
+                        Object key = keys.get(i);
+                        byte[] keyBytes = marshalledKeys.get(i);
                         int segment = handler.calculateSegment(key);
 
                         ColumnFamilyHandle handle = handler.getHandle(segment);
-                        byte[] keyBytes = marshall(key);
                         byte[] valueBytes = db.get(handle, keyBytes);
                         if (valueBytes == null)
                             continue;
-                        MarshallableEntry me = getMarshallableEntryFromValue(key, valueBytes);
-                        // TODO race condition: the entry could be updated between the get and delete!
-                        if (me.getMetadata() != null && me.getMetadata().isExpired(now)) {
-                            // somewhat inefficient to FIND then REMOVE...
-                            db.delete(handle, keyBytes);
-                            purgeListener.entryPurged(key);
-                            count++;
+
+                        MarshalledValue mv = (MarshalledValue) unmarshall(valueBytes);
+                        if (mv != null) {
+                            // TODO race condition: the entry could be updated between the get and delete!
+                            Metadata metadata = (Metadata) unmarshall(MarshallUtil.toByteArray(mv.getMetadataBytes()));
+                            if (MarshallableEntryImpl.isExpired(metadata, now, mv.getCreated(), mv.getLastUsed())) {
+                                // somewhat inefficient to FIND then REMOVE...
+                                db.delete(handle, keyBytes);
+                                purgeListener.entryPurged(key);
+                                count++;
+                            }
                         }
                     }
                     if (count != 0)
                         log.debugf("purged %d entries", count);
                 } catch (Exception e) {
                     throw new PersistenceException(e);
+                } finally {
+                    readOptions.close();
                 }
             }
         } catch (PersistenceException e) {
@@ -411,84 +430,79 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
     }
 
     private byte[] marshall(Object entry) throws IOException, InterruptedException {
-        return ctx.getMarshaller().objectToByteBuffer(entry);
+        return marshaller.objectToByteBuffer(entry);
     }
 
     private Object unmarshall(byte[] bytes) throws IOException, ClassNotFoundException {
         if (bytes == null)
             return null;
 
-        return ctx.getMarshaller().objectFromByteBuffer(bytes);
+        return marshaller.objectFromByteBuffer(bytes);
     }
 
-    private byte[] getMarshalledKeyValuePair(MarshallableEntry me) throws IOException, InterruptedException {
-        byte[] value = me.getValueBytes() != null ? me.getValueBytes().getBuf() : null;
-        byte[] meta = me.getMetadataBytes() != null ? me.getMetadataBytes().getBuf() : null;
-        KeyValuePair<byte[], byte[]> kvp = new KeyValuePair<>(value, meta);
-        return marshall(kvp);
+    private MarshallableEntry<K, V> valueToMarshallableEntry(Object key, byte[] valueBytes, boolean fetchMeta) throws IOException, ClassNotFoundException {
+        MarshalledValue value = (MarshalledValue) unmarshall(valueBytes);
+        if (value == null) return null;
+
+        ByteBuffer metadataBytes = fetchMeta ? value.getMetadataBytes() : null;
+        return entryFactory.create(key, value.getValueBytes(), metadataBytes, value.getCreated(), value.getLastUsed());
     }
 
-    private MarshallableEntry getMarshallableEntryFromValue(Object key, byte[] valueBytes) throws IOException, ClassNotFoundException {
-        KeyValuePair<byte[], byte[]> kvp = (KeyValuePair<byte[], byte[]>) unmarshall(valueBytes);
-        if (kvp == null) return null;
-
-        ByteBuffer value = kvp.getKey() != null ? new ByteBufferImpl(kvp.getKey()) : null;
-        ByteBuffer metadata = kvp.getValue() != null ? new ByteBufferImpl(kvp.getValue()) : null;
-        return ctx.getMarshallableEntryFactory().create(key, value, metadata);
-    }
-
-    private void addNewExpiry(MarshallableEntry entry) throws IOException {
-        long expiry = entry.getMetadata().expiryTime();
+    private void addNewExpiry(MarshallableEntry entry) {
+        long expiry = entry.expiryTime();
         long maxIdle = entry.getMetadata().maxIdle();
         if (maxIdle > 0) {
             // Coding getExpiryTime() for transient entries has the risk of being a moving target
             // which could lead to unexpected results, hence, InternalCacheEntry calls are required
             expiry = maxIdle + ctx.getTimeService().wallClockTime();
         }
-        Long at = expiry;
-        Object key = entry.getKey();
-
         try {
-            expiryEntryQueue.put(new ExpiryEntry(at, key));
+            byte[] keyBytes = entry.getKeyBytes().copy().getBuf();
+            expiryEntryQueue.put(new ExpiryEntry(expiry, keyBytes));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt(); // Restore interruption status
         }
     }
 
-    private static final class ExpiryEntry {
-        private final Long expiry;
-        private final Object key;
+    @ProtoTypeId(ProtoStreamTypeIds.ROCKSDB_EXPIRY_BUCKET)
+    static final class ExpiryBucket {
+        @ProtoField(number = 1, collectionImplementation = ArrayList.class)
+        List<byte[]> entries;
 
-        private ExpiryEntry(long expiry, Object key) {
+        ExpiryBucket(){}
+
+        ExpiryBucket(byte[] existingKey, byte[] newKey) {
+            entries = new ArrayList<>(2);
+            entries.add(existingKey);
+            entries.add(newKey);
+        }
+    }
+
+    private static final class ExpiryEntry {
+
+        long expiry;
+        byte[] keyBytes;
+
+        ExpiryEntry(long expiry, byte[] keyBytes) {
             this.expiry = expiry;
-            this.key = key;
+            this.keyBytes = keyBytes;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            ExpiryEntry that = (ExpiryEntry) o;
+            return expiry == that.expiry &&
+                  Arrays.equals(keyBytes, that.keyBytes);
         }
 
         @Override
         public int hashCode() {
-            final int prime = 31;
-            int result = 1;
-            result = prime * result + ((key == null) ? 0 : key.hashCode());
+            int result = Objects.hash(expiry);
+            result = 31 * result + Arrays.hashCode(keyBytes);
             return result;
         }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj)
-                return true;
-            if (obj == null)
-                return false;
-            if (getClass() != obj.getClass())
-                return false;
-            ExpiryEntry other = (ExpiryEntry) obj;
-            if (key == null) {
-                if (other.key != null)
-                    return false;
-            } else if (!key.equals(other.key))
-                return false;
-            return true;
-        }
-
     }
 
     private class RocksKeyIterator extends AbstractIterator<K> {
@@ -542,20 +556,12 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                     K key = (K) unmarshall(it.key());
                     if (filter == null || filter.test(key)) {
                         if (fetchValue || fetchMetadata) {
-                            MarshallableEntry<K, V> unmarshalledEntry = getMarshallableEntryFromValue(key, it.value());
-                            InternalMetadata metadata = unmarshalledEntry.getMetadata();
-                            if (metadata == null || !metadata.isExpired(now)) {
-                                if (fetchMetadata && fetchValue) {
-                                    entry = unmarshalledEntry;
-                                } else {
-                                    // Sad that this has to make another entry!
-                                    entry = ctx.getMarshallableEntryFactory().create(key,
-                                          fetchValue ? unmarshalledEntry.getValue() : null,
-                                          fetchMetadata ? unmarshalledEntry.getMetadata() : null);
-                                }
+                            MarshallableEntry<K, V> me = valueToMarshallableEntry(key, it.value(), fetchMetadata);
+                            if (me != null && !me.isExpired(now)) {
+                                entry = me;
                             }
                         } else {
-                            entry = ctx.getMarshallableEntryFactory().create(key, (Object) null, null);
+                            entry = entryFactory.create(key);
                         }
                     }
                     it.next();
@@ -569,7 +575,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
 
     private abstract class RocksDBHandler {
 
-        abstract RocksDB open(String location, DBOptions options) throws RocksDBException;
+        abstract RocksDB open(Path location, DBOptions options) throws RocksDBException;
 
         abstract void close();
 
@@ -610,22 +616,19 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                 return null;
             }
             try {
-                byte[] kvpBytes;
+                byte[] entryBytes;
                 semaphore.acquire();
                 try {
                     if (stopped) {
                         throw new PersistenceException("RocksDB is stopped");
                     }
 
-                    kvpBytes = db.get(handle, marshall(key));
+                    entryBytes = db.get(handle, marshall(key));
                 } finally {
                     semaphore.release();
                 }
-                MarshallableEntry me = getMarshallableEntryFromValue(key, kvpBytes);
-                if (me == null) return null;
-
-                InternalMetadata meta = me.getMetadata();
-                if (meta != null && meta.isExpired(timeService.wallClockTime())) {
+                MarshallableEntry<K, V> me = valueToMarshallableEntry(key, entryBytes, true);
+                if (me == null || me.isExpired(timeService.wallClockTime())) {
                     return null;
                 }
                 return me;
@@ -642,8 +645,8 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                 return;
             }
             try {
-                byte[] marshalledKey = marshall(key);
-                byte[] marshalledValue = getMarshalledKeyValuePair(me);
+                byte[] marshalledKey = MarshallUtil.toByteArray(me.getKeyBytes());
+                byte[] marshalledValue = marshall(me.getMarshalledValue());
                 semaphore.acquire();
                 try {
                     if (stopped) {
@@ -654,8 +657,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                 } finally {
                     semaphore.release();
                 }
-                InternalMetadata meta = me.getMetadata();
-                if (meta != null && meta.expiryTime() > -1) {
+                if (me.expiryTime() > -1) {
                     addNewExpiry(me);
                 }
             } catch (Exception e) {
@@ -684,30 +686,28 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             }
         }
 
-        CompletableFuture<Void> writeBatch(Publisher<MarshallableEntry<? extends K, ? extends V>> publisher) {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            Flowable.fromPublisher(publisher)
+        CompletionStage<Void> writeBatch(Publisher<MarshallableEntry<? extends K, ? extends V>> publisher) {
+            return Flowable.fromPublisher(publisher)
                   .buffer(configuration.maxBatchSize())
                   .doOnNext(entries -> {
                       WriteBatch batch = new WriteBatch();
                       for (MarshallableEntry<? extends K, ? extends V> entry : entries) {
-                          Object key = entry.getKey();
-                          batch.put(getHandle(calculateSegment(key)), marshall(key), getMarshalledKeyValuePair(entry));
+                          int segment = calculateSegment(entry.getKey());
+                          byte[] keyBytes = MarshallUtil.toByteArray(entry.getKeyBytes());
+                          batch.put(getHandle(segment), keyBytes, marshall(entry.getMarshalledValue()));
                       }
                       writeBatch(batch);
 
                       // Add metadata only after batch has been written
                       for (MarshallableEntry entry : entries) {
-                          InternalMetadata meta = entry.getMetadata();
-                          if (meta != null && meta.expiryTime() > -1)
+                          if (entry.expiryTime() > -1)
                               addNewExpiry(entry);
                       }
                   })
                   .doOnError(e -> {
                       throw new PersistenceException(e);
                   })
-                  .subscribe(Functions.emptyConsumer(), future::completeExceptionally, () -> future.complete(null));
-            return future;
+                  .to(RxJavaInterop.flowableToCompletionStage());
         }
 
         void deleteBatch(Iterable<Object> keys) {
@@ -740,8 +740,10 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                                                                    boolean fetchValue, boolean fetchMetadata);
 
         int size(IntSet segments) {
-            long count = Flowable.fromPublisher(publishKeys(segments, null))
-                  .count().blockingGet();
+            CompletionStage<Long> stage = Flowable.fromPublisher(publishKeys(segments, null))
+                  .count().to(RxJavaInterop.singleToCompletionStage());
+
+            long count = CompletionStages.join(stage);
             if (count > Integer.MAX_VALUE) {
                 return Integer.MAX_VALUE;
             }
@@ -749,12 +751,13 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         }
 
         <P> Flowable<P> publish(int segment, Function<RocksIterator, Flowable<P>> function) {
+            ReadOptions readOptions = new ReadOptions().setFillCache(false);
             return Flowable.using(() -> {
                 semaphore.acquire();
                 if (stopped) {
                     throw new PersistenceException("RocksDB is stopped");
                 }
-                return wrapIterator(db, segment);
+                return wrapIterator(db, readOptions, segment);
             }, iterator -> {
                 if (iterator == null) {
                     return Flowable.empty();
@@ -765,11 +768,12 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                 if (iterator != null) {
                     iterator.close();
                 }
+                readOptions.close();
                 semaphore.release();
             });
         }
 
-        abstract RocksIterator wrapIterator(RocksDB db, int segment);
+        abstract RocksIterator wrapIterator(RocksDB db, ReadOptions readOptions, int segment);
 
         private void writeBatch(WriteBatch batch) throws InterruptedException, RocksDBException {
             semaphore.acquire();
@@ -779,6 +783,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
 
                 db.write(dataWriteOptions(), batch);
             } finally {
+                batch.close();
                 semaphore.release();
             }
         }
@@ -808,11 +813,11 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         }
 
         @Override
-        RocksDB open(String location, DBOptions options) throws RocksDBException {
-            File dir = new File(location);
+        RocksDB open(Path location, DBOptions options) throws RocksDBException {
+            File dir = location.toFile();
             dir.mkdirs();
             List<ColumnFamilyHandle> handles = new ArrayList<>(1);
-            RocksDB rocksDB = RocksDB.open(options, location,
+            RocksDB rocksDB = RocksDB.open(options, location.toString(),
                   Collections.singletonList(newDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY)),
                   handles);
             defaultColumnFamilyHandle = handles.get(0);
@@ -828,11 +833,11 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             } catch (InterruptedException e) {
                 throw new PersistenceException("Cannot acquire semaphore", e);
             }
-            try {
+            try (ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
                 if (stopped) {
                     throw new PersistenceException("RocksDB is stopped");
                 }
-                RocksIterator optionalIterator = wrapIterator(db, -1);
+                RocksIterator optionalIterator = wrapIterator(db, readOptions, -1);
                 if (optionalIterator != null && (configuration.clearThreshold() > 0 || segments == null)) {
                     try (RocksIterator it = optionalIterator) {
                         for (it.seekToFirst(); it.isValid(); it.next()) {
@@ -885,7 +890,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             db.close();
         }
 
-        protected void reinitAllDatabases() throws IOException, RocksDBException {
+        protected void reinitAllDatabases() throws RocksDBException {
             try {
                 semaphore.acquire(Integer.MAX_VALUE);
             } catch (InterruptedException e) {
@@ -897,25 +902,27 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
                 }
                 db.close();
                 expiredDb.close();
-                // Force a GC to ensure that open file handles are released in Windows
-                System.gc();
-                String dataLocation = getQualifiedLocation();
-                Util.recursiveFileRemove(new File(dataLocation));
-                db = open(getQualifiedLocation(), dataDbOptions());
+                if (System.getProperty("os.name").startsWith("Windows")) {
+                    // Force a GC to ensure that open file handles are released in Windows.
+                    System.gc();
+                }
+                Path dataLocation = getLocation();
+                Util.recursiveFileRemove(dataLocation.toFile());
+                db = open(getLocation(), dataDbOptions());
 
-                String expirationLocation = getQualifiedExpiredLocation();
-                Util.recursiveFileRemove(new File(expirationLocation));
+                Path expirationLocation = getExpirationLocation();
+                Util.recursiveFileRemove(expirationLocation.toFile());
                 expiredDb = openDatabase(expirationLocation, expiredDbOptions());
             } finally {
                 semaphore.release(Integer.MAX_VALUE);
             }
         }
 
-        protected RocksIterator wrapIterator(RocksDB db, int segment) {
+        protected RocksIterator wrapIterator(RocksDB db, ReadOptions readOptions, int segment) {
             // Some Cache Store tests use clear and in case of the Rocks DB implementation
             // this clears out internal references and results in throwing exceptions
             // when getting an iterator. Unfortunately there is no nice way to check that...
-            return db.newIterator(defaultColumnFamilyHandle, new ReadOptions().setFillCache(false));
+            return db.newIterator(defaultColumnFamilyHandle, readOptions);
         }
 
         @Override
@@ -975,8 +982,8 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
         }
 
         @Override
-        RocksDB open(String location, DBOptions options) throws RocksDBException {
-            File dir = new File(location);
+        RocksDB open(Path location, DBOptions options) throws RocksDBException {
+            File dir = location.toFile();
             dir.mkdirs();
             int segmentCount = handles.length();
             List<ColumnFamilyDescriptor> descriptors = new ArrayList<>(segmentCount + 1);
@@ -987,7 +994,7 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             for (int i = 0; i < segmentCount; ++i) {
                 descriptors.add(newDescriptor(byteArrayFromInt(i)));
             }
-            RocksDB rocksDB = RocksDB.open(options, location, descriptors, outHandles);
+            RocksDB rocksDB = RocksDB.open(options, location.toString(), descriptors, outHandles);
             for (int i = 0; i < segmentCount; ++i) {
                 handles.set(i, outHandles.get(i + 1));
             }
@@ -1030,11 +1037,11 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
             } catch (InterruptedException e) {
                 throw new PersistenceException("Cannot acquire semaphore", e);
             }
-            try {
+            try (ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
                 if (stopped) {
                     throw new PersistenceException("RocksDB is stopped");
                 }
-                RocksIterator optionalIterator = wrapIterator(db, segment);
+                RocksIterator optionalIterator = wrapIterator(db, readOptions, segment);
                 if (optionalIterator != null) {
                     ColumnFamilyHandle handle = handles.get(segment);
                     try (RocksIterator it = optionalIterator) {
@@ -1090,24 +1097,33 @@ public class RocksDBStore<K,V> implements SegmentedAdvancedLoadWriteStore<K,V> {
 
         @Override
         Publisher<K> publishKeys(IntSet segments, Predicate<? super K> filter) {
-            return PersistenceUtil.parallelizePublisher(segments == null ? IntSets.immutableRangeSet(handles.length()) : segments,
-                  scheduler, i -> publish(i, it -> Flowable.fromIterable(() -> new RocksKeyIterator(it, filter))));
+            Function<RocksIterator, Flowable<K>> function = it -> Flowable.fromIterable(() -> new RocksKeyIterator(it, filter));
+            return handleIteratorFunction(function, segments);
         }
 
         @Override
         Publisher<MarshallableEntry<K, V>> publishEntries(IntSet segments, Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata) {
+            Function<RocksIterator, Flowable<MarshallableEntry<K, V>>> function = it -> Flowable.fromIterable(() -> {
+                long now = timeService.wallClockTime();
+                return new RocksEntryIterator(it, filter, fetchValue, fetchMetadata, now);
+            });
+            return handleIteratorFunction(function, segments);
+        }
+
+        <R> Publisher<R> handleIteratorFunction(Function<RocksIterator, Flowable<R>> function, IntSet segments) {
+            // Short circuit if only a single segment - assumed to be invoked from persistence thread
+            if (segments != null && segments.size() == 1) {
+                return publish(segments.iterator().nextInt(), function);
+            }
             return PersistenceUtil.parallelizePublisher(segments == null ? IntSets.immutableRangeSet(handles.length()) : segments,
-                  scheduler, i -> publish(i, it -> Flowable.fromIterable(() -> {
-                      long now = timeService.wallClockTime();
-                      return new RocksEntryIterator(it, filter, fetchValue, fetchMetadata, now);
-                  })));
+                  scheduler, i -> publish(i,  function));
         }
 
         @Override
-        RocksIterator wrapIterator(RocksDB db, int segment) {
+        RocksIterator wrapIterator(RocksDB db, ReadOptions readOptions, int segment) {
             ColumnFamilyHandle handle = handles.get(segment);
             if (handle != null) {
-                return db.newIterator(handle, new ReadOptions().setFillCache(false));
+                return db.newIterator(handle, readOptions);
             }
             return null;
         }

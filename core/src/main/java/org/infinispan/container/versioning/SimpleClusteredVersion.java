@@ -4,10 +4,15 @@ import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.util.Collections;
+import java.util.Objects;
 import java.util.Set;
 
 import org.infinispan.commons.marshall.AbstractExternalizer;
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
 import org.infinispan.marshall.core.Ids;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
 
 import net.jcip.annotations.Immutable;
 
@@ -18,18 +23,27 @@ import net.jcip.annotations.Immutable;
  * @since 5.1
  */
 @Immutable
+@ProtoTypeId(ProtoStreamTypeIds.SIMPLE_CLUSTERED_VERSION)
 public class SimpleClusteredVersion implements IncrementableEntryVersion {
    /**
     * The cache topology id in which it was first created.
     */
-   public final int topologyId;
-   public final long version;
+   private final int topologyId;
 
+   private final long version;
+
+   @ProtoFactory
    public SimpleClusteredVersion(int topologyId, long version) {
       this.version = version;
       this.topologyId = topologyId;
    }
 
+   @ProtoField(number = 1, defaultValue = "-1")
+   public int getTopologyId() {
+      return topologyId;
+   }
+
+   @ProtoField(number = 2, defaultValue = "-1")
    public long getVersion() {
       return version;
    }
@@ -59,19 +73,14 @@ public class SimpleClusteredVersion implements IncrementableEntryVersion {
    public boolean equals(Object o) {
       if (this == o) return true;
       if (o == null || getClass() != o.getClass()) return false;
-
       SimpleClusteredVersion that = (SimpleClusteredVersion) o;
-
-      if (topologyId != that.topologyId) return false;
-      return version == that.version;
-
+      return topologyId == that.topologyId &&
+            version == that.version;
    }
 
    @Override
    public int hashCode() {
-      int result = topologyId;
-      result = 31 * result + (int) (version ^ (version >>> 32));
-      return result;
+      return Objects.hash(topologyId, version);
    }
 
    @Override
@@ -91,7 +100,6 @@ public class SimpleClusteredVersion implements IncrementableEntryVersion {
       }
 
       @Override
-      @SuppressWarnings("unchecked")
       public SimpleClusteredVersion readObject(ObjectInput unmarshaller) throws IOException, ClassNotFoundException {
          int topologyId = unmarshaller.readInt();
          long version = unmarshaller.readLong();
@@ -105,7 +113,7 @@ public class SimpleClusteredVersion implements IncrementableEntryVersion {
 
       @Override
       public Set<Class<? extends SimpleClusteredVersion>> getTypeClasses() {
-         return Collections.<Class<? extends SimpleClusteredVersion>>singleton(SimpleClusteredVersion.class);
+         return Collections.singleton(SimpleClusteredVersion.class);
       }
    }
 }

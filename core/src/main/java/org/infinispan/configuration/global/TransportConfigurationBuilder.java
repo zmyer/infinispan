@@ -1,16 +1,16 @@
 package org.infinispan.configuration.global;
 
-import static java.util.Arrays.asList;
 import static org.infinispan.configuration.global.TransportConfiguration.CLUSTER_NAME;
 import static org.infinispan.configuration.global.TransportConfiguration.DISTRIBUTED_SYNC_TIMEOUT;
 import static org.infinispan.configuration.global.TransportConfiguration.INITIAL_CLUSTER_SIZE;
 import static org.infinispan.configuration.global.TransportConfiguration.INITIAL_CLUSTER_TIMEOUT;
 import static org.infinispan.configuration.global.TransportConfiguration.MACHINE_ID;
 import static org.infinispan.configuration.global.TransportConfiguration.NODE_NAME;
-import static org.infinispan.configuration.global.TransportConfiguration.PROPERTIES;
 import static org.infinispan.configuration.global.TransportConfiguration.RACK_ID;
+import static org.infinispan.configuration.global.TransportConfiguration.REMOTE_EXECUTOR;
 import static org.infinispan.configuration.global.TransportConfiguration.SITE_ID;
-import static org.infinispan.configuration.global.TransportConfiguration.TRANSPORT;
+import static org.infinispan.configuration.global.TransportConfiguration.STACK;
+import static org.infinispan.configuration.global.TransportConfiguration.TRANSPORT_EXECUTOR;
 
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
@@ -21,27 +21,25 @@ import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.util.TypedProperties;
 import org.infinispan.commons.util.Util;
 import org.infinispan.remoting.transport.Transport;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * Configures the transport used for network communications across the cluster.
  */
 public class TransportConfigurationBuilder extends AbstractGlobalConfigurationBuilder implements Builder<TransportConfiguration> {
-   private static final Log log = LogFactory.getLog(TransportConfigurationBuilder.class);
 
    // Lazily instantiate this if the user doesn't request an alternate to avoid a hard dep on jgroups library
    public static final String DEFAULT_TRANSPORT = "org.infinispan.remoting.transport.jgroups.JGroupsTransport";
 
-   private final ThreadPoolConfigurationBuilder transportThreadPool;
-   private final ThreadPoolConfigurationBuilder remoteCommandThreadPool;
+   private final ThreadsConfigurationBuilder threads;
    private final AttributeSet attributes;
+   private final JGroupsConfigurationBuilder jgroupsConfigurationBuilder;
+   private TypedProperties typedProperties = new TypedProperties();
 
-   TransportConfigurationBuilder(GlobalConfigurationBuilder globalConfig) {
+   TransportConfigurationBuilder(GlobalConfigurationBuilder globalConfig, ThreadsConfigurationBuilder threads) {
       super(globalConfig);
-      attributes = TransportConfiguration.attributeSet();
-      transportThreadPool = new ThreadPoolConfigurationBuilder(globalConfig);
-      remoteCommandThreadPool = new ThreadPoolConfigurationBuilder(globalConfig);
+      this.threads = threads;
+      this.attributes = TransportConfiguration.attributeSet();
+      this.jgroupsConfigurationBuilder = new JGroupsConfigurationBuilder(globalConfig);
    }
 
    /**
@@ -130,7 +128,7 @@ public class TransportConfigurationBuilder extends AbstractGlobalConfigurationBu
     * @param transport transport instance
     */
    public TransportConfigurationBuilder transport(Transport transport) {
-      attributes.attribute(TRANSPORT).set(transport);
+      jgroupsConfigurationBuilder.transport(transport);
       return this;
    }
 
@@ -153,7 +151,7 @@ public class TransportConfigurationBuilder extends AbstractGlobalConfigurationBu
     * @return this TransportConfig
     */
    public TransportConfigurationBuilder withProperties(Properties properties) {
-      attributes.attribute(PROPERTIES).set(TypedProperties.toTypedProperties(properties));
+      this.typedProperties = TypedProperties.toTypedProperties(properties);
       return this;
    }
 
@@ -163,58 +161,50 @@ public class TransportConfigurationBuilder extends AbstractGlobalConfigurationBu
     * @return this TransportConfig
     */
    public TransportConfigurationBuilder clearProperties() {
-      attributes.attribute(PROPERTIES).set(new TypedProperties());
+      typedProperties.clear();
       return this;
    }
 
    public TransportConfigurationBuilder addProperty(String key, String value) {
-      TypedProperties properties = attributes.attribute(PROPERTIES).get();
-      properties.put(key, value);
-      attributes.attribute(PROPERTIES).set(properties);
+      typedProperties.put(key, value);
       return this;
    }
 
    public TransportConfigurationBuilder removeProperty(String key) {
-      TypedProperties properties = attributes.attribute(PROPERTIES).get();
-      properties.remove(key);
-      attributes.attribute(PROPERTIES).set(properties);
+      typedProperties.remove(key);
       return this;
    }
 
    public String getProperty(String key) {
-      return String.valueOf(attributes.attribute(PROPERTIES).get().get(key));
-   }
-
-   /**
-    * @deprecated Since 6.0, strictPeerToPeer is ignored and asymmetric clusters are always allowed.
-    */
-   @Deprecated
-   public TransportConfigurationBuilder strictPeerToPeer(Boolean ignored) {
-      log.strictPeerToPeerDeprecated();
-      return this;
+      return String.valueOf(typedProperties.get(key));
    }
 
    public ThreadPoolConfigurationBuilder transportThreadPool() {
-      return transportThreadPool;
+      return threads.transportThreadPool();
    }
 
    public ThreadPoolConfigurationBuilder remoteCommandThreadPool() {
-      return remoteCommandThreadPool;
+      return threads.remoteCommandThreadPool();
    }
 
    @Override
    public
    void validate() {
-      asList(transportThreadPool, remoteCommandThreadPool).forEach(Builder::validate);
       if(attributes.attribute(CLUSTER_NAME).get() == null){
           throw new CacheConfigurationException("Transport clusterName cannot be null");
       }
    }
 
+   public JGroupsConfigurationBuilder jgroups() {
+      return jgroupsConfigurationBuilder;
+   }
+
    @Override
    public
    TransportConfiguration create() {
-      return new TransportConfiguration(attributes.protect(), transportThreadPool.create(), remoteCommandThreadPool.create());
+      if (typedProperties.containsKey("stack")) attributes.attribute(STACK).set(typedProperties.getProperty("stack"));
+      return new TransportConfiguration(attributes.protect(),
+            jgroupsConfigurationBuilder.create(), threads.transportThreadPool().create(), threads.remoteCommandThreadPool().create(), typedProperties);
    }
 
    public TransportConfigurationBuilder defaultTransport() {
@@ -223,12 +213,22 @@ public class TransportConfigurationBuilder extends AbstractGlobalConfigurationBu
       return this;
    }
 
+   public TransportConfigurationBuilder transportExecutor(String threadPoolName) {
+      attributes.attribute(TRANSPORT_EXECUTOR).set(threadPoolName);
+      return this;
+   }
+
+   public TransportConfigurationBuilder remoteExecutor(String threadPoolName) {
+      attributes.attribute(REMOTE_EXECUTOR).set(threadPoolName);
+      return this;
+   }
+
    @Override
    public
    TransportConfigurationBuilder read(TransportConfiguration template) {
       attributes.read(template.attributes());
-      this.remoteCommandThreadPool.read(template.remoteCommandThreadPool());
-      this.transportThreadPool.read(template.transportThreadPool());
+      this.jgroupsConfigurationBuilder.read(template.jgroups());
+      this.typedProperties = new TypedProperties(template.properties());
       if (template.transport() != null) {
          Transport transport = Util.getInstance(template.transport().getClass().getName(), template.transport().getClass().getClassLoader());
          transport(transport);
@@ -238,14 +238,16 @@ public class TransportConfigurationBuilder extends AbstractGlobalConfigurationBu
    }
 
    public Transport getTransport() {
-      return attributes.attribute(TRANSPORT).get();
+      return jgroupsConfigurationBuilder.jgroupsTransport();
    }
 
    @Override
    public String toString() {
-      return "TransportConfigurationBuilder [transportThreadPool=" + transportThreadPool + ", remoteCommandThreadPool="
-            + remoteCommandThreadPool + ", attributes=" + attributes
-            + "]";
+      return "TransportConfigurationBuilder{" +
+            "threads=" + threads +
+            ", attributes=" + attributes +
+            ", jgroupsConfigurationBuilder=" + jgroupsConfigurationBuilder +
+            ", typedProperties=" + typedProperties +
+            '}';
    }
-
 }

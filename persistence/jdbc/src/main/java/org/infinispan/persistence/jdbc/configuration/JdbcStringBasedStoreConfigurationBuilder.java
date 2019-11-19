@@ -18,6 +18,7 @@ import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
 import org.infinispan.commons.util.TypedProperties;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.parsing.XmlConfigHelper;
 import org.infinispan.persistence.keymappers.DefaultTwoWayKey2StringMapper;
 import org.infinispan.persistence.keymappers.Key2StringMapper;
@@ -100,6 +101,17 @@ public class JdbcStringBasedStoreConfigurationBuilder extends AbstractJdbcStoreC
    }
 
    @Override
+   public void validate() {
+      table.validate();
+      super.validate();
+   }
+
+   @Override
+   public void validate(GlobalConfiguration globalConfig) {
+      super.validate(globalConfig);
+   }
+
+   @Override
    public JdbcStringBasedStoreConfigurationBuilder withProperties(Properties props) {
       Map<Object, Object> unrecognized = XmlConfigHelper.setAttributes(attributes, props, false, false);
       unrecognized = XmlConfigHelper.setAttributes(table.attributes(), unrecognized, false, false);
@@ -110,7 +122,8 @@ public class JdbcStringBasedStoreConfigurationBuilder extends AbstractJdbcStoreC
 
    @Override
    public JdbcStringBasedStoreConfiguration create() {
-      return new JdbcStringBasedStoreConfiguration(attributes.protect(), async.create(), singletonStore.create(), connectionFactory != null ? connectionFactory.create() : null,
+      return new JdbcStringBasedStoreConfiguration(attributes.protect(), async.create(),
+                                                   connectionFactory != null ? connectionFactory.create() : null,
             table.create());
    }
 
@@ -146,8 +159,8 @@ public class JdbcStringBasedStoreConfigurationBuilder extends AbstractJdbcStoreC
 
    @Override
    public String toString() {
-      return "JdbcStringBasedStoreConfigurationBuilder [table=" + table + ", connectionFactory=" + connectionFactory + ", attributes=" + attributes + ", async=" + async
-            + ", singletonStore=" + singletonStore + "]";
+      return "JdbcStringBasedStoreConfigurationBuilder [table=" + table + ", connectionFactory=" + connectionFactory +
+             ", attributes=" + attributes + ", async=" + async + "]";
    }
 
 }

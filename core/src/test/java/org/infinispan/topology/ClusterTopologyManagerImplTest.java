@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commons.hash.MurmurHash3;
+import org.infinispan.configuration.ConfigurationManager;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
@@ -26,6 +27,7 @@ import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.impl.BasicComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.manager.TestModuleRepository;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifierImpl;
 import org.infinispan.partitionhandling.AvailabilityMode;
@@ -41,7 +43,7 @@ import org.testng.annotations.Test;
 public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
    private static final String CACHE_NAME = "testCache";
 
-   private ExecutorService transportExecutor = Executors.newFixedThreadPool(2, getTestThreadFactory("Transport"));
+   private ExecutorService executor = Executors.newFixedThreadPool(2, getTestThreadFactory("Executor"));
 
    private static final Address A = new TestAddress(0, "A");
    private static final Address B = new TestAddress(1, "B");
@@ -62,7 +64,9 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       // Create global component registry with dependencies
       GlobalConfiguration gc = GlobalConfigurationBuilder.defaultClusteredBuilder().build();
       EmbeddedCacheManager cacheManager = mock(EmbeddedCacheManager.class);
-      GlobalComponentRegistry gcr = new GlobalComponentRegistry(gc, cacheManager, Collections.emptySet());
+      GlobalComponentRegistry gcr = new GlobalComponentRegistry(gc, cacheManager, Collections.emptySet(),
+                                                                TestModuleRepository.defaultModuleRepository(),
+                                                                mock(ConfigurationManager.class));
       BasicComponentRegistry gbcr = gcr.getComponent(BasicComponentRegistry.class);
 
       CacheManagerNotifierImpl managerNotifier = new CacheManagerNotifierImpl();
@@ -75,7 +79,8 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       PersistentUUIDManager persistentUUIDManager = new PersistentUUIDManagerImpl();
       gbcr.replaceComponent(PersistentUUIDManager.class.getName(), persistentUUIDManager, false);
 
-      gbcr.replaceComponent(KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR, transportExecutor, false);
+      gbcr.replaceComponent(KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR, executor, false);
+      gbcr.replaceComponent(KnownComponentNames.STATE_TRANSFER_EXECUTOR, executor, false);
 
       MockLocalTopologyManager ltm = new MockLocalTopologyManager(CACHE_NAME);
       gbcr.replaceComponent(LocalTopologyManager.class.getName(), ltm, false);
@@ -137,7 +142,9 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       // Create global component registry with dependencies
       GlobalConfiguration gc = GlobalConfigurationBuilder.defaultClusteredBuilder().build();
       EmbeddedCacheManager cacheManager = mock(EmbeddedCacheManager.class);
-      GlobalComponentRegistry gcr = new GlobalComponentRegistry(gc, cacheManager, Collections.emptySet());
+      GlobalComponentRegistry gcr = new GlobalComponentRegistry(gc, cacheManager, Collections.emptySet(),
+                                                                TestModuleRepository.defaultModuleRepository(),
+                                                                mock(ConfigurationManager.class));
       BasicComponentRegistry gbcr = gcr.getComponent(BasicComponentRegistry.class);
 
       CacheManagerNotifierImpl managerNotifier = new CacheManagerNotifierImpl();
@@ -150,7 +157,8 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
       PersistentUUIDManager persistentUUIDManager = new PersistentUUIDManagerImpl();
       gbcr.replaceComponent(PersistentUUIDManager.class.getName(), persistentUUIDManager, false);
 
-      gbcr.replaceComponent(KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR, transportExecutor, false);
+      gbcr.replaceComponent(KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR, executor, false);
+      gbcr.replaceComponent(KnownComponentNames.STATE_TRANSFER_EXECUTOR, executor, false);
 
       MockLocalTopologyManager ltm = new MockLocalTopologyManager(CACHE_NAME);
       gbcr.replaceComponent(LocalTopologyManager.class.getName(), ltm, false);
@@ -312,7 +320,7 @@ public class ClusterTopologyManagerImplTest extends AbstractInfinispanTest {
 
    @AfterClass(alwaysRun = true)
    public void shutdownExecutor() throws InterruptedException {
-      transportExecutor.shutdownNow();
-      assertTrue(transportExecutor.awaitTermination(10, TimeUnit.SECONDS));
+      executor.shutdownNow();
+      assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
    }
 }

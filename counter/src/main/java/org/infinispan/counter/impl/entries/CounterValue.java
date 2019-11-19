@@ -1,19 +1,14 @@
 package org.infinispan.counter.impl.entries;
 
-import static org.infinispan.counter.util.Utils.calculateState;
+import static org.infinispan.counter.impl.Utils.calculateState;
 
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
-import java.util.Collections;
-import java.util.Set;
-
-import org.infinispan.commons.marshall.AdvancedExternalizer;
-import org.infinispan.commons.marshall.MarshallUtil;
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
 import org.infinispan.counter.api.CounterConfiguration;
 import org.infinispan.counter.api.CounterState;
 import org.infinispan.counter.api.CounterType;
-import org.infinispan.counter.impl.externalizers.ExternalizerIds;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
 
 import net.jcip.annotations.Immutable;
 
@@ -26,15 +21,16 @@ import net.jcip.annotations.Immutable;
  * @since 9.0
  */
 @Immutable
+@ProtoTypeId(ProtoStreamTypeIds.COUNTER_VALUE)
 public class CounterValue {
 
-   public static final AdvancedExternalizer<CounterValue> EXTERNALIZER = new Externalizer();
    //A valid zero value
    private static final CounterValue ZERO = new CounterValue(0, CounterState.VALID);
    private final long value;
    private final CounterState state;
 
-   private CounterValue(long value, CounterState state) {
+   @ProtoFactory
+   CounterValue(long value, CounterState state) {
       this.value = value;
       this.state = state;
    }
@@ -102,6 +98,7 @@ public class CounterValue {
    /**
     * @return the counter's value.
     */
+   @ProtoField(number = 1, defaultValue = "0")
    public long getValue() {
       return value;
    }
@@ -109,6 +106,7 @@ public class CounterValue {
    /**
     * @return the counter's state.
     */
+   @ProtoField(number = 2)
    public CounterState getState() {
       return state;
    }
@@ -138,34 +136,5 @@ public class CounterValue {
             "value=" + value +
             ", state=" + state +
             '}';
-   }
-
-   private static class Externalizer implements AdvancedExternalizer<CounterValue> {
-
-      @Override
-      public Set<Class<? extends CounterValue>> getTypeClasses() {
-         return Collections.singleton(CounterValue.class);
-      }
-
-      @Override
-      public Integer getId() {
-         return ExternalizerIds.COUNTER_VALUE;
-      }
-
-      @Override
-      public void writeObject(ObjectOutput output, CounterValue object) throws IOException {
-         output.writeLong(object.value);
-         MarshallUtil.marshallEnum(object.state, output);
-      }
-
-      @Override
-      public CounterValue readObject(ObjectInput input) throws IOException, ClassNotFoundException {
-         long value = input.readLong();
-         CounterState state = MarshallUtil.unmarshallEnum(input, CounterState::valueOf);
-         if (value == 0 && state == CounterState.VALID) {
-            return ZERO;
-         }
-         return new CounterValue(value, state);
-      }
    }
 }

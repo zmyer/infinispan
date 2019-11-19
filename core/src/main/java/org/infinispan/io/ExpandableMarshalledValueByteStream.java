@@ -1,12 +1,14 @@
 package org.infinispan.io;
 
 /**
- * A byte stream that can be written to and expanded on the fly, not dissimilar to {@link ExposedByteArrayOutputStream}
- * but with the benefit of not having to allocate unnecessary byte arrays by not extending {@link java.io.ByteArrayOutputStream}.
+ * A byte stream that can be written to and expanded on the fly without having to allocate unnecessary byte arrays by
+ * not extending {@link java.io.ByteArrayOutputStream}.
  *
  * @author Manik Surtani
  * @since 5.1
+ * @deprecated since 10.0
  */
+@Deprecated
 public final class ExpandableMarshalledValueByteStream extends MarshalledValueByteStream {
    /**
     * The buffer where data is stored.

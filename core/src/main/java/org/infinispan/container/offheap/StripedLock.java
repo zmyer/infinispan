@@ -1,45 +1,23 @@
 package org.infinispan.container.offheap;
 
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.StampedLock;
 
 import org.infinispan.commons.util.Util;
 
 /**
- * Holder for read write locks that provides ability to retrieve them by offset and hashCode
+ * Holder for stamped locks that provides ability to retrieve them by offset and hashCode
  * Note that locks protect entries
  * @author wburns
  * @since 9.0
  */
 public class StripedLock {
-   private final ReadWriteLock[] locks;
-   private final OffsetCalculator offSetCalculator;
+   private final StampedLock[] locks;
 
-   public StripedLock(int lockCount, OffsetCalculator offSetCalculator) {
-      locks = new ReadWriteLock[Util.findNextHighestPowerOfTwo(lockCount)];
+   public StripedLock(int lockCount) {
+      locks = new StampedLock[Util.findNextHighestPowerOfTwo(lockCount)];
       for (int i = 0; i< locks.length; ++i) {
-         locks[i] = new ReentrantReadWriteLock();
+         locks[i] = new StampedLock();
       }
-      this.offSetCalculator = offSetCalculator;
-   }
-
-   /**
-    * Retrieves the read write lock attributed to the given object using its hashCode for lookup.
-    * @param obj the object to use to find the lock
-    * @return the lock associated with the object
-    */
-   public ReadWriteLock getLock(Object obj) {
-      return getLockFromHashCode(obj.hashCode());
-   }
-
-   /**
-    * Retrieves the lock associated with the given hashCode
-    * @param hashCode the hashCode to retrieve the lock for
-    * @return the lock associated with the given hashCode
-    */
-   public ReadWriteLock getLockFromHashCode(int hashCode) {
-      int offset = offSetCalculator.calculateOffsetUsingHashCode(hashCode);
-      return locks[offset];
    }
 
    /**
@@ -48,7 +26,7 @@ public class StripedLock {
     * @param offset the offset of the lock to find
     * @return the lock at the given offset
     */
-   public ReadWriteLock getLockWithOffset(int offset) {
+   public StampedLock getLockWithOffset(int offset) {
       if (offset >= locks.length) {
          throw new ArrayIndexOutOfBoundsException();
       }
@@ -59,8 +37,8 @@ public class StripedLock {
     * Locks all write locks.  Ensure that {@link StripedLock#unlockAll()} is called in a proper finally block
     */
    public void lockAll() {
-      for (ReadWriteLock rwLock : locks) {
-         rwLock.writeLock().lock();
+      for (StampedLock rwLock : locks) {
+         rwLock.asWriteLock().lock();
       }
    }
 
@@ -68,8 +46,8 @@ public class StripedLock {
     * Unlocks all write locks, useful after {@link StripedLock#lockAll()} was invoked.
     */
    void unlockAll() {
-      for (ReadWriteLock rwLock : locks) {
-         rwLock.writeLock().unlock();
+      for (StampedLock rwLock : locks) {
+         rwLock.asWriteLock().unlock();
       }
    }
 }

@@ -4,13 +4,15 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.transaction.impl.TotalOrderRemoteTransactionState;
 import org.infinispan.util.concurrent.BlockingTaskAwareExecutorService;
 import org.infinispan.util.logging.Log;
@@ -36,14 +38,17 @@ import org.infinispan.util.logging.LogFactory;
  *
  * @author Pedro Ruivo
  * @since 5.3
+ * @deprecated since 10.0. Total Order will be removed.
  */
+@Scope(Scopes.NAMED_CACHE)
+@Deprecated
 public class TotalOrderManager {
 
    private static final Log log = LogFactory.getLog(TotalOrderManager.class);
    private static final boolean trace = log.isTraceEnabled();
 
    @Inject @ComponentName(KnownComponentNames.REMOTE_COMMAND_EXECUTOR)
-   private BlockingTaskAwareExecutorService totalOrderExecutor;
+   BlockingTaskAwareExecutorService totalOrderExecutor;
 
    /**
     * this map is used to keep track of concurrent transactions.
@@ -52,7 +57,7 @@ public class TotalOrderManager {
    private final AtomicReference<TotalOrderLatch> stateTransferInProgress;
 
    public TotalOrderManager() {
-      keysLocked = CollectionFactory.makeConcurrentMap();
+      keysLocked = new ConcurrentHashMap<>();
       stateTransferInProgress = new AtomicReference<>(null);
    }
 

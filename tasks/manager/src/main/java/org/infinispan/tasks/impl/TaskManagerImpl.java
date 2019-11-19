@@ -9,12 +9,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 
 import javax.security.auth.Subject;
 
-import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
@@ -30,7 +31,6 @@ import org.infinispan.tasks.TaskExecution;
 import org.infinispan.tasks.TaskManager;
 import org.infinispan.tasks.logging.Log;
 import org.infinispan.tasks.spi.TaskEngine;
-import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.LogFactory;
 import org.infinispan.util.logging.events.EventLogCategory;
 import org.infinispan.util.logging.events.EventLogManager;
@@ -46,10 +46,11 @@ import org.infinispan.util.logging.events.EventLogger;
 public class TaskManagerImpl implements TaskManager {
    private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass(), Log.class);
 
-   @Inject private EmbeddedCacheManager cacheManager;
-   @Inject private TimeService timeService;
+   @Inject EmbeddedCacheManager cacheManager;
+   @Inject TimeService timeService;
    @Inject @ComponentName(KnownComponentNames.ASYNC_OPERATIONS_EXECUTOR)
-   private ExecutorService asyncExecutor;
+   ExecutorService asyncExecutor;
+   @Inject EventLogManager eventLogManager;
 
    private List<TaskEngine> engines;
    private ConcurrentMap<UUID, TaskExecution> runningTasks;
@@ -57,7 +58,7 @@ public class TaskManagerImpl implements TaskManager {
 
    public TaskManagerImpl() {
       engines = new ArrayList<>();
-      runningTasks = CollectionFactory.makeConcurrentMap();
+      runningTasks = new ConcurrentHashMap<>();
    }
 
    @Start
@@ -67,9 +68,7 @@ public class TaskManagerImpl implements TaskManager {
 
    @Override
    public synchronized void registerTaskEngine(TaskEngine engine) {
-      if (engines.contains(engine)) {
-         throw log.duplicateTaskEngineRegistration(engine.getName());
-      } else {
+      if (!engines.contains(engine)) {
          engines.add(engine);
       }
    }
@@ -94,7 +93,7 @@ public class TaskManagerImpl implements TaskManager {
             CompletableFuture<T> task = engine.runTask(name, context, asyncExecutor);
             return task.whenComplete((r, e) -> {
                if (context.isLogEvent()) {
-                  EventLogger eventLog = EventLogManager.getEventLogger(cacheManager).scope(cacheManager.getAddress());
+                  EventLogger eventLog = eventLogManager.getEventLogger().scope(cacheManager.getAddress());
                   who.ifPresent(eventLog::who);
                   context.getCache().ifPresent(eventLog::context);
                   if (e != null) {

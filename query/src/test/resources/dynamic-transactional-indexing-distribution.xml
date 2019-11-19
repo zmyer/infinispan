@@ -1,21 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <infinispan
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} http://www.infinispan.org/schemas/infinispan-config:${infinispan.core.schema.version}"
+      xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} https://infinispan.org/schemas/infinispan-config:${infinispan.core.schema.version}"
       xmlns="urn:infinispan:config:${infinispan.core.schema.version}">
 
    <cache-container name="QueryEnabledGrid-Dist" default-cache="default" statistics="true">
+      <serialization>
+         <context-initializer class="org.infinispan.query.test.QueryTestSCIImpl"/>
+      </serialization>
       <transport cluster="Infinispan-Query-Cluster"/>
-      <jmx duplicate-domains="true" />
        <!-- *************************************** -->
        <!--  Default Cache, with indexing enabled.  -->
        <!-- *************************************** -->
       <distributed-cache name="default" mode="SYNC" remote-timeout="20000" statistics="true">
-         <locking acquire-timeout="20000" write-skew="false" concurrency-level="500" striping="false" />
+         <locking acquire-timeout="20000" concurrency-level="500" striping="false" />
          <transaction mode="NON_XA" />
-         <eviction size="-1" strategy="NONE" />
+         <memory>
+            <object size="-1"/>
+         </memory>
          <expiration max-idle="-1" />
-            <indexing index="LOCAL">
+            <indexing index="PRIMARY_OWNER">
                <indexed-entities>
                   <indexed-entity>org.infinispan.query.test.Person</indexed-entity>
                </indexed-entities>

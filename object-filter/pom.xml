@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -40,6 +40,8 @@
       <dependency>
          <groupId>org.antlr</groupId>
          <artifactId>antlr-runtime</artifactId>
+         <!--  This gets shaded, so we mark it optional in order not to propagate this dependency any further -->
+         <optional>true</optional>
       </dependency>
 
       <dependency>
@@ -55,37 +57,21 @@
       </dependency>
    </dependencies>
 
-   <properties>
-      <intermediary_jar_name>intermediary-${project.build.finalName}</intermediary_jar_name>
-      <intermediary_jar_path>${project.build.directory}/${intermediary_jar_name}.jar</intermediary_jar_path>
-   </properties>
-
    <build>
       <plugins>
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
-            <configuration combine.self="override">
+            <configuration>
+               <parallel>none</parallel>
                <groups combine.self="override">${defaultJUnitGroups}</groups>
                <excludedGroups combine.self="override">${defaultExcludedJUnitGroups}</excludedGroups>
-               <systemPropertyVariables>
-                  <!-- Copied from parent POM -->
-                  <infinispan.test.jgroups.protocol>${infinispan.test.jgroups.protocol}</infinispan.test.jgroups.protocol>
-                  <jgroups.bind_addr>127.0.0.1</jgroups.bind_addr>
-                  <jgroups.join_timeout>2000</jgroups.join_timeout>
-                  <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
-                  <log4j.configurationFile>${log4j.configurationFile}</log4j.configurationFile>
-                  <build.directory>${project.build.directory}</build.directory>
-                  <com.arjuna.ats.arjuna.common.propertiesFile>test-jbossts-properties.xml</com.arjuna.ats.arjuna.common.propertiesFile>
-
-                  <!-- this is picked up in the log4j xml which prepends it to each module's log file-->
-                  <infinispan.module-suffix>${infinispan.module-suffix}</infinispan.module-suffix>
-                  <ansi.strip>${ansi.strip}</ansi.strip>
-                  <!-- Log the correct thread name after we call Thread.setName(),
-                       see https://issues.apache.org/jira/browse/LOG4J2-2052 -->
-                  <AsyncLogger.ThreadNameStrategy>UNCACHED</AsyncLogger.ThreadNameStrategy>
-               </systemPropertyVariables>
-               <trimStackTrace>false</trimStackTrace>
+               <disableXmlReport>false</disableXmlReport>
+               <properties>
+                  <!-- Deactivate the default listeners which may cause OOME. Jenkins uses the surefire generated XML file. -->
+                  <usedefaultlisteners>false</usedefaultlisteners>
+                  <listener>${junitListener}</listener>
+               </properties>
                <argLine>-Xmx512m</argLine>
             </configuration>
             <dependencies>
@@ -126,19 +112,22 @@
                      <goal>shade</goal>
                   </goals>
                   <configuration>
-                     <finalName>${intermediary_jar_name}</finalName>
+                     <finalName>${project.artifactId}-${project.version}</finalName>
                      <minimizeJar>true</minimizeJar>
                      <artifactSet>
                         <excludes>
                            <exclude>net.jcip:jcip-annotations:jar:</exclude>
                            <exclude>log4j:log4j:jar:</exclude>
                            <exclude>org.jboss.logging:jboss-logging:jar:</exclude>
+                           <exclude>org.infinispan:infinispan-query-dsl:jar:</exclude>
+                           <exclude>org.infinispan.protostream:protostream:jar:</exclude>
+                           <exclude>org.infinispan:infinispan-component-annotations:</exclude>
                         </excludes>
                      </artifactSet>
                      <relocations>
                         <relocation>
                            <pattern>org.antlr.runtime</pattern>
-                           <shadedPattern>org.infinipan.objectfilter.impl.antlr.runtime</shadedPattern>
+                           <shadedPattern>org.infinispan.objectfilter.impl.antlr.runtime</shadedPattern>
                         </relocation>
                      </relocations>
                   </configuration>

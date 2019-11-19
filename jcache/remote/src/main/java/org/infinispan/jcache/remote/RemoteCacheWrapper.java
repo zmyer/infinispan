@@ -93,6 +93,7 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
       return delegate.getWithMetadataAsync(key);
    }
 
+   @Deprecated
    @Override
    public Set<Object> getListeners() {
       return delegate.getListeners();
@@ -499,6 +500,11 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
    }
 
    @Override
+   public CompletableFuture<Long> sizeAsync() {
+      return delegate.sizeAsync();
+   }
+
+   @Override
    public void start() {
       delegate.start();
    }
@@ -592,5 +598,10 @@ abstract class RemoteCacheWrapper<K, V> implements RemoteCache<K, V> {
    @Override
    public ServerStatistics serverStatistics() {
       return delegate.serverStatistics();
+   }
+
+   @Override
+   public boolean isTransactional() {
+      return delegate.isTransactional();
    }
 }

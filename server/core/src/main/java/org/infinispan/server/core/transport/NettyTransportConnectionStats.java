@@ -1,29 +1,21 @@
 package org.infinispan.server.core.transport;
 
-import java.io.Serializable;
-import java.util.List;
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
-import javax.management.AttributeNotFoundException;
-import javax.management.InstanceNotFoundException;
-import javax.management.MBeanException;
-import javax.management.MBeanServer;
-import javax.management.MalformedObjectNameException;
+import javax.management.JMException;
 import javax.management.ObjectName;
-import javax.management.ReflectionException;
 
-import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.jmx.JmxUtil;
-import org.infinispan.configuration.global.GlobalJmxStatisticsConfiguration;
-import org.infinispan.distexec.DefaultExecutorService;
-import org.infinispan.distexec.DistributedCallable;
-import org.infinispan.distexec.DistributedExecutorService;
+import org.infinispan.commons.marshall.SerializeWith;
+import org.infinispan.jmx.CacheManagerJmxRegistration;
 import org.infinispan.manager.EmbeddedCacheManager;
 
 import io.netty.channel.group.ChannelGroup;
@@ -39,7 +31,7 @@ class NettyTransportConnectionStats {
 
    public NettyTransportConnectionStats(EmbeddedCacheManager cacheManager, ChannelGroup acceptedChannels, String threadNamePrefix) {
       this.cacheManager = cacheManager;
-      this.isGlobalStatsEnabled = cacheManager != null && cacheManager.getCacheManagerConfiguration().globalJmxStatistics().enabled();
+      this.isGlobalStatsEnabled = cacheManager != null && SecurityActions.getCacheManagerConfiguration(cacheManager).globalJmxStatistics().enabled();
       this.acceptedChannels = acceptedChannels;
       this.threadNamePrefix = threadNamePrefix;
    }
@@ -48,7 +40,6 @@ class NettyTransportConnectionStats {
       if (isGlobalStatsEnabled)
          base.addAndGet(bytes);
    }
-
 
    public void incrementTotalBytesWritten(long bytes) {
       increment(totalBytesWritten, bytes);
@@ -68,59 +59,69 @@ class NettyTransportConnectionStats {
 
    private boolean needDistributedCalculation() {
       if (cacheManager != null) {
-         org.infinispan.remoting.transport.Transport transport = cacheManager.getTransport();
-         return transport != null && transport.getMembers().size() > 1;
+         return cacheManager.getMembers() != null && cacheManager.getMembers().size() > 1;
       }
       return false;
    }
 
    private int calculateGlobalConnections() {
-      Cache<Object, Object> cache = cacheManager.getCache();
-      DistributedExecutorService exec = new DefaultExecutorService(cache);
+      AtomicInteger connectionCount = new AtomicInteger();
+      // Submit calculation task
+      CompletableFuture<Void> results = SecurityActions.getClusterExecutor(cacheManager).submitConsumer(
+            new ConnectionAdderTask(threadNamePrefix), (a, v, t) -> {
+               if (t != null) {
+                  throw new CacheException(t);
+               }
+               connectionCount.addAndGet(v);
+            });
+      // Take all results and add them up with a bit of functional programming magic :)
       try {
-         // Submit calculation task
-         List<CompletableFuture<Integer>> results = exec.submitEverywhere(
-               new ConnectionAdderTask(threadNamePrefix));
-         // Take all results and add them up with a bit of functional programming magic :)
-         return results.stream().mapToInt(f -> {
-            try {
-               return f.get(30, TimeUnit.SECONDS);
-            } catch (InterruptedException | ExecutionException | TimeoutException e) {
-               throw new CacheException(e);
-            }
-         }).sum();
-      } finally {
-         exec.shutdown();
+         results.get();
+      } catch (InterruptedException | ExecutionException e) {
+         throw new CacheException(e);
       }
+      return connectionCount.get();
    }
 
-   static class ConnectionAdderTask implements Serializable, DistributedCallable<Object, Object, Integer> {
+   @SerializeWith(NettyTransportConnectionStats.ConnectionAdderTask.Externalizer.class)
+   static class ConnectionAdderTask implements Function<EmbeddedCacheManager, Integer> {
       private final String serverName;
-
-      Cache<Object, Object> cache;
 
       ConnectionAdderTask(String serverName) {
          this.serverName = serverName;
       }
 
       @Override
-      public void setEnvironment(Cache<Object, Object> cache, Set<Object> inputKeys) {
-         this.cache = cache;
+      public Integer apply(EmbeddedCacheManager embeddedCacheManager) {
+         CacheManagerJmxRegistration jmxRegistration = SecurityActions.getGlobalComponentRegistry(embeddedCacheManager)
+               .getComponent(CacheManagerJmxRegistration.class);
+         try {
+            ObjectName transportNamePattern = new ObjectName(jmxRegistration.getDomain() + ":type=Server,component=Transport,name=*");
+            Set<ObjectName> objectNames = jmxRegistration.getMBeanServer().queryNames(transportNamePattern, null);
+
+            // sum the NumberOfLocalConnections from all transport MBeans that match the pattern
+            int total = 0;
+            for (ObjectName name : objectNames) {
+               if (name.getKeyProperty("name").startsWith(serverName)) {
+                  Integer connections = (Integer) jmxRegistration.getMBeanServer().getAttribute(name, "NumberOfLocalConnections");
+                  total += connections;
+               }
+            }
+            return total;
+         } catch (JMException e) {
+            throw new RuntimeException(e);
+         }
       }
 
-      @Override
-      public Integer call() throws Exception {
-         GlobalJmxStatisticsConfiguration globalCfg = cache.getCacheManager().getCacheManagerConfiguration().globalJmxStatistics();
-         String jmxDomain = globalCfg.domain();
-         MBeanServer mbeanServer = JmxUtil.lookupMBeanServer(globalCfg.mbeanServerLookup(), globalCfg.properties());
-         try {
-            ObjectName transportMBeanName = new ObjectName(
-                  jmxDomain + ":type=Server,component=Transport,name=" + serverName);
+      public static class Externalizer implements org.infinispan.commons.marshall.Externalizer<ConnectionAdderTask> {
+         @Override
+         public void writeObject(ObjectOutput output, ConnectionAdderTask task) throws IOException {
+            output.writeUTF(task.serverName);
+         }
 
-            return (Integer) mbeanServer.getAttribute(transportMBeanName, "NumberOfLocalConnections");
-         } catch (MBeanException | AttributeNotFoundException | InstanceNotFoundException | ReflectionException |
-               MalformedObjectNameException e) {
-            throw new RuntimeException(e);
+         @Override
+         public ConnectionAdderTask readObject(ObjectInput input) throws IOException, ClassNotFoundException {
+            return new ConnectionAdderTask(input.readUTF());
          }
       }
    }

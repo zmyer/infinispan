@@ -18,7 +18,8 @@ import java.util.stream.Stream;
 
 import org.infinispan.Cache;
 import org.infinispan.distribution.ch.ConsistentHash;
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
 import org.infinispan.remoting.transport.Address;
 
 /**
@@ -28,11 +29,7 @@ import org.infinispan.remoting.transport.Address;
  * Note that this only works if all the caches have joined a single cluster before creating the key.
  * If the cluster membership changes then the keys may move to other servers.
  */
-public class MagicKey implements Serializable, ExternalPojo {
-   /**
-    * The serialVersionUID
-    */
-   private static final long serialVersionUID = -835275755945753954L;
+public class MagicKey implements Serializable {
 
    private static final WeakHashMap<Integer, int[]> hashCodes = new WeakHashMap<>();
    private static final AtomicLong counter = new AtomicLong();
@@ -40,14 +37,31 @@ public class MagicKey implements Serializable, ExternalPojo {
    /**
     * The name is used only for easier debugging and may be null. It is not part of equals()/hashCode().
     */
-   private final String name;
-   private final int hashcode;
+   @ProtoField(number = 1)
+   final String name;
+
+   @ProtoField(number = 2, defaultValue = "0")
+   final int hashcode;
    /**
     * As hash codes can collide, using counter makes the key unique.
     */
-   private final long unique;
-   private final int segment;
-   private final String address;
+   @ProtoField(number = 3, defaultValue = "0")
+   final long unique;
+
+   @ProtoField(number = 4, defaultValue = "0")
+   final int segment;
+
+   @ProtoField(number = 5)
+   final String address;
+
+   @ProtoFactory
+   MagicKey(String name, int hashcode, long unique, int segment, String address) {
+      this.name = name;
+      this.hashcode = hashcode;
+      this.unique = unique;
+      this.segment = segment;
+      this.address = address;
+   }
 
    public MagicKey(String name, Cache<?, ?> primaryOwner) {
       this.name = name;

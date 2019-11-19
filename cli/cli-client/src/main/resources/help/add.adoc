@@ -1,0 +1,36 @@
+ADD(1)
+======
+:doctype: manpage
+
+
+NAME
+----
+add - increments and decrements counters with arbitrary values.
+
+
+SYNOPSIS
+--------
+*add* ['OPTIONS'] ['COUNTER_NAME']
+
+
+OPTIONS
+-------
+*--delta*='nnn'::
+Sets a delta to increment or decrement the counter value. Defaults to `1`.
+
+*-q, --quiet*='[true|false]'::
+Hides return values for strong counters. The default is `false`.
+
+
+EXAMPLES
+--------
+`add --delta=10 cnt_a` +
+Increments the value of `cnt_a` by `10`.
+
+`add --delta=-5 cnt_a` +
+Decrements the value of `cnt_a` by `5`.
+
+
+SEE ALSO
+--------
+cas(1), reset(1)

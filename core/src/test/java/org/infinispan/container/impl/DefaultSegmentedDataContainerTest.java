@@ -33,7 +33,8 @@ public class DefaultSegmentedDataContainerTest extends MultipleCacheManagersTest
    public void ensureOldMapsRemoved() {
       for (Cache<Object, Object> cache : caches(CACHE_NAME)) {
          DataContainer dc = TestingUtil.extractComponent(cache, InternalDataContainer.class);
-         assertTrue(dc instanceof DefaultSegmentedDataContainer);
+
+         assertEquals(DefaultSegmentedDataContainer.class, dc.getClass());
 
          DefaultSegmentedDataContainer segmentedDataContainer = (DefaultSegmentedDataContainer) dc;
 

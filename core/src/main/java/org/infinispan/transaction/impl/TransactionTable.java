@@ -1,6 +1,8 @@
 package org.infinispan.transaction.impl;
 
 import static org.infinispan.factories.KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR;
+import static org.infinispan.util.logging.Log.CLUSTER;
+import static org.infinispan.util.logging.Log.CONTAINER;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -22,20 +24,20 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+
 import javax.transaction.Status;
 import javax.transaction.Transaction;
 import javax.transaction.TransactionManager;
 import javax.transaction.TransactionSynchronizationRegistry;
 import javax.transaction.xa.XAException;
 
-import net.jcip.annotations.GuardedBy;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.ByRef;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.distribution.LocalizedCacheTopology;
@@ -44,10 +46,13 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.TopologyChanged;
+import org.infinispan.notifications.cachelistener.annotation.TransactionRegistered;
 import org.infinispan.notifications.cachelistener.event.TopologyChangedEvent;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
@@ -63,9 +68,11 @@ import org.infinispan.transaction.xa.CacheTransaction;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.transaction.xa.TransactionFactory;
 import org.infinispan.util.ByteString;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+
+import net.jcip.annotations.GuardedBy;
 
 /**
  * Repository for {@link RemoteTransaction} and {@link org.infinispan.transaction.xa.TransactionXaAdapter}s (locally
@@ -76,6 +83,7 @@ import org.infinispan.util.logging.LogFactory;
  * @since 4.0
  */
 @Listener
+@Scope(Scopes.NAMED_CACHE)
 public class TransactionTable implements org.infinispan.transaction.TransactionTable {
    public enum CompletedTransactionStatus {
       NOT_COMPLETED, COMMITTED, ABORTED, EXPIRED
@@ -87,22 +95,22 @@ public class TransactionTable implements org.infinispan.transaction.TransactionT
    public static final int CACHE_STOPPED_TOPOLOGY_ID = -1;
 
    @ComponentName(KnownComponentNames.CACHE_NAME)
-   @Inject private String cacheName;
+   @Inject String cacheName;
    @Inject protected Configuration configuration;
    @Inject protected TransactionCoordinator txCoordinator;
-   @Inject private TransactionFactory txFactory;
+   @Inject TransactionFactory txFactory;
    @Inject protected RpcManager rpcManager;
    @Inject protected CommandsFactory commandsFactory;
-   @Inject private ClusteringDependentLogic clusteringLogic;
-   @Inject private CacheNotifier notifier;
-   @Inject private TransactionSynchronizationRegistry transactionSynchronizationRegistry;
-   @Inject private TimeService timeService;
-   @Inject private CacheManagerNotifier cacheManagerNotifier;
+   @Inject ClusteringDependentLogic clusteringLogic;
+   @Inject CacheNotifier notifier;
+   @Inject TransactionSynchronizationRegistry transactionSynchronizationRegistry;
+   @Inject TimeService timeService;
+   @Inject CacheManagerNotifier cacheManagerNotifier;
    @Inject protected PartitionHandlingManager partitionHandlingManager;
    @Inject @ComponentName(TIMEOUT_SCHEDULE_EXECUTOR)
-   private ScheduledExecutorService timeoutExecutor;
-   @Inject private TransactionOriginatorChecker transactionOriginatorChecker;
-   @Inject private TransactionManager transactionManager;
+   ScheduledExecutorService timeoutExecutor;
+   @Inject TransactionOriginatorChecker transactionOriginatorChecker;
+   @Inject TransactionManager transactionManager;
 
    /**
     * minTxTopologyId is the minimum topology ID across all ongoing local and remote transactions.
@@ -131,13 +139,13 @@ public class TransactionTable implements org.infinispan.transaction.TransactionT
       final int concurrencyLevel = configuration.locking().concurrencyLevel();
       //use the IdentityEquivalence because some Transaction implementation does not have a stable hash code function
       //and it can cause some leaks in the concurrent map.
-      localTransactions = CollectionFactory.makeConcurrentMap(concurrencyLevel, 0.75f, concurrencyLevel);
-      globalToLocalTransactions = CollectionFactory.makeConcurrentMap(concurrencyLevel, 0.75f, concurrencyLevel);
+      localTransactions = new ConcurrentHashMap<>(concurrencyLevel, 0.75f, concurrencyLevel);
+      globalToLocalTransactions = new ConcurrentHashMap<>(concurrencyLevel, 0.75f, concurrencyLevel);
 
       boolean transactional = configuration.transaction().transactionMode().isTransactional();
       if (clustered && transactional) {
          minTopologyRecalculationLock = new ReentrantLock();
-         remoteTransactions = CollectionFactory.makeConcurrentMap(concurrencyLevel, 0.75f, concurrencyLevel);
+         remoteTransactions = new ConcurrentHashMap<>(concurrencyLevel, 0.75f, concurrencyLevel);
 
          notifier.addListener(this);
          cacheManagerNotifier.addListener(this);
@@ -179,7 +187,7 @@ public class TransactionTable implements org.infinispan.transaction.TransactionT
 
    @Stop
    @SuppressWarnings("unused")
-   private void stop() {
+   void stop() {
       running = false;
       cacheManagerNotifier.removeListener(this);
       if (clustered) {
@@ -365,12 +373,12 @@ public class TransactionTable implements org.infinispan.transaction.TransactionT
 
       if (!running) {
          // Assume that we wouldn't get this far if the cache was already stopped
-         throw log.cacheIsStopping(cacheName);
+         throw CONTAINER.cacheIsStopping(cacheName);
       }
 
       int viewId = rpcManager.getTransport().getViewId();
       if (transactionOriginatorChecker.isOriginatorMissing(globalTx, rpcManager.getTransport().getMembers())) {
-         throw log.remoteTransactionOriginatorNotInView(globalTx);
+         throw CLUSTER.remoteTransactionOriginatorNotInView(globalTx);
       }
 
       RemoteTransaction newTransaction = modifications == null ? txFactory.newRemoteTransaction(globalTx, topologyId)
@@ -382,7 +390,7 @@ public class TransactionTable implements org.infinispan.transaction.TransactionT
             return existing;
          } else {
             if (isTransactionCompleted(gtx)) {
-               throw log.remoteTransactionAlreadyCompleted(gtx);
+               throw CLUSTER.remoteTransactionAlreadyCompleted(gtx);
             }
             if (trace)
                log.tracef("Created and registered remote transaction %s", newTransaction);
@@ -425,14 +433,17 @@ public class TransactionTable implements org.infinispan.transaction.TransactionT
       if (current == null) {
          if (!running) {
             // Assume that we wouldn't get this far if the cache was already stopped
-            throw log.cacheIsStopping(cacheName);
+            throw CONTAINER.cacheIsStopping(cacheName);
          }
          GlobalTransaction tx = gtxFactory.get();
          current = txFactory.newLocalTransaction(transaction, tx, implicitTransaction, currentTopologyId);
          if (trace) log.tracef("Created a new local transaction: %s", current);
          localTransactions.put(transaction, current);
          globalToLocalTransactions.put(current.getGlobalTransaction(), current);
-         notifier.notifyTransactionRegistered(tx, true);
+         if (notifier.hasListener(TransactionRegistered.class)) {
+            // TODO: this should be allowed to be async at some point
+            CompletionStages.join(notifier.notifyTransactionRegistered(tx, true));
+         }
       }
       return current;
    }
@@ -557,7 +568,7 @@ public class TransactionTable implements org.infinispan.transaction.TransactionT
             // The topology id must be updated after the topology was updated in StateConsumerImpl,
             // as state transfer requires transactions not sent to the new owners to have a smaller topology id.
             currentTopologyId = tce.getNewTopologyId();
-            log.debugf("Topology changed, recalculating minTopologyId");
+            log.debugf("Topology changed, recalculating minimum topology id");
             calculateMinTopologyId(-1);
          }
       }

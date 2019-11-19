@@ -23,7 +23,7 @@ import javax.transaction.xa.Xid;
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.CacheSet;
-import org.infinispan.IllegalLifecycleStateException;
+import org.infinispan.commons.IllegalLifecycleStateException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.dataconversion.MediaTypeIds;
@@ -179,7 +179,10 @@ class Encoder2x implements VersionedEncoder {
    @Override
    public ByteBuf statsResponse(HotRodHeader header, HotRodServer server, ByteBufAllocator alloc, Stats stats, NettyTransport transport, ComponentRegistry cacheRegistry) {
       ByteBuf buf = writeHeader(header, server, alloc, OperationStatus.Success);
-      int numStats = 11;
+      int numStats = 9;
+      if (transport != null) {
+         numStats += 2;
+      }
       ClusterCacheStats clusterCacheStats = null;
       if (HotRodVersion.HOTROD_24.isAtLeast(header.version)) {
          clusterCacheStats = cacheRegistry.getComponent(ClusterCacheStats.class);
@@ -187,6 +190,7 @@ class Encoder2x implements VersionedEncoder {
             numStats += 7;
          }
       }
+
       ExtendedByteBuf.writeUnsignedInt(numStats, buf);
       writePair(buf, "timeSinceStart", String.valueOf(stats.getTimeSinceStart()));
       writePair(buf, "currentNumberOfEntries", String.valueOf(stats.getCurrentNumberOfEntries()));
@@ -197,8 +201,11 @@ class Encoder2x implements VersionedEncoder {
       writePair(buf, "misses", String.valueOf(stats.getMisses()));
       writePair(buf, "removeHits", String.valueOf(stats.getRemoveHits()));
       writePair(buf, "removeMisses", String.valueOf(stats.getRemoveMisses()));
-      writePair(buf, "totalBytesRead", String.valueOf(transport.getTotalBytesRead()));
-      writePair(buf, "totalBytesWritten", String.valueOf(transport.getTotalBytesWritten()));
+
+      if (transport != null) {
+         writePair(buf, "totalBytesRead", String.valueOf(transport.getTotalBytesRead()));
+         writePair(buf, "totalBytesWritten", String.valueOf(transport.getTotalBytesWritten()));
+      }
 
       if (clusterCacheStats != null) {
          writePair(buf, "globalCurrentNumberOfEntries", String.valueOf(clusterCacheStats.getCurrentNumberOfEntries()));
@@ -429,9 +436,6 @@ class Encoder2x implements VersionedEncoder {
 
    private ByteBuf writeHeader(HotRodHeader header, HotRodServer server, ByteBufAllocator alloc, OperationStatus status, boolean sendMediaType) {
       ByteBuf buf = alloc.ioBuffer();
-      // Sometimes an error happens before we have added the cache to the knownCaches/knownCacheConfigurations map
-      // If that happens, we pretend the cache is LOCAL and we skip the topology update
-      String cacheName = header.cacheName.isEmpty() ? server.getConfiguration().defaultCacheName() : header.cacheName;
       Cache<Address, ServerAddress> addressCache = HotRodVersion.forVersion(header.version) != HotRodVersion.UNKNOWN ?
             server.getAddressCache() : null;
 
@@ -442,23 +446,31 @@ class Encoder2x implements VersionedEncoder {
       boolean objectStorage = false;
       CacheTopology cacheTopology;
 
-      if (CounterModuleLifecycle.COUNTER_CACHE_NAME.equals(cacheName)) {
-         cacheTopology = getCounterCacheTopology(server.getCacheManager());
-         newTopology = getTopologyResponse(header.clientIntel, header.topologyId, addressCache, CacheMode.DIST_SYNC, cacheTopology);
-      } else {
-         ComponentRegistry cr = server.getCacheRegistry(cacheName);
-         Configuration configuration = server.getCacheConfiguration(cacheName);
-         CacheMode cacheMode = configuration == null ? CacheMode.LOCAL : configuration.clustering().cacheMode();
+      if (header.op != HotRodOperation.ERROR) {
+         if (CounterModuleLifecycle.COUNTER_CACHE_NAME.equals(header.cacheName)) {
+            cacheTopology = getCounterCacheTopology(server.getCacheManager());
+            newTopology = getTopologyResponse(header.clientIntel, header.topologyId, addressCache, CacheMode.DIST_SYNC,
+                  cacheTopology);
+         } else if (header.cacheName.isEmpty() && !server.hasDefaultCache()) {
+            cacheTopology = null;
+            newTopology = Optional.empty();
+         } else {
+            HotRodServer.CacheInfo cacheInfo = server.getCacheInfo(header);
+            Configuration configuration = cacheInfo.configuration;
+            CacheMode cacheMode = configuration.clustering().cacheMode();
 
-         cacheTopology = cacheMode.isClustered() ? cr.getDistributionManager().getCacheTopology() : null;
-         newTopology = getTopologyResponse(header.clientIntel, header.topologyId, addressCache, cacheMode, cacheTopology);
-         if (configuration != null) {
+            cacheTopology =
+               cacheMode.isClustered() ? cacheInfo.distributionManager.getCacheTopology() : null;
+            newTopology = getTopologyResponse(header.clientIntel, header.topologyId, addressCache, cacheMode,
+                                              cacheTopology);
             keyMediaType = configuration.encoding().keyDataType().mediaType();
             valueMediaType = configuration.encoding().valueDataType().mediaType();
             objectStorage = APPLICATION_OBJECT.match(keyMediaType);
          }
+      } else {
+         cacheTopology = null;
+         newTopology = Optional.empty();
       }
-
 
       buf.writeByte(Constants.MAGIC_RES);
       writeUnsignedLong(header.messageId, buf);

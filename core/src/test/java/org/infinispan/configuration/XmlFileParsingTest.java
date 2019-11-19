@@ -1,6 +1,5 @@
 package org.infinispan.configuration;
 
-import static org.infinispan.test.TestingUtil.withCacheManager;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNotNull;
@@ -14,13 +13,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
 
-import org.infinispan.Version;
 import org.infinispan.commons.CacheConfigurationException;
-import org.infinispan.commons.equivalence.AnyEquivalence;
 import org.infinispan.commons.executors.BlockingThreadPoolExecutorFactory;
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
-import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
+import org.infinispan.commons.util.Version;
 import org.infinispan.configuration.cache.AbstractStoreConfiguration;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ClusterLoaderConfiguration;
@@ -34,20 +31,21 @@ import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.ShutdownHookBehavior;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ParserRegistry;
+import org.infinispan.distribution.ch.impl.DefaultConsistentHashFactory;
 import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.factories.threads.DefaultThreadFactory;
 import org.infinispan.interceptors.FooInterceptor;
+import org.infinispan.manager.DefaultCacheManager;
 import org.infinispan.marshall.AdvancedExternalizerTest;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
-import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfiguration;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.InitializationContext;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
 import org.infinispan.test.AbstractInfinispanTest;
-import org.infinispan.test.CacheManagerCallable;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.test.tx.TestLookup;
@@ -61,8 +59,8 @@ import org.testng.annotations.Test;
 public class XmlFileParsingTest extends AbstractInfinispanTest {
 
    @Test(expectedExceptions=FileNotFoundException.class)
-   public void testFailOnUnexpectedConfigurationFile() throws IOException {
-      TestCacheManagerFactory.fromXml("does-not-exist.xml");
+   public void testFailOnMissingConfigurationFile() throws IOException {
+      new DefaultCacheManager("does-not-exist.xml");
    }
 
    public void testNamedCacheFile() throws IOException {
@@ -71,7 +69,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertNamedCacheFile(holder, false);
    }
 
-   public void testNoNamedCaches() throws Exception {
+   public void testNoNamedCaches() {
       String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container default-cache=\"default\">" +
             "   <transport cluster=\"demoCluster\"/>\n" +
@@ -80,26 +78,25 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      GlobalConfiguration globalCfg = holder.getGlobalConfigurationBuilder().build();
 
-         @Override
-         public void call() {
-            GlobalConfiguration globalCfg = cm.getCacheManagerConfiguration();
+      assertTrue(globalCfg.transport().transport() instanceof JGroupsTransport);
+      assertEquals("demoCluster", globalCfg.transport().clusterName());
 
-            assertTrue(globalCfg.transport().transport() instanceof JGroupsTransport);
-            assertEquals("demoCluster", globalCfg.transport().clusterName());
-
-            Configuration cfg = cm.getDefaultCacheConfiguration();
-            assertEquals(CacheMode.REPL_SYNC, cfg.clustering().cacheMode());
-         }
-
-      });
+      Configuration cfg = holder.getDefaultConfigurationBuilder().build();
+      assertEquals(CacheMode.REPL_SYNC, cfg.clustering().cacheMode());
 
    }
 
+   private ConfigurationBuilderHolder parseStringConfiguration(String config) {
+      InputStream is = new ByteArrayInputStream(config.getBytes());
+      ParserRegistry parserRegistry = new ParserRegistry(Thread.currentThread().getContextClassLoader(), true, System.getProperties());
+      return parserRegistry.parse(is, null);
+   }
+
    @Test(expectedExceptions=CacheConfigurationException.class)
-   public void testDuplicateCacheNames() throws Exception {
+   public void testDuplicateCacheNames() {
       String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container default-cache=\"duplicatename\">" +
             "   <transport cluster=\"demoCluster\"/>\n" +
@@ -114,7 +111,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       TestCacheManagerFactory.fromStream(is);
    }
 
-   public void testNoSchemaWithStuff() throws IOException {
+   public void testNoSchemaWithStuff() {
       String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container default-cache=\"default\">" +
             "   <local-cache name=\"default\">\n" +
@@ -123,76 +120,14 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-
-         @Override
-         public void call() {
-            Configuration cfg = cm.getDefaultCacheConfiguration();
-            assertEquals(10000, cfg.locking().concurrencyLevel());
-            assertEquals(IsolationLevel.REPEATABLE_READ, cfg.locking().isolationLevel());
-         }
-
-      });
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      Configuration cfg = holder.getDefaultConfigurationBuilder().build();
+      assertEquals(10000, cfg.locking().concurrencyLevel());
+      assertEquals(IsolationLevel.REPEATABLE_READ, cfg.locking().isolationLevel());
 
    }
 
-   public void testCompatibility() throws Exception {
-      String config = TestingUtil.wrapXMLWithSchema(
-            "<cache-container default-cache=\"default\">" +
-            "   <local-cache name=\"default\">\n" +
-            "   </local-cache>\n" +
-            "</cache-container>"
-      );
-
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            Configuration cfg = cm.getDefaultCacheConfiguration();
-            assertFalse(cfg.compatibility().enabled());
-            assertNull(cfg.compatibility().marshaller());
-         }
-      });
-
-      config = TestingUtil.wrapXMLWithSchema(
-            "<cache-container default-cache=\"default\">" +
-            "   <local-cache name=\"default\">\n" +
-            "      <compatibility/>\n" +
-            "   </local-cache>\n" +
-            "</cache-container>"
-      );
-
-      is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            Configuration cfg = cm.getDefaultCacheConfiguration();
-            assertTrue(cfg.compatibility().enabled());
-            assertNull(cfg.compatibility().marshaller());
-         }
-      });
-
-      config = TestingUtil.wrapXMLWithSchema(
-            "<cache-container default-cache=\"default\">" +
-            "   <local-cache name=\"default\">\n" +
-            "      <compatibility marshaller=\"org.infinispan.commons.marshall.jboss.GenericJBossMarshaller\"/>\n" +
-            "   </local-cache>\n" +
-            "</cache-container>"
-      );
-
-      is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            Configuration cfg = cm.getDefaultCacheConfiguration();
-            assertTrue(cfg.compatibility().enabled());
-            assertTrue(cfg.compatibility().marshaller() instanceof GenericJBossMarshaller);
-         }
-      });
-   }
-
-   public void testOffHeap() throws Exception {
+   public void testOffHeap() {
       String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container default-cache=\"default\">" +
             "   <local-cache name=\"default\">\n" +
@@ -202,17 +137,10 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "   </local-cache>\n" +
             "</cache-container>"
       );
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            Configuration cfg = cm.getDefaultCacheConfiguration();
-            assertTrue(cfg.dataContainer().<byte[]>keyEquivalence() instanceof AnyEquivalence);
-            assertTrue(cfg.dataContainer().valueEquivalence() instanceof AnyEquivalence);
-            assertEquals(StorageType.OFF_HEAP, cfg.memory().storageType());
-            assertEquals(EvictionStrategy.MANUAL, cfg.memory().evictionStrategy());
-         }
-      });
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      Configuration cfg = holder.getDefaultConfigurationBuilder().build();
+      assertEquals(StorageType.OFF_HEAP, cfg.memory().storageType());
+      assertEquals(EvictionStrategy.MANUAL, cfg.memory().evictionStrategy());
 
       config = TestingUtil.wrapXMLWithSchema(
             "<cache-container default-cache=\"default\">" +
@@ -221,16 +149,9 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "   </local-cache>\n" +
             "</cache-container>"
       );
-      is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            Configuration cfg = cm.getDefaultCacheConfiguration();
-            assertTrue(cfg.dataContainer().<byte[]>keyEquivalence() instanceof AnyEquivalence);
-            assertTrue(cfg.dataContainer().<byte[]>valueEquivalence() instanceof AnyEquivalence);
-            assertEquals(StorageType.OBJECT, cfg.memory().storageType());
-         }
-      });
+      holder = parseStringConfiguration(config);
+      cfg = holder.getDefaultConfigurationBuilder().build();
+      assertEquals(StorageType.OBJECT, cfg.memory().storageType());
 
       config = TestingUtil.wrapXMLWithoutSchema(
             "<cache-container default-cache=\"default\">" +
@@ -241,19 +162,12 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "   </local-cache>\n" +
             "</cache-container>"
       );
-      is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            Configuration cfg = cm.getDefaultCacheConfiguration();
-            assertTrue(cfg.dataContainer().<byte[]>keyEquivalence() instanceof AnyEquivalence);
-            assertTrue(cfg.dataContainer().<byte[]>valueEquivalence() instanceof AnyEquivalence);
-            assertEquals(StorageType.BINARY, cfg.memory().storageType());
-         }
-      });
+      holder = parseStringConfiguration(config);
+      cfg = holder.getDefaultConfigurationBuilder().build();
+      assertEquals(StorageType.BINARY, cfg.memory().storageType());
    }
 
-   public void testDummyInMemoryStore() throws IOException {
+   public void testDummyInMemoryStore() {
       String config = TestingUtil.wrapXMLWithoutSchema(
             "<cache-container default-cache=\"default\">" +
             "   <local-cache name=\"default\">\n" +
@@ -266,19 +180,18 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            PersistenceConfiguration cfg = cm.getDefaultCacheConfiguration().persistence();
-            StoreConfiguration config = cfg.stores().get(0);
-            assertTrue(config instanceof DummyInMemoryStoreConfiguration);
-            DummyInMemoryStoreConfiguration dummyInMemoryStoreConfiguration = (DummyInMemoryStoreConfiguration)config;
-            assertEquals("myStore", dummyInMemoryStoreConfiguration.storeName());
-         }
-      });
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      PersistenceConfiguration cfg = holder.getDefaultConfigurationBuilder().build().persistence();
+      StoreConfiguration storeConfiguration = cfg.stores().get(0);
+      assertTrue(storeConfiguration instanceof DummyInMemoryStoreConfiguration);
+      DummyInMemoryStoreConfiguration dummyInMemoryStoreConfiguration = (DummyInMemoryStoreConfiguration)storeConfiguration;
+      assertEquals("myStore", dummyInMemoryStoreConfiguration.storeName());
    }
 
+   /**
+    * Used by testStoreWithNoConfigureBy, although the cache is not really created.
+    */
+   @SuppressWarnings("unused")
    public static class GenericLoader implements CacheLoader {
 
       @Override
@@ -297,7 +210,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       public void stop() { }
    }
 
-   public void testStoreWithNoConfigureBy() throws IOException {
+   public void testStoreWithNoConfigureBy() {
       String config = TestingUtil.wrapXMLWithoutSchema(
             "<cache-container default-cache=\"default\">" +
             "   <local-cache name=\"default\">\n" +
@@ -310,21 +223,16 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            PersistenceConfiguration cfg = cm.getDefaultCacheConfiguration().persistence();
-            StoreConfiguration config = cfg.stores().get(0);
-            assertTrue(config instanceof AbstractStoreConfiguration);
-            AbstractStoreConfiguration abstractStoreConfiguration = (AbstractStoreConfiguration)config;
-            assertTrue(abstractStoreConfiguration.fetchPersistentState());
-            assertTrue(abstractStoreConfiguration.preload());
-         }
-      });
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      PersistenceConfiguration cfg = holder.getDefaultConfigurationBuilder().build().persistence();
+      StoreConfiguration storeConfiguration = cfg.stores().get(0);
+      assertTrue(storeConfiguration instanceof AbstractStoreConfiguration);
+      AbstractStoreConfiguration abstractStoreConfiguration = (AbstractStoreConfiguration)storeConfiguration;
+      assertTrue(abstractStoreConfiguration.fetchPersistentState());
+      assertTrue(abstractStoreConfiguration.preload());
    }
 
-   public void testCustomTransport() throws IOException {
+   public void testCustomTransport() {
       String config = TestingUtil.wrapXMLWithSchema(
             "<jgroups transport=\"org.infinispan.configuration.XmlFileParsingTest$CustomTransport\"/>\n" +
             "<cache-container default-cache=\"default\">\n" +
@@ -333,18 +241,13 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-         @Override
-         public void call() {
-            Transport transport = cm.getTransport();
-            assertNotNull(transport);
-            assertTrue(transport instanceof CustomTransport);
-         }
-      });
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      Transport transport = holder.getGlobalConfigurationBuilder().build().transport().transport();
+      assertNotNull(transport);
+      assertTrue(transport instanceof CustomTransport);
    }
 
-   public void testNoDefaultCache() throws Exception {
+   public void testNoDefaultCache() {
       String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container>" +
             "   <transport cluster=\"demoCluster\"/>\n" +
@@ -353,22 +256,19 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      GlobalConfiguration globalCfg = holder.getGlobalConfigurationBuilder().build();
+      assertFalse(globalCfg.defaultCacheName().isPresent());
+      assertNull(holder.getDefaultConfigurationBuilder());
+      assertEquals(CacheMode.REPL_SYNC, getCacheConfiguration(holder, "default").clustering().cacheMode());
+   }
 
-         @Override
-         public void call() {
-            GlobalConfiguration globalCfg = cm.getCacheManagerConfiguration();
-            assertFalse(globalCfg.defaultCacheName().isPresent());
-            assertNull(cm.getDefaultCacheConfiguration());
-            assertEquals(CacheMode.REPL_SYNC, cm.getCacheConfiguration("default").clustering().cacheMode());
-         }
-
-      });
+   private Configuration getCacheConfiguration(ConfigurationBuilderHolder holder, String cacheName) {
+      return holder.getNamedConfigurationBuilders().get(cacheName).build();
    }
 
    @Test(expectedExceptions = CacheConfigurationException.class, expectedExceptionsMessageRegExp = "ISPN000432:.*")
-   public void testNoDefaultCacheDeclaration() throws Exception {
+   public void testNoDefaultCacheDeclaration() {
       String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container default-cache=\"non-existent\">" +
             "   <transport cluster=\"demoCluster\"/>\n" +
@@ -377,15 +277,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-
-         @Override
-         public void call() {
-            // Do nothing
-         }
-
-      });
+      parseStringConfiguration(config);
    }
 
 
@@ -398,19 +290,13 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-
-         @Override
-         public void call() {
-            Configuration wildcache1 = cm.getCacheConfiguration("wildcache1");
-            assertNotNull(wildcache1);
-            assertEquals(10500, wildcache1.expiration().wakeUpInterval());
-            assertEquals(11, wildcache1.expiration().lifespan());
-            assertEquals(11, wildcache1.expiration().maxIdle());
-         }
-
-      });
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      try (DefaultCacheManager cm = new DefaultCacheManager(holder, false)) {
+         Configuration wildcache1 = cm.getCacheConfiguration("wildcache1");
+         assertEquals(10500, wildcache1.expiration().wakeUpInterval());
+         assertEquals(11, wildcache1.expiration().lifespan());
+         assertEquals(11, wildcache1.expiration().maxIdle());
+      }
    }
 
    @Test(expectedExceptions = CacheConfigurationException.class, expectedExceptionsMessageRegExp = "ISPN000485:.*")
@@ -418,27 +304,20 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container>" +
             "   <local-cache-configuration name=\"wildcache*\">\n" +
-            "      <expiration interval=\"10500\" lifespan=\"11\" max-idle=\"11\"/>\n" +
             "   </local-cache-configuration>\n" +
             "   <local-cache-configuration name=\"wild*\">\n" +
             "   </local-cache-configuration>\n" +
             "</cache-container>"
       );
 
-      InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-
-         @Override
-         public void call() {
-            cm.getCacheConfiguration("wildcache1");
-            fail("Ambiguous name should have thrown exception");
-         }
-
-      });
+      ConfigurationBuilderHolder holder = parseStringConfiguration(config);
+      try (DefaultCacheManager cm = new DefaultCacheManager(holder, false)) {
+         cm.getCacheConfiguration("wildcache1");
+      }
    }
 
    @Test(expectedExceptions = CacheConfigurationException.class, expectedExceptionsMessageRegExp = "ISPN000484:.*")
-   public void testNoWildcardsInCacheName() throws Exception {
+   public void testNoWildcardsInCacheName() {
       String config = TestingUtil.wrapXMLWithSchema(
             "<cache-container>" +
             "   <transport cluster=\"demoCluster\"/>\n" +
@@ -447,15 +326,29 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "</cache-container>"
       );
 
+      parseStringConfiguration(config);
+      fail("Should have failed earlier");
+   }
+
+   public void testAsyncInheritance() {
+      String config = TestingUtil.wrapXMLWithSchema(
+            "<cache-container>" +
+                  "   <transport cluster=\"demoCluster\"/>\n" +
+                  "   <replicated-cache-configuration mode=\"ASYNC\" name=\"repl-1\">\n" +
+                  "   </replicated-cache-configuration>\n" +
+                  "   <replicated-cache-configuration name=\"repl-2\" configuration=\"repl-1\">\n" +
+                  "   </replicated-cache-configuration>\n" +
+                  "</cache-container>"
+      );
+
       InputStream is = new ByteArrayInputStream(config.getBytes());
-      withCacheManager(new CacheManagerCallable(TestCacheManagerFactory.fromStream(is)) {
-
-         @Override
-         public void call() {
-            fail("Should have failed earlier");
-         }
-
-      });
+      ConfigurationBuilderHolder holder = TestCacheManagerFactory.parseStream(is, false);
+      Configuration repl1 = getCacheConfiguration(holder, "repl-1");
+      Configuration repl2 = getCacheConfiguration(holder, "repl-2");
+      assertTrue(repl1.isTemplate());
+      assertTrue(repl2.isTemplate());
+      assertEquals(CacheMode.REPL_ASYNC, repl1.clustering().cacheMode());
+      assertEquals(CacheMode.REPL_ASYNC, repl2.clustering().cacheMode());
    }
 
 
@@ -536,50 +429,50 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       }
 
 
-      Configuration c = holder.getNamedConfigurationBuilders().get("transactional").build();
+      Configuration c = getCacheConfiguration(holder, "transactional");
       assertTrue(!c.clustering().cacheMode().isClustered());
       assertTrue(c.transaction().transactionManagerLookup() instanceof GenericTransactionManagerLookup);
       if (!deprecated) {
          assertReaperAndTimeoutInfo(defaultCfg);
       }
 
-      c = holder.getNamedConfigurationBuilders().get("transactional2").build();
+      c = getCacheConfiguration(holder, "transactional2");
       assertTrue(c.transaction().transactionManagerLookup() instanceof TestLookup);
       assertEquals(10000, c.transaction().cacheStopTimeout());
       assertEquals(LockingMode.PESSIMISTIC, c.transaction().lockingMode());
       assertTrue(!c.transaction().autoCommit());
 
-      c = holder.getNamedConfigurationBuilders().get("transactional3").build();
+      c = getCacheConfiguration(holder, "transactional3");
 
       if (!deprecated) {
          assertEquals(TransactionProtocol.TOTAL_ORDER, c.transaction().transactionProtocol());
       }
 
-      c = holder.getNamedConfigurationBuilders().get("syncInval").build();
+      c = getCacheConfiguration(holder, "syncInval");
 
       assertEquals(CacheMode.INVALIDATION_SYNC, c.clustering().cacheMode());
       assertTrue(c.clustering().stateTransfer().awaitInitialTransfer());
       assertEquals(15000, c.clustering().remoteTimeout());
 
-      c = holder.getNamedConfigurationBuilders().get("asyncInval").build();
+      c = getCacheConfiguration(holder, "asyncInval");
 
       assertEquals(CacheMode.INVALIDATION_ASYNC, c.clustering().cacheMode());
       assertEquals(15000, c.clustering().remoteTimeout());
 
-      c = holder.getNamedConfigurationBuilders().get("syncRepl").build();
+      c = getCacheConfiguration(holder, "syncRepl");
 
       assertEquals(CacheMode.REPL_SYNC, c.clustering().cacheMode());
       assertTrue(!c.clustering().stateTransfer().fetchInMemoryState());
       assertTrue(c.clustering().stateTransfer().awaitInitialTransfer());
       assertEquals(15000, c.clustering().remoteTimeout());
 
-      c = holder.getNamedConfigurationBuilders().get("asyncRepl").build();
+      c = getCacheConfiguration(holder, "asyncRepl");
 
       assertEquals(CacheMode.REPL_ASYNC, c.clustering().cacheMode());
       assertTrue(!c.clustering().stateTransfer().fetchInMemoryState());
       assertTrue(c.clustering().stateTransfer().awaitInitialTransfer());
 
-      c = holder.getNamedConfigurationBuilders().get("txSyncRepl").build();
+      c = getCacheConfiguration(holder, "txSyncRepl");
 
       assertTrue(c.transaction().transactionManagerLookup() instanceof GenericTransactionManagerLookup);
       assertEquals(CacheMode.REPL_SYNC, c.clustering().cacheMode());
@@ -587,7 +480,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertTrue(c.clustering().stateTransfer().awaitInitialTransfer());
       assertEquals(15000, c.clustering().remoteTimeout());
 
-      c = holder.getNamedConfigurationBuilders().get("overriding").build();
+      c = getCacheConfiguration(holder, "overriding");
 
       assertEquals(CacheMode.LOCAL, c.clustering().cacheMode());
       assertEquals(20000, c.locking().lockAcquisitionTimeout());
@@ -595,10 +488,10 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertEquals(IsolationLevel.REPEATABLE_READ, c.locking().isolationLevel());
       assertEquals(StorageType.OBJECT, c.memory().storageType());
 
-      c = holder.getNamedConfigurationBuilders().get("storeAsBinary").build();
+      c = getCacheConfiguration(holder, "storeAsBinary");
       assertEquals(StorageType.BINARY, c.memory().storageType());
 
-      c = holder.getNamedConfigurationBuilders().get("withFileStore").build();
+      c = getCacheConfiguration(holder, "withFileStore");
       assertTrue(c.persistence().preload());
       assertTrue(!c.persistence().passivation());
       assertEquals(1, c.persistence().stores().size());
@@ -613,55 +506,53 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertTrue(loaderCfg.async().enabled());
       assertEquals(700, loaderCfg.async().modificationQueueSize());
 
-      c = holder.getNamedConfigurationBuilders().get("withClusterLoader").build();
+      c = getCacheConfiguration(holder, "withClusterLoader");
       assertEquals(1, c.persistence().stores().size());
       ClusterLoaderConfiguration clusterLoaderCfg = (ClusterLoaderConfiguration) c.persistence().stores().get(0);
       assertEquals(15000, clusterLoaderCfg.remoteCallTimeout());
 
-      c = holder.getNamedConfigurationBuilders().get("withLoaderDefaults").build();
+      c = getCacheConfiguration(holder, "withLoaderDefaults");
       loaderCfg = (SingleFileStoreConfiguration) c.persistence().stores().get(0);
       assertEquals("/tmp/Another-FileCacheStore-Location", loaderCfg.location());
 
-      c = holder.getNamedConfigurationBuilders().get("withouthJmxEnabled").build();
-      assertTrue(!c.jmxStatistics().enabled());
+      c = getCacheConfiguration(holder, "withouthJmxEnabled");
+      assertFalse(c.jmxStatistics().enabled());
       assertTrue(gc.globalJmxStatistics().enabled());
       assertTrue(gc.globalJmxStatistics().allowDuplicateDomains());
       assertEquals("funky_domain", gc.globalJmxStatistics().domain());
-      assertTrue(gc.globalJmxStatistics().mbeanServerLookup() instanceof PerThreadMBeanServerLookup);
+      assertTrue(gc.globalJmxStatistics().mbeanServerLookup() instanceof TestMBeanServerLookup);
 
-      c = holder.getNamedConfigurationBuilders().get("dist").build();
+      c = getCacheConfiguration(holder, "dist");
       assertEquals(CacheMode.DIST_SYNC, c.clustering().cacheMode());
       assertEquals(600000, c.clustering().l1().lifespan());
-      if (deprecated) assertEquals(120000, c.clustering().hash().rehashRpcTimeout());
       assertEquals(120000, c.clustering().stateTransfer().timeout());
       assertEquals(1200, c.clustering().l1().cleanupTaskFrequency());
-      assertEquals(null, c.clustering().hash().consistentHash()); // this is just an override.
+      assertTrue(c.clustering().hash().consistentHashFactory() instanceof DefaultConsistentHashFactory);
       assertEquals(3, c.clustering().hash().numOwners());
       assertTrue(c.clustering().l1().enabled());
 
-      c = holder.getNamedConfigurationBuilders().get("dist_with_capacity_factors").build();
+      c = getCacheConfiguration(holder, "dist_with_capacity_factors");
       assertEquals(CacheMode.DIST_SYNC, c.clustering().cacheMode());
       assertEquals(600000, c.clustering().l1().lifespan());
-      if (deprecated) assertEquals(120000, c.clustering().hash().rehashRpcTimeout());
       assertEquals(120000, c.clustering().stateTransfer().timeout());
-      assertEquals(null, c.clustering().hash().consistentHash()); // this is just an override.
+      assertNull(c.clustering().hash().consistentHashFactory());
       assertEquals(3, c.clustering().hash().numOwners());
       assertTrue(c.clustering().l1().enabled());
       assertEquals(0.0f, c.clustering().hash().capacityFactor());
       if (!deprecated) assertEquals(1000, c.clustering().hash().numSegments());
 
-      c = holder.getNamedConfigurationBuilders().get("groups").build();
+      c = getCacheConfiguration(holder, "groups");
       assertTrue(c.clustering().hash().groups().enabled());
       assertEquals(1, c.clustering().hash().groups().groupers().size());
       assertEquals(String.class, c.clustering().hash().groups().groupers().get(0).getKeyType());
 
-      c = holder.getNamedConfigurationBuilders().get("chunkSize").build();
+      c = getCacheConfiguration(holder, "chunkSize");
       assertTrue(c.clustering().stateTransfer().fetchInMemoryState());
       assertEquals(120000, c.clustering().stateTransfer().timeout());
       assertEquals(1000, c.clustering().stateTransfer().chunkSize());
 
-      c = holder.getNamedConfigurationBuilders().get("cacheWithCustomInterceptors").build();
-      assertTrue(!c.customInterceptors().interceptors().isEmpty());
+      c = getCacheConfiguration(holder, "cacheWithCustomInterceptors");
+      assertFalse(c.customInterceptors().interceptors().isEmpty());
       assertEquals(6, c.customInterceptors().interceptors().size());
       for(InterceptorConfiguration i : c.customInterceptors().interceptors()) {
          if (i.asyncInterceptor() instanceof FooInterceptor) {
@@ -669,7 +560,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
          }
       }
 
-      c = holder.getNamedConfigurationBuilders().get("evictionCache").build();
+      c = getCacheConfiguration(holder, "evictionCache");
       assertEquals(5000, c.memory().size());
       assertEquals(EvictionStrategy.REMOVE, c.memory().evictionStrategy());
       assertEquals(EvictionType.COUNT, c.memory().evictionType());
@@ -678,18 +569,13 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertEquals(1000, c.expiration().maxIdle());
       assertEquals(500, c.expiration().wakeUpInterval());
 
-      c = holder.getNamedConfigurationBuilders().get("evictionMemoryExceptionCache").build();
+      c = getCacheConfiguration(holder, "evictionMemoryExceptionCache");
       assertEquals(5000, c.memory().size());
       assertEquals(EvictionStrategy.EXCEPTION, c.memory().evictionStrategy());
       assertEquals(EvictionType.MEMORY, c.memory().evictionType());
       assertEquals(StorageType.BINARY, c.memory().storageType());
 
-      c = holder.getNamedConfigurationBuilders().get("withDeadlockDetection").build();
-      assertFalse(c.deadlockDetection().enabled());
-      assertEquals(-1, c.deadlockDetection().spinDuration());
-      assertEquals(CacheMode.DIST_SYNC, c.clustering().cacheMode());
-
-      c = holder.getNamedConfigurationBuilders().get("storeKeyValueBinary").build();
+      c = getCacheConfiguration(holder, "storeKeyValueBinary");
       assertEquals(StorageType.BINARY, c.memory().storageType());
    }
 

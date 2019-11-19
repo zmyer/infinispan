@@ -22,6 +22,7 @@ import org.apache.lucene.search.SortField.Type;
 import org.hibernate.search.engine.integration.impl.ExtendedSearchIntegrator;
 import org.hibernate.search.exception.SearchException;
 import org.infinispan.Cache;
+import org.infinispan.commons.CacheException;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
@@ -36,6 +37,7 @@ import org.infinispan.query.dsl.Query;
 import org.infinispan.query.dsl.QueryFactory;
 import org.infinispan.query.helper.StaticTestingErrorHandler;
 import org.infinispan.query.test.Person;
+import org.infinispan.query.test.QueryTestSCI;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
@@ -97,7 +99,7 @@ public class ClusteredQueryTest extends MultipleCacheManagersTest {
             .addProperty("lucene_version", "LUCENE_CURRENT");
       cacheCfg.memory()
             .storageType(storageType);
-      List<Cache<String, Person>> caches = createClusteredCaches(2, cacheCfg);
+      List<Cache<String, Person>> caches = createClusteredCaches(2, QueryTestSCI.INSTANCE, cacheCfg);
       cacheAMachine1 = caches.get(0);
       cacheAMachine2 = caches.get(1);
       populateCache();
@@ -422,7 +424,7 @@ public class ClusteredQueryTest extends MultipleCacheManagersTest {
       hybridQuery.list();
    }
 
-   @Test(expectedExceptions = SearchException.class, expectedExceptionsMessageRegExp = ".*cannot be converted to an indexed query")
+   @Test(expectedExceptions = CacheException.class, expectedExceptionsMessageRegExp = ".*cannot be converted to an indexed query")
    public void testPreventAggregationQueries() {
       CacheQuery<Person> aggregationQuery = Search.getSearchManager(cacheAMachine1)
             .getQuery(String.format("FROM %s p where p.name:'name3' group by p.name", Person.class.getName()),

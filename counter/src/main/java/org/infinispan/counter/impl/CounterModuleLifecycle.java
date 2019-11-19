@@ -13,11 +13,9 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.counter.api.CounterConfiguration;
 import org.infinispan.counter.api.CounterManager;
-import org.infinispan.counter.api.CounterState;
 import org.infinispan.counter.configuration.CounterManagerConfiguration;
 import org.infinispan.counter.configuration.CounterManagerConfigurationBuilder;
 import org.infinispan.counter.configuration.Reliability;
-import org.infinispan.counter.impl.entries.CounterValue;
 import org.infinispan.counter.impl.function.AddFunction;
 import org.infinispan.counter.impl.function.CompareAndSwapFunction;
 import org.infinispan.counter.impl.function.CreateAndAddFunction;
@@ -30,20 +28,22 @@ import org.infinispan.counter.impl.interceptor.CounterInterceptor;
 import org.infinispan.counter.impl.listener.CounterKeyFilter;
 import org.infinispan.counter.impl.manager.EmbeddedCounterManager;
 import org.infinispan.counter.impl.metadata.ConfigurationMetadata;
-import org.infinispan.counter.impl.strong.StrongCounterKey;
-import org.infinispan.counter.impl.weak.WeakCounterKey;
+import org.infinispan.counter.impl.persistence.PersistenceContextInitializerImpl;
 import org.infinispan.counter.logging.Log;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
+import org.infinispan.factories.annotations.InfinispanModule;
 import org.infinispan.factories.impl.BasicComponentRegistry;
+import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
 import org.infinispan.jmx.CacheManagerJmxRegistration;
 import org.infinispan.lifecycle.ModuleLifecycle;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.marshall.protostream.impl.SerializationContextRegistry;
 import org.infinispan.partitionhandling.PartitionHandling;
 import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.logging.LogFactory;
-import org.kohsuke.MetaInfServices;
 
 /**
  * It register a {@link EmbeddedCounterManager} to each {@link EmbeddedCacheManager} started and starts the cache on it.
@@ -51,7 +51,7 @@ import org.kohsuke.MetaInfServices;
  * @author Pedro Ruivo
  * @since 9.0
  */
-@MetaInfServices(value = ModuleLifecycle.class)
+@InfinispanModule(name = "clustered-counter", requiredModules = "core")
 public class CounterModuleLifecycle implements ModuleLifecycle {
 
    public static final String COUNTER_CACHE_NAME = "org.infinispan.COUNTER";
@@ -67,9 +67,7 @@ public class CounterModuleLifecycle implements ModuleLifecycle {
             .partitionHandling().whenSplit(config.reliability() == Reliability.CONSISTENT ?
                                            PartitionHandling.DENY_READ_WRITES :
                                            PartitionHandling.ALLOW_READ_WRITES)
-            .transaction().transactionMode(TransactionMode.NON_TRANSACTIONAL)
-            .customInterceptors().addInterceptor().after(EntryWrappingInterceptor.class)
-            .interceptor(new CounterInterceptor());
+            .transaction().transactionMode(TransactionMode.NON_TRANSACTIONAL);
       return builder.build();
    }
 
@@ -85,9 +83,8 @@ public class CounterModuleLifecycle implements ModuleLifecycle {
       map.put(ext.getId(), ext);
    }
 
-   private static CounterManagerConfiguration extractConfiguration(GlobalComponentRegistry globalComponentRegistry) {
-      CounterManagerConfiguration config = globalComponentRegistry.getGlobalConfiguration()
-            .module(CounterManagerConfiguration.class);
+   private static CounterManagerConfiguration extractConfiguration(GlobalConfiguration globalConfiguration) {
+      CounterManagerConfiguration config = globalConfiguration.module(CounterManagerConfiguration.class);
       return config == null ? CounterManagerConfigurationBuilder.defaultConfiguration() : config;
    }
 
@@ -97,8 +94,13 @@ public class CounterModuleLifecycle implements ModuleLifecycle {
       EmbeddedCounterManager counterManager = new EmbeddedCounterManager(cacheManager);
       // This must happen before CacheManagerJmxRegistration starts
       registry.registerComponent(CounterManager.class, counterManager, true);
-      if (cacheManager.getCacheManagerConfiguration().globalJmxStatistics().enabled()) {
-         registry.getComponent(CacheManagerJmxRegistration.class).running().registerMBean(counterManager);
+      if (cacheManager.getCacheManagerConfiguration().statistics()) {
+         try {
+            CacheManagerJmxRegistration jmxRegistration = registry.getComponent(CacheManagerJmxRegistration.class).running();
+            jmxRegistration.registerMBean(counterManager);
+         } catch (Exception e) {
+            throw log.jmxRegistrationFailed(e);
+         }
       }
    }
 
@@ -117,18 +119,15 @@ public class CounterModuleLifecycle implements ModuleLifecycle {
       final Map<Integer, AdvancedExternalizer<?>> externalizerMap = globalConfiguration.serialization()
             .advancedExternalizers();
 
+      // Only required by GlobalMarshaller
       addAdvancedExternalizer(externalizerMap, ResetFunction.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, CounterKeyFilter.EXTERNALIZER);
-      addAdvancedExternalizer(externalizerMap, StrongCounterKey.EXTERNALIZER);
-      addAdvancedExternalizer(externalizerMap, WeakCounterKey.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, ReadFunction.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, CounterConfiguration.EXTERNALIZER);
-      addAdvancedExternalizer(externalizerMap, CounterValue.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, InitializeCounterFunction.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, ConfigurationMetadata.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, AddFunction.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, CompareAndSwapFunction.EXTERNALIZER);
-      addAdvancedExternalizer(externalizerMap, CounterState.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, CreateAndCASFunction.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, CreateAndAddFunction.EXTERNALIZER);
       addAdvancedExternalizer(externalizerMap, RemoveFunction.EXTERNALIZER);
@@ -137,8 +136,11 @@ public class CounterModuleLifecycle implements ModuleLifecycle {
       EmbeddedCacheManager cacheManager = bcr.getComponent(EmbeddedCacheManager.class).wired();
       InternalCacheRegistry internalCacheRegistry = bcr.getComponent(InternalCacheRegistry.class).running();
 
-      CounterManagerConfiguration counterManagerConfiguration = extractConfiguration(gcr);
-      if (gcr.getGlobalConfiguration().transport().transport() != null) {
+      SerializationContextRegistry ctxRegistry = gcr.getComponent(SerializationContextRegistry.class);
+      ctxRegistry.addContextInitializer(SerializationContextRegistry.MarshallerType.PERSISTENCE, new PersistenceContextInitializerImpl());
+
+      CounterManagerConfiguration counterManagerConfiguration = extractConfiguration(globalConfiguration);
+      if (gcr.getGlobalConfiguration().isClustered()) {
          //only attempts to create the caches if the cache manager is clustered.
          registerCounterCache(internalCacheRegistry, counterManagerConfiguration);
       } else {
@@ -146,5 +148,17 @@ public class CounterModuleLifecycle implements ModuleLifecycle {
          registerLocalCounterCache(internalCacheRegistry);
       }
       registerCounterManager(cacheManager, bcr);
+   }
+
+   @Override
+   public void cacheStarting(ComponentRegistry cr, Configuration configuration, String cacheName) {
+      if (COUNTER_CACHE_NAME.equals(cacheName) && configuration.clustering().cacheMode().isClustered()) {
+         BasicComponentRegistry bcr = cr.getComponent(BasicComponentRegistry.class);
+         CounterInterceptor counterInterceptor = new CounterInterceptor();
+         bcr.registerComponent(CounterInterceptor.class, counterInterceptor, true);
+         bcr.addDynamicDependency(AsyncInterceptorChain.class.getName(), CounterInterceptor.class.getName());
+         bcr.getComponent(AsyncInterceptorChain.class).wired()
+            .addInterceptorAfter(counterInterceptor, EntryWrappingInterceptor.class);
+      }
    }
 }

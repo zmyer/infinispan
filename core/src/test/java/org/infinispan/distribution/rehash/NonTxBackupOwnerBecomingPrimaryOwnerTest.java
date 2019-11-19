@@ -8,7 +8,6 @@ import static org.mockito.Mockito.spy;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNotNull;
-import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -18,19 +17,18 @@ import java.util.concurrent.TimeUnit;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.commands.FlagAffectedCommand;
-import org.infinispan.commons.api.BasicCacheContainer;
+import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.context.impl.FlagBitSets;
-import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.BlockingInterceptor;
 import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.distribution.TriangleDistributionInterceptor;
 import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
-import org.infinispan.manager.CacheContainer;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.partitionhandling.AvailabilityMode;
+import org.infinispan.protostream.annotations.ProtoName;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.StateTransferInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
@@ -54,14 +52,10 @@ import org.testng.annotations.Test;
 @CleanupAfterMethod
 public class NonTxBackupOwnerBecomingPrimaryOwnerTest extends MultipleCacheManagersTest {
 
-   private static final String CACHE_NAME = BasicCacheContainer.DEFAULT_CACHE_NAME;
-
    @Override
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder c = getConfigurationBuilder();
-
-      addClusterEnabledCacheManager(c);
-      addClusterEnabledCacheManager(c);
+      createCluster(DistributionRehashSCI.INSTANCE, c, 2);
       waitForClusterToForm();
    }
 
@@ -103,13 +97,14 @@ public class NonTxBackupOwnerBecomingPrimaryOwnerTest extends MultipleCacheManag
 
    protected void doTest(final TestWriteOperation op) throws Exception {
       final String key = "testkey";
+      final String cacheName = manager(0).getCacheManagerConfiguration().defaultCacheName().get();
       if (op.getPreviousValue() != null) {
-         cache(0, CACHE_NAME).put(key, op.getPreviousValue());
+         cache(0, cacheName).put(key, op.getPreviousValue());
       }
 
       CheckPoint checkPoint = new CheckPoint();
       LocalTopologyManager ltm0 = TestingUtil.extractGlobalComponent(manager(0), LocalTopologyManager.class);
-      int preJoinTopologyId = ltm0.getCacheTopology(CACHE_NAME).getTopologyId();
+      int preJoinTopologyId = ltm0.getCacheTopology(cacheName).getTopologyId();
 
       final AdvancedCache<Object, Object> cache0 = advancedCache(0);
       addBlockingLocalTopologyManager(manager(0), checkPoint, preJoinTopologyId);
@@ -128,7 +123,7 @@ public class NonTxBackupOwnerBecomingPrimaryOwnerTest extends MultipleCacheManag
       } else {
          stateTransferLatch.countDown();
       }
-      addClusterEnabledCacheManager(c);
+      addClusterEnabledCacheManager(DistributionRehashSCI.INSTANCE, c);
       addBlockingLocalTopologyManager(manager(2), checkPoint, preJoinTopologyId);
 
 
@@ -145,7 +140,7 @@ public class NonTxBackupOwnerBecomingPrimaryOwnerTest extends MultipleCacheManag
             cache1.getRpcManager().getMembers().size() == 3 &&
             cache2.getRpcManager().getMembers().size() == 3);
 
-      CacheTopology duringJoinTopology = ltm0.getCacheTopology(CACHE_NAME);
+      CacheTopology duringJoinTopology = ltm0.getCacheTopology(cacheName);
       assertEquals(duringJoinTopologyId, duringJoinTopology.getTopologyId());
       assertNotNull(duringJoinTopology.getPendingCH());
       log.tracef("Rebalance started. Found key %s with current owners %s and pending owners %s", key,
@@ -192,7 +187,7 @@ public class NonTxBackupOwnerBecomingPrimaryOwnerTest extends MultipleCacheManag
       beforeCache1Barrier.await(10, TimeUnit.SECONDS);
 
       // Allow the retry to proceed on cache1
-      CacheTopology postJoinTopology = ltm0.getCacheTopology(CACHE_NAME);
+      CacheTopology postJoinTopology = ltm0.getCacheTopology(cacheName);
       if (postJoinTopology.getCurrentCH().locateOwners(key).contains(address(1))) {
          beforeCache1Barrier.await(10, TimeUnit.SECONDS);
          beforeCache1Barrier.await(10, TimeUnit.SECONDS);
@@ -221,8 +216,9 @@ public class NonTxBackupOwnerBecomingPrimaryOwnerTest extends MultipleCacheManag
       return op.perform(cache0, key);
    }
 
-   private static class CustomConsistentHashFactory extends BaseControlledConsistentHashFactory.Default {
-      private CustomConsistentHashFactory() {
+   @ProtoName("BackupOwnerCustomConsistentHashFactory")
+   public static class CustomConsistentHashFactory extends BaseControlledConsistentHashFactory.Default {
+      CustomConsistentHashFactory() {
          super(1);
       }
 
@@ -250,16 +246,16 @@ public class NonTxBackupOwnerBecomingPrimaryOwnerTest extends MultipleCacheManag
          // Ignore the first topology update on the joiner, which is with the topology before the join
          if (topology.getTopologyId() != currentTopologyId) {
             checkPoint.trigger("pre_topology_" + topology.getTopologyId() + "_on_" + manager.getAddress());
-            assertTrue(checkPoint.await("allow_topology_" + topology.getTopologyId() + "_on_" + manager.getAddress(),
-                  10, TimeUnit.SECONDS));
+            checkPoint.awaitStrict("allow_topology_" + topology.getTopologyId() + "_on_" + manager.getAddress(),
+                  10, TimeUnit.SECONDS);
          }
          return invocation.callRealMethod();
-      }).when(spyLtm).handleTopologyUpdate(eq(CacheContainer.DEFAULT_CACHE_NAME), any(CacheTopology.class),
+      }).when(spyLtm).handleTopologyUpdate(eq(TestingUtil.getDefaultCacheName(manager)), any(CacheTopology.class),
                                            any(AvailabilityMode.class), anyInt(), any(Address.class));
       TestingUtil.replaceComponent(manager, LocalTopologyManager.class, spyLtm, true);
    }
 
-   private class StateTransferLatchInterceptor extends DDAsyncInterceptor {
+   class StateTransferLatchInterceptor extends DDAsyncInterceptor {
       private final CountDownLatch latch;
 
       private StateTransferLatchInterceptor(CountDownLatch latch) {

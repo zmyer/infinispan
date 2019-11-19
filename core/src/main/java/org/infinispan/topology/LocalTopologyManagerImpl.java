@@ -1,6 +1,8 @@
 package org.infinispan.topology;
 
 import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
+import static org.infinispan.util.logging.Log.CLUSTER;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -12,11 +14,13 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import org.infinispan.IllegalLifecycleStateException;
-import org.infinispan.Version;
+import org.infinispan.commons.IllegalLifecycleStateException;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.marshall.MarshallingException;
 import org.infinispan.commons.marshall.NotSerializableException;
+import org.infinispan.commons.time.TimeService;
+import org.infinispan.commons.util.Version;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.ConsistentHashFactory;
 import org.infinispan.eviction.PassivationManager;
@@ -27,6 +31,8 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.globalstate.GlobalStateManager;
 import org.infinispan.globalstate.GlobalStateProvider;
 import org.infinispan.globalstate.ScopedPersistentState;
@@ -45,7 +51,7 @@ import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -59,19 +65,20 @@ import net.jcip.annotations.GuardedBy;
  * @since 5.2
  */
 @MBean(objectName = "LocalTopologyManager", description = "Controls the cache membership and state transfer")
+@Scope(Scopes.GLOBAL)
 public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalStateProvider {
    private static Log log = LogFactory.getLog(LocalTopologyManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private Transport transport;
+   @Inject Transport transport;
    @Inject @ComponentName(ASYNC_TRANSPORT_EXECUTOR)
-   private ExecutorService asyncTransportExecutor;
-   @Inject private GlobalComponentRegistry gcr;
-   @Inject private TimeService timeService;
-   @Inject private GlobalStateManager globalStateManager;
-   @Inject private PersistentUUIDManager persistentUUIDManager;
+   ExecutorService asyncTransportExecutor;
+   @Inject GlobalComponentRegistry gcr;
+   @Inject TimeService timeService;
+   @Inject GlobalStateManager globalStateManager;
+   @Inject PersistentUUIDManager persistentUUIDManager;
    // Not used directly, but we have to start the ClusterTopologyManager before sending the join request
-   @Inject private ClusterTopologyManager clusterTopologyManager;
+   @Inject ClusterTopologyManager clusterTopologyManager;
 
    private final WithinThreadExecutor withinThreadExecutor = new WithinThreadExecutor();
 
@@ -144,40 +151,44 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
       try {
          while (true) {
             int viewId = transport.getViewId();
+            ReplicableCommand command = new CacheTopologyControlCommand(cacheName,
+                                                                        CacheTopologyControlCommand.Type.JOIN,
+                                                                        transport.getAddress(), joinInfo, viewId);
+            CacheStatusResponse initialStatus = null;
             try {
-               ReplicableCommand command = new CacheTopologyControlCommand(cacheName,
-                     CacheTopologyControlCommand.Type.JOIN, transport.getAddress(), joinInfo, viewId);
-               CacheStatusResponse initialStatus = (CacheStatusResponse) executeOnCoordinator(command, timeout);
-               if (initialStatus == null) {
-                  log.debug("Ignoring null join response, coordinator is probably shutting down");
-                  waitForView(viewId + 1, cacheStatus.getJoinInfo().getTimeout(), TimeUnit.MILLISECONDS);
-                  continue;
-               }
-
-               if (!doHandleTopologyUpdate(cacheName, initialStatus.getCacheTopology(),
-                                           initialStatus.getAvailabilityMode(), viewId, transport.getCoordinator(),
-                                           cacheStatus)) {
-                  throw new IllegalStateException(
-                        "We already had a newer topology by the time we received the join response");
-               }
-
-               doHandleStableTopologyUpdate(cacheName, initialStatus.getStableTopology(), viewId,
-                                            transport.getCoordinator(), cacheStatus);
-               return initialStatus.getCacheTopology();
-            } catch (NotSerializableException e) {
+               initialStatus = (CacheStatusResponse) executeOnCoordinator(command, timeout);
+            } catch (MarshallingException | NotSerializableException e) {
                // There's no point in retrying if the cache join info is not serializable
                throw new CacheJoinException(e);
             } catch (Exception e) {
                log.debugf(e, "Error sending join request for cache %s to coordinator", cacheName);
                if (e.getCause() != null && e.getCause() instanceof CacheJoinException) {
-                  throw (CacheJoinException)e.getCause();
+                  throw (CacheJoinException) e.getCause();
                }
                if (timeService.isTimeExpired(endTime)) {
                   throw e;
                }
                // TODO Add some configuration for this, or use a fraction of state transfer timeout
                Thread.sleep(100);
+               continue;
             }
+
+            if (initialStatus == null) {
+               log.debug("Ignoring null join response, coordinator is probably shutting down");
+               waitForView(viewId + 1, cacheStatus.getJoinInfo().getTimeout(), TimeUnit.MILLISECONDS);
+               continue;
+            }
+
+            if (!doHandleTopologyUpdate(cacheName, initialStatus.getCacheTopology(),
+                                        initialStatus.getAvailabilityMode(), viewId, transport.getCoordinator(),
+                                        cacheStatus)) {
+               throw new IllegalStateException(
+                  "We already had a newer topology by the time we received the join response");
+            }
+
+            doHandleStableTopologyUpdate(cacheName, initialStatus.getStableTopology(), viewId,
+                                         transport.getCoordinator(), cacheStatus);
+            return initialStatus.getCacheTopology();
          }
       } finally {
          joinFuture.complete(null);
@@ -339,7 +350,8 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
 
          boolean updateAvailabilityModeFirst = availabilityMode != AvailabilityMode.AVAILABLE;
          if (updateAvailabilityModeFirst && availabilityMode != null) {
-            cacheStatus.getPartitionHandlingManager().setAvailabilityMode(availabilityMode);
+            // TODO: handle this async?
+            CompletionStages.join(cacheStatus.getPartitionHandlingManager().setAvailabilityMode(availabilityMode));
          }
 
          boolean startConflictResolution = cacheTopology.getPhase() == CacheTopology.Phase.CONFLICT_RESOLUTION;
@@ -354,7 +366,8 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
          }
 
          if (!updateAvailabilityModeFirst) {
-            cacheStatus.getPartitionHandlingManager().setAvailabilityMode(availabilityMode);
+            // TODO: handle this async?
+            CompletionStages.join(cacheStatus.getPartitionHandlingManager().setAvailabilityMode(availabilityMode));
          }
          return true;
       }
@@ -555,7 +568,7 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
          // The view future should never complete with an exception
          throw new CacheException(e.getCause());
       } catch (TimeoutException e) {
-         throw log.timeoutWaitingForView(viewId, transport.getViewId());
+         throw CLUSTER.timeoutWaitingForView(viewId, transport.getViewId());
       }
    }
 
@@ -787,7 +800,7 @@ public class LocalTopologyManagerImpl implements LocalTopologyManager, GlobalSta
    @Override
    public void prepareForRestore(ScopedPersistentState state) {
       if (!state.containsProperty("uuid")) {
-         throw log.invalidPersistentState(ScopedPersistentState.GLOBAL_SCOPE);
+         throw CONFIG.invalidPersistentState(ScopedPersistentState.GLOBAL_SCOPE);
       }
       persistentUUID = PersistentUUID.fromString(state.getProperty("uuid"));
    }

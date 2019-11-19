@@ -1,6 +1,6 @@
 package org.infinispan.distribution.group.impl;
 
-import static org.infinispan.commons.util.ReflectionUtil.invokeAccessibly;
+import static org.infinispan.commons.util.ReflectionUtil.invokeMethod;
 
 import java.lang.reflect.Method;
 import java.security.AccessController;
@@ -8,9 +8,9 @@ import java.security.PrivilegedAction;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.ReflectionUtil;
 import org.infinispan.commons.util.Util;
 import org.infinispan.distribution.DistributionManager;
@@ -19,11 +19,14 @@ import org.infinispan.distribution.group.Grouper;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.remoting.transport.Address;
 
+@Scope(Scopes.NAMED_CACHE)
 public class GroupManagerImpl implements GroupManager {
 
-   @Inject private ComponentRegistry componentRegistry;
+   @Inject ComponentRegistry componentRegistry;
    // This can't be injected due to circular dependency with DistributionManager when using a GroupingPartitioner
    private DistributionManager distributionManager;
 
@@ -31,7 +34,7 @@ public class GroupManagerImpl implements GroupManager {
    private final List<Grouper<?>> groupers;
 
    public GroupManagerImpl(List<Grouper<?>> groupers) {
-      this.groupMetadataCache = CollectionFactory.makeConcurrentMap();
+      this.groupMetadataCache = new ConcurrentHashMap<>();
       if (groupers != null)
          this.groupers = groupers;
       else
@@ -84,12 +87,15 @@ public class GroupManagerImpl implements GroupManager {
 
       @Override
       public Object getGroup(Object instance) {
-         Object object;
          if (System.getSecurityManager() == null) {
-            return invokeAccessibly(instance, method, Util.EMPTY_OBJECT_ARRAY);
+            method.setAccessible(true);
          } else {
-            return AccessController.doPrivileged((PrivilegedAction<Object>) () -> invokeAccessibly(instance, method, Util.EMPTY_OBJECT_ARRAY));
+            AccessController.doPrivileged((PrivilegedAction<List<Method>>) () -> {
+               method.setAccessible(true);
+               return null;
+            });
          }
+         return invokeMethod(instance, method, Util.EMPTY_OBJECT_ARRAY);
       }
    }
 

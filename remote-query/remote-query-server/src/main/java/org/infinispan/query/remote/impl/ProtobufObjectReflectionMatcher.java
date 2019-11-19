@@ -11,8 +11,8 @@ import org.infinispan.protostream.SerializationContext;
 import org.infinispan.query.dsl.embedded.impl.HibernateSearchPropertyHelper;
 
 /**
- * A sub-class of ReflectionMatcher that is able to lookup classes by their protobuf type name and can work whit
- * object storage.
+ * A sub-class of ReflectionMatcher that is able to lookup classes by their protobuf type name and can work with object
+ * storage.
  *
  * @author anistor@redhat.com
  * @since 7.0

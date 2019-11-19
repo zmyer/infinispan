@@ -10,6 +10,7 @@ import static org.infinispan.configuration.parsing.Element.SCATTERED_CACHE;
 import java.util.Arrays;
 
 import org.infinispan.commons.CacheConfigurationException;
+import org.infinispan.protostream.annotations.ProtoEnumValue;
 
 /**
  * Cache replication mode.
@@ -18,44 +19,52 @@ public enum CacheMode {
    /**
     * Data is not replicated.
     */
+   @ProtoEnumValue(number = 0)
    LOCAL,
 
    /**
     * Data replicated synchronously.
     */
+   @ProtoEnumValue(number = 1)
    REPL_SYNC,
 
    /**
     * Data replicated asynchronously.
     */
+   @ProtoEnumValue(number = 2)
    REPL_ASYNC,
 
    /**
     * Data invalidated synchronously.
     */
+   @ProtoEnumValue(number = 3)
    INVALIDATION_SYNC,
 
    /**
     * Data invalidated asynchronously.
     */
+   @ProtoEnumValue(number = 4)
    INVALIDATION_ASYNC,
 
    /**
     * Synchronous DIST
     */
+   @ProtoEnumValue(number = 5)
    DIST_SYNC,
 
    /**
     * Async DIST
     */
+   @ProtoEnumValue(number = 6)
    DIST_ASYNC,
 
    /**
     * Synchronous scattered cache
     */
+   @ProtoEnumValue(number = 7)
    SCATTERED_SYNC;
 
-   private static CacheMode[] cachedValues = values();
+   private static final CacheMode[] cachedValues = values();
 
    public static CacheMode valueOf(int order) {
       return cachedValues[order];
@@ -101,6 +110,10 @@ public enum CacheMode {
          default:
             return this;
       }
+   }
+
+   public CacheMode toSync(boolean sync) {
+      return sync ? toSync() : toAsync();
    }
 
    public CacheMode toAsync() {

@@ -5,6 +5,10 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
 import java.util.Base64;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
+
+import javax.security.auth.Subject;
 
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.ContentResponse;
@@ -14,12 +18,12 @@ import org.infinispan.rest.assertion.ResponseAssertion;
 import org.infinispan.rest.authentication.SecurityDomain;
 import org.infinispan.rest.authentication.impl.BasicAuthenticator;
 import org.infinispan.rest.helper.RestServerHelper;
-import org.infinispan.server.core.security.simple.SimpleUserPrincipal;
 import org.infinispan.test.AbstractInfinispanTest;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestResourceTracker;
+import org.testng.annotations.AfterClass;
 import org.testng.annotations.AfterMethod;
-import org.testng.annotations.AfterSuite;
-import org.testng.annotations.BeforeSuite;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "rest.AuthenticationTest")
@@ -28,19 +32,18 @@ public class AuthenticationTest extends AbstractInfinispanTest {
    private HttpClient client;
    private RestServerHelper restServer;
 
-   @BeforeSuite
+   @BeforeClass
    public void beforeSuite() throws Exception {
       client = new HttpClient();
       client.start();
    }
 
-   @AfterSuite
+   @AfterClass(alwaysRun = true)
    public void afterSuite() throws Exception {
-      restServer.stop();
       client.stop();
    }
 
-   @AfterMethod
+   @AfterMethod(alwaysRun = true)
    public void afterMethod() throws Exception {
       restServer.clear();
       if (restServer != null) {
@@ -52,8 +55,8 @@ public class AuthenticationTest extends AbstractInfinispanTest {
    public void shouldAuthenticateWhenProvidingProperCredentials() throws Exception {
       //given
       SecurityDomain securityDomainMock = mock(SecurityDomain.class);
-      SimpleUserPrincipal userPrincipal = new SimpleUserPrincipal("test");
-      doReturn(userPrincipal).when(securityDomainMock).authenticate(eq("test"), eq("test"));
+      Subject user = TestingUtil.makeSubject("test");
+      doReturn(user).when(securityDomainMock).authenticate(eq("test"), eq("test"));
 
       BasicAuthenticator basicAuthenticator = new BasicAuthenticator(securityDomainMock, "ApplicationRealm");
       restServer = RestServerHelper.defaultRestServer().withAuthenticator(basicAuthenticator).start(TestResourceTracker.getCurrentTestShortName());
@@ -106,5 +109,24 @@ public class AuthenticationTest extends AbstractInfinispanTest {
 
       //then
       ResponseAssertion.assertThat(response).isUnauthorized();
+   }
+
+   @Test
+   public void shouldAllowHealthAnonymously() throws InterruptedException, ExecutionException, TimeoutException {
+      SecurityDomain securityDomainMock = mock(SecurityDomain.class);
+      Subject user = TestingUtil.makeSubject("test");
+      doReturn(user).when(securityDomainMock).authenticate(eq("test"), eq("test"));
+      BasicAuthenticator basicAuthenticator = new BasicAuthenticator(securityDomainMock, "ApplicationRealm");
+
+      restServer = RestServerHelper.defaultRestServer().withAuthenticator(basicAuthenticator).start(TestResourceTracker.getCurrentTestShortName());
+
+      ContentResponse response = client
+            .newRequest(String.format("http://localhost:%d/rest/v2/cache-managers/DefaultCacheManager/health/status", restServer.getPort()))
+            .method(HttpMethod.GET)
+            .send();
+
+      ResponseAssertion.assertThat(response).isOk();
+      ResponseAssertion.assertThat(response).hasContentType("text/plain");
+      ResponseAssertion.assertThat(response).hasReturnedText("HEALTHY");
    }
 }

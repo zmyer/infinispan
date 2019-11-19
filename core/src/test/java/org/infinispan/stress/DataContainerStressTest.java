@@ -3,28 +3,30 @@ package org.infinispan.stress;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.impl.DefaultDataContainer;
 import org.infinispan.container.impl.InternalEntryFactoryImpl;
-import org.infinispan.eviction.ActivationManager;
 import org.infinispan.eviction.EvictionManager;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.eviction.PassivationManager;
+import org.infinispan.eviction.impl.ActivationManagerStub;
 import org.infinispan.expiration.impl.InternalExpirationManager;
-import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.util.EmbeddedTimeService;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
@@ -75,7 +77,7 @@ public class DataContainerStressTest {
       TimeService timeService = new EmbeddedTimeService();
       TestingUtil.inject(entryFactory, timeService);
       // Mockito cannot be used as it will run out of memory from keeping all the invocations, thus we use blank impls
-      TestingUtil.inject(dc, (EvictionManager) evicted -> {}, new PassivationManager() {
+      TestingUtil.inject(dc, (EvictionManager) (evicted, cmd) -> CompletableFutures.completedNull(), new PassivationManager() {
                        @Override
                        public boolean isEnabled() {
                           return false;
@@ -83,7 +85,11 @@ public class DataContainerStressTest {
 
                        @Override
                        public void passivate(InternalCacheEntry entry) {
+                       }
 
+                       @Override
+                       public CompletionStage<Void> passivateAsync(InternalCacheEntry entry) {
+                          return CompletableFutures.completedNull();
                        }
 
                        @Override
@@ -116,22 +122,7 @@ public class DataContainerStressTest {
 
                        }
                     }, entryFactory,
-              new ActivationManager() {
-                 @Override
-                 public void onUpdate(Object key, boolean newEntry) {
-
-                 }
-
-                 @Override
-                 public void onRemove(Object key, boolean newEntry) {
-
-                 }
-
-                 @Override
-                 public long getActivationCount() {
-                    return 0;
-                 }
-              }, null, timeService, null, new InternalExpirationManager() {
+              new ActivationManagerStub(), null, timeService, null, new InternalExpirationManager() {
                  @Override
                  public void processExpiration() {
 
@@ -154,8 +145,8 @@ public class DataContainerStressTest {
                  }
 
                  @Override
-                 public CompletableFuture<Boolean> entryExpiredInMemoryFromIteration(InternalCacheEntry entry, long currentTime) {
-                    return null;
+                 public boolean entryExpiredInMemoryFromIteration(InternalCacheEntry entry, long currentTime) {
+                    return true;
                  }
 
                  @Override

@@ -1,5 +1,7 @@
 package org.infinispan.globalstate.impl;
 
+import java.util.concurrent.CompletionStage;
+
 import org.infinispan.globalstate.ScopedState;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.annotation.CacheEntryCreated;
@@ -22,15 +24,15 @@ public class GlobalConfigurationStateListener {
    }
 
    @CacheEntryCreated
-   public void createCache(CacheEntryCreatedEvent<ScopedState, CacheState> event) {
+   public CompletionStage<Void> createCache(CacheEntryCreatedEvent<ScopedState, CacheState> event) {
       String cacheName = event.getKey().getName();
       CacheState state = event.getCache().get(event.getKey());
-      gcm.createCacheLocally(cacheName, state);
+      return gcm.createCacheLocally(cacheName, state);
    }
 
    @CacheEntryRemoved
-   public void removeCache(CacheEntryRemovedEvent<ScopedState, CacheState> event) {
+   public CompletionStage<Void> removeCache(CacheEntryRemovedEvent<ScopedState, CacheState> event) {
       String cacheName = event.getKey().getName();
-      gcm.removeCacheLocally(cacheName, event.getOldValue());
+      return gcm.removeCacheLocally(cacheName, event.getOldValue());
    }
 }

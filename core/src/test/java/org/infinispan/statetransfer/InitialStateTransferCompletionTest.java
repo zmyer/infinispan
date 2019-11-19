@@ -18,7 +18,7 @@ import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.distribution.ch.ConsistentHash;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.BaseAsyncInterceptor;
 import org.infinispan.interceptors.impl.InvocationContextInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.fwk.CleanupAfterMethod;
@@ -65,22 +65,8 @@ public class InitialStateTransferCompletionTest extends MultipleCacheManagersTes
 
       final AtomicBoolean ignoreFurtherStateTransfer = new AtomicBoolean();
       final AtomicInteger transferredKeys = new AtomicInteger();
-      cacheConfigBuilder.customInterceptors().addInterceptor().before(InvocationContextInterceptor.class).interceptor(new CommandInterceptor() {
-         @Override
-         protected Object handleDefault(InvocationContext ctx, VisitableCommand cmd) throws Throwable {
-            if (cmd instanceof PutKeyValueCommand &&
-                  ((PutKeyValueCommand) cmd).hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER)) {
-               if (ignoreFurtherStateTransfer.get()) {
-                  return null;
-               }
-               Object result = super.handleDefault(ctx, cmd);
-               transferredKeys.incrementAndGet();
-               return result;
-            }
-
-            return super.handleDefault(ctx, cmd);
-         }
-      });
+      cacheConfigBuilder.customInterceptors().addInterceptor().before(InvocationContextInterceptor.class)
+                        .interceptor(new CountInterceptor(ignoreFurtherStateTransfer, transferredKeys));
 
       // add the third member
       log.trace("Adding new member ...");
@@ -111,6 +97,31 @@ public class InitialStateTransferCompletionTest extends MultipleCacheManagersTes
          InternalCacheEntry entry = dc2.get(key);
          assertNotNull(entry);
          assertEquals(expectedValue, entry.getValue());
+      }
+   }
+
+   static class CountInterceptor extends BaseAsyncInterceptor {
+      private final AtomicBoolean ignoreFurtherStateTransfer;
+      private final AtomicInteger transferredKeys;
+
+      public CountInterceptor(AtomicBoolean ignoreFurtherStateTransfer, AtomicInteger transferredKeys) {
+         this.ignoreFurtherStateTransfer = ignoreFurtherStateTransfer;
+         this.transferredKeys = transferredKeys;
+      }
+
+      @Override
+      public Object visitCommand(InvocationContext ctx, VisitableCommand cmd) throws Throwable {
+         if (cmd instanceof PutKeyValueCommand &&
+             ((PutKeyValueCommand) cmd).hasAnyFlag(FlagBitSets.PUT_FOR_STATE_TRANSFER)) {
+            if (ignoreFurtherStateTransfer.get()) {
+               return null;
+            }
+            return invokeNextThenAccept(ctx, cmd, (rCtx, rCommand, rv) -> {
+               transferredKeys.incrementAndGet();
+            });
+         }
+
+         return invokeNext(ctx, cmd);
       }
    }
 }

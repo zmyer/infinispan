@@ -3,10 +3,9 @@ package org.infinispan.persistence.rest;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.metadata.InternalMetadata;
+import org.infinispan.metadata.Metadata;
 import org.infinispan.persistence.ParallelIterationTest;
 import org.infinispan.persistence.rest.configuration.RestStoreConfigurationBuilder;
 import org.infinispan.rest.RestServer;
@@ -19,8 +18,8 @@ import org.testng.annotations.Test;
  * @author Mircea Markus
  * @since 6.0
  */
-@Test (groups = "functional", testName = "persistence.rest.RestStoreParallelIterationTest")
-public class RestStoreParallelIterationTest  extends ParallelIterationTest {
+@Test(groups = "functional", testName = "persistence.rest.RestStoreParallelIterationTest")
+public class RestStoreParallelIterationTest extends ParallelIterationTest {
 
    private EmbeddedCacheManager localCacheManager;
    private RestServer restServer;
@@ -34,7 +33,8 @@ public class RestStoreParallelIterationTest  extends ParallelIterationTest {
       cb.persistence().addStore(RestStoreConfigurationBuilder.class)
             .host("localhost")
             .port(restServer.getPort())
-            .path("/rest/"+ BasicCacheContainer.DEFAULT_CACHE_NAME)
+            .path("/rest/" + TestingUtil.getDefaultCacheName(localCacheManager))
+            .segmented(false)
             .preload(false);
    }
 
@@ -46,11 +46,9 @@ public class RestStoreParallelIterationTest  extends ParallelIterationTest {
    }
 
    @Override
-   protected void assertMetadataEmpty(InternalMetadata metadata) {
+   protected void assertMetadataEmpty(Metadata metadata) {
       // RestStore always creates metadata, even if we wrote the entry with null metadata
       if (metadata != null) {
-         assertTrue(metadata.created() < 0);
-         assertTrue(metadata.lastUsed() < 0);
          assertTrue(metadata.lifespan() < 0);
          assertTrue(metadata.maxIdle() < 0);
          assertNull(metadata.version());

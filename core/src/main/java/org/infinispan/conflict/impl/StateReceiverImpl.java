@@ -27,6 +27,8 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.DataRehashed;
@@ -42,19 +44,20 @@ import org.infinispan.topology.CacheTopology;
  * @since 9.1
  */
 @Listener
+@Scope(Scopes.NAMED_CACHE)
 public class StateReceiverImpl<K, V> implements StateReceiver<K, V> {
 
    private static final Log log = LogFactory.getLog(StateReceiverImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
    @ComponentName(CACHE_NAME)
-   @Inject private String cacheName;
-   @Inject private CacheNotifier cacheNotifier;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private InternalDataContainer<K, V> dataContainer;
-   @Inject private RpcManager rpcManager;
+   @Inject String cacheName;
+   @Inject CacheNotifier cacheNotifier;
+   @Inject CommandsFactory commandsFactory;
+   @Inject InternalDataContainer<K, V> dataContainer;
+   @Inject RpcManager rpcManager;
    @Inject @ComponentName(STATE_TRANSFER_EXECUTOR)
-   private ExecutorService stateTransferExecutor;
+   ExecutorService stateTransferExecutor;
 
    private LimitedExecutor stateReceiverExecutor;
 

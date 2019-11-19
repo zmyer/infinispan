@@ -1,6 +1,6 @@
 package org.infinispan.persistence.jdbc.stringbased;
 
-import static org.infinispan.persistence.PersistenceUtil.getExpiryTime;
+import static org.infinispan.persistence.jdbc.logging.Log.PERSISTENCE;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -24,7 +24,6 @@ import javax.transaction.Transaction;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.configuration.ConfiguredBy;
 import org.infinispan.commons.io.ByteBuffer;
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.persistence.Store;
 import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.AbstractIterator;
@@ -32,19 +31,20 @@ import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.distribution.ch.KeyPartitioner;
+import org.infinispan.marshall.persistence.PersistenceMarshaller;
 import org.infinispan.persistence.jdbc.JdbcUtil;
 import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfiguration;
 import org.infinispan.persistence.jdbc.connectionfactory.ConnectionFactory;
-import org.infinispan.persistence.jdbc.connectionfactory.ManagedConnectionFactory;
+import org.infinispan.persistence.jdbc.impl.table.TableManager;
+import org.infinispan.persistence.jdbc.impl.table.TableManagerFactory;
 import org.infinispan.persistence.jdbc.logging.Log;
-import org.infinispan.persistence.jdbc.table.management.TableManager;
-import org.infinispan.persistence.jdbc.table.management.TableManagerFactory;
 import org.infinispan.persistence.keymappers.Key2StringMapper;
 import org.infinispan.persistence.keymappers.TwoWayKey2StringMapper;
 import org.infinispan.persistence.keymappers.UnsupportedKeyTypeException;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.MarshallableEntryFactory;
+import org.infinispan.persistence.spi.MarshalledValue;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.spi.SegmentedAdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.TransactionalCacheWriter;
@@ -98,7 +98,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
    private String cacheName;
    private ConnectionFactory connectionFactory;
    private MarshallableEntryFactory<K, V> marshalledEntryFactory;
-   private StreamingMarshaller marshaller;
+   private PersistenceMarshaller marshaller;
    private TableManager tableManager;
    private TimeService timeService;
    private KeyPartitioner keyPartitioner;
@@ -110,7 +110,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
       this.cacheName = ctx.getCache().getName();
       this.globalConfiguration = ctx.getCache().getCacheManager().getCacheManagerConfiguration();
       this.marshalledEntryFactory = ctx.getMarshallableEntryFactory();
-      this.marshaller = ctx.getMarshaller();
+      this.marshaller = ctx.getPersistenceMarshaller();
       this.timeService = ctx.getTimeService();
       this.keyPartitioner = configuration.segmented() ? ctx.getKeyPartitioner() : null;
       this.isDistributedCache = ctx.getCache().getCacheConfiguration() != null && ctx.getCache().getCacheConfiguration().clustering().cacheMode().isDistributed();
@@ -148,29 +148,21 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
    public void stop() {
       Throwable cause = null;
       try {
-         tableManager.stop();
-         tableManager = null;
+         if (tableManager != null) {
+            tableManager.stop();
+            tableManager = null;
+         }
       } catch (Throwable t) {
-         cause = t.getCause();
-         if (cause == null) cause = t;
          log.debug("Exception while stopping", t);
       }
 
       try {
-         if (configuration.connectionFactory() instanceof ManagedConnectionFactory) {
-            log.tracef("Stopping managed connection factory: %s", connectionFactory);
+         log.tracef("Stopping connection factory: %s", connectionFactory);
+         if (connectionFactory != null) {
             connectionFactory.stop();
          }
       } catch (Throwable t) {
-         if (cause == null) {
-            cause = t;
-         } else {
-            t.addSuppressed(cause);
-         }
          log.debug("Exception while stopping", t);
-      }
-      if (cause != null) {
-         throw new PersistenceException("Exceptions occurred while stopping store", cause);
       }
    }
 
@@ -192,8 +184,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
 
    void initializeConnectionFactory(ConnectionFactory connectionFactory) throws PersistenceException {
       this.connectionFactory = connectionFactory;
-      tableManager = getTableManager();
-      tableManager.setCacheName(cacheName);
+      tableManager = getTableManager(cacheName);
       tableManager.start();
    }
 
@@ -216,7 +207,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          connection = connectionFactory.getConnection();
          write(entry, connection, keyStr, getSegment(entry));
       } catch (SQLException ex) {
-         log.sqlFailureStoringKey(keyStr, ex);
+         PERSISTENCE.sqlFailureStoringKey(keyStr, ex);
          throw new PersistenceException(String.format("Error while storing string key to database; key: '%s'", keyStr), ex);
       } catch (InterruptedException e) {
          if (trace) {
@@ -325,7 +316,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
                upsertBatch.clearBatch();
             })
             .doOnError(e -> {
-               throw log.sqlFailureWritingBatch(e);
+               throw PERSISTENCE.sqlFailureWritingBatch(e);
             });
    }
 
@@ -353,7 +344,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
                deleteBatch.executeBatch();
          }
       } catch (SQLException e) {
-         throw log.sqlFailureDeletingBatch(keys, e);
+         throw PERSISTENCE.sqlFailureDeletingBatch(keys, e);
       } finally {
          connectionFactory.releaseConnection(connection);
       }
@@ -365,7 +356,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
       Connection conn = null;
       PreparedStatement ps = null;
       ResultSet rs = null;
-      MarshallableEntry<K, V> storedValue = null;
+      MarshallableEntry<K, V> entry = null;
       try {
          String sql = tableManager.getSelectRowSql();
          conn = connectionFactory.getConnection();
@@ -374,11 +365,10 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          rs = ps.executeQuery();
          if (rs.next()) {
             InputStream inputStream = rs.getBinaryStream(2);
-            KeyValuePair<ByteBuffer, ByteBuffer> icv = unmarshall(inputStream);
-            storedValue = marshalledEntryFactory.create(key, icv.getKey(), icv.getValue());
+            entry = marshalledEntryFactory.create(key, unmarshall(inputStream));
          }
       } catch (SQLException e) {
-         log.sqlFailureReadingKey(key, lockingKey, e);
+         PERSISTENCE.sqlFailureReadingKey(key, lockingKey, e);
          throw new PersistenceException(String.format(
                "SQL error while fetching stored entry with key: %s, lockingKey: %s",
                key, lockingKey), e);
@@ -387,11 +377,11 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          JdbcUtil.safeClose(ps);
          connectionFactory.releaseConnection(conn);
       }
-      if (storedValue != null && storedValue.getMetadata() != null &&
-            storedValue.getMetadata().isExpired(timeService.wallClockTime())) {
+      if (entry != null && entry.getMetadata() != null &&
+            entry.isExpired(timeService.wallClockTime())) {
          return null;
       }
-      return storedValue;
+      return entry;
    }
 
    @Override
@@ -407,7 +397,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
             log.tracef("Successfully removed %d rows.", result);
          }
       } catch (SQLException ex) {
-         log.failedClearingJdbcCacheStore(ex);
+         PERSISTENCE.failedClearingJdbcCacheStore(ex);
          throw new PersistenceException("Failed clearing cache store", ex);
       } finally {
          JdbcUtil.safeClose(statement);
@@ -432,7 +422,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
             log.tracef("Successfully removed %d rows.", result);
          }
       } catch (SQLException ex) {
-         log.failedClearingJdbcCacheStore(ex);
+         PERSISTENCE.failedClearingJdbcCacheStore(ex);
          throw new PersistenceException("Failed clearing cache store when using segments " + segments, ex);
       } finally {
          JdbcUtil.safeClose(ps);
@@ -455,7 +445,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          ps.setString(1, keyStr);
          return ps.executeUpdate() == 1;
       } catch (SQLException ex) {
-         log.sqlFailureRemovingKeys(ex);
+         PERSISTENCE.sqlFailureRemovingKeys(ex);
          throw new PersistenceException("Error while removing string keys from database", ex);
       } finally {
          JdbcUtil.safeClose(ps);
@@ -471,6 +461,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
       try {
          String sql = tableManager.getSelectOnlyExpiredRowsSql();
          conn = connectionFactory.getConnection();
+         conn.setAutoCommit(false);
          ps = conn.prepareStatement(sql);
          ps.setLong(1, timeService.wallClockTime());
          rs = ps.executeQuery();
@@ -491,7 +482,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
             }
 
             if (!twoWayMapperExists)
-               log.twoWayKey2StringMapperIsMissing(TwoWayKey2StringMapper.class.getSimpleName());
+               PERSISTENCE.twoWayKey2StringMapperIsMissing(TwoWayKey2StringMapper.class.getSimpleName());
 
             if (affectedRows > 0) {
                int[] result = batchDelete.executeBatch();
@@ -499,10 +490,16 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
                   log.tracef("Successfully purged %d rows.", result.length);
                }
             }
+            conn.commit();
          }
-      } catch (SQLException ex) {
-         log.failedClearingJdbcCacheStore(ex);
-         throw new PersistenceException("Failed clearing string based JDBC store", ex);
+      } catch (SQLException e) {
+         log.failedClearingJdbcCacheStore(e);
+         try {
+            conn.rollback();
+         } catch (SQLException ex) {
+            log.sqlFailureTxRollback(ex);
+         }
+         throw new PersistenceException("Failed clearing string based JDBC store", e);
       } finally {
          JdbcUtil.safeClose(rs);
          JdbcUtil.safeClose(ps);
@@ -568,7 +565,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
             try {
                connection.rollback();
             } catch (SQLException e) {
-               log.sqlFailureTxRollback(e);
+               PERSISTENCE.sqlFailureTxRollback(e);
             }
          }
          factory.releaseConnection(connection);
@@ -631,7 +628,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          // We do not call connection.close() in the event of an exception, as close() on active Tx behaviour is implementation
          // dependent. See https://docs.oracle.com/javase/8/docs/api/java/sql/Connection.html#close--
       } catch (SQLException | InterruptedException e) {
-         throw log.prepareTxFailure(e);
+         throw PERSISTENCE.prepareTxFailure(e);
       }
    }
 
@@ -642,7 +639,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          connection = getTxConnection(tx);
          connection.commit();
       } catch (SQLException e) {
-         log.sqlFailureTxCommit(e);
+         PERSISTENCE.sqlFailureTxCommit(e);
          throw new PersistenceException(String.format("Error during commit of JDBC transaction (%s)", tx), e);
       } finally {
          destroyTxConnection(tx);
@@ -656,7 +653,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          connection = getTxConnection(tx);
          connection.rollback();
       } catch (SQLException e) {
-         log.sqlFailureTxRollback(e);
+         PERSISTENCE.sqlFailureTxRollback(e);
          throw new PersistenceException(String.format("Error during rollback of JDBC transaction (%s)", tx), e);
       } finally {
          destroyTxConnection(tx);
@@ -692,7 +689,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          rs.next();
          return rs.getInt(1);
       } catch (SQLException e) {
-         log.sqlFailureIntegratingState(e);
+         PERSISTENCE.sqlFailureIntegratingState(e);
          throw new PersistenceException("SQL failure while integrating state into store", e);
       } finally {
          JdbcUtil.safeClose(rs);
@@ -719,7 +716,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
          rs.next();
          return rs.getInt(1);
       } catch (SQLException e) {
-         log.sqlFailureIntegratingState(e);
+         PERSISTENCE.sqlFailureIntegratingState(e);
          throw new PersistenceException("SQL failure while integrating state into store", e);
       } finally {
          JdbcUtil.safeClose(rs);
@@ -733,12 +730,11 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
    }
 
    private void prepareStatement(MarshallableEntry entry, String key, int segment, PreparedStatement ps, boolean upsert) throws InterruptedException, SQLException {
-      ByteBuffer byteBuffer = marshall(new KeyValuePair(entry.getValueBytes(), entry.getMetadataBytes()));
-      long expiryTime = getExpiryTime(entry.getMetadata());
+      ByteBuffer byteBuffer = marshall(entry.getMarshalledValue());
       if (upsert) {
-         tableManager.prepareUpsertStatement(ps, key, expiryTime, segment, byteBuffer);
+         tableManager.prepareUpsertStatement(ps, key, entry.expiryTime(), segment, byteBuffer);
       } else {
-         tableManager.prepareUpdateStatement(ps, key, expiryTime, segment, byteBuffer);
+         tableManager.prepareUpdateStatement(ps, key, entry.expiryTime(), segment, byteBuffer);
       }
    }
 
@@ -750,15 +746,15 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
       return tableManager.isStringEncodingRequired() ? tableManager.encodeString(keyStr) : keyStr;
    }
 
-   public TableManager getTableManager() {
+   public TableManager getTableManager(String cacheName) {
       if (tableManager == null)
-         tableManager = TableManagerFactory.getManager(connectionFactory, configuration);
+         tableManager = TableManagerFactory.getManager(connectionFactory, configuration, cacheName);
       return tableManager;
    }
 
    private void enforceTwoWayMapper(String where) throws PersistenceException {
       if (!(key2StringMapper instanceof TwoWayKey2StringMapper)) {
-         log.invalidKey2StringMapper(where, key2StringMapper.getClass().getName());
+         PERSISTENCE.invalidKey2StringMapper(where, key2StringMapper.getClass().getName());
          throw new PersistenceException(String.format("Invalid key to string mapper : %s", key2StringMapper.getClass().getName()));
       }
    }
@@ -767,7 +763,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
       try {
          return marshaller.objectToBuffer(obj);
       } catch (IOException e) {
-         log.errorMarshallingObject(e, obj);
+         PERSISTENCE.errorMarshallingObject(e, obj);
          throw new PersistenceException("I/O failure while marshalling object: " + obj, e);
       }
    }
@@ -775,12 +771,12 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
    @SuppressWarnings("unchecked")
    private <T> T unmarshall(InputStream inputStream) throws PersistenceException {
       try {
-         return (T) marshaller.objectFromInputStream(inputStream);
+         return (T) marshaller.readObject(inputStream);
       } catch (IOException e) {
-         log.ioErrorUnmarshalling(e);
+         PERSISTENCE.ioErrorUnmarshalling(e);
          throw new PersistenceException("I/O error while unmarshalling from stream", e);
       } catch (ClassNotFoundException e) {
-         log.unexpectedClassNotFoundException(e);
+         PERSISTENCE.unexpectedClassNotFoundException(e);
          throw new PersistenceException("*UNEXPECTED* ClassNotFoundException. This should not happen as Bucket class exists", e);
       }
    }
@@ -791,7 +787,7 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
       private final boolean fetchValue;
       private final boolean fetchMetadata;
 
-      public ResultSetEntryIterator(ResultSet rs, Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata) {
+      ResultSetEntryIterator(ResultSet rs, Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata) {
          this.rs = rs;
          this.filter = filter;
          this.fetchValue = fetchValue;
@@ -800,27 +796,29 @@ public class JdbcStringBasedStore<K,V> implements SegmentedAdvancedLoadWriteStor
 
       @Override
       protected MarshallableEntry<K, V> getNext() {
-         MarshallableEntry<K, V> entry = null;
          try {
-            while (entry == null && rs.next()) {
+            while (rs.next()) {
                String keyStr = rs.getString(2);
                K key = (K) ((TwoWayKey2StringMapper) key2StringMapper).getKeyMapping(keyStr);
 
                if (filter == null || filter.test(key)) {
                   if (fetchValue || fetchMetadata) {
                      InputStream inputStream = rs.getBinaryStream(1);
-                     KeyValuePair<ByteBuffer, ByteBuffer> kvp = unmarshall(inputStream);
-                     entry = marshalledEntryFactory.create(
-                           key, fetchValue ? kvp.getKey() : null, fetchMetadata ? kvp.getValue() : null);
+                     MarshalledValue value = unmarshall(inputStream);
+                     return marshalledEntryFactory.create(key,
+                           fetchValue ? value.getValueBytes() : null,
+                           fetchMetadata ? value.getMetadataBytes() : null,
+                           value.getCreated(),
+                           value.getLastUsed());
                   } else {
-                     entry = marshalledEntryFactory.create(key, (Object) null, null);
+                     return marshalledEntryFactory.create(key);
                   }
                }
             }
          } catch (SQLException e) {
             throw new CacheException(e);
          }
-         return entry;
+         return null;
       }
    }
 

@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import org.infinispan.rest.Http11To2UpgradeHandler;
+import org.infinispan.rest.ALPNHandler;
 import org.infinispan.rest.RestServer;
 import org.infinispan.server.core.ProtocolServer;
 
@@ -17,7 +17,7 @@ import io.netty.handler.ssl.ApplicationProtocolNames;
  *
  * @author Sebastian Łaskawiec
  */
-public class SinglePortUpgradeHandler extends Http11To2UpgradeHandler {
+public class SinglePortUpgradeHandler extends ALPNHandler {
 
    private final boolean useAlpn;
    private final Map<String, ProtocolServer> upgradeServers;
@@ -65,5 +65,10 @@ public class SinglePortUpgradeHandler extends Http11To2UpgradeHandler {
                supportedProtocols);
       }
       return null;
+   }
+
+
+   public Map<String, ProtocolServer> getUpgradeServers() {
+      return upgradeServers;
    }
 }

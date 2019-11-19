@@ -1,8 +1,8 @@
 package org.infinispan.configuration.cache;
 
 import static java.util.Arrays.asList;
-import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT_TYPE;
 import static org.infinispan.configuration.cache.Configuration.SIMPLE_CACHE;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
@@ -20,18 +20,11 @@ import org.infinispan.commons.configuration.ConfigurationUtils;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
 import org.infinispan.configuration.global.GlobalConfiguration;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 public class ConfigurationBuilder implements ConfigurationChildBuilder, ConfigurationBuilderInfo {
-   private static final Log log = LogFactory.getLog(ConfigurationBuilder.class, Log.class);
-
    private final ClusteringConfigurationBuilder clustering;
    private final CustomInterceptorsConfigurationBuilder customInterceptors;
-   private final DataContainerConfigurationBuilder dataContainer;
-   private final DeadlockDetectionConfigurationBuilder deadlockDetection;
    private final EncodingConfigurationBuilder encoding;
-   private final EvictionConfigurationBuilder eviction;
    private final ExpirationConfigurationBuilder expiration;
    private final IndexingConfigurationBuilder indexing;
    private final InvocationBatchingConfigurationBuilder invocationBatching;
@@ -39,13 +32,10 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
    private final PersistenceConfigurationBuilder persistence;
    private final LockingConfigurationBuilder locking;
    private final SecurityConfigurationBuilder security;
-   private final StoreAsBinaryConfigurationBuilder storeAsBinary;
    private final TransactionConfigurationBuilder transaction;
-   private final VersioningConfigurationBuilder versioning;
    private final UnsafeConfigurationBuilder unsafe;
    private final List<Builder<?>> modules = new ArrayList<>();
    private final SitesConfigurationBuilder sites;
-   private final CompatibilityModeConfigurationBuilder compatibility;
    private final MemoryConfigurationBuilder memory;
    private final AttributeSet attributes;
 
@@ -62,10 +52,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
       this.attributes = Configuration.attributeDefinitionSet();
       this.clustering = new ClusteringConfigurationBuilder(this);
       this.customInterceptors = new CustomInterceptorsConfigurationBuilder(this);
-      this.dataContainer = new DataContainerConfigurationBuilder(this);
-      this.deadlockDetection = new DeadlockDetectionConfigurationBuilder(this);
       this.encoding = new EncodingConfigurationBuilder(this);
-      this.eviction = new EvictionConfigurationBuilder(this);
       this.expiration = new ExpirationConfigurationBuilder(this);
       this.indexing = new IndexingConfigurationBuilder(this);
       this.invocationBatching = new InvocationBatchingConfigurationBuilder(this);
@@ -73,15 +60,13 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
       this.persistence = new PersistenceConfigurationBuilder(this);
       this.locking = new LockingConfigurationBuilder(this);
       this.security = new SecurityConfigurationBuilder(this);
-      this.storeAsBinary = new StoreAsBinaryConfigurationBuilder(this);
       this.transaction = new TransactionConfigurationBuilder(this);
-      this.versioning = new VersioningConfigurationBuilder(this);
       this.unsafe = new UnsafeConfigurationBuilder(this);
       this.sites = new SitesConfigurationBuilder(this);
-      this.compatibility = new CompatibilityModeConfigurationBuilder(this);
       this.memory = new MemoryConfigurationBuilder(this);
 
-      subElements.addAll(Arrays.asList(clustering, persistence, unsafe, dataContainer, jmxStatistics, locking, indexing, expiration, encoding, memory, transaction, sites, customInterceptors, security, sites.backupFor(), compatibility));
+      subElements.addAll(Arrays.asList(clustering, persistence, unsafe, jmxStatistics, locking, indexing, expiration,
+                                       encoding, memory, transaction, sites, customInterceptors, security, sites.backupFor()));
    }
 
 
@@ -111,37 +96,18 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
       return clustering;
    }
 
+   /**
+    * @deprecated Since 10.0, custom interceptors support will be removed and only modules will be able to define interceptors
+    */
+   @Deprecated
    @Override
    public CustomInterceptorsConfigurationBuilder customInterceptors() {
       return customInterceptors;
    }
 
    @Override
-   public DataContainerConfigurationBuilder dataContainer() {
-      return dataContainer;
-   }
-
-   /**
-    * @deprecated Since 9.0, deadlock detection is always disabled.
-    */
-   @Deprecated
-   @Override
-   public DeadlockDetectionConfigurationBuilder deadlockDetection() {
-      return deadlockDetection;
-   }
-
-   @Override
    public EncodingConfigurationBuilder encoding() {
       return encoding;
-   }
-
-   /**
-    * @deprecated Since 9.0, Use {@link ConfigurationBuilder#memory()} instead
-    */
-   @Deprecated
-   @Override
-   public EvictionConfigurationBuilder eviction() {
-      return eviction;
    }
 
    @Override
@@ -162,15 +128,6 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
    @Override
    public JMXStatisticsConfigurationBuilder jmxStatistics() {
       return jmxStatistics;
-   }
-
-   /**
-    * Deprecated since 9.0, please use {@link ConfigurationBuilder#memory()} instead.
-    */
-   @Deprecated
-   @Override
-   public StoreAsBinaryConfigurationBuilder storeAsBinary() {
-      return storeAsBinary;
    }
 
    @Override
@@ -194,11 +151,6 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
    }
 
    @Override
-   public VersioningConfigurationBuilder versioning() {
-      return versioning;
-   }
-
-   @Override
    public UnsafeConfigurationBuilder unsafe() {
       return unsafe;
    }
@@ -206,12 +158,6 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
    @Override
    public SitesConfigurationBuilder sites() {
       return sites;
-   }
-
-   @Override
-   @Deprecated
-   public CompatibilityModeConfigurationBuilder compatibility() {
-      return compatibility;
    }
 
    @Override
@@ -247,16 +193,15 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
       return template;
    }
 
-   @SuppressWarnings("unchecked")
    public void validate() {
       if (attributes.attribute(SIMPLE_CACHE).get()) {
          validateSimpleCacheConfiguration();
       }
       List<RuntimeException> validationExceptions = new ArrayList<>();
       for (Builder<?> validatable:
-            asList(clustering, customInterceptors, dataContainer, deadlockDetection, eviction, expiration, indexing,
-                   invocationBatching, jmxStatistics, persistence, locking, storeAsBinary, transaction,
-                   versioning, unsafe, sites, compatibility, memory)) {
+            asList(clustering, customInterceptors, expiration, indexing,
+                   invocationBatching, jmxStatistics, persistence, locking, transaction,
+                   unsafe, sites, memory)) {
          try {
             validatable.validate();
          } catch (RuntimeException e) {
@@ -280,9 +225,8 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
             || !persistence.stores().isEmpty()
             || invocationBatching.isEnabled()
             || indexing.enabled()
-            || memory.create().storageType() == StorageType.BINARY
-            || compatibility.create().enabled()) {
-         throw log.notSupportedInSimpleCache();
+            || memory.create().storageType() == StorageType.BINARY) {
+         throw CONFIG.notSupportedInSimpleCache();
       }
    }
 
@@ -290,9 +234,9 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
    public void validate(GlobalConfiguration globalConfig) {
       List<RuntimeException> validationExceptions = new ArrayList<>();
       for (ConfigurationChildBuilder validatable:
-            asList(clustering, customInterceptors, dataContainer, deadlockDetection, eviction, expiration, indexing,
-                   invocationBatching, jmxStatistics, persistence, locking, storeAsBinary, transaction,
-                   versioning, unsafe, sites, compatibility, security, memory)) {
+            asList(clustering, customInterceptors, expiration, indexing,
+                   invocationBatching, jmxStatistics, persistence, locking, transaction,
+                   unsafe, sites, security, memory)) {
          try {
             validatable.validate(globalConfig);
          } catch (RuntimeException e) {
@@ -317,29 +261,19 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
       if (validate) {
          validate();
       }
-      if (compatibility.isEnabled()) {
-         encoding.key().mediaType(APPLICATION_OBJECT_TYPE);
-         encoding.value().mediaType(APPLICATION_OBJECT_TYPE);
-      }
       List<Object> modulesConfig = new LinkedList<>();
       for (Builder<?> module : modules)
          modulesConfig.add(module.create());
       return new Configuration(template, attributes.protect(), clustering.create(), customInterceptors.create(),
-               dataContainer.create(), deadlockDetection.create(), eviction.create(),
                expiration.create(), encoding.create(), indexing.create(), invocationBatching.create(),
                jmxStatistics.create(), persistence.create(), locking.create(), security.create(),
-               storeAsBinary.create(), transaction.create(), unsafe.create(), versioning.create(), sites.create(),
-               compatibility.create(), memory.create(),
-               modulesConfig);
+               transaction.create(), unsafe.create(), sites.create(), memory.create(), modulesConfig);
    }
 
    public ConfigurationBuilder read(Configuration template) {
       this.attributes.read(template.attributes());
       this.clustering.read(template.clustering());
       this.customInterceptors.read(template.customInterceptors());
-      this.dataContainer.read(template.dataContainer());
-      this.deadlockDetection.read(template.deadlockDetection());
-      this.eviction.read(template.eviction());
       this.expiration.read(template.expiration());
       this.indexing.read(template.indexing());
       this.invocationBatching.read(template.invocationBatching());
@@ -347,14 +281,12 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
       this.persistence.read(template.persistence());
       this.locking.read(template.locking());
       this.security.read(template.security());
-      this.storeAsBinary.read(template.storeAsBinary());
       this.transaction.read(template.transaction());
       this.unsafe.read(template.unsafe());
       this.sites.read(template.sites());
-      this.versioning.read(template.versioning());
-      this.compatibility.read(template.compatibility());
       this.memory.read(template.memory());
       this.encoding.read(template.encoding());
+      this.template = template.isTemplate();
 
       for (Object c : template.modules().values()) {
          Builder<Object> builder = this.addModule(ConfigurationUtils.builderFor(c));
@@ -369,9 +301,6 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
       return "ConfigurationBuilder{" +
             "clustering=" + clustering +
             ", customInterceptors=" + customInterceptors +
-            ", dataContainer=" + dataContainer +
-            ", deadlockDetection=" + deadlockDetection +
-            ", eviction=" + eviction +
             ", expiration=" + expiration +
             ", indexing=" + indexing +
             ", invocationBatching=" + invocationBatching +
@@ -380,12 +309,9 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Configur
             ", locking=" + locking +
             ", modules=" + modules +
             ", security=" + security +
-            ", storeAsBinary=" + storeAsBinary +
             ", transaction=" + transaction +
-            ", versioning=" + versioning +
             ", unsafe=" + unsafe +
             ", sites=" + sites +
-            ", compatibility=" + compatibility +
             '}';
    }
 

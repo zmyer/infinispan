@@ -9,7 +9,7 @@ import org.infinispan.configuration.cache.Index;
 import org.infinispan.distribution.ch.impl.AffinityPartitioner;
 import org.infinispan.query.blackbox.ClusteredCacheTest;
 import org.infinispan.query.test.Person;
-import org.testng.annotations.AfterMethod;
+import org.infinispan.query.test.QueryTestSCI;
 import org.testng.annotations.Test;
 
 /**
@@ -19,37 +19,30 @@ import org.testng.annotations.Test;
 public class ClusteredCacheWithElasticsearchIndexManagerIT extends ClusteredCacheTest {
 
     @Override
-    public void testCombinationOfFilters() throws Exception {
+    public void testCombinationOfFilters() {
         // Not supported by hibernate search
     }
 
     @Override
-    public void testFullTextFilterOnOff() throws Exception {
+    public void testFullTextFilterOnOff() {
         // Not supported by hibernate search
     }
 
     @Override
-    public void testSearchKeyTransformer() throws Exception {
+    public void testSearchKeyTransformer() {
         // Will be fixed in Hibernate Search v. 5.8.0.Beta2 : see HSEARCH-2688
     }
 
     @Override
-    protected void createCacheManagers() throws Throwable {
+    protected void createCacheManagers() {
         ConfigurationBuilder cacheCfg = getDefaultClusteredCacheConfig(CacheMode.REPL_SYNC, transactionsEnabled());
         cacheCfg.clustering().hash().keyPartitioner(new AffinityPartitioner());
         cacheCfg.indexing()
-                .index(Index.LOCAL)
+                .index(Index.PRIMARY_OWNER)
                 .addIndexedEntity(Person.class);
         ElasticsearchTesting.applyTestProperties(cacheCfg.indexing());
-        List<Cache<Object, Person>> caches = createClusteredCaches(2, cacheCfg);
+        List<Cache<Object, Person>> caches = createClusteredCaches(2, QueryTestSCI.INSTANCE, cacheCfg);
         cache1 = caches.get(0);
         cache2 = caches.get(1);
-    }
-
-    @AfterMethod
-    @Override
-    protected void clearContent() throws Throwable {
-        cache(0).clear();
-        super.clearContent();
     }
 }

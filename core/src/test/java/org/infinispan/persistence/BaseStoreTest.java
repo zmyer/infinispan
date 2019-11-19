@@ -8,7 +8,6 @@ import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -19,7 +18,8 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import org.infinispan.commons.marshall.StreamingMarshaller;
+import org.infinispan.commons.marshall.Marshaller;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
 import org.infinispan.commons.marshall.WrappedByteArray;
 import org.infinispan.commons.marshall.WrappedBytes;
 import org.infinispan.configuration.cache.Configuration;
@@ -28,16 +28,21 @@ import org.infinispan.container.entries.InternalCacheValue;
 import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.container.impl.InternalEntryFactoryImpl;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
-import org.infinispan.marshall.core.ExternalPojo;
-import org.infinispan.marshall.core.MarshalledEntry;
+import org.infinispan.marshall.persistence.PersistenceMarshaller;
 import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.persistence.spi.AdvancedCacheExpirationWriter;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
+import org.infinispan.protostream.ProtobufUtil;
+import org.infinispan.protostream.SerializationContext;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.infinispan.test.AbstractInfinispanTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.data.Key;
+import org.infinispan.test.data.Person;
 import org.infinispan.test.fwk.TestInternalCacheEntryFactory;
 import org.infinispan.util.ControlledTimeService;
 import org.infinispan.util.PersistenceMockUtil;
@@ -59,7 +64,7 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
 
    protected static final int WRITE_DELETE_BATCH_MIN_ENTRIES = 80;
    protected static final int WRITE_DELETE_BATCH_MAX_ENTRIES = 120;
-   private TestObjectStreamMarshaller marshaller;
+   protected TestObjectStreamMarshaller marshaller;
    protected abstract AdvancedLoadWriteStore createStore() throws Exception;
 
    protected AdvancedLoadWriteStore<Object, Object> cl;
@@ -69,7 +74,7 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
    //alwaysRun = true otherwise, when we run unstable tests, this method is not invoked (because it belongs to the unit group)
    @BeforeMethod(alwaysRun = true)
    public void setUp() throws Exception {
-      marshaller = new TestObjectStreamMarshaller();
+      marshaller = new TestObjectStreamMarshaller(getSerializationContextInitializer());
       timeService = getTimeService();
       factory = new InternalEntryFactoryImpl();
       TestingUtil.inject(factory, timeService);
@@ -103,8 +108,15 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
    /**
     * @return a mock marshaller for use with the cache store impls
     */
-   protected StreamingMarshaller getMarshaller() {
+   protected PersistenceMarshaller getMarshaller() {
       return marshaller;
+   }
+
+   /**
+    * @return the {@link SerializationContextInitializer} used to initiate the user marshaller
+    */
+   protected SerializationContextInitializer getSerializationContextInitializer() {
+      return TestDataSCI.INSTANCE;
    }
 
    /**
@@ -135,7 +147,7 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
       MarshallableEntry entry = cl.loadEntry("k");
       assertEquals("v", unwrap(entry.getValue()));
       assertTrue("Expected an immortalEntry",
-                 entry.getMetadata() == null || entry.getMetadata().expiryTime() == -1 || entry.getMetadata().maxIdle() == -1);
+                 entry.getMetadata() == null || entry.expiryTime() == -1 || entry.getMetadata().maxIdle() == -1);
       assertContains("k", true);
       assertFalse(cl.delete("k2"));
    }
@@ -151,6 +163,7 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
       assertContains("k", true);
       assertCorrectExpiry(cl.loadEntry("k"), "v", lifespan, -1, false);
       assertCorrectExpiry(TestingUtil.allEntries(cl).iterator().next(), "v", lifespan, -1, false);
+      timeService.advance(lifespan + 1);
 
       lifespan = 2000;
       se = internalCacheEntry("k", "v", lifespan);
@@ -171,15 +184,15 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
       if (lifespan > -1) {
          assertNotNull(me + ".getMetadata()", me.getMetadata());
          assertEquals(me + ".getMetadata().lifespan()", lifespan, me.getMetadata().lifespan());
-         assertTrue(me + ".getMetadata().created() > -1", me.getMetadata().created() > -1);
+         assertTrue(me + ".created() > -1", me.created() > -1);
       }
       if (maxIdle > -1) {
          assertNotNull(me + ".getMetadata()", me.getMetadata());
          assertEquals(me + ".getMetadata().maxIdle()", maxIdle, me.getMetadata().maxIdle());
-         assertTrue(me + ".getMetadata().lastUsed() > -1", me.getMetadata().lastUsed() > -1);
+         assertTrue(me + ".lastUsed() > -1", me.lastUsed() > -1);
       }
       if (me.getMetadata() != null) {
-         assertEquals(me + "getMetadata().isExpired() ", expired, me.getMetadata().isExpired(timeService.wallClockTime()));
+         assertEquals(me + ".isExpired() ", expired, me.isExpired(timeService.wallClockTime()));
       }
    }
 
@@ -195,6 +208,7 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
       assertContains("k", true);
       assertCorrectExpiry(cl.loadEntry("k"), "v", -1, idle, false);
       assertCorrectExpiry(TestingUtil.allEntries(cl).iterator().next(), "v", -1, idle, false);
+      timeService.advance(idle + 1);
 
       idle = 1000;
       se = internalCacheEntry("k", "v", -1, idle);
@@ -270,6 +284,7 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
       assertContains("k", true);
       assertCorrectExpiry(cl.loadEntry("k"), "v", lifespan, idle, false);
       assertCorrectExpiry(TestingUtil.allEntries(cl).iterator().next(), "v", lifespan, idle, false);
+      timeService.advance(idle + 1);
 
       idle = 1000;
       lifespan = 4000;
@@ -419,7 +434,7 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
       // before running out of lifespan making this test unpredictably fail on them.
 
       long lifespan = 7000;
-      long idle = 5000;
+      long idle = 2000;
 
       InternalCacheEntry ice1 = internalCacheEntry("k1", "v1", lifespan);
       cl.write(marshalledEntry(ice1));
@@ -523,17 +538,23 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
    public void testLoadAndStoreBytesValues() throws PersistenceException, IOException, InterruptedException {
       assertIsEmpty();
 
-      WrappedBytes key = new WrappedByteArray(getMarshaller().objectToByteBuffer(new Pojo().role("key")));
-      WrappedBytes key2 = new WrappedByteArray(getMarshaller().objectToByteBuffer(new Pojo().role("key2")));
-      WrappedBytes value = new WrappedByteArray(getMarshaller().objectToByteBuffer(new Pojo().role("value")));
+      SerializationContext ctx = ProtobufUtil.newSerializationContext();
+      SerializationContextInitializer sci = TestDataSCI.INSTANCE;
+      sci.registerSchema(ctx);
+      sci.registerMarshallers(ctx);
+      Marshaller userMarshaller = new ProtoStreamMarshaller(ctx);
+      WrappedBytes key = new WrappedByteArray(userMarshaller.objectToByteBuffer(new Key("key")));
+      WrappedBytes key2 = new WrappedByteArray(userMarshaller.objectToByteBuffer(new Key("key2")));
+      WrappedBytes value = new WrappedByteArray(userMarshaller.objectToByteBuffer(new Person()));
 
       assertFalse(cl.contains(key));
-      cl.write(MarshalledEntryUtil.create(key, value, getMarshaller()));
+      PersistenceMarshaller persistenceMarshaller = getMarshaller();
+      cl.write(MarshalledEntryUtil.create(key, value, persistenceMarshaller));
 
       assertEquals(value, cl.loadEntry(key).getValue());
       MarshallableEntry entry = cl.loadEntry(key);
       assertTrue("Expected an immortalEntry",
-                 entry.getMetadata() == null || entry.getMetadata().expiryTime() == -1 || entry.getMetadata().maxIdle() == -1);
+                 entry.getMetadata() == null || entry.expiryTime() == -1 || entry.getMetadata().maxIdle() == -1);
       assertContains(key, true);
 
       assertFalse(cl.delete(key2));
@@ -552,10 +573,19 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
       testBatch(numberOfEntries, () ->
             cl.writeBatch(
                   IntStream.range(0, numberOfEntries).boxed()
-                        .map(i -> MarshalledEntry.wrap(marshalledEntry(i.toString(), "Val" + i)))
+                        .map(i -> marshalledEntry(i.toString(), "Val" + i).asMarshalledEntry())
                         .collect(Collectors.toList())
             )
       );
+   }
+
+   public void testEmptyWriteAndDeleteBatchIterable() {
+      assertIsEmpty();
+      assertNull("should not be present in the store", cl.loadEntry(0));
+      cl.bulkUpdate(Flowable.empty());
+      assertEquals(0, cl.size());
+      cl.deleteBatch(Collections.emptyList());
+      assertEquals(0, cl.size());
    }
 
    private <R> void testBatch(int numberOfEntries, Runnable createBatch) {
@@ -581,7 +611,7 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
    }
 
    protected final InitializationContext createContext(Configuration configuration) {
-      return PersistenceMockUtil.createContext(getClass().getSimpleName(), configuration, getMarshaller(), timeService);
+      return PersistenceMockUtil.createContext(getClass(), configuration, getMarshaller(), timeService);
    }
 
    protected final void assertContains(Object k, boolean expected) {
@@ -616,35 +646,4 @@ public abstract class BaseStoreTest extends AbstractInfinispanTest {
    private void assertEmpty(Collection<?> collection, boolean expected) {
       assertEquals(collection + ".isEmpty()", expected, collection.isEmpty());
    }
-
-
-
-   public static class Pojo implements Serializable, ExternalPojo {
-
-      private String role;
-
-      public Pojo role(String role) {
-         this.role = role;
-         return this;
-      }
-
-      @Override
-      public boolean equals(Object o) {
-         if (this == o) return true;
-         if (o == null || getClass() != o.getClass()) return false;
-
-         Pojo pojo = (Pojo) o;
-
-         if (role != null ? !role.equals(pojo.role) : pojo.role != null)
-            return false;
-
-         return true;
-      }
-
-      @Override
-      public int hashCode() {
-         return role != null ? role.hashCode() : 0;
-      }
-   }
-
 }

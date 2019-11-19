@@ -1,5 +1,7 @@
 package org.infinispan.container.versioning;
 
+import static org.infinispan.util.logging.Log.CONTAINER;
+
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -7,6 +9,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
@@ -30,6 +34,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author Galder Zamarreño
  * @since 5.3
  */
+@Scope(Scopes.NAMED_CACHE)
 public class NumericVersionGenerator implements VersionGenerator {
 
    private static final Log log = LogFactory.getLog(NumericVersionGenerator.class);
@@ -40,9 +45,9 @@ public class NumericVersionGenerator implements VersionGenerator {
    final AtomicLong versionPrefix = new AtomicLong();
    private static final NumericVersion NON_EXISTING = new NumericVersion(0);
 
-   @Inject private Configuration configuration;
-   @Inject private CacheManagerNotifier cacheManagerNotifier;
-   @Inject private Transport transport;
+   @Inject Configuration configuration;
+   @Inject CacheManagerNotifier cacheManagerNotifier;
+   @Inject Transport transport;
 
    private boolean isClustered;
 
@@ -85,7 +90,7 @@ public class NumericVersionGenerator implements VersionGenerator {
          return createNumericVersion(counter);
       }
 
-      throw log.unexpectedInitialVersion(initialVersion.getClass().getName());
+      throw CONTAINER.unexpectedInitialVersion(initialVersion.getClass().getName());
    }
 
    @Override

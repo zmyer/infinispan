@@ -4,18 +4,16 @@ import static org.infinispan.configuration.cache.StateTransferConfiguration.AWAI
 import static org.infinispan.configuration.cache.StateTransferConfiguration.CHUNK_SIZE;
 import static org.infinispan.configuration.cache.StateTransferConfiguration.FETCH_IN_MEMORY_STATE;
 import static org.infinispan.configuration.cache.StateTransferConfiguration.TIMEOUT;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.util.concurrent.TimeUnit;
 
-import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.configuration.ConfigurationBuilderInfo;
 import org.infinispan.commons.configuration.attributes.Attribute;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
 import org.infinispan.configuration.global.GlobalConfiguration;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * Configures how state is transferred when a cache joins or leaves the cluster. Used in distributed and
@@ -25,8 +23,6 @@ import org.infinispan.util.logging.LogFactory;
  */
 public class StateTransferConfigurationBuilder extends
       AbstractClusteringConfigurationChildBuilder implements Builder<StateTransferConfiguration>, ConfigurationBuilderInfo {
-   private static final Log log = LogFactory.getLog(StateTransferConfigurationBuilder.class);
-
    private final AttributeSet attributes;
 
    StateTransferConfigurationBuilder(ClusteringConfigurationBuilder builder) {
@@ -98,21 +94,22 @@ public class StateTransferConfigurationBuilder extends
 
    @Override
    public void validate() {
-      if (attributes.attribute(CHUNK_SIZE).get() <= 0) {
-         throw new CacheConfigurationException("chunkSize can not be <= 0");
+      int chunkSize = attributes.attribute(CHUNK_SIZE).get();
+      if (chunkSize <= 0) {
+         throw CONFIG.invalidChunkSize(chunkSize);
       }
 
       if (clustering().cacheMode().isInvalidation()) {
          Attribute<Boolean> fetchAttribute = attributes.attribute(FETCH_IN_MEMORY_STATE);
          if (fetchAttribute.isModified() && fetchAttribute.get()) {
-            throw log.attributeNotAllowedInInvalidationMode(FETCH_IN_MEMORY_STATE.name());
+            throw CONFIG.attributeNotAllowedInInvalidationMode(FETCH_IN_MEMORY_STATE.name());
          }
       }
 
       Attribute<Boolean> awaitInitialTransfer = attributes.attribute(AWAIT_INITIAL_TRANSFER);
       if (awaitInitialTransfer.isModified() && awaitInitialTransfer.get()
             && !getClusteringBuilder().cacheMode().needsStateTransfer())
-         throw log.awaitInitialTransferOnlyForDistOrRepl();
+         throw CONFIG.awaitInitialTransferOnlyForDistOrRepl();
    }
 
    @Override

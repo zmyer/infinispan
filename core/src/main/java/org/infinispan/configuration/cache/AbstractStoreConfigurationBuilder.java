@@ -9,6 +9,7 @@ import static org.infinispan.configuration.cache.AbstractStoreConfiguration.PURG
 import static org.infinispan.configuration.cache.AbstractStoreConfiguration.SEGMENTED;
 import static org.infinispan.configuration.cache.AbstractStoreConfiguration.SHARED;
 import static org.infinispan.configuration.cache.AbstractStoreConfiguration.TRANSACTIONAL;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -27,59 +28,20 @@ import org.infinispan.commons.util.TypedProperties;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.parsing.XmlConfigHelper;
 import org.infinispan.persistence.spi.SegmentedAdvancedLoadWriteStore;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfiguration, S extends AbstractStoreConfigurationBuilder<T, S>>
       extends AbstractPersistenceConfigurationChildBuilder implements StoreConfigurationBuilder<T, S>, ConfigurationBuilderInfo {
 
-   private static final Log log = LogFactory.getLog(AbstractStoreConfigurationBuilder.class);
-
    protected final AttributeSet attributes;
    protected final AsyncStoreConfigurationBuilder<S> async;
-   protected final SingletonStoreConfigurationBuilder<S> singletonStore;
-
-   @Deprecated
-   protected boolean preload;
-   @Deprecated
-   protected boolean shared;
-   @Deprecated
-   protected boolean ignoreModifications;
-   @Deprecated
-   protected Properties properties;
-   @Deprecated
-   protected boolean purgeOnStartup;
-   @Deprecated
-   protected boolean fetchPersistentState;
 
    private final List<ConfigurationBuilderInfo> subElements = new ArrayList<>();
-
-   /**
-    * @deprecated Use {@link AbstractStoreConfigurationBuilder#AbstractStoreConfigurationBuilder(PersistenceConfigurationBuilder, AttributeSet)} instead
-    */
-   @Deprecated
-   public AbstractStoreConfigurationBuilder(PersistenceConfigurationBuilder builder) {
-      this(builder, AbstractStoreConfiguration.attributeDefinitionSet());
-   }
 
    public AbstractStoreConfigurationBuilder(PersistenceConfigurationBuilder builder, AttributeSet attributes) {
       super(builder);
       this.attributes = attributes;
       this.async = new AsyncStoreConfigurationBuilder(this);
-      this.singletonStore = new SingletonStoreConfigurationBuilder(this);
-      initCompatibilitySettings();
       subElements.add(async);
-      subElements.add(singletonStore);
-   }
-
-   @Deprecated
-   private void initCompatibilitySettings() {
-      fetchPersistentState = attributes.attribute(FETCH_PERSISTENT_STATE).get();
-      preload = attributes.attribute(PRELOAD).get();
-      purgeOnStartup = attributes.attribute(PURGE_ON_STARTUP).get();
-      shared = attributes.attribute(SHARED).get();
-      ignoreModifications = attributes.attribute(IGNORE_MODIFICATIONS).get();
-      properties = attributes.attribute(PROPERTIES).get();
    }
 
    @Override
@@ -104,17 +66,8 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
     * {@inheritDoc}
     */
    @Override
-   public SingletonStoreConfigurationBuilder<S> singleton() {
-      return singletonStore;
-   }
-
-   /**
-    * {@inheritDoc}
-    */
-   @Override
    public S fetchPersistentState(boolean b) {
       attributes.attribute(FETCH_PERSISTENT_STATE).set(b);
-      fetchPersistentState = b;
       return self();
    }
 
@@ -124,7 +77,6 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
    @Override
    public S ignoreModifications(boolean b) {
       attributes.attribute(IGNORE_MODIFICATIONS).set(b);
-      ignoreModifications = b;
       return self();
    }
 
@@ -134,13 +86,11 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
    @Override
    public S purgeOnStartup(boolean b) {
       attributes.attribute(PURGE_ON_STARTUP).set(b);
-      purgeOnStartup = b;
       return self();
    }
 
    public S properties(Properties properties) {
       attributes.attribute(PROPERTIES).set(new TypedProperties(properties));
-      this.properties = properties;
       return self();
    }
 
@@ -153,7 +103,6 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
       properties.put(key, value);
       attributes.attribute(PROPERTIES).set(properties);
       XmlConfigHelper.setAttributes(attributes, properties, false, false);
-      this.properties = properties;
       return self();
    }
 
@@ -164,7 +113,6 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
    public S withProperties(Properties props) {
       XmlConfigHelper.showUnrecognizedAttributes(XmlConfigHelper.setAttributes(attributes, props, false, false));
       attributes.attribute(PROPERTIES).set(new TypedProperties(props));
-      this.properties = props;
       return self();
    }
 
@@ -174,7 +122,6 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
    @Override
    public S preload(boolean b) {
       attributes.attribute(PRELOAD).set(b);
-      preload = b;
       return self();
    }
 
@@ -184,7 +131,6 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
    @Override
    public S shared(boolean b) {
       attributes.attribute(SHARED).set(b);
-      shared = b;
       return self();
    }
 
@@ -222,7 +168,6 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
 
    private void validateStoreAttributes() {
       async.validate();
-      singletonStore.validate();
       boolean shared = attributes.attribute(SHARED).get();
       boolean fetchPersistentState = attributes.attribute(FETCH_PERSISTENT_STATE).get();
       boolean purgeOnStartup = attributes.attribute(PURGE_ON_STARTUP).get();
@@ -232,22 +177,27 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
 
       if (!shared && !fetchPersistentState && !purgeOnStartup
             && builder.clustering().cacheMode().isClustered() && !getBuilder().template())
-         log.staleEntriesWithoutFetchPersistentStateOrPurgeOnStartup();
+         CONFIG.staleEntriesWithoutFetchPersistentStateOrPurgeOnStartup();
 
       if (fetchPersistentState && attributes.attribute(FETCH_PERSISTENT_STATE).isModified() &&
             clustering().cacheMode().isInvalidation()) {
-         throw log.attributeNotAllowedInInvalidationMode(FETCH_PERSISTENT_STATE.name());
+         throw CONFIG.attributeNotAllowedInInvalidationMode(FETCH_PERSISTENT_STATE.name());
       }
 
-      if (shared && !preload && builder.indexing().enabled()
-            && builder.indexing().indexLocalOnly() && !getBuilder().template())
-         log.localIndexingWithSharedCacheLoaderRequiresPreload();
+      if (shared) {
+         if (!builder.clustering().cacheMode().isClustered())
+            throw CONFIG.sharedStoreWithLocalCache();
+
+         if (!preload && builder.indexing().enabled()
+               && builder.indexing().index() == Index.PRIMARY_OWNER && !getBuilder().template())
+            CONFIG.localIndexingWithSharedCacheLoaderRequiresPreload();
+      }
 
       if (transactional && !builder.transaction().transactionMode().isTransactional())
-         throw log.transactionalStoreInNonTransactionalCache();
+         throw CONFIG.transactionalStoreInNonTransactionalCache();
 
       if (transactional && builder.persistence().passivation())
-         throw log.transactionalStoreInPassivatedCache();
+         throw CONFIG.transactionalStoreInPassivatedCache();
    }
 
    private void validateStoreWithAnnotations() {
@@ -259,16 +209,16 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
             boolean segmented = attributes.attribute(SEGMENTED).get();
             if (segmented && !SegmentedAdvancedLoadWriteStore.class.isAssignableFrom(storeKlass) &&
                   !AbstractSegmentedStoreConfiguration.class.isAssignableFrom(configKlass)) {
-               throw log.storeNotSegmented(storeKlass);
+               throw CONFIG.storeNotSegmented(storeKlass);
             }
-            if (!storeProps.shared() && shared) {
-               throw log.nonSharedStoreConfiguredAsShared(storeKlass.getSimpleName());
+            if (!storeProps.shared() && attributes.attribute(SHARED).get()) {
+               throw CONFIG.nonSharedStoreConfiguredAsShared(storeKlass.getSimpleName());
             }
          } else {
-            log.warnStoreAnnotationMissing(storeKlass.getSimpleName());
+            CONFIG.warnStoreAnnotationMissing(storeKlass.getSimpleName());
          }
       } else {
-         log.warnConfigurationForAnnotationMissing(attributes.getName());
+         CONFIG.warnConfigurationForAnnotationMissing(attributes.getName());
       }
    }
 
@@ -285,16 +235,13 @@ public abstract class AbstractStoreConfigurationBuilder<T extends StoreConfigura
       } catch (Exception e) {
          throw new CacheConfigurationException(e);
       }
-      initCompatibilitySettings();
       async.read(template.async());
-      singletonStore.read(template.singletonStore());
 
       return this;
    }
 
    @Override
    public String toString() {
-      return "AbstractStoreConfigurationBuilder [attributes=" + attributes + ", async=" + async + ", singletonStore="
-            + singletonStore + "]";
+      return "AbstractStoreConfigurationBuilder [attributes=" + attributes + ", async=" + async + "]";
    }
 }

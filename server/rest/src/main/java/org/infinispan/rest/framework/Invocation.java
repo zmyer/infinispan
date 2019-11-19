@@ -1,6 +1,7 @@
 package org.infinispan.rest.framework;
 
 import java.util.Set;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
 
 /**
@@ -36,5 +37,10 @@ public interface Invocation {
    /**
     * Return the function to execute the invocation.
     */
-   Function<RestRequest, RestResponse> handler();
+   Function<RestRequest, CompletionStage<RestResponse>> handler();
+
+   /**
+    * @return true whether the invocation can be done anonymously (without auth)
+    */
+   boolean anonymous();
 }

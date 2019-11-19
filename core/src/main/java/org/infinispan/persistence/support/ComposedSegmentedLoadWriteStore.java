@@ -1,12 +1,12 @@
 package org.infinispan.persistence.support;
 
 import java.util.PrimitiveIterator;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.IntConsumer;
+import java.util.function.IntFunction;
 import java.util.function.ObjIntConsumer;
 import java.util.function.Predicate;
 import java.util.function.ToIntFunction;
@@ -21,14 +21,16 @@ import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.persistence.InitializationContextImpl;
 import org.infinispan.persistence.factory.CacheStoreFactoryRegistry;
 import org.infinispan.persistence.internal.PersistenceUtil;
+import org.infinispan.persistence.spi.AdvancedCacheExpirationWriter;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.reactive.RxJavaInterop;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.reactivestreams.Publisher;
 
 import io.reactivex.Flowable;
 import io.reactivex.Scheduler;
-import io.reactivex.internal.functions.Functions;
 import io.reactivex.schedulers.Schedulers;
 
 /**
@@ -120,30 +122,38 @@ public class ComposedSegmentedLoadWriteStore<K, V, T extends AbstractSegmentedSt
    }
 
    @Override
-   public Flowable<K> publishKeys(IntSet segments, Predicate<? super K> filter) {
-      return PersistenceUtil.parallelizePublisher(segments, scheduler, i -> {
+   public Publisher<K> publishKeys(IntSet segments, Predicate<? super K> filter) {
+      IntFunction<Publisher<K>> publisherFunction = i -> {
          AdvancedLoadWriteStore<K, V> alws = stores.get(i);
          if (alws != null) {
             return alws.publishKeys(filter);
          }
          return Flowable.empty();
-      });
+      };
+      if (segments.size() == 1) {
+         return publisherFunction.apply(segments.iterator().nextInt());
+      }
+      return PersistenceUtil.parallelizePublisher(segments, scheduler, publisherFunction);
    }
 
    @Override
-   public Flowable<K> publishKeys(Predicate<? super K> filter) {
+   public Publisher<K> publishKeys(Predicate<? super K> filter) {
       return publishKeys(IntSets.immutableRangeSet(stores.length()), filter);
    }
 
    @Override
    public Publisher<MarshallableEntry<K, V>> entryPublisher(IntSet segments, Predicate<? super K> filter, boolean fetchValue, boolean fetchMetadata) {
-      return PersistenceUtil.parallelizePublisher(segments, scheduler, i -> {
+      IntFunction<Publisher<MarshallableEntry<K, V>>> publisherFunction = i -> {
          AdvancedLoadWriteStore<K, V> alws = stores.get(i);
          if (alws != null) {
             return alws.entryPublisher(filter, fetchValue, fetchMetadata);
          }
          return Flowable.empty();
-      });
+      };
+      if (segments.size() == 1) {
+         return publisherFunction.apply(segments.iterator().nextInt());
+      }
+      return PersistenceUtil.parallelizePublisher(segments, scheduler, publisherFunction);
    }
 
    @Override
@@ -162,11 +172,13 @@ public class ComposedSegmentedLoadWriteStore<K, V, T extends AbstractSegmentedSt
    }
 
    @Override
-   public void purge(Executor threadPool, PurgeListener<? super K> listener) {
+   public void purge(Executor executor, ExpirationPurgeListener<K, V> listener) {
       for (int i = 0; i < stores.length(); ++i) {
          AdvancedLoadWriteStore<K, V> alws = stores.get(i);
-         if (alws != null) {
-            alws.purge(threadPool, listener);
+         if (alws instanceof AdvancedCacheExpirationWriter) {
+            ((AdvancedCacheExpirationWriter) alws).purge(executor, listener);
+         } else if (alws != null) {
+            alws.purge(executor, listener);
          }
       }
    }
@@ -183,28 +195,30 @@ public class ComposedSegmentedLoadWriteStore<K, V, T extends AbstractSegmentedSt
 
    @Override
    public void deleteBatch(Iterable<Object> keys) {
-      Flowable.fromIterable(keys)
+      CompletionStage<Void> stage = Flowable.fromIterable(keys)
             // Separate out batches by segment
             .groupBy(keyPartitioner::getSegment)
-            .blockingForEach(groupedFlowable ->
+            .flatMap(groupedFlowable ->
                   groupedFlowable
                         .buffer(configuration.maxBatchSize())
-                        .blockingForEach(batch -> stores.get(groupedFlowable.getKey()).deleteBatch(batch))
-            );
+                        .doOnNext(batch -> stores.get(groupedFlowable.getKey()).deleteBatch(batch))
+                  , stores.length()).to(RxJavaInterop.flowableToCompletionStage());
+      CompletionStages.join(stage);
    }
 
    @Override
    public CompletionStage<Void> bulkUpdate(Publisher<MarshallableEntry<? extends K, ? extends V>> publisher) {
-      CompletableFuture<Void> future = new CompletableFuture<>();
-
-      Flowable.fromPublisher(publisher)
+      return Flowable.fromPublisher(publisher)
             .groupBy(me -> keyPartitioner.getSegment(me.getKey()))
-            .flatMap(groupedFlowable ->
+            .flatMapCompletable(groupedFlowable ->
                   groupedFlowable
                         .buffer(configuration.maxBatchSize())
-                        .doOnNext(batch -> stores.get(groupedFlowable.getKey()).bulkUpdate(Flowable.fromIterable(batch))))
-            .subscribe(Functions.emptyConsumer(), future::completeExceptionally, () -> future.complete(null));
-      return future;
+                        .flatMapCompletable(batch -> {
+                           CompletionStage<Void> stage = stores.get(groupedFlowable.getKey()).bulkUpdate(Flowable.fromIterable(batch));
+                           return RxJavaInterop.completionStageToCompletable(stage);
+                           // Make sure to set the parallelism level to how many groups will be created
+                        }), false, stores.length())
+            .to(RxJavaInterop.completableToCompletionStage());
    }
 
    @Override
@@ -239,10 +253,10 @@ public class ComposedSegmentedLoadWriteStore<K, V, T extends AbstractSegmentedSt
 
    private void startNewStoreForSegment(int segment) {
       if (stores.get(segment) == null) {
-         T storeConfiguration = configuration.newConfigurationFrom(segment);
+         T storeConfiguration = configuration.newConfigurationFrom(segment, ctx);
          AdvancedLoadWriteStore<K, V> newStore = (AdvancedLoadWriteStore<K, V>) cacheStoreFactoryRegistry.createInstance(storeConfiguration);
-         newStore.init(new InitializationContextImpl(storeConfiguration, cache, keyPartitioner, ctx.getMarshaller(), ctx.getTimeService(),
-               ctx.getByteBufferFactory(), ctx.getMarshalledEntryFactory(), ctx.getMarshallableEntryFactory(), ctx.getExecutor()));
+         newStore.init(new InitializationContextImpl(storeConfiguration, cache, keyPartitioner, ctx.getPersistenceMarshaller(), ctx.getTimeService(),
+               ctx.getByteBufferFactory(), ctx.getMarshalledEntryFactory(), ctx.getMarshallableEntryFactory(), ctx.getExecutor(), ctx.getGlobalConfiguration()));
          newStore.start();
          stores.set(segment, newStore);
       }

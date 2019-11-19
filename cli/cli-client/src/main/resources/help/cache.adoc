@@ -1,0 +1,24 @@
+CACHE(1)
+========
+:doctype: manpage
+
+
+NAME
+----
+cache - selects the default cache for subsequent commands.
+
+
+SYNOPSIS
+--------
+*cache* ['CACHE_NAME']
+
+
+EXAMPLE
+-------
+`cache mycache` +
+Selects `mycache` and is the same as navigating the resource tree using `cd caches/mycache`.
+
+
+SEE ALSO
+--------
+cd(1), clear(1), container(1), get(1), put(1), remove(1)

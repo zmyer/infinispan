@@ -1,18 +1,32 @@
 package org.infinispan.rest;
 
+import java.io.IOException;
+import java.nio.file.Path;
+
+import org.infinispan.counter.EmbeddedCounterManagerFactory;
+import org.infinispan.counter.impl.manager.EmbeddedCounterManager;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.rest.authentication.Authenticator;
-import org.infinispan.rest.authentication.impl.VoidAuthenticator;
 import org.infinispan.rest.cachemanager.RestCacheManager;
+import org.infinispan.rest.configuration.AuthenticationConfiguration;
 import org.infinispan.rest.configuration.RestServerConfiguration;
 import org.infinispan.rest.framework.ResourceManager;
 import org.infinispan.rest.framework.RestDispatcher;
 import org.infinispan.rest.framework.impl.ResourceManagerImpl;
 import org.infinispan.rest.framework.impl.RestDispatcherImpl;
+import org.infinispan.rest.resources.CacheManagerResource;
 import org.infinispan.rest.resources.CacheResource;
-import org.infinispan.rest.resources.ConfigResource;
+import org.infinispan.rest.resources.CacheResourceV2;
+import org.infinispan.rest.resources.ClusterResource;
+import org.infinispan.rest.resources.CounterResource;
+import org.infinispan.rest.resources.MetricsResource;
+import org.infinispan.rest.resources.SearchAdminResource;
+import org.infinispan.rest.resources.ServerResource;
 import org.infinispan.rest.resources.SplashResource;
+import org.infinispan.rest.resources.StaticContentResource;
+import org.infinispan.rest.resources.TasksResource;
+import org.infinispan.rest.resources.XSiteResource;
 import org.infinispan.server.core.AbstractProtocolServer;
+import org.infinispan.server.core.ServerManagement;
 import org.infinispan.server.core.transport.NettyInitializers;
 
 import io.netty.channel.Channel;
@@ -26,10 +40,10 @@ import io.netty.channel.ChannelOutboundHandler;
  * @author Sebastian Łaskawiec
  */
 public class RestServer extends AbstractProtocolServer<RestServerConfiguration> {
-
-   private Authenticator authenticator = new VoidAuthenticator();
+   private ServerManagement server;
    private RestDispatcher restDispatcher;
    private RestCacheManager<Object> restCacheManager;
+   private InvocationHelper invocationHelper;
 
    public RestServer() {
       super("REST");
@@ -59,49 +73,65 @@ public class RestServer extends AbstractProtocolServer<RestServerConfiguration> 
       return new RestChannelInitializer(this, transport);
    }
 
-   /**
-    * Gets Authentication mechanism.
-    *
-    * @return {@link Authenticator} instance.
-    */
-   Authenticator getAuthenticator() {
-      return authenticator;
-   }
-
    RestDispatcher getRestDispatcher() {
       return restDispatcher;
    }
 
-   /**
-    * Sets Authentication mechanism.
-    *
-    * @param authenticator {@link Authenticator} instance.
-    */
-   public void setAuthenticator(Authenticator authenticator) {
-      this.authenticator = authenticator;
-   }
-
    @Override
    public void stop() {
+      if (restCacheManager != null) {
+         restCacheManager.stop();
+      }
+      AuthenticationConfiguration auth = configuration.authentication();
+      if (auth.enabled()) {
+         try {
+            auth.authenticator().close();
+         } catch (IOException e) {
+         }
+      }
       super.stop();
-      restCacheManager.stop();
+   }
+
+   public void setServer(ServerManagement server) {
+      this.server = server;
    }
 
    @Override
    protected void startInternal(RestServerConfiguration configuration, EmbeddedCacheManager cacheManager) {
+      this.configuration = configuration;
+      AuthenticationConfiguration auth = configuration.authentication();
+      if (auth.enabled()) {
+         auth.authenticator().init(this);
+      }
       super.startInternal(configuration, cacheManager);
       restCacheManager = new RestCacheManager<>(cacheManager, this::isCacheIgnored);
-      String rootContext = configuration.startTransport() ? configuration.contextPath() : "*";
-      ResourceManager resourceManager = new ResourceManagerImpl(rootContext);
-      resourceManager.registerResource(new CacheResource(restCacheManager, configuration));
-      resourceManager.registerResource(new SplashResource());
-      resourceManager.registerResource(new ConfigResource(cacheManager));
-      this.restDispatcher = new RestDispatcherImpl(resourceManager);
-   }
 
-   @Override
-   public int getWorkerThreads() {
-      // Unused for now, so just return the smallest possible valid value
-      return 1;
+      invocationHelper = new InvocationHelper(restCacheManager,
+            (EmbeddedCounterManager) EmbeddedCounterManagerFactory.asCounterManager(cacheManager),
+            configuration, server, getExecutor());
+
+      String restContext = configuration.contextPath();
+      String rootContext = "/";
+      ResourceManager resourceManager = new ResourceManagerImpl();
+      resourceManager.registerResource(rootContext, new SplashResource());
+      resourceManager.registerResource(restContext, new CacheResource(invocationHelper));
+      resourceManager.registerResource(restContext, new CacheResourceV2(invocationHelper));
+      resourceManager.registerResource(restContext, new CounterResource(invocationHelper));
+      resourceManager.registerResource(restContext, new CacheManagerResource(invocationHelper));
+      resourceManager.registerResource(restContext, new XSiteResource(invocationHelper));
+      resourceManager.registerResource(restContext, new SearchAdminResource(invocationHelper));
+      resourceManager.registerResource(restContext, new TasksResource(invocationHelper));
+      resourceManager.registerResource(rootContext, new MetricsResource());
+      Path staticResources = configuration.staticResources();
+      if (staticResources != null) {
+         Path console = configuration.staticResources().resolve("console");
+         resourceManager.registerResource(rootContext, new StaticContentResource(staticResources, "static"));
+         resourceManager.registerResource(rootContext, new StaticContentResource(console, "console"));
+      }
+      if (server != null) {
+         resourceManager.registerResource(restContext, new ServerResource(invocationHelper));
+         resourceManager.registerResource(restContext, new ClusterResource(invocationHelper));
+      }
+      this.restDispatcher = new RestDispatcherImpl(resourceManager);
    }
 }

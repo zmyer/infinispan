@@ -24,7 +24,6 @@ import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
-import org.infinispan.commands.read.SizeCommand;
 import org.infinispan.commands.remote.BaseClusteredReadCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
@@ -95,10 +94,9 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
 
    protected boolean isL1Enabled;
    protected boolean isReplicated;
-   protected boolean isWriteBehind;
 
    private final ReadOnlyManyHelper readOnlyManyHelper = new ReadOnlyManyHelper();
-   private final InvocationSuccessFunction primaryReturnHandler = this::primaryReturnHandler;
+   private final InvocationSuccessFunction<AbstractDataWriteCommand> primaryReturnHandler = this::primaryReturnHandler;
 
    @Override
    protected Log getLog() {
@@ -110,17 +108,6 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       // Can't rely on the super injectConfiguration() to be called before our injectDependencies() method2
       isL1Enabled = cacheConfiguration.clustering().l1().enabled();
       isReplicated = cacheConfiguration.clustering().cacheMode().isReplicated();
-      isWriteBehind = cacheConfiguration.persistence().usingAsyncStore();
-   }
-
-   @Override
-   public Object visitSizeCommand(InvocationContext ctx, SizeCommand command) throws Throwable {
-      if (isReplicated && !isWriteBehind) {
-         // Replicated size command has no reason to be distributed as we do is count entries, no processing
-         // done upon these entries and the overhead of coordinating remote nodes and network calls is more expensive
-         command.setFlagsBitSet(command.getFlagsBitSet() | FlagBitSets.CACHE_MODE_LOCAL);
-      }
-      return super.visitSizeCommand(ctx, command);
    }
 
    @Override
@@ -295,8 +282,7 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       return cacheTopology;
    }
 
-   private Object primaryReturnHandler(InvocationContext ctx, VisitableCommand visitableCommand, Object localResult) {
-      DataWriteCommand command = (DataWriteCommand) visitableCommand;
+   private Object primaryReturnHandler(InvocationContext ctx, AbstractDataWriteCommand command, Object localResult) {
       if (!command.isSuccessful()) {
          if (trace) log.tracef("Skipping the replication of the conditional command as it did not succeed on primary owner (%s).", command);
          return localResult;
@@ -476,7 +462,7 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
    }
 
    private <C extends TopologyAffectedCommand & VisitableCommand> Object handleRemoteReadManyCommand(
-         InvocationContext ctx, C command, Collection<?> keys, InvocationSuccessFunction remoteReturnHandler) {
+         InvocationContext ctx, C command, Collection<?> keys, InvocationSuccessFunction<C> remoteReturnHandler) {
       for (Object key : keys) {
          if (ctx.lookupEntry(key) == null) {
             return UnsureResponse.INSTANCE;
@@ -753,8 +739,7 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
          command.setValueMatcher(command.getValueMatcher().matcherForRetry());
          throw t;
       }
-      return asyncValue(remoteInvocation).andHandle(ctx, command, (rCtx, rCommand, rv, t) -> {
-         DataWriteCommand dataWriteCommand = (DataWriteCommand) rCommand;
+      return asyncValue(remoteInvocation).andHandle(ctx, command, (rCtx, dataWriteCommand, rv, t) -> {
          dataWriteCommand.setValueMatcher(dataWriteCommand.getValueMatcher().matcherForRetry());
          CompletableFutures.rethrowException(t);
 
@@ -778,7 +763,7 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       return !command.hasAnyFlag(FlagBitSets.CACHE_MODE_LOCAL | FlagBitSets.SKIP_REMOTE_LOOKUP);
    }
 
-   protected interface ReadManyCommandHelper<C> extends InvocationSuccessFunction {
+   protected interface ReadManyCommandHelper<C extends VisitableCommand> extends InvocationSuccessFunction<C> {
       Collection<?> keys(C command);
       C copyForLocal(C command, List<Object> keys);
       ReadOnlyManyCommand copyForRemote(C command, List<Object> keys, InvocationContext ctx);
@@ -792,8 +777,8 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
 
    protected class ReadOnlyManyHelper implements ReadManyCommandHelper<ReadOnlyManyCommand> {
       @Override
-      public Object apply(InvocationContext rCtx, VisitableCommand rCommand, Object rv) throws Throwable {
-         return wrapFunctionalManyResultOnNonOrigin(rCtx, ((ReadOnlyManyCommand) rCommand).getKeys(), ((Stream) rv).toArray());
+      public Object apply(InvocationContext rCtx, ReadOnlyManyCommand rCommand, Object rv) throws Throwable {
+         return wrapFunctionalManyResultOnNonOrigin(rCtx, rCommand.getKeys(), ((Stream) rv).toArray());
       }
 
       @Override
@@ -881,7 +866,6 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
                      ulac.setTopologyId(cacheTopology.getTopologyId());
                      CompletionStage<?> updateState = rpcManager.invokeCommand(info.readOwners(), ulac,
                            VoidResponseCollector.ignoreLeavers(), rpcManager.getSyncRpcOptions());
-                     ulac.inject(dataContainer);
                      // We update locally as well
                      ulac.invokeAsync();
                      return asyncValue(updateState).thenApply(rCtx, rCommand, (rCtx2, rCommand2, ignore) -> Boolean.FALSE);

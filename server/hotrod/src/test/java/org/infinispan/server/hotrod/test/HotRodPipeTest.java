@@ -11,6 +11,15 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
+import org.infinispan.commons.util.Either;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.server.hotrod.HotRodServer;
+import org.infinispan.test.SingleCacheManagerTest;
+import org.infinispan.test.fwk.TestCacheManagerFactory;
+import org.infinispan.test.fwk.TestResourceTracker;
+import org.testng.annotations.Test;
+
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -26,13 +35,6 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.handler.codec.ReplayingDecoder;
 import io.netty.util.concurrent.DefaultThreadFactory;
-import org.infinispan.commons.util.Either;
-import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.server.hotrod.HotRodServer;
-import org.infinispan.test.SingleCacheManagerTest;
-import org.infinispan.test.fwk.TestCacheManagerFactory;
-import org.infinispan.test.fwk.TestResourceTracker;
-import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "server.hotrod.test.HotRodPipeTest")
 public class HotRodPipeTest extends SingleCacheManagerTest {
@@ -41,7 +43,9 @@ public class HotRodPipeTest extends SingleCacheManagerTest {
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
-      return TestCacheManagerFactory.createCacheManager();
+      GlobalConfigurationBuilder gcb = new GlobalConfigurationBuilder();
+      TestCacheManagerFactory.amendTransport(gcb);
+      return TestCacheManagerFactory.createServerModeCacheManager(gcb);
    }
 
    @Override

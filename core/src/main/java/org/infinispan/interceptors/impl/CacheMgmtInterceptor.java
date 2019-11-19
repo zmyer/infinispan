@@ -33,7 +33,9 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.ByRef;
+import org.infinispan.commons.util.concurrent.StripedCounters;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ClusteringConfiguration;
 import org.infinispan.configuration.cache.Configuration;
@@ -43,37 +45,36 @@ import org.infinispan.container.offheap.OffHeapMemoryAllocator;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.FlagBitSets;
+import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.eviction.EvictionType;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.impl.ComponentRef;
 import org.infinispan.functional.impl.StatsEnvelope;
-import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
-import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
 import org.infinispan.jmx.annotations.Units;
 import org.infinispan.topology.CacheTopology;
-import org.infinispan.commons.time.TimeService;
-import org.infinispan.commons.util.concurrent.StripedCounters;
 
 /**
- * Captures cache management statistics
+ * Captures cache management statistics.
  *
  * @author Jerry Gauthier
  * @since 9.0
  */
 @MBean(objectName = "Statistics", description = "General statistics such as timings, hit/miss ratio, etc.")
-public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
-   @Inject private ComponentRef<AdvancedCache> cache;
-   @Inject private InternalDataContainer dataContainer;
-   @Inject private TimeService timeService;
-   @Inject private OffHeapMemoryAllocator allocator;
+public final class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
+   @Inject ComponentRef<AdvancedCache> cache;
+   @Inject InternalDataContainer dataContainer;
+   @Inject TimeService timeService;
+   @Inject OffHeapMemoryAllocator allocator;
+   @Inject ComponentRegistry componentRegistry;
 
    private final AtomicLong startNanoseconds = new AtomicLong(0);
-   private volatile AtomicLong resetNanoseconds = new AtomicLong(0);
-   private StripedCounters<StripeB> counters = new StripedCounters<>(StripeC::new);
+   private final AtomicLong resetNanoseconds = new AtomicLong(0);
+   private final StripedCounters<StripeB> counters = new StripedCounters<>(StripeC::new);
 
    @Start
    public void start() {
@@ -83,20 +84,18 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
    @Override
    public Object visitEvictCommand(InvocationContext ctx, EvictCommand command) throws Throwable {
-      if (!getStatisticsEnabled(command))
-         return invokeNext(ctx, command);
-
-      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) ->
-            counters.increment(StripeB.evictionsFieldUpdater, counters.stripeForCurrentThread()));
+      // This is just here to notify that evictions are counted in the ClusteringDependentLogic via NotifyHelper and
+      // EvictionManager
+      return super.visitEvictCommand(ctx, command);
    }
 
    @Override
-   public final Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
+   public final Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) {
       return visitDataReadCommand(ctx, command);
    }
 
    @Override
-   public final Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
+   public final Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) {
       return visitDataReadCommand(ctx, command);
    }
 
@@ -111,20 +110,18 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       }
    }
 
-   private Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command) throws Throwable {
+   private Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command) {
       boolean statisticsEnabled = getStatisticsEnabled(command);
       if (!statisticsEnabled || !ctx.isOriginLocal())
          return invokeNext(ctx, command);
 
       long start = timeService.time();
-      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
-         addDataRead(rv != null, timeService.timeDuration(start, TimeUnit.NANOSECONDS));
-      });
+      return invokeNextAndFinally(ctx, command,
+            (rCtx, rCommand, rv, t) -> addDataRead(rv != null, timeService.timeDuration(start, TimeUnit.NANOSECONDS)));
    }
 
-   @SuppressWarnings("unchecked")
    @Override
-   public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
+   public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) {
       boolean statisticsEnabled = getStatisticsEnabled(command);
       if (!statisticsEnabled || !ctx.isOriginLocal())
          return invokeNext(ctx, command);
@@ -132,10 +129,10 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       long start = timeService.time();
       return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
          long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
-         int requests = ((GetAllCommand) rCommand).getKeys().size();
+         int requests = rCommand.getKeys().size();
          int hitCount = 0;
          if (t == null) {
-            for (Entry<Object, Object> entry : ((Map<Object, Object>) rv).entrySet()) {
+            for (Entry<?, ?> entry : ((Map<?, ?>) rv).entrySet()) {
                if (entry.getValue() != null) {
                   hitCount++;
                }
@@ -156,7 +153,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
+   public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) {
       boolean statisticsEnabled = getStatisticsEnabled(command);
       if (!statisticsEnabled || !ctx.isOriginLocal())
          return invokeNext(ctx, command);
@@ -164,7 +161,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       long start = timeService.time();
       return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
          final long intervalNanoseconds = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
-         final Map<Object, Object> data = ((PutMapCommand) rCommand).getMap();
+         final Map<Object, Object> data = rCommand.getMap();
          if (data != null && !data.isEmpty()) {
             StripeB stripe = counters.stripeForCurrentThread();
             counters.add(StripeB.storeTimesFieldUpdater, stripe, intervalNanoseconds);
@@ -174,18 +171,17 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   //Map.put(key,value) :: oldValue
-   public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
+   public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) {
       return updateStoreStatistics(ctx, command);
    }
 
    @Override
-   public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+   public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) {
       return updateStoreStatistics(ctx, command);
    }
 
    @Override
-   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) {
       boolean statisticsEnabled = getStatisticsEnabled(command);
       if (!statisticsEnabled || !ctx.isOriginLocal())
          return invokeNext(ctx, command);
@@ -195,20 +191,20 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          if (rv == null && rCommand.isSuccessful()) {
             increaseRemoveMisses();
          } else if (rCommand.isSuccessful()) {
-            long intervalMilliseconds = timeService.timeDuration(start, TimeUnit.MILLISECONDS);
+            long intervalNanos = timeService.timeDuration(start, TimeUnit.NANOSECONDS);
             StripeB stripe = counters.stripeForCurrentThread();
-            counters.add(StripeB.storeTimesFieldUpdater, stripe, intervalMilliseconds);
+            counters.add(StripeB.storeTimesFieldUpdater, stripe, intervalNanos);
             counters.increment(StripeB.storesFieldUpdater, stripe);
          }
       });
    }
 
    @Override
-   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) {
       return updateStoreStatistics(ctx, command);
    }
 
-   private Object updateStoreStatistics(InvocationContext ctx, WriteCommand command) throws Throwable {
+   private Object updateStoreStatistics(InvocationContext ctx, WriteCommand command) {
       boolean statisticsEnabled = getStatisticsEnabled(command);
       if (!statisticsEnabled || !ctx.isOriginLocal())
          return invokeNext(ctx, command);
@@ -225,7 +221,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   public Object visitReadOnlyKeyCommand(InvocationContext ctx, ReadOnlyKeyCommand command) throws Throwable {
+   public Object visitReadOnlyKeyCommand(InvocationContext ctx, ReadOnlyKeyCommand command) {
       if (!ctx.isOriginLocal() || command.hasAnyFlag(FlagBitSets.SKIP_STATISTICS))
          return invokeNext(ctx, command);
 
@@ -249,7 +245,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   public Object visitReadOnlyManyCommand(InvocationContext ctx, ReadOnlyManyCommand command) throws Throwable {
+   public Object visitReadOnlyManyCommand(InvocationContext ctx, ReadOnlyManyCommand command) {
       if (!ctx.isOriginLocal() || command.hasAnyFlag(FlagBitSets.SKIP_STATISTICS))
          return invokeNext(ctx, command);
 
@@ -262,7 +258,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          StripeB stripe = counters.stripeForCurrentThread();
          ByRef.Integer hitCount = new ByRef.Integer(0);
          ByRef.Integer missCount = new ByRef.Integer(0);
-         int numResults = ((ReadOnlyManyCommand) rCommand).getKeys().size();
+         int numResults = rCommand.getKeys().size();
          Collection<Object> retvals = new ArrayList<>(numResults);
          ((Stream<StatsEnvelope<Object>>) rv).forEach(e -> {
             if (e.isHit()) hitCount.inc();
@@ -282,7 +278,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   public Object visitWriteOnlyKeyCommand(InvocationContext ctx, WriteOnlyKeyCommand command) throws Throwable {
+   public Object visitWriteOnlyKeyCommand(InvocationContext ctx, WriteOnlyKeyCommand command) {
       return updateStatisticsWriteOnly(ctx, command);
    }
 
@@ -311,7 +307,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   public Object visitReadWriteKeyValueCommand(InvocationContext ctx, ReadWriteKeyValueCommand command) throws Throwable {
+   public Object visitReadWriteKeyValueCommand(InvocationContext ctx, ReadWriteKeyValueCommand command) {
       return updateStatisticsReadWrite(ctx, command);
    }
 
@@ -347,12 +343,12 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
+   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) {
       return updateStatisticsReadWrite(ctx, command);
    }
 
    @Override
-   public Object visitWriteOnlyKeyValueCommand(InvocationContext ctx, WriteOnlyKeyValueCommand command) throws Throwable {
+   public Object visitWriteOnlyKeyValueCommand(InvocationContext ctx, WriteOnlyKeyValueCommand command) {
       return updateStatisticsWriteOnly(ctx, command);
    }
 
@@ -360,7 +356,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    // does not pass the return value.
 
    @Override
-   public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) throws Throwable {
+   public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) {
       return updateStatisticsReadWrite(ctx, command);
    }
 
@@ -381,7 +377,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          int misses = 0;
          int stores = 0;
          int removals = 0;
-         int numResults = ((AbstractWriteManyCommand) rCommand).getAffectedKeys().size();
+         int numResults = rCommand.getAffectedKeys().size();
          List<Object> results = new ArrayList<>(numResults);
          for(StatsEnvelope<?> envelope : ((Collection<StatsEnvelope<?>>) rv)) {
             if (envelope.isDelete()) {
@@ -417,19 +413,18 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
-   public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) throws Throwable {
+   public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) {
       return updateStatisticsReadWrite(ctx, command);
    }
 
    @Override
-   public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
+   public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) {
       boolean statisticsEnabled = getStatisticsEnabled(command);
       if (!statisticsEnabled || !ctx.isOriginLocal())
          return invokeNext(ctx, command);
 
       long start = timeService.time();
-      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
-         RemoveCommand removeCommand = (RemoveCommand) rCommand;
+      return invokeNextAndFinally(ctx, command, (rCtx, removeCommand, rv, t) -> {
          if (removeCommand.isConditional()) {
             if (removeCommand.isSuccessful())
                increaseRemoveHits(start);
@@ -458,8 +453,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Number of cache attribute hits",
          displayName = "Number of cache hits",
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY)
+         measurementType = MeasurementType.TRENDSUP)
    public long getHits() {
       return counters.get(StripeB.hitsFieldUpdater);
    }
@@ -467,8 +461,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Number of cache attribute misses",
          displayName = "Number of cache misses",
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getMisses() {
       return counters.get(StripeB.missesFieldUpdater);
@@ -477,8 +470,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Number of cache removal hits",
          displayName = "Number of cache removal hits",
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getRemoveHits() {
       return counters.get(StripeB.removeHitsFieldUpdater);
@@ -487,8 +479,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Number of cache removals where keys were not found",
          displayName = "Number of cache removal misses",
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getRemoveMisses() {
       return counters.get(StripeB.removeMissesFieldUpdater);
@@ -497,8 +488,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Number of cache attribute put operations",
          displayName = "Number of cache puts" ,
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getStores() {
       return counters.get(StripeB.storesFieldUpdater);
@@ -507,8 +497,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Number of cache eviction operations",
          displayName = "Number of cache evictions",
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getEvictions() {
       return counters.get(StripeB.evictionsFieldUpdater);
@@ -517,10 +506,8 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Percentage hit/(hit+miss) ratio for the cache",
          displayName = "Hit ratio",
-         units = Units.PERCENTAGE,
-         displayType = DisplayType.SUMMARY
+         units = Units.PERCENTAGE
    )
-   @SuppressWarnings("unused")
    public double getHitRatio() {
       long hitsL = counters.get(StripeB.hitsFieldUpdater);
       double total = hitsL + counters.get(StripeB.missesFieldUpdater);
@@ -534,24 +521,20 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Read/writes ratio for the cache",
          displayName = "Read/write ratio",
-         units = Units.PERCENTAGE,
-         displayType = DisplayType.SUMMARY
+         units = Units.PERCENTAGE
    )
-   @SuppressWarnings("unused")
    public double getReadWriteRatio() {
       long sum = counters.get(StripeB.storesFieldUpdater);
       if (sum == 0)
          return 0;
-      return (((double) (counters.get(StripeB.hitsFieldUpdater) + counters.get(StripeB.missesFieldUpdater)) / (double) sum));
+      return (double) (counters.get(StripeB.hitsFieldUpdater) + counters.get(StripeB.missesFieldUpdater)) / (double) sum;
    }
 
    @ManagedAttribute(
          description = "Average number of milliseconds for a read operation on the cache",
          displayName = "Average read time",
-         units = Units.MILLISECONDS,
-         displayType = DisplayType.SUMMARY
+         units = Units.MILLISECONDS
    )
-   @SuppressWarnings("unused")
    public long getAverageReadTime() {
       long total = counters.get(StripeB.hitsFieldUpdater) + counters.get(StripeB.missesFieldUpdater);
       if (total == 0)
@@ -563,10 +546,8 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Average number of nanoseconds for a read operation on the cache",
          displayName = "Average read time",
-         units = Units.NANOSECONDS,
-         displayType = DisplayType.SUMMARY
+         units = Units.NANOSECONDS
    )
-   @SuppressWarnings("unused")
    public long getAverageReadTimeNanos() {
       long total = counters.get(StripeB.hitsFieldUpdater) + counters.get(StripeB.missesFieldUpdater);
       if (total == 0)
@@ -577,10 +558,8 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Average number of milliseconds for a write operation in the cache",
          displayName = "Average write time",
-         units = Units.MILLISECONDS,
-         displayType = DisplayType.SUMMARY
+         units = Units.MILLISECONDS
    )
-   @SuppressWarnings("unused")
    public long getAverageWriteTime() {
       long sum = counters.get(StripeB.storesFieldUpdater);
       if (sum == 0)
@@ -591,10 +570,8 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Average number of nanoseconds for a write operation in the cache",
          displayName = "Average write time",
-         units = Units.NANOSECONDS,
-         displayType = DisplayType.SUMMARY
+         units = Units.NANOSECONDS
    )
-   @SuppressWarnings("unused")
    public long getAverageWriteTimeNanos() {
       long sum = counters.get(StripeB.storesFieldUpdater);
       if (sum == 0)
@@ -605,10 +582,8 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Average number of milliseconds for a remove operation in the cache",
          displayName = "Average remove time",
-         units = Units.MILLISECONDS,
-         displayType = DisplayType.SUMMARY
+         units = Units.MILLISECONDS
    )
-   @SuppressWarnings("unused")
    public long getAverageRemoveTime() {
       long removes = getRemoveHits();
       if (removes == 0)
@@ -619,10 +594,8 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Average number of nanoseconds for a remove operation in the cache",
          displayName = "Average remove time",
-         units = Units.NANOSECONDS,
-         displayType = DisplayType.SUMMARY
+         units = Units.NANOSECONDS
    )
-   @SuppressWarnings("unused")
    public long getAverageRemoveTimeNanos() {
       long removes = getRemoveHits();
       if (removes == 0)
@@ -632,8 +605,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedAttribute(
          description = "Number of entries in the cache including passivated entries",
-         displayName = "Number of current cache entries",
-         displayType = DisplayType.SUMMARY
+         displayName = "Number of current cache entries"
    )
    public int getNumberOfEntries() {
       return cache.wired().withFlags(Flag.CACHE_MODE_LOCAL).size();
@@ -641,8 +613,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedAttribute(
          description = "Number of entries currently in-memory excluding expired entries",
-         displayName = "Number of in-memory cache entries",
-         displayType = DisplayType.SUMMARY
+         displayName = "Number of in-memory cache entries"
    )
    public int getNumberOfEntriesInMemory() {
       return dataContainer.size();
@@ -650,8 +621,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedAttribute(
          description = "Amount of memory in bytes allocated for use in eviction for data in the cache",
-         displayName = "Memory Used by data in the cache",
-         displayType = DisplayType.SUMMARY
+         displayName = "Memory used by data in the cache"
    )
    public long getDataMemoryUsed() {
       if (cacheConfiguration.memory().isEvictionEnabled() && cacheConfiguration.memory().evictionType() == EvictionType.MEMORY) {
@@ -661,9 +631,8 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @ManagedAttribute(
-         description = "Amount of memory in bytes allocated in off-heap",
-         displayName = "Off-Heap Memory Used",
-         displayType = DisplayType.SUMMARY
+         description = "Amount off-heap memory used by this cache (bytes)",
+         displayName = "Off-Heap memory used"
    )
    public long getOffHeapMemoryUsed() {
       return allocator.getAllocatedAmount();
@@ -671,14 +640,13 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
    @ManagedAttribute(
          description = "Amount of nodes required to guarantee data consistency",
-         displayName = "Required Minimum Nodes",
-         displayType = DisplayType.SUMMARY
+         displayName = "Required Minimum Nodes"
    )
    public int getRequiredMinimumNumberOfNodes() {
-      return calculateRequiredMinimumNumberOfNodes(cache.wired());
+      return calculateRequiredMinimumNumberOfNodes(cache.wired(), componentRegistry);
    }
 
-   public static int calculateRequiredMinimumNumberOfNodes(AdvancedCache<?, ?> cache) {
+   public static int calculateRequiredMinimumNumberOfNodes(AdvancedCache<?, ?> cache, ComponentRegistry componentRegistry) {
       Configuration config = cache.getCacheConfiguration();
 
       ClusteringConfiguration clusteringConfiguration = config.clustering();
@@ -700,10 +668,24 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
 
       int evictionRestrictedNodes;
       if (maxSize > 0) {
-         DataContainer dataContainer = cache.getDataContainer();
-         long totalData = dataContainer.evictionSize() * numOwners;
-         long capacity = dataContainer.capacity();
-
+         EvictionStrategy evictionStrategy = config.memory().evictionStrategy();
+         long totalData;
+         long capacity;
+         switch (evictionStrategy) {
+            case REMOVE:
+               DataContainer dataContainer = cache.getDataContainer();
+               totalData = dataContainer.evictionSize() * numOwners;
+               capacity = dataContainer.capacity();
+               break;
+            case EXCEPTION:
+               TransactionalExceptionEvictionInterceptor exceptionInterceptor = componentRegistry.getComponent(
+                     TransactionalExceptionEvictionInterceptor.class);
+               totalData = exceptionInterceptor.getCurrentSize();
+               capacity = exceptionInterceptor.getMaxSize();
+               break;
+            default:
+               throw new IllegalArgumentException("We only support remove or exception based strategy here");
+         }
          evictionRestrictedNodes = (int) (totalData / capacity) + (totalData % capacity != 0 ? 1 : 0);
       } else {
          evictionRestrictedNodes = 1;
@@ -715,8 +697,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          description = "Number of seconds since cache started",
          displayName = "Seconds since cache started",
          units = Units.SECONDS,
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getTimeSinceStart() {
       return timeService.timeDuration(startNanoseconds.get(), TimeUnit.SECONDS);
@@ -732,8 +713,7 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
          description = "Number of seconds since cache started",
          displayName = "Seconds since cache started",
          units = Units.SECONDS,
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    @Deprecated
    public long getElapsedTime() {
@@ -744,19 +724,13 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
    @ManagedAttribute(
          description = "Number of seconds since the cache statistics were last reset",
          displayName = "Seconds since cache statistics were reset",
-         units = Units.SECONDS,
-         displayType = DisplayType.SUMMARY
+         units = Units.SECONDS
    )
-   @SuppressWarnings("unused")
    public long getTimeSinceReset() {
       return timeService.timeDuration(resetNanoseconds.get(), TimeUnit.SECONDS);
    }
 
    @Override
-   @ManagedOperation(
-         description = "Resets statistics gathered by this component",
-         displayName = "Reset Statistics (Statistics)"
-   )
    public void resetStatistics() {
       counters.reset(StripeB.hitsFieldUpdater);
       counters.reset(StripeB.missesFieldUpdater);
@@ -779,12 +753,12 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       counters.add(StripeB.evictionsFieldUpdater, counters.stripeForCurrentThread(), numEvictions);
    }
 
-   @SuppressWarnings("unused")
    private static class StripeA {
+      @SuppressWarnings("unused")
       private long slack1, slack2, slack3, slack4, slack5, slack6, slack7, slack8;
    }
 
-   @SuppressWarnings({"unused", "VolatileLongOrDoubleField"})
+   @SuppressWarnings("VolatileLongOrDoubleField")
    private static class StripeB extends StripeA {
       static final AtomicLongFieldUpdater<StripeB> hitTimesFieldUpdater =
             AtomicLongFieldUpdater.newUpdater(StripeB.class, "hitTimes");
@@ -819,8 +793,8 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
       private volatile long removeTimes = 0;
    }
 
-   @SuppressWarnings("unused")
-   private static class StripeC extends StripeB {
+   private static final class StripeC extends StripeB {
+      @SuppressWarnings("unused")
       private long slack1, slack2, slack3, slack4, slack5, slack6, slack7, slack8;
    }
 }

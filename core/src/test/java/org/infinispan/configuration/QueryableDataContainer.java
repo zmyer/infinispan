@@ -5,15 +5,15 @@ import static java.util.Collections.synchronizedCollection;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
-import java.util.Set;
-import java.util.function.BiConsumer;
 
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.filter.KeyFilter;
-import org.infinispan.filter.KeyValueFilter;
+import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.metadata.Metadata;
 
+@Scope(Scopes.NAMED_CACHE)
 public class QueryableDataContainer implements DataContainer<Object, Object> {
 
    // Since this static field is here, we can't use generic types properly
@@ -87,28 +87,11 @@ public class QueryableDataContainer implements DataContainer<Object, Object> {
       return delegate.sizeIncludingExpired();
    }
 
+   @Stop
    @Override
    public void clear() {
       loggedOperations.add("clear()" );
       delegate.clear();
-   }
-
-   @Override
-   public Set<Object> keySet() {
-      loggedOperations.add("keySet()" );
-      return delegate.keySet();
-   }
-
-   @Override
-   public Collection<Object> values() {
-      loggedOperations.add("values()" );
-      return delegate.values();
-   }
-
-   @Override
-   public Set<InternalCacheEntry<Object, Object>> entrySet() {
-      loggedOperations.add("entrySet()" );
-      return delegate.entrySet();
    }
 
    @Override
@@ -125,16 +108,5 @@ public class QueryableDataContainer implements DataContainer<Object, Object> {
 
    public Collection<String> getLoggedOperations() {
       return loggedOperations;
-   }
-
-   @Override
-   public void executeTask(final KeyFilter<? super Object> filter, BiConsumer<? super Object, InternalCacheEntry<Object, Object>> action)
-         throws InterruptedException {
-      throw new UnsupportedOperationException();
-   }
-
-   @Override
-   public void executeTask(final KeyValueFilter<? super Object, ? super Object> filter, BiConsumer<? super Object, InternalCacheEntry<Object, Object>> action) throws InterruptedException {
-      throw new UnsupportedOperationException();
    }
 }

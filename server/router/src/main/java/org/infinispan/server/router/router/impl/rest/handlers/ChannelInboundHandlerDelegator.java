@@ -44,8 +44,8 @@ public class ChannelInboundHandlerDelegator extends SimpleChannelInboundHandler<
             .filter(r -> r.getRouteSource().getRoutePrefix().equals(context))
             .findAny();
 
-      RestServerRouteDestination routeDestination = route.orElseThrow(() -> logger.noRouteFound()).getRouteDesitnation();
-      Http11RequestHandler restHandler = (Http11RequestHandler) routeDestination.getRestServer().getRestChannelInitializer().getHttp11To2UpgradeHandler().getHttp1Handler();
+      RestServerRouteDestination routeDestination = route.orElseThrow(() -> logger.noRouteFound()).getRouteDestination();
+      Http11RequestHandler restHandler = (Http11RequestHandler) routeDestination.getRestServer().getRestChannelInitializer().getAlpnHandler().getHttp1Handler();
 
       //before passing it to REST Handler, we need to replace path. The handler should not be aware of additional context
       //used for multi-tenant prefixes

@@ -1,5 +1,7 @@
 package org.infinispan.client.hotrod.configuration;
 
+import static org.infinispan.client.hotrod.logging.Log.HOTROD;
+
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,18 +24,17 @@ import org.infinispan.client.hotrod.impl.ConfigurationProperties;
 import org.infinispan.client.hotrod.impl.consistenthash.ConsistentHash;
 import org.infinispan.client.hotrod.impl.consistenthash.ConsistentHashV2;
 import org.infinispan.client.hotrod.impl.consistenthash.SegmentConsistentHash;
-import org.infinispan.client.hotrod.impl.transport.TransportFactory;
 import org.infinispan.client.hotrod.impl.transport.tcp.RoundRobinBalancingStrategy;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
-import org.infinispan.client.hotrod.marshall.BytesOnlyMarshaller;
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.marshall.Marshaller;
-import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
 import org.infinispan.commons.util.Features;
 import org.infinispan.commons.util.StringPropertyReplacer;
 import org.infinispan.commons.util.TypedProperties;
 import org.infinispan.commons.util.Util;
+import org.infinispan.protostream.SerializationContextInitializer;
 
 /**
  * <p>ConfigurationBuilder used to generate immutable {@link Configuration} objects to pass to the
@@ -81,6 +82,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
    private final StatisticsConfigurationBuilder statistics;
    private final List<ClusterConfigurationBuilder> clusters = new ArrayList<>();
    private Features features;
+   private final List<SerializationContextInitializer> contextInitializers = new ArrayList<>();
 
    public ConfigurationBuilder() {
       this.classLoader = new WeakReference<>(Thread.currentThread().getContextClassLoader());
@@ -125,7 +127,7 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
                   : Integer.parseInt(portString);
             c.accept(host, port);
          } else {
-            throw log.parseErrorServerAddress(server);
+            throw HOTROD.parseErrorServerAddress(server);
          }
 
       }
@@ -235,6 +237,26 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
    @Override
    public ConfigurationBuilder marshaller(Marshaller marshaller) {
       this.marshaller = marshaller;
+      this.marshallerClass = marshaller == null ? null : marshaller.getClass();
+      return this;
+   }
+
+   @Override
+   public ConfigurationBuilder addContextInitializer(String contextInitializer) {
+      SerializationContextInitializer sci = Util.getInstance(contextInitializer, this.classLoader());
+      return addContextInitializers(sci);
+   }
+
+   @Override
+   public ConfigurationBuilder addContextInitializer(SerializationContextInitializer contextInitializer) {
+      if (contextInitializer != null)
+         this.contextInitializers.add(contextInitializer);
+      return this;
+   }
+
+   @Override
+   public ConfigurationBuilder addContextInitializers(SerializationContextInitializer... contextInitializers) {
+      this.contextInitializers.addAll(Arrays.asList(contextInitializers));
       return this;
    }
 
@@ -278,18 +300,6 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
    @Override
    public ConfigurationBuilder tcpKeepAlive(boolean keepAlive) {
       this.tcpKeepAlive = keepAlive;
-      return this;
-   }
-
-   @Override
-   public ConfigurationBuilder transportFactory(String transportFactory) {
-      log.transportFactoryDeprecated();
-      return this;
-   }
-
-   @Override
-   public ConfigurationBuilder transportFactory(Class<? extends TransportFactory> transportFactory) {
-      log.transportFactoryDeprecated();
       return this;
    }
 
@@ -363,6 +373,11 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
       if (typed.containsKey(ConfigurationProperties.MARSHALLER)) {
          this.marshaller(typed.getProperty(ConfigurationProperties.MARSHALLER, null, true));
       }
+      if (typed.containsKey(ConfigurationProperties.CONTEXT_INITIALIZERS)) {
+         String initializers = typed.getProperty(ConfigurationProperties.CONTEXT_INITIALIZERS);
+         for (String sci : initializers.split(","))
+            this.addContextInitializer(sci);
+      }
       this.version(ProtocolVersion.parseVersion(typed.getProperty(ConfigurationProperties.PROTOCOL_VERSION, protocolVersion.toString(), true)));
       String serverList = typed.getProperty(ConfigurationProperties.SERVER_LIST, null, true);
       if (serverList != null) {
@@ -372,16 +387,13 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
       this.socketTimeout(typed.getIntProperty(ConfigurationProperties.SO_TIMEOUT, socketTimeout, true));
       this.tcpNoDelay(typed.getBooleanProperty(ConfigurationProperties.TCP_NO_DELAY, tcpNoDelay, true));
       this.tcpKeepAlive(typed.getBooleanProperty(ConfigurationProperties.TCP_KEEP_ALIVE, tcpKeepAlive, true));
-      if (typed.containsKey(ConfigurationProperties.TRANSPORT_FACTORY)) {
-         this.transportFactory(typed.getProperty(ConfigurationProperties.TRANSPORT_FACTORY, null, true));
-      }
       this.valueSizeEstimate(typed.getIntProperty(ConfigurationProperties.VALUE_SIZE_ESTIMATE, valueSizeEstimate, true));
       this.maxRetries(typed.getIntProperty(ConfigurationProperties.MAX_RETRIES, maxRetries, true));
       this.security.ssl().withProperties(properties);
       this.security.authentication().withProperties(properties);
 
       String serialWhitelist = typed.getProperty(ConfigurationProperties.JAVA_SERIAL_WHITELIST);
-      if (serialWhitelist != null) {
+      if (serialWhitelist != null && !serialWhitelist.isEmpty()) {
          String[] classes = serialWhitelist.split(",");
          Collections.addAll(this.whiteListRegExs, classes);
       }
@@ -400,6 +412,8 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
          ClusterConfigurationBuilder cluster = this.addCluster(entry.getKey());
          parseServers(entry.getValue(), (host, port) -> cluster.addClusterNode(host, port));
       });
+
+      statistics.withProperties(properties);
       return this;
    }
 
@@ -412,12 +426,12 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
       transaction.validate();
       statistics.validate();
       if (maxRetries < 0) {
-         throw log.invalidMaxRetries(maxRetries);
+         throw HOTROD.invalidMaxRetries(maxRetries);
       }
       Set<String> clusterNameSet = new HashSet<>(clusters.size());
       for (ClusterConfigurationBuilder clusterConfigBuilder : clusters) {
          if (!clusterNameSet.add(clusterConfigBuilder.getClusterName())) {
-            throw log.duplicateClusterDefinition(clusterConfigBuilder.getClusterName());
+            throw HOTROD.duplicateClusterDefinition(clusterConfigBuilder.getClusterName());
          }
          clusterConfigBuilder.validate();
       }
@@ -442,21 +456,18 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
 
       return new Configuration(asyncExecutorFactory.create(), balancingStrategyFactory, classLoader == null ? null : classLoader.get(), clientIntelligence, connectionPool.create(), connectionTimeout,
             consistentHashImpl, forceReturnValues, keySizeEstimate, marshaller, marshallerClass, protocolVersion, servers, socketTimeout, security.create(), tcpNoDelay, tcpKeepAlive,
-            valueSizeEstimate, maxRetries, nearCache.create(), serverClusterConfigs, whiteListRegExs, batchSize, transaction.create(), statistics.create(), features);
+            valueSizeEstimate, maxRetries, nearCache.create(), serverClusterConfigs, whiteListRegExs, batchSize, transaction.create(), statistics.create(), features, contextInitializers);
    }
 
    // Method that handles default marshaller - needed as a placeholder
    private void handleNullMarshaller() {
-      try {
-         // First see if marshalling is in the class path - if so we can use the generic marshaller
-         // We have to use the commons class loader, since marshalling is its dependency
-         Class.forName("org.jboss.marshalling.river.RiverMarshaller", false, Util.class.getClassLoader());
-         marshallerClass = GenericJBossMarshaller.class;
-      } catch (ClassNotFoundException e) {
-         log.tracef("JBoss Marshalling is not on the class path - Only byte[] instances can be marshalled");
-         // Otherwise we fall back to a byte[] only marshaller
-         marshaller = BytesOnlyMarshaller.INSTANCE;
+      // First see if infinispan-jboss-marshalling is in the class path - if so we can use the generic marshaller
+      marshaller = Util.getJBossMarshaller(ConfigurationBuilder.class.getClassLoader(), null);
+      if (marshaller == null) {
+         // Otherwise we use the protostream marshaller
+         marshaller = new ProtoStreamMarshaller();
       }
+      marshallerClass = marshaller.getClass();
    }
 
    @Override
@@ -503,6 +514,8 @@ public class ConfigurationBuilder implements ConfigurationChildBuilder, Builder<
       this.whiteListRegExs.addAll(template.serialWhitelist());
       this.transaction.read(template.transaction());
       this.statistics.read(template.statistics());
+      this.contextInitializers.clear();
+      this.contextInitializers.addAll(template.getContextInitializers());
 
       return this;
    }

@@ -20,7 +20,6 @@ import org.infinispan.Cache;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.commons.dataconversion.Encoder;
 import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.commons.dataconversion.MediaType;
@@ -31,6 +30,7 @@ import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.configuration.internal.PrivateGlobalConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.EncoderRegistry;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.infinispan.rest.RestServer;
 import org.infinispan.rest.configuration.RestServerConfigurationBuilder;
 import org.infinispan.server.hotrod.HotRodServer;
@@ -68,6 +68,7 @@ public class EndpointsCacheFactory<K, V> {
    private final String cacheName;
    private final Marshaller marshaller;
    private final CacheMode cacheMode;
+   private final SerializationContextInitializer contextInitializer;
    private final int numOwners;
    private final boolean l1Enable;
    private final boolean memcachedWithDecoder;
@@ -77,12 +78,16 @@ public class EndpointsCacheFactory<K, V> {
       this(cacheMode, DEFAULT_NUM_OWNERS, false);
    }
 
+   EndpointsCacheFactory(CacheMode cacheMode, SerializationContextInitializer contextInitializer) {
+      this("test", null, cacheMode, DEFAULT_NUM_OWNERS, false, null, null, contextInitializer);
+   }
+
    EndpointsCacheFactory(CacheMode cacheMode, int numOwners, boolean l1Enable) {
-      this("", null, cacheMode, numOwners, l1Enable, null, null);
+      this("test", null, cacheMode, numOwners, l1Enable, null, null, null);
    }
 
    EndpointsCacheFactory(CacheMode cacheMode, int numOwners, boolean l1Enable, Encoder encoder) {
-      this("", null, cacheMode, numOwners, l1Enable, null, encoder);
+      this("test", null, cacheMode, numOwners, l1Enable, null, encoder, null);
    }
 
    EndpointsCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode) {
@@ -90,20 +95,20 @@ public class EndpointsCacheFactory<K, V> {
    }
 
    EndpointsCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, Encoder encoder) {
-      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS, false, null, encoder);
+      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS, false, null, encoder, null);
    }
 
 
    EndpointsCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, int numOwners, Encoder encoder) {
-      this(cacheName, marshaller, cacheMode, numOwners, false, null, encoder);
+      this(cacheName, marshaller, cacheMode, numOwners, false, null, encoder, null);
    }
 
    public EndpointsCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, Transcoder transcoder) {
-      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS, false, transcoder, null);
+      this(cacheName, marshaller, cacheMode, DEFAULT_NUM_OWNERS, false, transcoder, null, null);
    }
 
    EndpointsCacheFactory(String cacheName, Marshaller marshaller, CacheMode cacheMode, int numOwners, boolean l1Enable,
-                         Transcoder transcoder, Encoder encoder) {
+                         Transcoder transcoder, Encoder encoder, SerializationContextInitializer contextInitializer) {
       this.cacheName = cacheName;
       this.marshaller = marshaller;
       this.cacheMode = cacheMode;
@@ -111,6 +116,7 @@ public class EndpointsCacheFactory<K, V> {
       this.l1Enable = l1Enable;
       this.transcoder = transcoder;
       this.memcachedWithDecoder = transcoder != null;
+      this.contextInitializer = contextInitializer;
    }
 
    public EndpointsCacheFactory<K, V> setup() throws Exception {
@@ -139,11 +145,15 @@ public class EndpointsCacheFactory<K, V> {
          globalBuilder = new GlobalConfigurationBuilder().nonClusteredDefault();
       }
       globalBuilder.addModule(PrivateGlobalConfigurationBuilder.class).serverMode(true);
+      globalBuilder.defaultCacheName(cacheName);
+      if (contextInitializer != null)
+         globalBuilder.serialization().addContextInitializer(contextInitializer);
 
       org.infinispan.configuration.cache.ConfigurationBuilder builder =
             new org.infinispan.configuration.cache.ConfigurationBuilder();
       builder.clustering().cacheMode(cacheMode)
-            .compatibility().enable().marshaller(marshaller);
+            .encoding().key().mediaType(MediaType.APPLICATION_OBJECT_TYPE)
+            .encoding().value().mediaType(MediaType.APPLICATION_OBJECT_TYPE);
 
       if (cacheMode.isDistributed() && numOwners != DEFAULT_NUM_OWNERS) {
          builder.clustering().hash().numOwners(numOwners);
@@ -157,12 +167,7 @@ public class EndpointsCacheFactory<K, V> {
             ? TestCacheManagerFactory.createClusteredCacheManager(globalBuilder, builder)
             : TestCacheManagerFactory.createCacheManager(globalBuilder, builder);
 
-      if (!cacheName.isEmpty())
-         cacheManager.defineConfiguration(cacheName, builder.build());
-
-      embeddedCache = cacheName.isEmpty()
-            ? cacheManager.getCache()
-            : cacheManager.getCache(cacheName);
+      embeddedCache = cacheManager.getCache(cacheName);
 
       EncoderRegistry encoderRegistry = embeddedCache.getAdvancedCache().getComponentRegistry().getGlobalComponentRegistry().getComponent(EncoderRegistry.class);
 
@@ -184,6 +189,7 @@ public class EndpointsCacheFactory<K, V> {
             .addServers("localhost:" + hotrod.getPort())
             .addJavaSerialWhiteList(".*Person.*", ".*CustomEvent.*")
             .marshaller(marshaller)
+            .addContextInitializer(contextInitializer)
             .build());
       hotrodCache = cacheName.isEmpty()
             ? hotrodClient.getCache()
@@ -280,8 +286,7 @@ public class EndpointsCacheFactory<K, V> {
    }
 
    public String getRestUrl() {
-      String restCacheName = cacheName.isEmpty() ? BasicCacheContainer.DEFAULT_CACHE_NAME : cacheName;
-      return String.format("http://localhost:%s/rest/%s", restPort, restCacheName);
+      return String.format("http://localhost:%s/rest/%s", restPort, cacheName);
    }
 
    HotRodServer getHotrodServer() {

@@ -6,12 +6,13 @@ import static org.testng.Assert.assertNotNull;
 import java.util.List;
 
 import org.infinispan.Cache;
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
+import org.infinispan.query.MassIndexer;
 import org.infinispan.query.Search;
 import org.infinispan.query.queries.faceting.Car;
+import org.infinispan.query.test.QueryTestSCI;
 import org.testng.annotations.Test;
 
 /**
@@ -33,11 +34,11 @@ public class ReplRamMassIndexingTest extends DistributedMassIndexingTest {
             .clustering()
             .hash().numSegments(10 * NUM_NODES);
       cacheCfg.clustering().stateTransfer().fetchInMemoryState(true);
-      List<Cache<String, Car>> cacheList = createClusteredCaches(NUM_NODES, cacheCfg);
+      List<Cache<String, Car>> cacheList = createClusteredCaches(NUM_NODES, QueryTestSCI.INSTANCE, cacheCfg);
 
-      waitForClusterToForm(BasicCacheContainer.DEFAULT_CACHE_NAME);
+      waitForClusterToForm(getDefaultCacheName());
 
-      for(Cache cache : cacheList) {
+      for (Cache cache : cacheList) {
          caches.add(cache);
       }
    }
@@ -63,9 +64,11 @@ public class ReplRamMassIndexingTest extends DistributedMassIndexingTest {
    }
 
    @Override
-   protected void rebuildIndexes() throws Exception {
+   protected void rebuildIndexes() {
       for (Cache cache : caches) {
-         Search.getSearchManager(cache).getMassIndexer().start();
+         MassIndexer massIndexer = Search.getSearchManager(cache).getMassIndexer();
+         eventually(() -> !massIndexer.isRunning());
+         massIndexer.start();
       }
    }
 }

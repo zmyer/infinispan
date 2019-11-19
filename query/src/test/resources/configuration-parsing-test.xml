@@ -1,31 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <infinispan
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} http://www.infinispan.org/schemas/infinispan-config:${infinispan.core.schema.version}"
+      xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} https://infinispan.org/schemas/infinispan-config:${infinispan.core.schema.version}"
       xmlns="urn:infinispan:config:${infinispan.core.schema.version}">
 
-   <cache-container default-cache="default" statistics="true">
+   <cache-container default-cache="default" statistics="false">
       <transport stack="tcp"/>
-      <jmx duplicate-domains="true" />
       <local-cache name="default">
          <indexing index="NONE"/>
       </local-cache>
       <local-cache name="simple" />
       <local-cache name="memory-searchable">
          <indexing index="ALL">
+            <key-transformers>
+               <key-transformer key="org.infinispan.query.test.CustomKey" transformer="org.infinispan.query.test.CustomTransformer"/>
+            </key-transformers>
+            <indexed-entities>
+               <indexed-entity>org.infinispan.query.test.Person</indexed-entity>
+            </indexed-entities>
             <property name="default.directory_provider">local-heap</property>
             <property name="lucene_version">LUCENE_48</property>
          </indexing>
       </local-cache>
       <local-cache name="disk-searchable">
-         <indexing index="LOCAL">
+         <indexing index="PRIMARY_OWNER">
             <property name="hibernate.search.default.directory_provider">filesystem</property>
             <property name="hibernate.search.cats.exclusive_index_use">true</property>
             <property name="lucene_version">LUCENE_48</property>
          </indexing>
       </local-cache>
       <replicated-cache name="repl-with-default">
-         <indexing index="LOCAL" auto-config="true"/>
+         <indexing index="PRIMARY_OWNER" auto-config="true"/>
       </replicated-cache>
       <distributed-cache name="dist-with-default">
           <indexing index="ALL" auto-config="true"/>

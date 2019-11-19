@@ -1,7 +1,7 @@
 package org.infinispan.xsite.statetransfer;
 
 import static java.lang.String.format;
-import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
+import static org.infinispan.factories.KnownComponentNames.PERSISTENCE_EXECUTOR;
 import static org.infinispan.remoting.transport.RetryOnFailureXSiteCommand.MaxRetriesPolicy;
 import static org.infinispan.remoting.transport.RetryOnFailureXSiteCommand.NO_RETRY;
 import static org.infinispan.remoting.transport.RetryOnFailureXSiteCommand.RetryPolicy;
@@ -18,15 +18,15 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.remote.CacheRpcCommand;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.configuration.cache.BackupConfiguration;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.SitesConfiguration;
@@ -35,6 +35,8 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.TopologyChanged;
@@ -60,30 +62,31 @@ import org.infinispan.xsite.XSiteBackup;
  * @since 7.0
  */
 @Listener
+@Scope(Scopes.NAMED_CACHE)
 public class XSiteStateTransferManagerImpl implements XSiteStateTransferManager {
 
    private static final Log log = LogFactory.getLog(XSiteStateTransferManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
    private static final boolean debug = log.isDebugEnabled();
 
-   @Inject private RpcManager rpcManager;
-   @Inject private Configuration configuration;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private ResponseGenerator responseGenerator;
-   @Inject @ComponentName(value = ASYNC_TRANSPORT_EXECUTOR)
-   private ExecutorService asyncExecutor;
-   @Inject private StateTransferManager stateTransferManager;
-   @Inject private DistributionManager distributionManager;
-   @Inject private CacheNotifier cacheNotifier;
-   @Inject private XSiteStateConsumer consumer;
-   @Inject private XSiteStateProvider provider;
+   @Inject RpcManager rpcManager;
+   @Inject Configuration configuration;
+   @Inject CommandsFactory commandsFactory;
+   @Inject ResponseGenerator responseGenerator;
+   @Inject @ComponentName(value = PERSISTENCE_EXECUTOR)
+   ExecutorService blockingExecutor;
+   @Inject StateTransferManager stateTransferManager;
+   @Inject DistributionManager distributionManager;
+   @Inject CacheNotifier cacheNotifier;
+   @Inject XSiteStateConsumer consumer;
+   @Inject XSiteStateProvider provider;
 
    private final ConcurrentMap<String, XSiteStateTransferCollector> siteCollector;
    private final ConcurrentMap<String, String> status;
 
    public XSiteStateTransferManagerImpl() {
-      siteCollector = CollectionFactory.makeConcurrentMap();
-      status = CollectionFactory.makeConcurrentMap();
+      siteCollector = new ConcurrentHashMap<>();
+      status = new ConcurrentHashMap<>();
    }
 
    @Start
@@ -180,7 +183,7 @@ public class XSiteStateTransferManagerImpl implements XSiteStateTransferManager 
    }
 
    @Override
-   public Map<String, String> getClusterStatus() throws Exception {
+   public Map<String, String> getClusterStatus() {
       CacheRpcCommand command = commandsFactory.buildXSiteStateTransferControlCommand(STATUS_REQUEST, null);
       Map<String, String> result = new HashMap<>();
 
@@ -232,15 +235,25 @@ public class XSiteStateTransferManagerImpl implements XSiteStateTransferManager 
       }
    }
 
+   @Override
+   public XSiteStateProvider getStateProvider() {
+      return provider;
+   }
+
+   @Override
+   public XSiteStateConsumer getStateConsumer() {
+      return consumer;
+   }
+
    @TopologyChanged
-   public <K, V> void handleTopology(TopologyChangedEvent<K, V> topologyChangedEvent) {
+   public <K, V> CompletionStage<Void> handleTopology(TopologyChangedEvent<K, V> topologyChangedEvent) {
       if (debug) {
          log.debugf("Topology change detected! %s", topologyChangedEvent);
       }
       if (topologyChangedEvent.isPre()) {
-         return;
+         return null;
       }
-      final List<Address> newMembers = topologyChangedEvent.getConsistentHashAtEnd().getMembers();
+      final List<Address> newMembers = topologyChangedEvent.getWriteConsistentHashAtEnd().getMembers();
       final boolean amINewCoordinator = newMembers.get(0).equals(rpcManager.getAddress());
       Collection<String> missingCoordinatorSites = provider.getSitesMissingCoordinator(new HashSet<>(newMembers));
 
@@ -248,29 +261,36 @@ public class XSiteStateTransferManagerImpl implements XSiteStateTransferManager 
          startCoordinating(missingCoordinatorSites, newMembers);
       }
 
+      // Don't use thread if no sites to notify
+      if (siteCollector.isEmpty()) {
+         return null;
+      }
       if (stateTransferManager.isStateTransferInProgress()) {
-         //cancel all the x-site state transfer until the local site is rebalanced
-         for (String siteName : siteCollector.keySet()) {
-            try {
-               log.debugf("Topology change detected! Canceling x-site state transfer for site %s", siteName);
-               controlStateTransferOnLocalSite(StateTransferControl.CANCEL_SEND, siteName);
-            } catch (Exception e) {
-               //not serious... we are going to restart it anyway
-               log.debugf(e, "Unable to cancel x-site state transfer for site %s", siteName);
+         return CompletableFuture.runAsync(() -> {
+            //cancel all the x-site state transfer until the local site is rebalanced
+            for (String siteName : siteCollector.keySet()) {
+               try {
+                  log.debugf("Topology change detected! Canceling x-site state transfer for site %s", siteName);
+                  controlStateTransferOnLocalSite(StateTransferControl.CANCEL_SEND, siteName);
+               } catch (Exception e) {
+                  //not serious... we are going to restart it anyway
+                  log.debugf(e, "Unable to cancel x-site state transfer for site %s", siteName);
+               }
             }
-         }
+         }, blockingExecutor);
       } else {
-         //it is balanced
-         for (Map.Entry<String, XSiteStateTransferCollector> entry : siteCollector.entrySet()) {
-            entry.setValue(new XSiteStateTransferCollector(newMembers));
-            log.debugf("Topology change detected! Restarting x-site state transfer for site %s", entry.getKey());
-            try {
-               controlStateTransferOnLocalSite(StateTransferControl.RESTART_SEND, entry.getKey());
-            } catch (Exception e) {
-               log.failedToRestartXSiteStateTransfer(entry.getKey(), e);
+         return CompletableFuture.runAsync(() -> {
+            //it is balanced
+            for (Map.Entry<String, XSiteStateTransferCollector> entry : siteCollector.entrySet()) {
+               entry.setValue(new XSiteStateTransferCollector(newMembers));
+               log.debugf("Topology change detected! Restarting x-site state transfer for site %s", entry.getKey());
+               try {
+                  controlStateTransferOnLocalSite(StateTransferControl.RESTART_SEND, entry.getKey());
+               } catch (Exception e) {
+                  log.failedToRestartXSiteStateTransfer(entry.getKey(), e);
+               }
             }
-         }
-
+         }, blockingExecutor);
       }
    }
 
@@ -341,7 +361,7 @@ public class XSiteStateTransferManagerImpl implements XSiteStateTransferManager 
       SitesConfiguration sites = configuration.sites();
       for (BackupConfiguration bc : sites.allBackups()) {
          if (bc.site().equals(siteName)) {
-            return new XSiteBackup(bc.site(), true, bc.stateTransfer().timeout());
+            return new XSiteBackup(bc.site(), true, bc.replicationTimeout());
          }
       }
       return null;
@@ -358,14 +378,18 @@ public class XSiteStateTransferManagerImpl implements XSiteStateTransferManager 
       return null;
    }
 
-   private Map<Address, Response> invokeRemotelyInLocalSite(CacheRpcCommand command) throws Exception {
+   private Map<Address, Response> invokeRemotelyInLocalSite(CacheRpcCommand command) {
       commandsFactory.initializeReplicableCommand(command, false);
       CompletionStage<Map<Address, Response>> remoteFuture = rpcManager.invokeCommandOnAll(
             command, MapResponseCollector.ignoreLeavers(), rpcManager.getSyncRpcOptions());
-      final Future<Response> localFuture = asyncExecutor.submit(
-            LocalInvocation.newInstance(responseGenerator, command, commandsFactory, rpcManager.getAddress()));
+      Response localResponse;
+      try {
+         localResponse = LocalInvocation.newInstance(responseGenerator, command, commandsFactory, rpcManager.getAddress()).call();
+      } catch (Exception e) {
+         localResponse = new ExceptionResponse(e);
+      }
       final Map<Address, Response> responseMap = rpcManager.blocking(remoteFuture);
-      responseMap.put(rpcManager.getAddress(), localFuture.get());
+      responseMap.put(rpcManager.getAddress(), localResponse);
       return responseMap;
    }
 

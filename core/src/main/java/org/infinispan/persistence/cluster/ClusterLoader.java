@@ -1,5 +1,7 @@
 package org.infinispan.persistence.cluster;
 
+import static org.infinispan.util.logging.Log.PERSISTENCE;
+
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
@@ -88,10 +90,10 @@ public class ClusterLoader implements CacheLoader, LocalOnlyCacheLoader {
       if (response.isSuccessful() && response instanceof SuccessfulResponse) {
          InternalCacheValue value = (InternalCacheValue) ((SuccessfulResponse) response).getResponseValue();
          return value == null ? null :
-               ctx.getMarshallableEntryFactory().create(key, value.getValue(), null);
+               ctx.getMarshallableEntryFactory().create(key, value.getValue());
       }
 
-      log.unknownResponsesFromRemoteCache(responses);
+      PERSISTENCE.unknownResponsesFromRemoteCache(responses);
       throw new PersistenceException("Unknown responses");
    }
 
@@ -120,7 +122,7 @@ public class ClusterLoader implements CacheLoader, LocalOnlyCacheLoader {
                .timeout(configuration.remoteCallTimeout(), TimeUnit.MILLISECONDS).responseFilter(filter).build();
          return rpcManager.invokeRemotely(null, clusteredGetCommand, options).values();
       } catch (Exception e) {
-         log.errorDoingRemoteCall(e);
+         PERSISTENCE.errorDoingRemoteCall(e);
          throw new PersistenceException(e);
       }
    }

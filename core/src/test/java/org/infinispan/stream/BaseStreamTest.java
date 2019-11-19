@@ -5,7 +5,9 @@ import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertTrue;
 import static org.testng.AssertJUnit.fail;
 
-import java.io.Serializable;
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.DoubleSummaryStatistics;
@@ -21,6 +23,8 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
+import java.util.StringJoiner;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
@@ -36,18 +40,22 @@ import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
 import java.util.stream.LongStream;
+import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 import org.infinispan.Cache;
 import org.infinispan.CacheCollection;
 import org.infinispan.CacheSet;
 import org.infinispan.CacheStream;
+import org.infinispan.commons.marshall.SerializeWith;
+import org.infinispan.commons.util.IntSet;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.entries.ImmortalCacheEntry;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.marshall.core.ExternalPojo;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.function.SerializableToDoubleFunction;
@@ -288,9 +296,9 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
       }
    }
 
-   private static class ForEachInjected<E> implements Consumer<E>,
-         CacheAware<Integer, String>, Serializable, ExternalPojo {
-      private transient Cache<?, ?> cache;
+   @SerializeWith(ForEachInjected.Externalizer.class)
+   public static class ForEachInjected<E> implements Consumer<E>, CacheAware<Integer, String> {
+      private Cache<?, ?> cache;
       private final int cacheOffset;
       private final int atomicOffset;
 
@@ -314,6 +322,23 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
             ((AtomicInteger) getForEachObject(atomicOffset)).addAndGet(function.applyAsInt(entry));
          } else {
             fail("Did not receive correct cache!");
+         }
+      }
+
+      public static class Externalizer implements org.infinispan.commons.marshall.Externalizer<ForEachInjected> {
+         @Override
+         public void writeObject(ObjectOutput output, ForEachInjected object) throws IOException {
+            output.writeInt(object.cacheOffset);
+            output.writeInt(object.atomicOffset);
+            output.writeObject(object.function);
+         }
+
+         @Override
+         public ForEachInjected readObject(ObjectInput input) throws IOException, ClassNotFoundException {
+            int cacheOffset = input.readInt();
+            int atomicOffset = input.readInt();
+            SerializableToIntFunction f = (SerializableToIntFunction) input.readObject();
+            return new ForEachInjected<>(cacheOffset, atomicOffset, f);
          }
       }
    }
@@ -595,16 +620,51 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
    public void testObjFlatMapIterator() {
       Cache<Integer, String> cache = getCache(0);
       int range = 10;
+      Map<Integer, IntSet> keysBySegment = log.isTraceEnabled() ? new TreeMap<>() : null;
+      KeyPartitioner kp = TestingUtil.extractComponent(cache, KeyPartitioner.class);
       // First populate the cache with a bunch of values
-      IntStream.range(0, range).boxed().forEach(i -> cache.put(i, i + "-value"));
+      IntStream.range(0, range).boxed().forEach(i -> {
+         if (keysBySegment != null) {
+            int segment = kp.getSegment(i);
+            IntSet keys = keysBySegment.computeIfAbsent(segment, IntSets::mutableEmptySet);
+            keys.set(i);
+         }
+         cache.put(i, i + "-value");
+      });
+
+      if (keysBySegment != null) {
+         log.tracef("Keys by segment are: " + keysBySegment);
+      }
 
       assertEquals(range, cache.size());
       CacheSet<Map.Entry<Integer, String>> entrySet = cache.entrySet();
 
-      Iterator<String> iterator = createStream(entrySet).flatMap(e -> Arrays.stream(e.getValue().split("a"))).iterator();
+      StringJoiner stringJoiner = new StringJoiner(" ");
+      // Rxjava requets 128 by default for many operations - thus we have a number larger than that
+      int explosionCount = 293;
+      for (int i = 0; i < explosionCount; ++i) {
+         stringJoiner.add("special-" + String.valueOf(i));
+      }
+
+      String specialString = stringJoiner.toString();
+
+      Iterator<String> iterator = createStream(entrySet)
+            .distributedBatchSize(1)
+            .flatMap(e -> {
+               if (e.getKey() == 2) {
+                  // Make sure to test an empty stream as well
+                  return Stream.empty();
+               }
+               if (e.getKey() == 5) {
+                  // Make sure we also test a very large resulting stream without the key in it
+                  return Arrays.stream(specialString.split(" "));
+               }
+               return Arrays.stream(e.getValue().split("a"));
+            })
+            .iterator();
       List<String> list = new ArrayList<>(range * 2);
       iterator.forEachRemaining(list::add);
-      assertEquals(range * 2, list.size());
+      assertEquals((range - 2) * 2 + explosionCount, list.size());
    }
 
    public void testObjToArray1() {
@@ -856,9 +916,9 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
       }
    }
 
-   private static class ForEachIntInjected implements IntConsumer,
-         CacheAware<Integer, String>, Serializable, ExternalPojo {
-      private transient Cache<?, ?> cache;
+   @SerializeWith(ForEachIntInjected.Externalizer.class)
+   public static class ForEachIntInjected implements IntConsumer, CacheAware<Integer, String> {
+      private Cache<?, ?> cache;
       private final int cacheOffset;
       private final int atomicOffset;
 
@@ -879,6 +939,21 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
             ((AtomicInteger) getForEachObject(atomicOffset)).addAndGet(value);
          } else {
             fail("Did not receive correct cache!");
+         }
+      }
+
+      public static class Externalizer implements org.infinispan.commons.marshall.Externalizer<ForEachIntInjected> {
+         @Override
+         public void writeObject(ObjectOutput output, ForEachIntInjected object) throws IOException {
+            output.writeInt(object.cacheOffset);
+            output.writeInt(object.atomicOffset);
+         }
+
+         @Override
+         public ForEachIntInjected readObject(ObjectInput input) throws IOException, ClassNotFoundException {
+            int cacheOffset = input.readInt();
+            int atomicOffset = input.readInt();
+            return new ForEachIntInjected(cacheOffset, atomicOffset);
          }
       }
    }
@@ -1318,9 +1393,9 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
       }
    }
 
-   private static class ForEachLongInjected implements LongConsumer,
-         CacheAware<Long, String>, Serializable, ExternalPojo {
-      private transient Cache<?, ?> cache;
+   @SerializeWith(ForEachLongInjected.Externalizer.class)
+   public static class ForEachLongInjected implements LongConsumer, CacheAware<Long, String> {
+      private Cache<?, ?> cache;
       private final int cacheOffset;
       private final int atomicOffset;
 
@@ -1341,6 +1416,21 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
             ((AtomicLong) getForEachObject(atomicOffset)).addAndGet(value);
          } else {
             fail("Did not receive correct cache!");
+         }
+      }
+
+      public static class Externalizer implements org.infinispan.commons.marshall.Externalizer<ForEachLongInjected> {
+         @Override
+         public void writeObject(ObjectOutput output, ForEachLongInjected object) throws IOException {
+            output.writeInt(object.cacheOffset);
+            output.writeInt(object.atomicOffset);
+         }
+
+         @Override
+         public ForEachLongInjected readObject(ObjectInput input) throws IOException, ClassNotFoundException {
+            int cacheOffset = input.readInt();
+            int atomicOffset = input.readInt();
+            return new ForEachLongInjected(cacheOffset, atomicOffset);
          }
       }
    }
@@ -1789,9 +1879,9 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
       }
    }
 
-   private static class ForEachDoubleInjected<E> implements DoubleConsumer,
-         CacheAware<Double, String>, Serializable, ExternalPojo {
-      private transient Cache<?, ?> cache;
+   @SerializeWith(ForEachDoubleInjected.Externalizer.class)
+   public static class ForEachDoubleInjected<E> implements DoubleConsumer, CacheAware<Double, String> {
+      private Cache<?, ?> cache;
       private final int cacheOffset;
       private final int atomicOffset;
 
@@ -1815,6 +1905,21 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
             }
          } else {
             fail("Did not receive correct cache!");
+         }
+      }
+
+      public static class Externalizer implements org.infinispan.commons.marshall.Externalizer<ForEachDoubleInjected> {
+         @Override
+         public void writeObject(ObjectOutput output, ForEachDoubleInjected object) throws IOException {
+            output.writeInt(object.cacheOffset);
+            output.writeInt(object.atomicOffset);
+         }
+
+         @Override
+         public ForEachDoubleInjected readObject(ObjectInput input) throws IOException, ClassNotFoundException {
+            int cacheOffset = input.readInt();
+            int atomicOffset = input.readInt();
+            return new ForEachDoubleInjected(cacheOffset, atomicOffset);
          }
       }
    }
@@ -2188,6 +2293,18 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
             createStream(keySet).max((e1, e2) -> Integer.compare(
                   Integer.valueOf(e1.substring(0, 1)),
                   Integer.valueOf(e2.substring(0, 1)))).get());
+   }
+
+   // Tests to make sure when max returns an empty result that it works
+   public void testObjMaxEmpty() {
+      Cache<Integer, String> cache = getCache(0);
+      assertEquals(0, cache.size());
+      CacheCollection<String> keySet = cache.values();
+
+      assertFalse(
+            createStream(keySet).max((e1, e2) -> Integer.compare(
+                  Integer.valueOf(e1.substring(0, 1)),
+                  Integer.valueOf(e2.substring(0, 1)))).isPresent());
    }
 
    public void testObjValuesIterator() {

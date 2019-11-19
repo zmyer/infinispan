@@ -1,5 +1,7 @@
 package org.infinispan.lock.singlelock;
 
+import static org.infinispan.test.TestingUtil.extractInterceptorChain;
+
 import java.util.Collection;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -14,11 +16,12 @@ import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.impl.TxInvocationContext;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.ResponseCollector;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.impl.TransactionTable;
@@ -46,7 +49,7 @@ public abstract class AbstractCrashTest extends MultipleCacheManagersTest {
    @Override
    protected void createCacheManagers() {
       ConfigurationBuilder c = buildConfiguration();
-      createCluster(c, 3);
+      createCluster(TestDataSCI.INSTANCE, c, 3);
       waitForClusterToForm();
    }
 
@@ -89,7 +92,7 @@ public abstract class AbstractCrashTest extends MultipleCacheManagersTest {
       });
    }
 
-   public static class TxControlInterceptor extends CommandInterceptor {
+   public static class TxControlInterceptor extends DDAsyncInterceptor {
 
       public CountDownLatch prepareProgress = new CountDownLatch(1);
       public CountDownLatch preparedReceived = new CountDownLatch(1);
@@ -98,17 +101,17 @@ public abstract class AbstractCrashTest extends MultipleCacheManagersTest {
 
       @Override
       public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
-         final Object result = super.visitPrepareCommand(ctx, command);
-         preparedReceived.countDown();
-         prepareProgress.await();
-         return result;
+         return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, throwable) -> {
+            preparedReceived.countDown();
+            prepareProgress.await();
+         });
       }
 
       @Override
       public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
          commitReceived.countDown();
          commitProgress.await();
-         return super.visitCommitCommand(ctx, command);
+         return invokeNext(ctx, command);
 
       }
    }
@@ -134,7 +137,7 @@ public abstract class AbstractCrashTest extends MultipleCacheManagersTest {
       TxControlInterceptor txControlInterceptor = new TxControlInterceptor();
       txControlInterceptor.prepareProgress.countDown();
       txControlInterceptor.commitProgress.countDown();
-      advancedCache(1).addInterceptor(txControlInterceptor, 1);
+      extractInterceptorChain(advancedCache(1)).addInterceptor(txControlInterceptor, 1);
    }
 
 }

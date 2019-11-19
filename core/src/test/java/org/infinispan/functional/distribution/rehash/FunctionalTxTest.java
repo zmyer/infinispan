@@ -7,6 +7,7 @@ import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -29,7 +30,6 @@ import org.infinispan.statetransfer.StateConsumer;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
-import org.infinispan.test.fwk.TestResourceTracker;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.ControlledConsistentHashFactory;
 import org.testng.annotations.Test;
@@ -107,9 +107,10 @@ public class FunctionalTxTest extends MultipleCacheManagersTest {
       Transaction tx = tm(2).suspend();
 
       chf.setOwnerIndexes(0, 2);
+
+      addClusterEnabledCacheManager(cb);
       Future<?> future = fork(() -> {
-         TestResourceTracker.testThreadStarted(this);
-         addClusterEnabledCacheManager(cb).getCache();
+         cache(3);
       });
 
       bsc2.await();
@@ -139,9 +140,9 @@ public class FunctionalTxTest extends MultipleCacheManagersTest {
       BlockingStateConsumer bsc2 = TestingUtil.wrapComponent(cache(2), StateConsumer.class, BlockingStateConsumer::new);
 
       chf.setOwnerIndexes(0, 2);
+      addClusterEnabledCacheManager(cb);
       Future<?> future = fork(() -> {
-         TestResourceTracker.testThreadStarted(this);
-         addClusterEnabledCacheManager(cb).getCache();
+         cache(3);
       });
 
       bsc2.await();
@@ -187,14 +188,14 @@ public class FunctionalTxTest extends MultipleCacheManagersTest {
       }
 
       @Override
-      public void applyState(Address sender, int topologyId, boolean pushTransfer, Collection<StateChunk> stateChunks) {
+      public CompletionStage<?> applyState(Address sender, int topologyId, boolean pushTransfer, Collection<StateChunk> stateChunks) {
          expectLatch.countDown();
          try {
             assertTrue(blockLatch.await(10, TimeUnit.SECONDS));
          } catch (InterruptedException e) {
             throw new RuntimeException(e);
          }
-         super.applyState(sender, topologyId, pushTransfer, stateChunks);
+         return super.applyState(sender, topologyId, pushTransfer, stateChunks);
       }
 
       public void await() {

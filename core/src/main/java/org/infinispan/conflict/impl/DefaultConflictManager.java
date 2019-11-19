@@ -1,6 +1,7 @@
 package org.infinispan.conflict.impl;
 
 import static org.infinispan.factories.KnownComponentNames.STATE_TRANSFER_EXECUTOR;
+import static org.infinispan.util.logging.Log.CLUSTER;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -33,6 +34,7 @@ import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.PartitionHandlingConfiguration;
@@ -55,6 +57,8 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.impl.ComponentRef;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
 import org.infinispan.remoting.responses.Response;
@@ -65,13 +69,13 @@ import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.statetransfer.StateConsumer;
 import org.infinispan.topology.CacheTopology;
-import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 /**
  * @author Ryan Emerson
  */
+@Scope(Scopes.NAMED_CACHE)
 public class DefaultConflictManager<K, V> implements InternalConflictManager<K, V> {
 
    private static Log log = LogFactory.getLog(DefaultConflictManager.class);
@@ -81,19 +85,19 @@ public class DefaultConflictManager<K, V> implements InternalConflictManager<K, 
    private static final Flag[] userMergeFlags = new Flag[] {Flag.IGNORE_RETURN_VALUES};
    private static final Flag[] autoMergeFlags = new Flag[] {Flag.IGNORE_RETURN_VALUES, Flag.PUT_FOR_STATE_TRANSFER, Flag.SKIP_REMOTE_LOOKUP};
 
-   @Inject private ComponentRef<AsyncInterceptorChain> interceptorChain;
-   @Inject private ComponentRef<AdvancedCache<K, V>> cache;
-   @Inject private Configuration cacheConfiguration;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private DistributionManager distributionManager;
+   @Inject ComponentRef<AsyncInterceptorChain> interceptorChain;
+   @Inject ComponentRef<AdvancedCache<K, V>> cache;
+   @Inject Configuration cacheConfiguration;
+   @Inject CommandsFactory commandsFactory;
+   @Inject DistributionManager distributionManager;
    @Inject @ComponentName(STATE_TRANSFER_EXECUTOR)
-   private ExecutorService stateTransferExecutor;
-   @Inject private InvocationContextFactory invocationContextFactory;
-   @Inject private RpcManager rpcManager;
-   @Inject private ComponentRef<StateConsumer> stateConsumer;
-   @Inject private StateReceiver<K, V> stateReceiver;
-   @Inject private EntryMergePolicyFactoryRegistry mergePolicyRegistry;
-   @Inject private TimeService timeService;
+   ExecutorService stateTransferExecutor;
+   @Inject InvocationContextFactory invocationContextFactory;
+   @Inject RpcManager rpcManager;
+   @Inject ComponentRef<StateConsumer> stateConsumer;
+   @Inject StateReceiver<K, V> stateReceiver;
+   @Inject EntryMergePolicyFactoryRegistry mergePolicyRegistry;
+   @Inject TimeService timeService;
 
    private String cacheName;
    private Address localAddress;
@@ -119,7 +123,7 @@ public class DefaultConflictManager<K, V> implements InternalConflictManager<K, 
       this.conflictTimeout = cacheConfiguration.clustering().stateTransfer().timeout();
 
       // Limit the number of concurrent tasks to ensure that internal CR operations can never overlap
-      this.resolutionExecutor = new LimitedExecutor("ConflictManager-", stateTransferExecutor, 1);
+      this.resolutionExecutor = new LimitedExecutor("ConflictManager-" + cacheName, stateTransferExecutor, 1);
       this.running = true;
       if (trace) log.tracef("Cache %s starting %s. isRunning=%s", cacheName, getClass().getSimpleName(), !running);
    }
@@ -135,6 +139,11 @@ public class DefaultConflictManager<K, V> implements InternalConflictManager<K, 
 
       if (isConflictResolutionInProgress() && conflictSpliterator != null)
          conflictSpliterator.stop();
+   }
+
+   @Override
+   public StateReceiver getStateReceiver() {
+      return stateReceiver;
    }
 
    @Override
@@ -194,11 +203,11 @@ public class DefaultConflictManager<K, V> implements InternalConflictManager<K, 
    private Stream<Map<Address, CacheEntry<K, V>>> getConflicts(LocalizedCacheTopology topology) {
       if (trace) log.tracef("getConflicts isStateTransferInProgress=%s, topology=%s", stateConsumer.running().isStateTransferInProgress(), topology);
       if (topology.getPhase() != CacheTopology.Phase.CONFLICT_RESOLUTION && stateConsumer.running().isStateTransferInProgress()) {
-         throw log.getConflictsStateTransferInProgress(cacheName);
+         throw CLUSTER.getConflictsStateTransferInProgress(cacheName);
       }
 
       if (!streamInProgress.compareAndSet(false, true))
-         throw log.getConflictsAlreadyInProgress();
+         throw CLUSTER.getConflictsAlreadyInProgress();
 
       conflictSpliterator = new ReplicaSpliterator(topology);
       if (!running) {

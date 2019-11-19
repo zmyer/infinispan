@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-persistence-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-cachestore-remote</artifactId>
@@ -41,6 +41,16 @@
          <groupId>org.infinispan</groupId>
           <artifactId>infinispan-commons</artifactId>
       </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-component-processor</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-jboss-marshalling</artifactId>
+         <!-- Prevent transitive dependency -->
+         <optional>true</optional>
+      </dependency>
        <dependency>
            <groupId>org.infinispan</groupId>
            <artifactId>infinispan-multimap</artifactId>
@@ -70,7 +80,6 @@
       <dependency>
          <groupId>org.kohsuke.metainf-services</groupId>
          <artifactId>metainf-services</artifactId>
-         <optional>true</optional>
       </dependency>
       <dependency>
          <groupId>org.testng</groupId>
@@ -147,13 +156,7 @@
                            <attribute name="command"/>
                            <element name="args"/>
                            <sequential>
-                              <condition property="keytool.classname" value="com.ibm.crypto.tools.KeyTool">
-                                 <available classname="com.ibm.crypto.tools.KeyTool"/>
-                              </condition>
-                              <condition property="keytool.classname" value="sun.security.tools.keytool.Main">
-                                 <available classname="sun.security.tools.keytool.Main"/>
-                              </condition>
-                              <java classname="${keytool.classname}" failonerror="true">
+                              <exec executable="${server.jvm}/bin/keytool">
                                  <arg value="@{command}"/>
                                  <!-- common arguments -->
                                  <arg value="-validity"/>
@@ -167,7 +170,7 @@
                                  <arg value="${default.password}"/>
                                  <!-- additional arguments -->
                                  <args/>
-                              </java>
+                              </exec>
                            </sequential>
                         </macrodef>
                         <delete quiet="true">
@@ -434,6 +437,16 @@
                <features>
                   <feature>infinispan-cachestore-remote</feature>
                </features>
+            </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+               <dependenciesToScan>
+                  <!-- TestNGSuiteChecksTest -->
+                  <dependency>org.infinispan:infinispan-commons-test</dependency>
+               </dependenciesToScan>
             </configuration>
          </plugin>
       </plugins>

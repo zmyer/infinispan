@@ -5,8 +5,11 @@ import java.util.function.BiConsumer;
 
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.interceptors.ExceptionSyncInvocationStage;
 import org.infinispan.interceptors.InvocationCallback;
+import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.jgroups.annotations.GuardedBy;
@@ -42,7 +45,11 @@ public class QueueAsyncInvocationStage extends SimpleAsyncInvocationStage implem
       this.command = command;
 
       queueAdd(function);
-      valueFuture.whenComplete(this);
+      if (CompletionStages.isCompletedSuccessfully(valueFuture)) {
+         accept(valueFuture.join(), null);
+      } else {
+         valueFuture.whenComplete(this);
+      }
    }
 
    @Override
@@ -71,7 +78,7 @@ public class QueueAsyncInvocationStage extends SimpleAsyncInvocationStage implem
       try {
          return function.apply(ctx, command, rv, throwable);
       } catch (Throwable t) {
-         return new SimpleAsyncInvocationStage(t);
+         return new ExceptionSyncInvocationStage(t);
       }
    }
 
@@ -121,25 +128,10 @@ public class QueueAsyncInvocationStage extends SimpleAsyncInvocationStage implem
             rv = null;
             throwable = t;
          }
-         if (rv instanceof SimpleAsyncInvocationStage) {
-            SimpleAsyncInvocationStage currentStage = (SimpleAsyncInvocationStage) rv;
-            if (!currentStage.isDone()) {
-               if (currentStage instanceof QueueAsyncInvocationStage) {
-                  QueueAsyncInvocationStage queueAsyncInvocationStage = (QueueAsyncInvocationStage) currentStage;
-                  queueAsyncInvocationStage.future.whenComplete(this);
-                  return;
-               } else {
-                  // Use the CompletableFuture directly, without creating another AsyncInvocationStage instance
-                  currentStage.future.whenComplete(this);
-                  return;
-               }
-            } else {
-               try {
-                  rv = currentStage.get();
-               } catch (Throwable t) {
-                  throwable = t;
-               }
-            }
+         if (rv instanceof InvocationStage) {
+            InvocationStage currentStage = (InvocationStage) rv;
+            currentStage.addCallback(ctx, command, this);
+            return;
          }
          // We got a synchronous invocation stage, continue with the next handler
       }

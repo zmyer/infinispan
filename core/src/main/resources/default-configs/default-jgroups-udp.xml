@@ -1,8 +1,10 @@
 <config xmlns="urn:org:jgroups"
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="urn:org:jgroups http://www.jgroups.org/schema/jgroups-4.0.xsd">
-   <UDP mcast_addr="${jgroups.udp.mcast_addr:228.6.7.8}"
-        mcast_port="${jgroups.udp.mcast_port:46655}"
+        xsi:schemaLocation="urn:org:jgroups http://www.jgroups.org/schema/jgroups-4.1.xsd">
+   <UDP bind_addr="${jgroups.bind.address,jgroups.udp.address:SITE_LOCAL}"
+        bind_port="${jgroups.bind.port,jgroups.udp.port:0}"
+        mcast_addr="${jgroups.mcast_addr:228.6.7.8}"
+        mcast_port="${jgroups.mcast_port:46655}"
         ucast_send_buf_size="1m"
         mcast_send_buf_size="1m"
         ucast_recv_buf_size="20m"
@@ -17,7 +19,7 @@
         thread_pool.max_threads="${jgroups.thread_pool.max_threads:200}"
         thread_pool.keep_alive_time="60000"
    />
-   <PING />
+   <PING num_discovery_runs="3"/>
    <MERGE3 min_interval="10000" 
            max_interval="30000" 
    />
@@ -44,12 +46,12 @@
                   max_bytes="1M"
    />
    <pbcast.GMS print_local_addr="false"
-               join_timeout="${jgroups.join_timeout:5000}"
+               join_timeout="${jgroups.join_timeout:2000}"
    />
-   <UFC max_credits="2m" 
+   <UFC_NB max_credits="3m"
         min_threshold="0.40"
    />
-   <MFC max_credits="2m" 
+   <MFC_NB max_credits="3m"
         min_threshold="0.40"
    />
    <FRAG3 frag_size="8000"/>

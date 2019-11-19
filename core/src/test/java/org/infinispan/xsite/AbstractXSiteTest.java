@@ -13,11 +13,10 @@ import java.util.concurrent.locks.LockSupport;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.commons.api.Lifecycle;
-import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.transport.Transport;
@@ -38,16 +37,16 @@ import org.testng.annotations.BeforeMethod;
  */
 public abstract class AbstractXSiteTest extends AbstractCacheTest {
 
-   List<TestSite> sites = new ArrayList<>();
+   protected List<TestSite> sites = new ArrayList<>();
    private Map<String, Integer> siteName2index = new HashMap<>();
 
    @BeforeMethod(alwaysRun = true) // run even for tests in the unstable group
-   public void createBeforeMethod() throws Throwable {
+   public void createBeforeMethod() {
       if (cleanupAfterMethod()) createSites();
    }
 
    @BeforeClass(alwaysRun = true) // run even for tests in the unstable group
-   public void createBeforeClass() throws Throwable {
+   public void createBeforeClass() {
       if (cleanupAfterTest()) createSites();
    }
 
@@ -83,6 +82,15 @@ public abstract class AbstractXSiteTest extends AbstractCacheTest {
       }
       sites.clear();
       siteName2index.clear();
+   }
+
+   protected void killSite(String siteName) {
+      Integer index = siteName2index.remove(siteName);
+      if (index == null) {
+         return;
+      }
+      TestSite site = sites.remove(index.intValue());
+      killSite(site);
    }
 
    protected void killSite(TestSite ts) {
@@ -162,7 +170,7 @@ public abstract class AbstractXSiteTest extends AbstractCacheTest {
       TestSite site = site(siteName);
       for (EmbeddedCacheManager ecm : site.cacheManagers) {
          Configuration config = configurationBuilder.build();
-         ecm.defineConfiguration(cacheName, BasicCacheContainer.DEFAULT_CACHE_NAME, config);
+         ecm.defineConfiguration(cacheName, getDefaultCacheName(), config);
       }
       site.waitForClusterToForm(cacheName);
    }
@@ -226,6 +234,10 @@ public abstract class AbstractXSiteTest extends AbstractCacheTest {
          this.siteIndex = siteIndex;
       }
 
+      public String getSiteName() {
+         return siteName;
+      }
+
       private TransportFlags transportFlags() {
          return new TransportFlags().withPortRange(siteIndex).withSiteName(siteName).withFD(true);
       }
@@ -254,13 +266,14 @@ public abstract class AbstractXSiteTest extends AbstractCacheTest {
          //get the transport here as clone.read below would inject the same transport reference into the clone
          // which we don't want
          Transport transport = clone.transport().getTransport();
-         Marshaller marshaller = clone.serialization().getMarshaller();
-         clone.read(gcb.build());
+         GlobalConfiguration original = gcb.build();
+         clone.read(original);
          clone.transport().transport(transport);
-         clone.serialization().marshaller(marshaller);
 
          clone.transport().clusterName("ISPN(SITE " + siteName + ")");
-
+         if (original.globalJmxStatistics().enabled()) {
+            clone.globalJmxStatistics().jmxDomain(original.globalJmxStatistics().domain() + cacheManagers.size());
+         }
          EmbeddedCacheManager cm = TestCacheManagerFactory.createClusteredCacheManager(clone, builder, flags);
          cacheManagers.add(cm);
          return cm;
@@ -331,4 +344,8 @@ public abstract class AbstractXSiteTest extends AbstractCacheTest {
       return cache.getAdvancedCache().getComponentRegistry().getComponent(TransactionTable.class);
    }
 
+   @Override
+   public String getDefaultCacheName() {
+      return site(0).cacheManagers.get(0).getCacheManagerConfiguration().defaultCacheName().get();
+   }
 }

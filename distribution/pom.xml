@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
    <artifactId>infinispan-distribution</artifactId>
@@ -14,17 +14,17 @@
    <dependencies>
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-embedded</artifactId>
+         <artifactId>infinispan-core</artifactId>
       </dependency>
 
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-embedded-query</artifactId>
+         <artifactId>infinispan-query</artifactId>
       </dependency>
 
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-remote</artifactId>
+         <artifactId>infinispan-client-hotrod</artifactId>
       </dependency>
 
       <dependency>
@@ -59,26 +59,7 @@
 
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-tree</artifactId>
-      </dependency>
-
-      <dependency>
-         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-extended-statistics</artifactId>
-      </dependency>
-
-      <dependency>
-         <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-javadoc-embedded</artifactId>
-         <version>${version.infinispan}</version>
-         <classifier>javadoc</classifier>
-      </dependency>
-
-      <dependency>
-         <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-javadoc-remote</artifactId>
-         <version>${version.infinispan}</version>
-         <classifier>javadoc</classifier>
       </dependency>
 
       <dependency>
@@ -157,7 +138,7 @@
          <plugin>
             <groupId>org.wildfly.maven.plugins</groupId>
             <artifactId>licenses-plugin</artifactId>
-            <version>1.0.0</version>
+            <version>${versionx.org.wildfly.maven.plugins.licenses-plugin}</version>
             <inherited>false</inherited>
             <executions>
                <execution>
@@ -214,6 +195,7 @@
                               <include name="core/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
                               <include name="persistence/*/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
                               <include name="spring/spring5/spring5-common/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
+                              <include name="server/runtime/target/classes/schema/*-${infinispan.core.schema.version}.xsd" />
                            </fileset>
                         </path>
                         <pathconvert pathsep=" " property="xsd.fileset" refid="xsd.fileset.path" />
@@ -221,36 +203,6 @@
                         <java classname="org.infinispan.tools.xsd.XSDoc">
                            <arg value="-o" />
                            <arg value="${project.build.directory}/site/configdocs" />
-                           <arg line="${xsd.fileset}" />
-                           <classpath>
-                              <pathelement path="${plugin_classpath}" />
-                           </classpath>
-                        </java>
-                     </target>
-                  </configuration>
-               </execution>
-               <execution>
-                  <id>serverxsdocgen</id>
-                  <phase>package</phase>
-                  <goals>
-                     <goal>run</goal>
-                  </goals>
-                  <configuration>
-                     <target>
-			               <property name="plugin_classpath" refid="maven.plugin.classpath" />
-                        <property name="server.output.dir.prefix" value="${infinispan.brand.prefix}-server" />
-			               <property name="server.thin.dir.path" value="${basedir}/../server/integration/build/target/server-distribution-thin/${server.output.dir.prefix}-${infinispan.brand.version}"/>
-                        <echo message="Base dir: ${basedir}" />
-                        <path id="xsd.fileset.path">
-                           <fileset casesensitive="yes" dir="${server.thin.dir.path}/docs/schema">
-                              <include name="*.xsd" />
-                           </fileset>
-                        </path>
-                        <pathconvert pathsep=" " property="xsd.fileset" refid="xsd.fileset.path" />
-                        <echo message="XSDs: ${xsd.fileset}" />
-                        <java classname="org.infinispan.tools.xsd.XSDoc">
-                           <arg value="-o" />
-                           <arg value="${project.build.directory}/site/serverconfigdocs" />
                            <arg line="${xsd.fileset}" />
                            <classpath>
                               <pathelement path="${plugin_classpath}" />
@@ -342,9 +294,6 @@
                   </goals>
                   <configuration>
                      <descriptors>
-                        <descriptor>src/main/assemblies/minimal.xml</descriptor>
-                        <descriptor>src/main/assemblies/all.xml</descriptor>
-                        <descriptor>src/main/assemblies/remote.xml</descriptor>
                         <descriptor>src/main/assemblies/src.xml</descriptor>
                      </descriptors>
                      <finalName>${infinispan.brand.prefix}-${infinispan.brand.version}</finalName>
@@ -393,7 +342,7 @@
       <profile>
          <id>nexus-staging</id>
          <activation>
-            <property><name>skipNexusStaging</name></property>
+            <property><name>deployServerZip</name></property>
          </activation>
          <build>
             <plugins>

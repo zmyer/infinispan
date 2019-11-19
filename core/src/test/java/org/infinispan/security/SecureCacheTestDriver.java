@@ -10,15 +10,13 @@ import java.util.function.Function;
 import javax.transaction.NotSupportedException;
 import javax.transaction.SystemException;
 
-import org.infinispan.atomic.Delta;
-import org.infinispan.atomic.DeltaAware;
 import org.infinispan.commons.dataconversion.ByteArrayWrapper;
 import org.infinispan.commons.dataconversion.IdentityEncoder;
 import org.infinispan.conflict.ConflictManagerFactory;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.context.Flag;
 import org.infinispan.filter.KeyFilter;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.FooInterceptor;
 import org.infinispan.interceptors.impl.InvocationContextInterceptor;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
@@ -26,19 +24,19 @@ import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
 import org.infinispan.partitionhandling.AvailabilityMode;
+import org.infinispan.util.concurrent.CompletionStages;
 
 public class SecureCacheTestDriver {
 
    private Metadata metadata;
    private NullListener listener;
-   private CommandInterceptor interceptor;
+   private FooInterceptor interceptor;
    private KeyFilter<String> keyFilter;
    private CacheEventConverter<String, String, String> converter;
    private CacheEventFilter<String, String> keyValueFilter;
 
    public SecureCacheTestDriver() {
-      interceptor = new CommandInterceptor() {
-      };
+      interceptor = new FooInterceptor();
       keyFilter = key -> true;
       keyValueFilter = (key, oldValue, oldMetadata, newValue, newMetadata, eventType) -> true;
       converter = (key, oldValue, oldMetadata, newValue, newMetadata, eventType) -> null;
@@ -101,8 +99,12 @@ public class SecureCacheTestDriver {
 
    @TestCachePermission(AuthorizationPermission.LISTEN)
    public void testRemoveListener_Object(SecureCache<String, String> cache) {
-      cache.addListener(listener);
       cache.removeListener(listener);
+   }
+
+   @TestCachePermission(AuthorizationPermission.LISTEN)
+   public void testRemoveListenerAsync_Object(SecureCache<String, String> cache) {
+      CompletionStages.join(cache.removeListenerAsync(listener));
    }
 
    @TestCachePermission(AuthorizationPermission.WRITE)
@@ -160,6 +162,16 @@ public class SecureCacheTestDriver {
    @TestCachePermission(AuthorizationPermission.LISTEN)
    public void testAddListener_Object_CacheEventFilter_CacheEventConverter(SecureCache<String, String> cache) {
       cache.addListener(listener, keyValueFilter, converter);
+   }
+
+   @TestCachePermission(AuthorizationPermission.LISTEN)
+   public void testAddListenerAsync_Object_CacheEventFilter_CacheEventConverter(SecureCache<String, String> cache) {
+      CompletionStages.join(cache.addListenerAsync(listener, keyValueFilter, converter));
+   }
+
+   @TestCachePermission(AuthorizationPermission.LISTEN)
+   public void testAddFilteredListenerAsync_Object_CacheEventFilter_CacheEventConverter_Set(SecureCache<String, String> cache) {
+      CompletionStages.join(cache.addListenerAsync(listener, keyValueFilter, converter));
    }
 
    @TestCachePermission(AuthorizationPermission.LISTEN)
@@ -263,11 +275,6 @@ public class SecureCacheTestDriver {
       cache.replace("a", "a", "b", 1000, TimeUnit.MILLISECONDS);
    }
 
-   @TestCachePermission(AuthorizationPermission.ADMIN)
-   public void testGetInvocationContextContainer(SecureCache<String, String> cache) {
-      cache.getInvocationContextContainer();
-   }
-
    @TestCachePermission(AuthorizationPermission.WRITE)
    public void testReplace_Object_Object_long_TimeUnit(SecureCache<String, String> cache) {
       cache.replace("a", "a", 1000, TimeUnit.MILLISECONDS);
@@ -330,6 +337,11 @@ public class SecureCacheTestDriver {
    }
 
    @TestCachePermission(AuthorizationPermission.NONE)
+   public void testWithFlags_Flag(SecureCache<String, String> cache) {
+      cache.withFlags(Flag.IGNORE_RETURN_VALUES);
+   }
+
+   @TestCachePermission(AuthorizationPermission.NONE)
    public void testNoFlags(SecureCache<String, String> cache) {
       cache.noFlags();
    }
@@ -372,6 +384,11 @@ public class SecureCacheTestDriver {
    @TestCachePermission(AuthorizationPermission.BULK_READ)
    public void testSize(SecureCache<String, String> cache) {
       cache.size();
+   }
+
+   @TestCachePermission(AuthorizationPermission.BULK_READ)
+   public void testSizeAsync(SecureCache<String, String> cache) {
+      cache.sizeAsync();
    }
 
    @TestCachePermission(AuthorizationPermission.ADMIN)
@@ -500,23 +517,6 @@ public class SecureCacheTestDriver {
    }
 
    @TestCachePermission(AuthorizationPermission.WRITE)
-   public void testApplyDelta_Object_Delta_ObjectArray(SecureCache<String, String> cache) throws Exception {
-      try {
-         cache.getTransactionManager().begin();
-
-         cache.applyDelta("deltakey", new Delta() {
-
-            @Override
-            public DeltaAware merge(DeltaAware d) {
-               return d;
-            }
-         }, "deltakey");
-      } finally {
-         cache.getTransactionManager().rollback();
-      }
-   }
-
-   @TestCachePermission(AuthorizationPermission.WRITE)
    public void testPutIfAbsent_Object_Object_Metadata(SecureCache<String, String> cache) {
       cache.putIfAbsent("a", "a", metadata);
    }
@@ -536,6 +536,11 @@ public class SecureCacheTestDriver {
    public void testAddListener_Object(SecureCache<String, String> cache) {
       cache.addListener(listener);
       cache.removeListener(listener);
+   }
+
+   @TestCachePermission(AuthorizationPermission.LISTEN)
+   public void testAddListenerAsync_Object(SecureCache<String, String> cache) {
+      CompletionStages.join(cache.addListenerAsync(listener));
    }
 
    @TestCachePermission(AuthorizationPermission.NONE)
@@ -626,11 +631,6 @@ public class SecureCacheTestDriver {
    @TestCachePermission(AuthorizationPermission.ADMIN)
    public void testGetConflictResolutionManager(SecureCache<String, String> cache) {
       ConflictManagerFactory.get(cache);
-   }
-
-   @TestCachePermission(AuthorizationPermission.ADMIN)
-   public void testGetInterceptorChain(SecureCache<String, String> cache) {
-      cache.getInterceptorChain();
    }
 
    @TestCachePermission(AuthorizationPermission.ADMIN)
@@ -801,6 +801,16 @@ public class SecureCacheTestDriver {
    }
 
    @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testCompute_Object_SerializableBiFunction_long_TimeUnit(SecureCache<String, String> cache) {
+      cache.compute("a", (k, v) -> "yes", 1, TimeUnit.SECONDS);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testCompute_Object_SerializableBiFunction_long_TimeUnit_long_TimeUnit(SecureCache<String, String> cache) {
+      cache.compute("a", (k, v) -> "yes", 1, TimeUnit.SECONDS, 1, TimeUnit.SECONDS);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
    public void testCompute_Object_SerializableBiFunction_Metadata(SecureCache<String, String> cache) {
       cache.compute("a", (k, v) -> "yes", metadata);
    }
@@ -826,8 +836,28 @@ public class SecureCacheTestDriver {
    }
 
    @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfAbsent_Object_SerializableFunction_long_TimeUnit(SecureCache<String, String> cache) {
+      cache.computeIfAbsent("b", k -> "no", 10, TimeUnit.SECONDS, 10, TimeUnit.SECONDS);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfAbsent_Object_SerializableFunction_long_TimeUnit_long_TimeUnit(SecureCache<String, String> cache) {
+      cache.computeIfAbsent("b", k -> "no", 10, TimeUnit.SECONDS, 10, TimeUnit.SECONDS);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
    public void testMerge_Object_Object_SerializableBiFunction(SecureCache<String, String> cache) {
       cache.merge("a", "b", (k, v) -> "no");
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testMerge_Object_Object_SerializableBiFunction_long_TimeUnit(SecureCache<String, String> cache) {
+      cache.merge("a", "b", (k, v) -> "no", 1, TimeUnit.SECONDS);
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testMerge_Object_Object_SerializableBiFunction_long_TimeUnit_long_TimeUnit(SecureCache<String, String> cache) {
+      cache.merge("a", "b", (k, v) -> "no", 1, TimeUnit.SECONDS, 1, TimeUnit.SECONDS);
    }
 
    @TestCachePermission(AuthorizationPermission.WRITE)
@@ -850,9 +880,44 @@ public class SecureCacheTestDriver {
       cache.addStorageFormatFilteredListener(listener, keyValueFilter, converter, Collections.emptySet());
    }
 
+   @TestCachePermission(AuthorizationPermission.LISTEN)
+   public void testAddStorageFormatFilteredListenerAsync_Object_CacheEventFilter_CacheEventConverter_Set(SecureCache<String, String> cache) {
+      CompletionStages.join(cache.addStorageFormatFilteredListenerAsync(listener, keyValueFilter, converter, Collections.emptySet()));
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfAbsentAsync_Object_SerializableFunction(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeIfAbsentAsync("b", k -> "no").get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfAbsentAsync_Object_SerializableFunction_long_TimeUnit(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeIfAbsentAsync("b", k -> "no", 1, TimeUnit.SECONDS).get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfAbsentAsync_Object_SerializableFunction_long_TimeUnit_long_TimeUnit(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeIfAbsentAsync("b", k -> "no", 1, TimeUnit.SECONDS, 1, TimeUnit.SECONDS).get();
+   }
+
    @TestCachePermission(AuthorizationPermission.WRITE)
    public void testComputeIfAbsentAsync_Object_SerializableFunction_Metadata(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
-      cache.computeIfAbsentAsync("b", k -> "no").get();
+      cache.computeIfAbsentAsync("b", k -> "no", metadata).get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testMergeAsync_Object_Object_SerializableBiFunction(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.mergeAsync("a", "b", (k, v) -> "no").get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testMergeAsync_Object_Object_SerializableBiFunction_long_TimeUnit(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.mergeAsync("a", "b", (k, v) -> "no", 1, TimeUnit.SECONDS).get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testMergeAsync_Object_Object_SerializableBiFunction_long_TimeUnit_long_TimeUnit(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.mergeAsync("a", "b", (k, v) -> "no", 1, TimeUnit.SECONDS, 1, TimeUnit.SECONDS).get();
    }
 
    @TestCachePermission(AuthorizationPermission.WRITE)
@@ -861,8 +926,38 @@ public class SecureCacheTestDriver {
    }
 
    @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfPresentAsync_Object_SerializableBiFunction(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeIfPresentAsync("a", (k, v) -> "yes").get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfPresentAsync_Object_SerializableBiFunction_long_TimeUnit(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeIfPresentAsync("a", (k, v) -> "yes", 1, TimeUnit.SECONDS).get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeIfPresentAsync_Object_SerializableBiFunction_long_TimeUnit_long_TimeUnit(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeIfPresentAsync("a", (k, v) -> "yes", 1, TimeUnit.SECONDS, 1, TimeUnit.SECONDS).get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
    public void testComputeIfPresentAsync_Object_SerializableBiFunction_Metadata(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
       cache.computeIfPresentAsync("a", (k, v) -> "yes", metadata).get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeAsync_Object_SerializableBiFunction(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeAsync("a", (k, v) -> "yes").get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeAsync_Object_SerializableBiFunction_long_TimeUnit(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeAsync("a", (k, v) -> "yes", 1, TimeUnit.SECONDS).get();
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testComputeAsync_Object_SerializableBiFunction_long_TimeUnit_long_TimeUnit(SecureCache<String, String> cache) throws ExecutionException, InterruptedException {
+      cache.computeAsync("a", (k, v) -> "yes", 1, TimeUnit.SECONDS, 1, TimeUnit.SECONDS).get();
    }
 
    @TestCachePermission(AuthorizationPermission.WRITE)

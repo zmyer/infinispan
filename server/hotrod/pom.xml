@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-server-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -14,11 +14,15 @@
    <description>Infinispan Hot Rod Server</description>
 
    <properties>
-      <module.skipComponentMetaDataProcessing>false</module.skipComponentMetaDataProcessing>
       <certificate.dname>CN=HotRod_1,OU=Infinispan,O=JBoss,L=Red Hat,ST=World,C=WW</certificate.dname>
    </properties>
 
    <dependencies>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-component-processor</artifactId>
+      </dependency>
+
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-core</artifactId>
@@ -47,6 +51,24 @@
          <artifactId>infinispan-multimap</artifactId>
       </dependency>
       <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>protostream</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>protostream-processor</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.kohsuke.metainf-services</groupId>
+         <artifactId>metainf-services</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.wildfly.security</groupId>
+         <artifactId>wildfly-elytron</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
          <groupId>org.testng</groupId>
          <artifactId>testng</artifactId>
          <scope>test</scope>
@@ -71,13 +93,7 @@
                            <attribute name="command"/>
                            <element name="args"/>
                            <sequential>
-                              <condition property="keytool.classname" value="com.ibm.crypto.tools.KeyTool">
-                                 <available classname="com.ibm.crypto.tools.KeyTool"/>
-                              </condition>
-                              <condition property="keytool.classname" value="sun.security.tools.keytool.Main">
-                                 <available classname="sun.security.tools.keytool.Main"/>
-                              </condition>
-                              <java classname="${keytool.classname}" failonerror="true">
+                              <exec executable="${server.jvm}/bin/keytool">
                                  <arg value="@{command}"/>
                                  <!-- common arguments -->
                                  <arg value="-validity"/>
@@ -95,7 +111,7 @@
                                  <arg value="pkcs12"/>
                                  <!-- additional arguments -->
                                  <args/>
-                              </java>
+                              </exec>
                            </sequential>
                         </macrodef>
                         <mkdir dir="${project.build.testOutputDirectory}"/>
@@ -207,16 +223,15 @@
                   </Export-Package>
                   <Include-Resource>
                      {maven-resources},
-                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
+                     /META-INF/services=${project.basedir}/target/classes/META-INF/services
                   </Include-Resource>
                </instructions>
             </configuration>
          </plugin>
 
          <plugin>
-            <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-protocol-parser-generator-maven-plugin</artifactId>
-            <version>${project.version}</version>
+            <groupId>org.infinispan.maven-plugins</groupId>
+            <artifactId>protocol-parser-generator</artifactId>
             <configuration>
                <files>
                   <file>${basedir}/src/main/resources/hotrod.gr</file>
@@ -230,6 +245,16 @@
                   <phase>generate-sources</phase>
                </execution>
             </executions>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+               <dependenciesToScan>
+                  <!-- TestNGSuiteChecksTest -->
+                  <dependency>org.infinispan:infinispan-commons-test</dependency>
+               </dependenciesToScan>
+            </configuration>
          </plugin>
       </plugins>
       <resources>

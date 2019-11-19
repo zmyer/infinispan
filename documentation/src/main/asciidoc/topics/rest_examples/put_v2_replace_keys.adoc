@@ -1,0 +1,1 @@
+PUT /rest/v2/caches/{cacheName}/{cacheKey}

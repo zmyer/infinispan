@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.infinispan</groupId>
         <artifactId>infinispan-parent</artifactId>
-        <version>10.0.0-SNAPSHOT</version>
+        <version>10.1.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -47,7 +47,7 @@
                 <!--
                   java.lang, java.util, java.io, java.lang.invoke, java.lang, reflect, java.util.concurrent, java.time:
                     core externalizers for JDK types
-                  java.nio, jdk.internal.ref, sun.nio.ch: Netty, server/hotrod
+                  java.nio, jdk.internal.ref, jdk.internal.misc, sun.nio.ch: Netty, server/hotrod
                   com.sun.security.sasl: CRAM-MD5 mechanism, server/hotrod
                   java.text, java.awt.font: XStream, server/rest
                   java.security: Wildfly, server/integration/*
@@ -63,9 +63,9 @@
                     --add-opens=java.base/java.time=ALL-UNNAMED
                     --add-opens=java.base/java.nio=ALL-UNNAMED
                     --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED
+                    --add-exports=java.base/jdk.internal.misc=ALL-UNNAMED
                     --add-exports=java.security.sasl/com.sun.security.sasl=ALL-UNNAMED
                     --add-opens=java.base/java.text=ALL-UNNAMED
-                    --add-opens=java.desktop/java.awt.font=ALL-UNNAMED
                     --add-opens=java.base/java.security=ALL-UNNAMED
                     --add-exports=jdk.security.jgss/com.sun.security.sasl.gsskerb=ALL-UNNAMED
                     --add-exports=java.base/sun.nio.ch=ALL-UNNAMED
@@ -76,6 +76,7 @@
                     --add-opens=java.management/javax.management=ALL-UNNAMED
                     --add-exports=java.management/com.sun.jmx.mbeanserver=ALL-UNNAMED
                     --add-opens=java.base/com.sun.crypto.provider=ALL-UNNAMED
+                    --add-modules java.se
                 </testjvm.jigsawArgs>
             </properties>
         </profile>

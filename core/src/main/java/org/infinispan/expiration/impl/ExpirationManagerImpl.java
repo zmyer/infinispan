@@ -1,13 +1,17 @@
 package org.infinispan.expiration.impl;
 
+import static org.infinispan.util.logging.Log.CONTAINER;
+
 import java.util.Iterator;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.entries.InternalCacheEntry;
@@ -19,24 +23,29 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.impl.ComponentRef;
-import org.infinispan.persistence.spi.MarshallableEntry;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.persistence.manager.PersistenceManager;
-import org.infinispan.commons.time.TimeService;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
 import net.jcip.annotations.ThreadSafe;
 
 @ThreadSafe
+@Scope(Scopes.NAMED_CACHE)
 public class ExpirationManagerImpl<K, V> implements InternalExpirationManager<K, V> {
    private static final Log log = LogFactory.getLog(ExpirationManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
    @Inject @ComponentName(KnownComponentNames.EXPIRATION_SCHEDULED_EXECUTOR)
    protected ScheduledExecutorService executor;
+   @Inject @ComponentName(KnownComponentNames.PERSISTENCE_EXECUTOR)
+   protected ExecutorService blockingExecutor;
    @Inject protected Configuration configuration;
    @Inject protected PersistenceManager persistenceManager;
    @Inject protected ComponentRef<InternalDataContainer<K, V>> dataContainer;
@@ -72,7 +81,7 @@ public class ExpirationManagerImpl<K, V> implements InternalExpirationManager<K,
          // Set up the eviction timer task
          long expWakeUpInt = configuration.expiration().wakeUpInterval();
          if (expWakeUpInt <= 0) {
-            log.notStartingEvictionThread();
+            CONTAINER.notStartingEvictionThread();
             enabled = false;
          } else {
             expirationTask = executor.scheduleWithFixedDelay(new ScheduledTask(),
@@ -103,7 +112,7 @@ public class ExpirationManagerImpl<K, V> implements InternalExpirationManager<K,
                           Util.prettyPrintTime(timeService.timeDuration(start, TimeUnit.MILLISECONDS)));
             }
          } catch (Exception e) {
-            log.exceptionPurgingDataContainer(e);
+            CONTAINER.exceptionPurgingDataContainer(e);
          }
       }
 
@@ -139,9 +148,42 @@ public class ExpirationManagerImpl<K, V> implements InternalExpirationManager<K,
    }
 
    @Override
-   public CompletableFuture<Boolean> entryExpiredInMemoryFromIteration(InternalCacheEntry<K, V> entry, long currentTime) {
-      // Local we just remove the entry as we see them
-      return entryExpiredInMemory(entry, currentTime, false);
+   public boolean entryExpiredInMemoryFromIteration(InternalCacheEntry<K, V> entry, long currentTime) {
+      if (persistenceManager.hasWriter()) {
+         // If entry was expired and we have store this can block - so fire in separate thread to remove the entry
+         blockingExecutor.submit(() -> entryExpiredInMemorySync(entry, currentTime));
+      } else {
+         // This shouldn't block as there are no stores (other than the lock acquisition on the Map and notification)
+         entryExpiredInMemory(entry, currentTime, false);
+      }
+      return true;
+   }
+
+   private void entryExpiredInMemorySync(InternalCacheEntry<K, V> entry, long currentTime) {
+      dataContainer.running().compute(entry.getKey(), ((k, oldEntry, factory) -> {
+         if (oldEntry != null) {
+            synchronized (oldEntry) {
+               if (oldEntry.isExpired(currentTime)) {
+                  deleteFromStoresAndNotifySync(k, oldEntry.getValue(), oldEntry.getMetadata());
+               } else {
+                  return oldEntry;
+               }
+            }
+         }
+         return null;
+      }));
+   }
+
+   /**
+    * Same as {@link #deleteFromStoresAndNotify(Object, Object, Metadata)} except that the store removal is done
+    * synchronously - this means this method <b>MUST</b> be invoked in the blocking thread pool
+    * @param key
+    * @param value
+    * @param metadata
+    */
+   private void deleteFromStoresAndNotifySync(K key, V value, Metadata metadata) {
+      persistenceManager.deleteFromAllStoresSync(key, keyPartitioner.getSegment(key), PersistenceManager.AccessMode.BOTH);
+      CompletionStages.join(cacheNotifier.notifyCacheEntryExpired(key, value, metadata, null));
    }
 
    @Override
@@ -194,22 +236,17 @@ public class ExpirationManagerImpl<K, V> implements InternalExpirationManager<K,
    /**
     * Deletes the key from the store as well as notifies the cache listeners of the expiration of the given key,
     * value, metadata combination.
+    * <p>
+    * This method must be invoked while holding data container lock for the given key to ensure events are ordered
+    * properly.
     * @param key
     * @param value
     * @param metadata
     */
    private void deleteFromStoresAndNotify(K key, V value, Metadata metadata) {
-      deleteFromStores(key);
-      if (cacheNotifier != null) {
-         // To guarantee ordering of events this must be done on the entry, so that another write cannot be
-         // done at the same time
-         cacheNotifier.notifyCacheEntryExpired(key, value, metadata, null);
-      }
-   }
-
-   private void deleteFromStores(K key) {
-      // We have to delete from shared stores as well to make sure there are not multiple expiration events
-      persistenceManager.deleteFromAllStores(key, keyPartitioner.getSegment(key), PersistenceManager.AccessMode.BOTH);
+      CompletionStages.join(CompletionStages.allOf(
+            persistenceManager.deleteFromAllStores(key, keyPartitioner.getSegment(key), PersistenceManager.AccessMode.BOTH),
+            cacheNotifier.notifyCacheEntryExpired(key, value, metadata, null)));
    }
 
    protected Long localLastAccess(Object key, Object value, int segment) {

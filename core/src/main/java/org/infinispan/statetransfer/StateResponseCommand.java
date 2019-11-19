@@ -7,10 +7,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
 
+import org.infinispan.commands.InitializableCommand;
 import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.remote.BaseRpcCommand;
 import org.infinispan.commons.marshall.MarshallUtil;
 import org.infinispan.conflict.impl.StateReceiver;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.util.ByteString;
 import org.infinispan.util.concurrent.CompletableFutures;
@@ -23,7 +25,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author anistor@redhat.com
  * @since 5.2
  */
-public class StateResponseCommand extends BaseRpcCommand implements TopologyAffectedCommand {
+public class StateResponseCommand extends BaseRpcCommand implements InitializableCommand, TopologyAffectedCommand {
 
    private static final Log log = LogFactory.getLog(StateResponseCommand.class);
 
@@ -74,9 +76,10 @@ public class StateResponseCommand extends BaseRpcCommand implements TopologyAffe
       this.pushTransfer = pushTransfer;
    }
 
-   public void init(StateConsumer stateConsumer, StateReceiver stateReceiver) {
-      this.stateConsumer = stateConsumer;
-      this.stateReceiver = stateReceiver;
+   @Override
+   public void init(ComponentRegistry componentRegistry, boolean isRemote) {
+      this.stateConsumer = componentRegistry.getStateTransferManager().getStateConsumer();
+      this.stateReceiver = componentRegistry.getConflictManager().running().getStateReceiver();
    }
 
    @Override
@@ -85,7 +88,8 @@ public class StateResponseCommand extends BaseRpcCommand implements TopologyAffe
       LogFactory.pushNDC(cacheName, trace);
       try {
          if (applyState) {
-            stateConsumer.applyState(getOrigin(), topologyId, pushTransfer, stateChunks);
+            return (CompletableFuture) stateConsumer.applyState(getOrigin(), topologyId, pushTransfer, stateChunks)
+                                                    .toCompletableFuture();
          } else {
             stateReceiver.receiveState(getOrigin(), topologyId, stateChunks);
          }

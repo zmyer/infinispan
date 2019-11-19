@@ -3,18 +3,14 @@ package org.infinispan.container.offheap;
 import java.util.Iterator;
 import java.util.Spliterator;
 import java.util.concurrent.ConcurrentMap;
-import java.util.function.ObjIntConsumer;
 
 import org.infinispan.commons.marshall.WrappedBytes;
 import org.infinispan.commons.util.FilterIterator;
 import org.infinispan.commons.util.FilterSpliterator;
 import org.infinispan.commons.util.IntSet;
-import org.infinispan.commons.util.ProcessorInfo;
-import org.infinispan.commons.util.Util;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.impl.AbstractInternalDataContainer;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 
 /**
@@ -25,29 +21,17 @@ public class OffHeapDataContainer extends AbstractInternalDataContainer<WrappedB
    @Inject protected OffHeapMemoryAllocator allocator;
    @Inject protected OffHeapEntryFactory offHeapEntryFactory;
 
-   private final int desiredSize;
-
    private OffHeapConcurrentMap map;
 
-   public OffHeapDataContainer(int desiredSize) {
-      this.desiredSize = desiredSize;
-   }
-
-   public static int getActualAddressCount(int desiredSize) {
-      return OffHeapConcurrentMap.getActualAddressCount(desiredSize,
-            Util.findNextHighestPowerOfTwo(ProcessorInfo.availableProcessors() << 1));
-   }
-
-   @Start
    public void start() {
-      map = new OffHeapConcurrentMap(desiredSize, allocator, offHeapEntryFactory, null);
-      map.start();
+      super.start();
+      map = new OffHeapConcurrentMap(allocator, offHeapEntryFactory, null);
    }
 
-   // Priority has to be higher than the clear priority - which is currently 999
-   @Stop(priority = 9999)
+   @Stop
    public void stop() {
-      map.stop();
+      clear();
+      map.close();
    }
 
    @Override
@@ -104,18 +88,13 @@ public class OffHeapDataContainer extends AbstractInternalDataContainer<WrappedB
    }
 
    @Override
-   public void forEachIncludingExpired(ObjIntConsumer<? super InternalCacheEntry<WrappedBytes, WrappedBytes>> action) {
-      map.values().forEach(e -> action.accept(e, 0));
-   }
-
-   @Override
    public void addSegments(IntSet segments) {
-      throw new UnsupportedOperationException("Container is not segmented");
+      throw new UnsupportedOperationException();
    }
 
    @Override
    public void removeSegments(IntSet segments) {
-      throw new UnsupportedOperationException("Container is not segmented");
+      throw new UnsupportedOperationException();
    }
 
    @Override

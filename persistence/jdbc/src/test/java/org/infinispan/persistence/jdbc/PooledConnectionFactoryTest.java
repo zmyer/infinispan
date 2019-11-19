@@ -7,16 +7,16 @@ import java.util.Set;
 import org.infinispan.persistence.jdbc.configuration.ConnectionFactoryConfiguration;
 import org.infinispan.persistence.jdbc.configuration.ConnectionFactoryConfigurationBuilder;
 import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfigurationBuilder;
-import org.infinispan.persistence.jdbc.connectionfactory.PooledConnectionFactory;
+import org.infinispan.persistence.jdbc.configuration.PooledConnectionFactoryConfiguration;
+import org.infinispan.persistence.jdbc.impl.connectionfactory.PooledConnectionFactory;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
-import org.infinispan.test.fwk.UnitTestDatabaseManager;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 /**
- * Tester class for {@link org.infinispan.persistence.jdbc.connectionfactory.PooledConnectionFactory}.
+ * Tester class for {@link PooledConnectionFactory}.
  *
  * @author Mircea.Markus@jboss.com
  * @author Tristan Tarrant
@@ -27,6 +27,15 @@ public class PooledConnectionFactoryTest {
    private PooledConnectionFactory factory;
    private JdbcStringBasedStoreConfigurationBuilder storeBuilder;
    private ConnectionFactoryConfigurationBuilder<?> factoryBuilder;
+   private PooledConnectionFactoryConfiguration customFactoryConfiguration;
+
+   public PooledConnectionFactoryTest() {}
+
+   //Invoked from external resource
+   @SuppressWarnings("unused")
+   public PooledConnectionFactoryTest(PooledConnectionFactoryConfiguration customFactoryConfiguration) {
+      this.customFactoryConfiguration = customFactoryConfiguration;
+   }
 
    @BeforeMethod
    public void beforeMethod() {
@@ -41,11 +50,17 @@ public class PooledConnectionFactoryTest {
    @Test
    public void testValuesNoOverrides() throws Exception {
       storeBuilder = TestCacheManagerFactory
-            .getDefaultCacheConfiguration(false)
-            .persistence()
-            .addStore(JdbcStringBasedStoreConfigurationBuilder.class);
-      // We load agroal.properties to enable metrics and ensure that property file loading works as expected
-      factoryBuilder = storeBuilder.connectionPool().propertyFile("src/test/resources/configs/agroal.properties");
+              .getDefaultCacheConfiguration(false)
+              .persistence()
+              .addStore(JdbcStringBasedStoreConfigurationBuilder.class);
+
+      if(customFactoryConfiguration != null) {
+         factoryBuilder = storeBuilder.connectionPool().read(customFactoryConfiguration);
+      } else {
+         // We load agroal.properties to enable metrics and ensure that property file loading works as expected
+         factoryBuilder = storeBuilder.connectionPool().propertyFile("src/test/resources/configs/agroal.properties");
+      }
+
       ConnectionFactoryConfiguration factoryConfiguration = factoryBuilder.create();
       factory.start(factoryConfiguration, Thread.currentThread().getContextClassLoader());
 

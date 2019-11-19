@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.Stream;
+
 import javax.transaction.Transaction;
 
 import org.infinispan.Cache;
@@ -39,6 +40,7 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.transaction.TransactionMode;
@@ -90,7 +92,7 @@ public class EntryWrappingInterceptorDoesNotBlockTest extends MultipleCacheManag
       cb = new ConfigurationBuilder();
       cb.clustering().cacheMode(CacheMode.DIST_SYNC).hash().consistentHashFactory(chFactory).numSegments(2);
       cb.transaction().transactionMode(TransactionMode.TRANSACTIONAL);
-      createCluster(cb, 3);
+      createCluster(TestDataSCI.INSTANCE, cb, 3);
       // make sure the caches are started in proper order
       for (int i = 0; i < 3; ++i) cache(i);
    }
@@ -117,7 +119,7 @@ public class EntryWrappingInterceptorDoesNotBlockTest extends MultipleCacheManag
       cache(0).addListener(new TopologyChangeListener(topologyChangeLatch));
       cache(2).addListener(new TopologyChangeListener(topologyChangeLatch));
       PrepareExpectingInterceptor prepareExpectingInterceptor = new PrepareExpectingInterceptor();
-      cache(2).getAdvancedCache().getAsyncInterceptorChain().addInterceptor(prepareExpectingInterceptor, 0);
+      TestingUtil.extractInterceptorChain(cache(2)).addInterceptor(prepareExpectingInterceptor, 0);
 
       tm(0).begin();
       for (int i = 0; i < keys.length; ++i) {
@@ -133,7 +135,7 @@ public class EntryWrappingInterceptorDoesNotBlockTest extends MultipleCacheManag
 
       // block sending segment 0 to node 2
       expectStateRequestCommand(crm2, StateRequestCommand.Type.GET_TRANSACTIONS).send().receiveAll();
-      expectStateRequestCommand(crm2, StateRequestCommand.Type.START_STATE_TRANSFER).send().receiveAll();
+      expectStateRequestCommand(crm2, StateRequestCommand.Type.START_STATE_TRANSFER).send().receiveAllAsync();
       ControlledRpcManager.BlockedRequest blockedStateResponse0 = crm0.expectCommand(StateResponseCommand.class);
       assertTrue(topologyChangeLatch.await(10, TimeUnit.SECONDS));
 
@@ -177,8 +179,7 @@ public class EntryWrappingInterceptorDoesNotBlockTest extends MultipleCacheManag
    }
 
    private ControlledRpcManager.BlockedRequest expectStateRequestCommand(ControlledRpcManager crm,
-                                                                         StateRequestCommand.Type type)
-      throws InterruptedException {
+                                                                         StateRequestCommand.Type type) {
       return crm.expectCommand(StateRequestCommand.class, c -> assertEquals(type, c.getType()));
    }
 
@@ -250,7 +251,7 @@ public class EntryWrappingInterceptorDoesNotBlockTest extends MultipleCacheManag
       }
    }
 
-   private class PrepareExpectingInterceptor extends DDAsyncInterceptor {
+   class PrepareExpectingInterceptor extends DDAsyncInterceptor {
       private final CountDownLatch latch = new CountDownLatch(1);
 
       @Override

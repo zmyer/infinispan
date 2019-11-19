@@ -13,6 +13,8 @@ import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.filter.AbstractKeyValueFilterConverter;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.metadata.Metadata;
@@ -20,7 +22,6 @@ import org.infinispan.objectfilter.ObjectFilter;
 import org.infinispan.protostream.ProtobufUtil;
 import org.infinispan.protostream.SerializationContext;
 import org.infinispan.query.remote.impl.ExternalizerIds;
-import org.infinispan.query.remote.impl.ProtobufMetadataManagerImpl;
 
 /**
  * Adapter for {@link IckleProtobufFilterAndConverter} that produces binary values as a result of filter/conversion.
@@ -28,6 +29,7 @@ import org.infinispan.query.remote.impl.ProtobufMetadataManagerImpl;
  * @author gustavonalle
  * @since 8.1
  */
+@Scope(Scopes.NONE)
 public final class IckleBinaryProtobufFilterAndConverter<K, V> extends AbstractKeyValueFilterConverter<K, V, Object> {
 
    private SerializationContext serCtx;
@@ -37,7 +39,7 @@ public final class IckleBinaryProtobufFilterAndConverter<K, V> extends AbstractK
    @Inject
    void injectDependencies(ComponentRegistry componentRegistry, EmbeddedCacheManager cacheManager) {
       componentRegistry.wireDependencies(delegate);
-      serCtx = ProtobufMetadataManagerImpl.getSerializationContext(cacheManager);
+      serCtx = SecurityActions.getSerializationContext(cacheManager);
    }
 
    IckleBinaryProtobufFilterAndConverter(String queryString, Map<String, Object> namedParameters) {

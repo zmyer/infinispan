@@ -1,6 +1,7 @@
 package org.infinispan.persistence.remote.upgrade;
 
 import static org.infinispan.client.hotrod.ProtocolVersion.DEFAULT_PROTOCOL_VERSION;
+import static org.infinispan.client.hotrod.ProtocolVersion.PROTOCOL_VERSION_23;
 import static org.infinispan.test.AbstractCacheTest.getDefaultClusteredCacheConfig;
 import static org.infinispan.test.fwk.TestCacheManagerFactory.createClusteredCacheManager;
 
@@ -11,6 +12,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.infinispan.Cache;
+import org.infinispan.client.hotrod.ProtocolVersion;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
@@ -98,7 +100,7 @@ class TestCluster {
          private final Builder builder;
          private ConfigurationBuilder configurationBuilder;
          private String name;
-         private String protocolVersion = DEFAULT_PROTOCOL_VERSION.toString();
+         private ProtocolVersion protocolVersion = DEFAULT_PROTOCOL_VERSION;
          private Integer remotePort;
 
          CacheDefinitionBuilder(Builder builder) {
@@ -115,8 +117,8 @@ class TestCluster {
             return this;
          }
 
-         CacheDefinitionBuilder remoteProtocolVersion(String remoteVersion) {
-            this.protocolVersion = remoteVersion;
+         CacheDefinitionBuilder remoteProtocolVersion(ProtocolVersion version) {
+            this.protocolVersion = version;
             return this;
          }
 
@@ -147,6 +149,9 @@ class TestCluster {
                }
                if (builder.keyStoreFileName != null) {
                   store.remoteSecurity().ssl().keyStoreFileName(builder.keyStoreFileName).keyStorePassword(builder.keyStorePassword);
+               }
+               if (protocolVersion.compareTo(PROTOCOL_VERSION_23) < 0) {
+                  store.segmented(false);
                }
             }
             builder.addCache(name, configurationBuilder);

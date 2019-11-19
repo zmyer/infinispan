@@ -1,7 +1,5 @@
 package org.infinispan.server.core.configuration;
 
-import java.util.Set;
-
 import org.infinispan.commons.configuration.Self;
 import org.infinispan.server.core.admin.AdminOperationsHandler;
 
@@ -14,12 +12,13 @@ import org.infinispan.server.core.admin.AdminOperationsHandler;
  * @author Tristan Tarrant
  * @since 5.3
  */
-public interface ProtocolServerConfigurationChildBuilder<T extends ProtocolServerConfiguration, S extends ProtocolServerConfigurationChildBuilder<T,S>>
+public interface ProtocolServerConfigurationChildBuilder<T extends ProtocolServerConfiguration, S extends ProtocolServerConfigurationChildBuilder<T, S>>
       extends Self<S> {
    /**
     * Specifies the cache to use as a default cache for the protocol
     */
    S defaultCacheName(String defaultCacheName);
+
    /**
     * Specifies a custom name for this server in order to easily distinguish it from other servers, e.g. via JMX. Defaults to the empty string.
     */
@@ -76,11 +75,6 @@ public interface ProtocolServerConfigurationChildBuilder<T extends ProtocolServe
    S workerThreads(int workerThreads);
 
    /**
-    * Sets the caches to be ignored
-    */
-   S ignoredCaches(Set<String> ignoredCaches);
-
-   /**
     * Indicates whether transport implementation should or should not be started.
     */
    S startTransport(boolean startTransport);
@@ -89,6 +83,11 @@ public interface ProtocolServerConfigurationChildBuilder<T extends ProtocolServe
     * Indicates the {@link AdminOperationsHandler} which will be used to handle admin operations
     */
    S adminOperationsHandler(AdminOperationsHandler handler);
+
+   /**
+    * Indicates the name of socket binding which will be used
+    */
+   S socketBinding(String name);
 
    /**
     * Builds a configuration object

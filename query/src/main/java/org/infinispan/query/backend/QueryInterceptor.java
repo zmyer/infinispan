@@ -82,11 +82,11 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
       }
    };
 
-   @Inject private DistributionManager distributionManager;
-   @Inject private RpcManager rpcManager;
+   @Inject DistributionManager distributionManager;
+   @Inject RpcManager rpcManager;
    @Inject @ComponentName(KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR)
-   private ExecutorService asyncExecutor;
-   @Inject private InternalCacheRegistry internalCacheRegistry;
+   ExecutorService asyncExecutor;
+   @Inject InternalCacheRegistry internalCacheRegistry;
 
    private final IndexModificationStrategy indexingMode;
    private final SearchIntegrator searchFactory;
@@ -108,7 +108,7 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
 
    private final AdvancedCache<?, ?> cache;
 
-   private final InvocationSuccessAction processClearCommand = this::processClearCommand;
+   private final InvocationSuccessAction<ClearCommand> processClearCommand = this::processClearCommand;
 
    public QueryInterceptor(SearchIntegrator searchFactory, KeyTransformationHandler keyTransformationHandler,
                            IndexModificationStrategy indexingMode,
@@ -128,7 +128,8 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
       Set<Class<?>> indexedEntities = cacheConfiguration.indexing().indexedEntities();
       this.indexedEntities = indexedEntities.isEmpty() ? null : indexedEntities.toArray(new Class<?>[indexedEntities.size()]);
       queryKnownClasses = indexedEntities.isEmpty() ? new QueryKnownClasses(cache.getName(), cache.getCacheManager(), internalCacheRegistry) : new QueryKnownClasses(cache.getName(), indexedEntities);
-      searchFactoryHandler = new SearchFactoryHandler(searchFactory, queryKnownClasses, new TransactionHelper(cache.getTransactionManager()));
+      searchFactoryHandler = new SearchFactoryHandler(searchFactory, queryKnownClasses, new TransactionHelper(cache.getTransactionManager()),
+            asyncExecutor, cache.getClassLoader());
       if (this.indexedEntities == null) {
          queryKnownClasses.start(searchFactoryHandler);
          Set<Class<?>> classes = queryKnownClasses.keys();
@@ -178,8 +179,7 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
             prev = UNKNOWN;
          }
          Object oldValue = prev;
-         return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-            DataWriteCommand cmd = (DataWriteCommand) rCommand;
+         return invokeNextThenAccept(ctx, command, (rCtx, cmd, rv) -> {
             if (!cmd.isSuccessful()) {
                return;
             }
@@ -219,8 +219,7 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
                oldValues.put(key, entry.getValue());
             }
          }
-         return invokeNextThenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-            WriteCommand cmd = (WriteCommand) rCommand;
+         return invokeNextThenAccept(ctx, command, (rCtx, cmd, rv) -> {
             if (!cmd.isSuccessful()) {
                return;
             }
@@ -472,8 +471,8 @@ public final class QueryInterceptor extends DDAsyncInterceptor {
       }
    }
 
-   private void processClearCommand(InvocationContext ctx, VisitableCommand command, Object rv) {
-      if (shouldModifyIndexes((ClearCommand) command, ctx, null)) {
+   private void processClearCommand(InvocationContext ctx, ClearCommand command, Object rv) {
+      if (shouldModifyIndexes(command, ctx, null)) {
          purgeAllIndexes(NoTransactionContext.INSTANCE);
       }
    }

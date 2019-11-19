@@ -1,8 +1,8 @@
 package org.infinispan.scattered.statetransfer;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertNotNull;
+import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
@@ -39,7 +39,7 @@ import org.infinispan.util.ControlledConsistentHashFactory;
 import org.infinispan.util.ControlledRpcManager;
 import org.testng.annotations.Test;
 
-@Test(groups = "functional", testName = "scattered.statetransfer.CoordinatorStopTest")
+@Test(groups = "unstable", testName = "scattered.statetransfer.CoordinatorStopTest", description = "ISPN-9940")
 @CleanupAfterMethod
 public class CoordinatorStopTest extends MultipleCacheManagersTest {
    private CountDownLatch viewLatch;

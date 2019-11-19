@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-server-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -16,7 +16,25 @@
    <dependencies>
       <dependency>
          <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-component-processor</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>protostream-processor</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-server-core</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.kohsuke.metainf-services</groupId>
+         <artifactId>metainf-services</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-commons</artifactId>
+         <type>test-jar</type>
+         <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
@@ -46,13 +64,36 @@
                   <Export-Package>
                      ${project.groupId}.server.memcached.*;version=${project.version};-split-package:=error
                   </Export-Package>
-                  <Include-Resources>
+                  <Include-Resource>
                      {maven-resources},
-                     ${project.build.outputDirectory}/${project.artifactId}-component-metadata.dat
-                  </Include-Resources>
+                     /proto=${project.basedir}/target/classes/proto,
+                     /META-INF/services=${project.basedir}/target/classes/META-INF/services
+                  </Include-Resource>
                </instructions>
             </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+               <dependenciesToScan>
+                  <!-- TestNGSuiteChecksTest -->
+                  <dependency>org.infinispan:infinispan-commons-test</dependency>
+               </dependenciesToScan>
+            </configuration>
+         </plugin>
+         <plugin>
+            <groupId>org.infinispan.maven-plugins</groupId>
+            <artifactId>proto-schema-compatibility</artifactId>
+            <executions>
+               <execution>
+                  <goals>
+                     <goal>proto-schema-compatibility-check</goal>
+                  </goals>
+               </execution>
+            </executions>
          </plugin>
       </plugins>
    </build>
 </project>
+

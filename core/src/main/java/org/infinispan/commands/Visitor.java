@@ -11,7 +11,6 @@ import org.infinispan.commands.functional.WriteOnlyKeyCommand;
 import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
 import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
-import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
@@ -22,7 +21,6 @@ import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.ComputeCommand;
 import org.infinispan.commands.write.ComputeIfAbsentCommand;
@@ -66,11 +64,6 @@ public interface Visitor {
       return visitRemoveCommand(ctx, command);
    }
 
-   @Deprecated
-   default Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable {
-      throw new UnsupportedOperationException();
-   }
-
    // read commands
 
    Object visitSizeCommand(InvocationContext ctx, SizeCommand command) throws Throwable;
@@ -101,14 +94,6 @@ public interface Visitor {
    Object visitLockControlCommand(TxInvocationContext ctx, LockControlCommand command) throws Throwable;
 
    Object visitUnknownCommand(InvocationContext ctx, VisitableCommand command) throws Throwable;
-
-   /**
-    * @deprecated since 10.0, DistributedExecutor is planned on being removed
-    */
-   @Deprecated
-   default <V> Object visitDistributedExecuteCommand(InvocationContext ctx, DistributedExecuteCommand<V> command) throws Throwable {
-      return null;
-   }
 
    Object visitGetKeysInGroupCommand(InvocationContext ctx, GetKeysInGroupCommand command) throws Throwable;
 

@@ -1,5 +1,9 @@
 package org.infinispan.persistence;
 
+import static org.infinispan.util.logging.Log.PERSISTENCE;
+
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
@@ -8,25 +12,24 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
 
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.IntSet;
+import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.container.entries.InternalCacheValue;
 import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.filter.KeyFilter;
-import org.infinispan.persistence.spi.MarshallableEntry;
-import org.infinispan.metadata.InternalMetadata;
-import org.infinispan.metadata.impl.InternalMetadataImpl;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.SegmentedAdvancedLoadWriteStore;
-import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.reactivestreams.Publisher;
 
 import io.reactivex.Flowable;
+import io.reactivex.Single;
 import io.reactivex.schedulers.Schedulers;
 
 /**
@@ -36,7 +39,6 @@ import io.reactivex.schedulers.Schedulers;
 public class PersistenceUtil {
 
    private static Log log = LogFactory.getLog(PersistenceUtil.class);
-   private static final boolean trace = log.isTraceEnabled();
 
    public static KeyFilter notNull(KeyFilter filter) {
       return filter == null ? KeyFilter.ACCEPT_ALL_FILTER : filter;
@@ -61,7 +63,7 @@ public class PersistenceUtil {
    public static <K, V> int count(AdvancedCacheLoader<K, V> acl, Predicate<? super K> filter) {
 
       // This can't be null
-      Long result = Flowable.fromPublisher(acl.publishKeys(filter)).count().blockingGet();
+      Long result = singleToValue(Flowable.fromPublisher(acl.publishKeys(filter)).count());
       if (result > Integer.MAX_VALUE) {
          return Integer.MAX_VALUE;
       }
@@ -75,7 +77,7 @@ public class PersistenceUtil {
     * @return count of entries that are in the provided segments
     */
    public static int count(SegmentedAdvancedLoadWriteStore<?, ?> salws, IntSet segments) {
-      Long result = Flowable.fromPublisher(salws.publishKeys(segments, null)).count().blockingGet();
+      Long result = singleToValue(Flowable.fromPublisher(salws.publishKeys(segments, null)).count());
       if (result > Integer.MAX_VALUE) {
          return Integer.MAX_VALUE;
       }
@@ -89,18 +91,24 @@ public class PersistenceUtil {
     * @param <K>
     * @param <V>
     * @return
-    * @deprecated Please use {@link #toKeySet(AdvancedCacheLoader, Predicate)} instead
+    * @deprecated since 9.3 Please use {@link #toKeySet(AdvancedCacheLoader, Predicate)} instead
     */
    @Deprecated
    public static <K, V> Set<K> toKeySet(AdvancedCacheLoader<K, V> acl, KeyFilter<? super K> filter) {
       return toKeySet(acl, (Predicate<? super K>) filter);
    }
 
+   // This method is blocking - but only invoked by user code
+   @SuppressWarnings("checkstyle:forbiddenmethod")
+   private static <E> E singleToValue(Single<E> single) {
+      return single.blockingGet();
+   }
+
    public static <K, V> Set<K> toKeySet(AdvancedCacheLoader<K, V> acl, Predicate<? super K> filter) {
       if (acl == null)
          return Collections.emptySet();
-      return Flowable.fromPublisher(acl.publishKeys(filter))
-            .collectInto(new HashSet<K>(), Set::add).blockingGet();
+      return singleToValue(Flowable.fromPublisher(acl.publishKeys(filter))
+            .collectInto(new HashSet<>(), Set::add));
    }
 
    /**
@@ -122,21 +130,9 @@ public class PersistenceUtil {
    public static <K, V> Set<InternalCacheEntry<K, V>> toEntrySet(AdvancedCacheLoader<K, V> acl, Predicate<? super K> filter, final InternalEntryFactory ief) {
       if (acl == null)
          return Collections.emptySet();
-      return Flowable.fromPublisher(acl.entryPublisher(filter, true, true))
+      return singleToValue(Flowable.fromPublisher(acl.entryPublisher(filter, true, true))
             .map(me -> ief.create(me.getKey(), me.getValue(), me.getMetadata()))
-            .collectInto(new HashSet<InternalCacheEntry<K, V>>(), Set::add).blockingGet();
-   }
-
-   public static long getExpiryTime(InternalMetadata internalMetadata) {
-      return internalMetadata == null ? -1 : internalMetadata.expiryTime();
-   }
-
-   public static InternalMetadata internalMetadata(InternalCacheEntry ice) {
-      return ice.getMetadata() == null ? null : new InternalMetadataImpl(ice);
-   }
-
-   public static InternalMetadata internalMetadata(InternalCacheValue icv) {
-      return icv.getMetadata() == null ? null : new InternalMetadataImpl(icv.getMetadata(), icv.getCreated(), icv.getLastUsed());
+            .collectInto(new HashSet<>(), Set::add));
    }
 
    /**
@@ -202,5 +198,31 @@ public class PersistenceUtil {
          IntFunction<Publisher<R>> publisherFunction) {
       return org.infinispan.persistence.internal.PersistenceUtil.parallelizePublisher(segments, Schedulers.from(executor),
             publisherFunction);
+   }
+
+   /**
+    * Replace unwanted characters from cache names so they can be used as filenames
+    */
+   public static String sanitizedCacheName(String cacheName) {
+      return cacheName.replaceAll("[^a-zA-Z0-9-_\\.]", "_");
+   }
+
+   public static Path getQualifiedLocation(GlobalConfiguration globalConfiguration, String location, String cacheName, String qualifier) {
+      Path persistentLocation = Paths.get(globalConfiguration.globalState().persistentLocation());
+      if (location == null) {
+         return persistentLocation.resolve(Paths.get(sanitizedCacheName(cacheName), qualifier));
+      } else {
+         Path path = Paths.get(location);
+         if (path.isAbsolute()) {
+            // Ensure that the path lives under the global persistent location
+            if (path.startsWith(persistentLocation)) {
+               return Paths.get(location, sanitizedCacheName(cacheName), qualifier);
+            } else {
+               throw PERSISTENCE.forbiddenStoreLocation(path, persistentLocation);
+            }
+         } else {
+            return persistentLocation.resolve(path.resolve(Paths.get(sanitizedCacheName(cacheName), qualifier)));
+         }
+      }
    }
 }

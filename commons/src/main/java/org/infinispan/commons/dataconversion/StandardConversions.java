@@ -6,6 +6,7 @@ import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_OBJECT
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_WWW_FORM_URLENCODED;
 import static org.infinispan.commons.dataconversion.MediaType.TEXT_PLAIN;
 import static org.infinispan.commons.dataconversion.MediaType.TEXT_PLAIN_TYPE;
+import static org.infinispan.commons.logging.Log.CONTAINER;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -17,9 +18,9 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-import org.infinispan.commons.logging.Log;
-import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.marshall.Marshaller;
+import org.infinispan.protostream.ImmutableSerializationContext;
+import org.infinispan.protostream.ProtobufUtil;
 
 /**
  * Utilities to convert between text/plain, octet-stream, java-objects and url-encoded contents.
@@ -27,8 +28,6 @@ import org.infinispan.commons.marshall.Marshaller;
  * @since 9.2
  */
 public final class StandardConversions {
-
-   private static final Log log = LogFactory.getLog(StandardConversions.class);
 
    /**
     * Convert text content to a different encoding.
@@ -41,7 +40,7 @@ public final class StandardConversions {
    public static Object convertTextToText(Object source, MediaType sourceType, MediaType destinationType) {
       if (source == null) return null;
       if (sourceType == null) throw new NullPointerException("MediaType cannot be null!");
-      if (!sourceType.match(MediaType.TEXT_PLAIN)) throw log.invalidMediaType(TEXT_PLAIN_TYPE, sourceType.toString());
+      if (!sourceType.match(MediaType.TEXT_PLAIN)) throw CONTAINER.invalidMediaType(TEXT_PLAIN_TYPE, sourceType.toString());
 
       boolean asString = destinationType.hasStringType();
 
@@ -91,7 +90,7 @@ public final class StandardConversions {
          byte[] bytesSource = (byte[]) source;
          return new String(bytesSource, sourceType.getCharset());
       }
-      throw log.invalidTextContent(source);
+      throw CONTAINER.invalidTextContent(source);
    }
 
    /**
@@ -128,7 +127,7 @@ public final class StandardConversions {
    public static Object convertOctetStreamToJava(byte[] source, MediaType destination, Marshaller marshaller) {
       if (source == null) return null;
       if (!destination.match(MediaType.APPLICATION_OBJECT)) {
-         throw log.invalidMediaType(APPLICATION_OBJECT_TYPE, destination.toString());
+         throw CONTAINER.invalidMediaType(APPLICATION_OBJECT_TYPE, destination.toString());
       }
       String classType = destination.getClassType();
       if (classType == null) return source;
@@ -141,8 +140,8 @@ public final class StandardConversions {
       }
       try {
          return marshaller.objectFromByteBuffer(source);
-      } catch (IOException | ClassNotFoundException e) {
-         throw log.conversionNotSupported(source, MediaType.APPLICATION_OCTET_STREAM_TYPE, destination.toString());
+      } catch (IOException | IllegalStateException | ClassNotFoundException e) {
+         throw CONTAINER.conversionNotSupported(source, MediaType.APPLICATION_OCTET_STREAM_TYPE, destination.toString());
       }
    }
 
@@ -158,7 +157,7 @@ public final class StandardConversions {
    public static byte[] convertJavaToOctetStream(Object source, MediaType sourceMediaType, Marshaller marshaller) throws IOException, InterruptedException {
       if (source == null) return null;
       if (!sourceMediaType.match(MediaType.APPLICATION_OBJECT)) {
-         throw new EncodingException("destination MediaType not conforming to application/x-java-object!");
+         throw new EncodingException("sourceMediaType not conforming to application/x-java-object!");
       }
 
       Object decoded = decodeObjectContent(source, sourceMediaType);
@@ -166,6 +165,28 @@ public final class StandardConversions {
       if (decoded instanceof String && isJavaString(sourceMediaType))
          return ((String) decoded).getBytes(StandardCharsets.UTF_8);
       return marshaller.objectToByteBuffer(source);
+   }
+
+   /**
+    * Converts a java object to a sequence of bytes using a ProtoStream {@link ImmutableSerializationContext}.
+    *
+    * @param source source the java object to convert.
+    * @param sourceMediaType the MediaType matching application/x-application-object describing the source.
+    * @return byte[] representation of the java object.
+    * @throws EncodingException if the sourceMediaType is not a application/x-java-object or if the conversion is
+    * not supported.
+    */
+   public static byte[] convertJavaToProtoStream(Object source, MediaType sourceMediaType, ImmutableSerializationContext ctx) throws IOException, InterruptedException {
+      if (source == null) return null;
+      if (!sourceMediaType.match(MediaType.APPLICATION_OBJECT)) {
+         throw new EncodingException("sourceMediaType not conforming to application/x-java-object!");
+      }
+
+      Object decoded = decodeObjectContent(source, sourceMediaType);
+      if (decoded instanceof byte[]) return (byte[]) decoded;
+      if (decoded instanceof String && isJavaString(sourceMediaType))
+         return ((String) decoded).getBytes(StandardCharsets.UTF_8);
+      return ProtobufUtil.toWrappedByteArray(ctx, source);
    }
 
    private static boolean isJavaString(MediaType mediaType) {
@@ -206,41 +227,46 @@ public final class StandardConversions {
     * @throws EncodingException if the provided type is not supported.
     */
    public static Object decodeObjectContent(Object content, MediaType contentMediaType) {
-      try {
-         if (content == null) return null;
-         if (contentMediaType == null) {
-            throw new NullPointerException("contentMediaType cannot be null!");
-         }
-         String strContent;
-         String type = contentMediaType.getClassType();
-         if (type == null) return content;
-
-         if (type.equals("ByteArray")) {
-            if (content instanceof byte[]) return content;
-            if (content instanceof String) return hexToBytes(content.toString());
-            throw new EncodingException("Cannot read ByteArray!");
-         }
-
-         if (content instanceof byte[]) {
-            strContent = new String((byte[]) content, UTF_8);
-         } else {
-            strContent = content.toString();
-         }
-
-         Class<?> destinationType = Class.forName(type);
-
-         if (destinationType == String.class) return content;
-         if (destinationType == Boolean.class) return Boolean.parseBoolean(strContent);
-         if (destinationType == Short.class) return Short.parseShort(strContent);
-         if (destinationType == Byte.class) return Byte.parseByte(strContent);
-         if (destinationType == Integer.class) return Integer.parseInt(strContent);
-         if (destinationType == Long.class) return Long.parseLong(strContent);
-         if (destinationType == Float.class) return Float.parseFloat(strContent);
-         if (destinationType == Double.class) return Double.parseDouble(strContent);
-         return content;
-      } catch (ClassNotFoundException cne) {
-         throw new EncodingException("Cannot decode object!", cne);
+      if (content == null) return null;
+      if (contentMediaType == null) {
+         throw new NullPointerException("contentMediaType cannot be null!");
       }
+      String strContent;
+      String type = contentMediaType.getClassType();
+      if (type == null) return content;
+
+      if (type.equals("ByteArray")) {
+         if (content instanceof byte[]) return content;
+         if (content instanceof String) return hexToBytes(content.toString());
+         throw new EncodingException("Cannot read ByteArray!");
+      }
+
+      if (content instanceof byte[]) {
+         strContent = new String((byte[]) content, UTF_8);
+      } else {
+         strContent = content.toString();
+      }
+
+      switch (type) {
+         case "java.lang.String":
+            return strContent;
+         case "java.lang.Boolean":
+            return Boolean.parseBoolean(strContent);
+         case "java.lang.Short":
+            return Short.parseShort(strContent);
+         case "java.lang.Byte":
+            return Byte.parseByte(strContent);
+         case "java.lang.Integer":
+            return Integer.parseInt(strContent);
+         case "java.lang.Long":
+            return Long.parseLong(strContent);
+         case "java.lang.Float":
+            return Float.parseFloat(strContent);
+         case "java.lang.Double":
+            return Double.parseDouble(strContent);
+      }
+
+      return content;
    }
 
    /**
@@ -338,7 +364,7 @@ public final class StandardConversions {
 
    /**
     * Handle x-www-form-urlencoded as single values for now.
-    * Ideally it should generate a Map<String, String>
+    * Ideally it should generate a Map&lt;String, String&gt;
     */
    public static Object convertUrlEncodedToObject(Object content) {
       Object decoded = urlDecode(content);
@@ -364,7 +390,7 @@ public final class StandardConversions {
          }
          return URLEncoder.encode(asString, mediaType.getCharset().toString());
       } catch (UnsupportedEncodingException e) {
-         throw log.errorEncoding(content, APPLICATION_WWW_FORM_URLENCODED);
+         throw CONTAINER.errorEncoding(content, APPLICATION_WWW_FORM_URLENCODED);
       }
    }
 
@@ -377,7 +403,7 @@ public final class StandardConversions {
          }
          return URLDecoder.decode(content.toString(), UTF_8.toString());
       } catch (UnsupportedEncodingException e) {
-         throw log.cannotDecodeFormURLContent(content);
+         throw CONTAINER.cannotDecodeFormURLContent(content);
       }
    }
 

@@ -1,0 +1,38 @@
+ENCODING(1)
+===========
+:doctype: manpage
+
+
+NAME
+----
+encoding - displays and sets the encoding for cache entries.
+
+
+DESCRIPTION
+-----------
+Sets a default encoding for *put* and *get* operations on a cache. If no
+argument is specified, the *encoding* command displays the current encoding.
+
+Valid encodings use standard MIME type (IANA media types) naming conventions,
+such as the following:
+
+* `text/plain`
+* `application/json`
+* `application/xml`
+* `application/octet-stream`
+
+
+SYNOPSIS
+--------
+*encoding* ['ENCODING']
+
+
+EXAMPLE
+-------
+`encoding application/json` +
+Configures the currently selected cache to encode entries as `application/json`.
+
+
+SEE ALSO
+--------
+get(1), put(1)

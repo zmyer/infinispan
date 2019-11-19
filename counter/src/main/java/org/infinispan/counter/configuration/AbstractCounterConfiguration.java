@@ -1,10 +1,11 @@
 package org.infinispan.counter.configuration;
 
+import static org.infinispan.counter.logging.Log.CONTAINER;
+
+import org.infinispan.commons.configuration.ConfigurationInfo;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
-import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.counter.api.Storage;
-import org.infinispan.counter.logging.Log;
 
 /**
  * Base counter configuration with its name, initial value and {@link Storage} mode.
@@ -12,18 +13,17 @@ import org.infinispan.counter.logging.Log;
  * @author Pedro Ruivo
  * @since 9.0
  */
-public abstract class AbstractCounterConfiguration {
+public abstract class AbstractCounterConfiguration implements ConfigurationInfo {
 
    static final AttributeDefinition<Long> INITIAL_VALUE = AttributeDefinition.builder("initialValue", 0L)
          .xmlName("initial-value")
          .immutable()
          .build();
-   private static final Log log = LogFactory.getLog(AbstractCounterConfiguration.class, Log.class);
    static final AttributeDefinition<Storage> STORAGE = AttributeDefinition.builder("storage", Storage.VOLATILE)
          .xmlName("storage")
          .validator(value -> {
             if (value == null) {
-               throw log.invalidStorageMode();
+               throw CONTAINER.invalidStorageMode();
             }
          })
          .immutable()
@@ -32,7 +32,7 @@ public abstract class AbstractCounterConfiguration {
          .xmlName("name")
          .validator(value -> {
             if (value == null) {
-               throw log.missingCounterName();
+               throw CONTAINER.missingCounterName();
             }
          })
          .immutable()
@@ -47,7 +47,7 @@ public abstract class AbstractCounterConfiguration {
       return new AttributeSet(AbstractCounterConfiguration.class, NAME, INITIAL_VALUE, STORAGE);
    }
 
-   final AttributeSet attributes() {
+   public final AttributeSet attributes() {
       return attributes;
    }
 

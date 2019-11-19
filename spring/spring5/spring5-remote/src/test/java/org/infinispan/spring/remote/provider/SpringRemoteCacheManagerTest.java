@@ -4,6 +4,8 @@ import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheCon
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertNotNull;
+import static org.testng.AssertJUnit.assertNotSame;
+import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertSame;
 import static org.testng.AssertJUnit.assertTrue;
 
@@ -12,17 +14,21 @@ import java.util.Collection;
 
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
+import org.infinispan.commons.api.CacheContainerAdmin;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.server.core.admin.embeddedserver.EmbeddedServerAdminOperationHandler;
 import org.infinispan.server.core.test.ServerTestingUtil;
 import org.infinispan.server.hotrod.HotRodServer;
 import org.infinispan.server.hotrod.configuration.HotRodServerConfigurationBuilder;
 import org.infinispan.server.hotrod.test.HotRodTestingUtil;
+import org.infinispan.spring.common.provider.SpringCache;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.springframework.cache.Cache;
 import org.testng.annotations.AfterClass;
+import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 /**
@@ -38,18 +44,37 @@ import org.testng.annotations.Test;
 public class SpringRemoteCacheManagerTest extends SingleCacheManagerTest {
 
    private static final String TEST_CACHE_NAME = "spring.remote.cache.manager.Test";
+   private static final String OTHER_TEST_CACHE_NAME = "spring.remote.cache.manager.OtherTest";
 
    private RemoteCacheManager remoteCacheManager;
 
    private HotRodServer hotrodServer;
+   private SpringRemoteCacheManager objectUnderTest;
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
       cacheManager = TestCacheManagerFactory.createCacheManager(hotRodCacheConfiguration());
-      cacheManager.defineConfiguration(TEST_CACHE_NAME, cacheManager.getDefaultCacheConfiguration());
-      cache = cacheManager.getCache(TEST_CACHE_NAME);
-
+      cacheManager.defineConfiguration(OTHER_TEST_CACHE_NAME, cacheManager.getDefaultCacheConfiguration());
       return cacheManager;
+   }
+
+   @BeforeMethod
+   public void createCache(){
+      if(objectUnderTest != null) {
+         objectUnderTest.start();
+      }
+      cacheManager.administration().removeCache(TEST_CACHE_NAME);
+      cacheManager.undefineConfiguration(TEST_CACHE_NAME);
+      cacheManager.defineConfiguration(TEST_CACHE_NAME, cacheManager.getDefaultCacheConfiguration());
+      cache = cacheManager.administration().withFlags(CacheContainerAdmin.AdminFlag.VOLATILE).getOrCreateCache(TEST_CACHE_NAME, TEST_CACHE_NAME);
+      objectUnderTest = new SpringRemoteCacheManager(remoteCacheManager);
+   }
+
+   @AfterMethod(alwaysRun = true)
+   public void afterMethod() {
+      if (objectUnderTest != null) {
+         objectUnderTest.stop();
+      }
    }
 
    @BeforeClass
@@ -62,15 +87,16 @@ public class SpringRemoteCacheManagerTest extends SingleCacheManagerTest {
       remoteCacheManager = new RemoteCacheManager(builder.build());
    }
 
-   @AfterClass
+   @AfterClass(alwaysRun = true)
    public void destroyRemoteCacheFactory() {
       remoteCacheManager.stop();
       hotrodServer.stop();
    }
 
+
    /**
     * Test method for
-    * {@link org.infinispan.spring.provider.SpringRemoteCacheManager#SpringRemoteCacheManager(RemoteCacheManager)}
+    * {@link org.infinispan.spring.remote.provider.SpringRemoteCacheManager#SpringRemoteCacheManager(RemoteCacheManager)}
     * .
     */
    @Test(expectedExceptions = IllegalArgumentException.class)
@@ -80,13 +106,10 @@ public class SpringRemoteCacheManagerTest extends SingleCacheManagerTest {
 
    /**
     * Test method for
-    * {@link org.infinispan.spring.provider.SpringRemoteCacheManager#getCache(String)}.
+    * {@link org.infinispan.spring.remote.provider.SpringRemoteCacheManager#getCache(String)}.
     */
    @Test
    public final void springRemoteCacheManagerShouldProperlyCreateCache() {
-      final SpringRemoteCacheManager objectUnderTest = new SpringRemoteCacheManager(
-            remoteCacheManager);
-
       final Cache defaultCache = objectUnderTest.getCache(TEST_CACHE_NAME);
 
       assertNotNull("getCache(" + TEST_CACHE_NAME
@@ -98,11 +121,10 @@ public class SpringRemoteCacheManagerTest extends SingleCacheManagerTest {
 
    /**
     * Test method for
-    * {@link org.infinispan.spring.provider.SpringRemoteCacheManager#getCacheNames()}.
+    * {@link org.infinispan.spring.remote.provider.SpringRemoteCacheManager#getCacheNames()}.
     */
    @Test
    public final void getCacheNamesShouldReturnAllCachesDefinedInConfigurationFile() {
-      final SpringRemoteCacheManager objectUnderTest = new SpringRemoteCacheManager(remoteCacheManager);
       final Collection<String> cacheNames = objectUnderTest.getCacheNames();
       assertTrue("SpringRemoteCacheManager should load all named caches found in the "
             + "native cache manager. However, it does not know about the cache named "
@@ -112,58 +134,94 @@ public class SpringRemoteCacheManagerTest extends SingleCacheManagerTest {
    }
 
    /**
-    * Test method for {@link org.infinispan.spring.provider.SpringRemoteCacheManager#start()}.
+    * Test method for {@link org.infinispan.spring.remote.provider.SpringRemoteCacheManager#start()}.
     *
     * @throws IOException
     */
    @Test
    public final void startShouldStartTheNativeRemoteCacheManager() throws IOException {
-      final RemoteCacheManager nativeCacheManager = new RemoteCacheManager(true);
-      final SpringRemoteCacheManager objectUnderTest = new SpringRemoteCacheManager(
-            nativeCacheManager);
-
       objectUnderTest.start();
 
       assertTrue("Calling start() on SpringRemoteCacheManager should start the enclosed "
                        + "Infinispan RemoteCacheManager. However, it is still not running.",
-                 nativeCacheManager.isStarted());
+                 remoteCacheManager.isStarted());
    }
 
    /**
-    * Test method for {@link org.infinispan.spring.provider.SpringRemoteCacheManager#stop()}.
+    * Test method for {@link org.infinispan.spring.remote.provider.SpringRemoteCacheManager#stop()}.
     *
     * @throws IOException
     */
    @Test
    public final void stopShouldStopTheNativeRemoteCacheManager() throws IOException {
-      final RemoteCacheManager nativeCacheManager = new RemoteCacheManager(true);
-      final SpringRemoteCacheManager objectUnderTest = new SpringRemoteCacheManager(
-            nativeCacheManager);
-
       objectUnderTest.stop();
 
       assertFalse("Calling stop() on SpringRemoteCacheManager should stop the enclosed "
                         + "Infinispan RemoteCacheManager. However, it is still running.",
-                  nativeCacheManager.isStarted());
+                  remoteCacheManager.isStarted());
    }
 
    /**
     * Test method for
-    * {@link org.infinispan.spring.provider.SpringRemoteCacheManager#getNativeCacheManager()}.
+    * {@link org.infinispan.spring.remote.provider.SpringRemoteCacheManager#getNativeCacheManager()}.
     *
-    * @throws IOException
     */
    @Test
-   public final void getNativeCacheShouldReturnTheRemoteCacheManagerSuppliedAtConstructionTime()
-         throws IOException {
-      final RemoteCacheManager nativeCacheManager = new RemoteCacheManager(true);
-      final SpringRemoteCacheManager objectUnderTest = new SpringRemoteCacheManager(
-            nativeCacheManager);
+   public final void getNativeCacheShouldReturnTheRemoteCacheManagerSuppliedAtConstructionTime() {
 
       final RemoteCacheManager nativeCacheManagerReturned = objectUnderTest.getNativeCacheManager();
 
       assertSame(
             "getNativeCacheManager() should have returned the RemoteCacheManager supplied at construction time. However, it retuned a different one.",
-            nativeCacheManager, nativeCacheManagerReturned);
+            remoteCacheManager, nativeCacheManagerReturned);
    }
+
+   @Test
+   public final void getCacheShouldReturnSameInstanceForSameName() {
+      // When
+      final SpringCache firstObtainedSpringCache = objectUnderTest.getCache(TEST_CACHE_NAME);
+      final SpringCache secondObtainedSpringCache = objectUnderTest.getCache(TEST_CACHE_NAME);
+
+      // Then
+      assertSame(
+              "getCache() should have returned the same SpringCache instance for the same name",
+              firstObtainedSpringCache, secondObtainedSpringCache);
+   }
+
+   @Test
+   public final void getCacheShouldReturnDifferentInstancesForDifferentNames() {
+      // When
+      final SpringCache firstObtainedSpringCache = objectUnderTest.getCache(TEST_CACHE_NAME);
+      final SpringCache secondObtainedSpringCache = objectUnderTest.getCache(OTHER_TEST_CACHE_NAME);
+
+      // Then
+      assertNotSame(
+              "getCache() should have returned different SpringCache instances for different names",
+              firstObtainedSpringCache, secondObtainedSpringCache);
+   }
+
+   @Test
+   public final void getCacheReturnsDifferentInstanceForSameNameAfterLifecycleStop() {
+      final SpringCache firstObtainedSpringCache = objectUnderTest.getCache(TEST_CACHE_NAME);
+
+      // When
+      objectUnderTest.stop();
+      final SpringCache secondObtainedSpringCache = objectUnderTest.getCache(TEST_CACHE_NAME);
+
+      // Then
+      assertNotSame(
+              "getCache() should have returned different SpringCache instances for the sam name after a Lifecycle#stop()",
+              firstObtainedSpringCache, secondObtainedSpringCache);
+   }
+
+   @Test
+   public final void getCacheShouldReturnNullItWasChangedByRemoteCacheManager() {
+      // When
+      objectUnderTest.getCache(TEST_CACHE_NAME);
+      remoteCacheManager.administration().removeCache(TEST_CACHE_NAME);
+
+      // Then
+      assertNull(objectUnderTest.getCache(TEST_CACHE_NAME));
+   }
+
 }

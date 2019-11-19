@@ -14,7 +14,6 @@ import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.DefaultElementDefinition;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
 import org.infinispan.configuration.cache.AsyncStoreConfiguration;
-import org.infinispan.configuration.cache.SingletonStoreConfiguration;
 import org.infinispan.configuration.serializing.SerializedWith;
 import org.infinispan.persistence.jdbc.stringbased.JdbcStringBasedStore;
 import org.infinispan.persistence.keymappers.DefaultTwoWayKey2StringMapper;
@@ -23,21 +22,21 @@ import org.infinispan.persistence.keymappers.DefaultTwoWayKey2StringMapper;
 @ConfigurationFor(JdbcStringBasedStore.class)
 @SerializedWith(JdbcStringBasedStoreConfigurationSerializer.class)
 public class JdbcStringBasedStoreConfiguration extends AbstractJdbcStoreConfiguration implements ConfigurationInfo {
-   static final AttributeDefinition<String> KEY2STRING_MAPPER = AttributeDefinition.builder("key2StringMapper" , DefaultTwoWayKey2StringMapper.class.getName()).immutable().xmlName("key-to-string-mapper").build();
+   static final AttributeDefinition<String> KEY2STRING_MAPPER = AttributeDefinition.builder("key2StringMapper", DefaultTwoWayKey2StringMapper.class.getName()).immutable().xmlName("key-to-string-mapper").build();
    private final List<ConfigurationInfo> subElements;
 
    public static AttributeSet attributeDefinitionSet() {
       return new AttributeSet(JdbcStringBasedStoreConfiguration.class, AbstractJdbcStoreConfiguration.attributeDefinitionSet(), KEY2STRING_MAPPER);
    }
 
-   static ElementDefinition ELEMENT_DEFINITION = new DefaultElementDefinition(STRING_KEYED_JDBC_STORE.getLocalName());
+   static ElementDefinition ELEMENT_DEFINITION = new DefaultElementDefinition(STRING_KEYED_JDBC_STORE.getLocalName(), true, false);
 
    private final Attribute<String> key2StringMapper;
    private final TableManipulationConfiguration table;
 
-   public JdbcStringBasedStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore,
+   public JdbcStringBasedStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async,
                                             ConnectionFactoryConfiguration connectionFactory, TableManipulationConfiguration table) {
-      super(attributes, async, singletonStore, connectionFactory);
+      super(attributes, async, connectionFactory);
       this.table = table;
       key2StringMapper = attributes.attribute(KEY2STRING_MAPPER);
       subElements = new ArrayList<>(super.subElements());
@@ -64,8 +63,8 @@ public class JdbcStringBasedStoreConfiguration extends AbstractJdbcStoreConfigur
 
    @Override
    public String toString() {
-      return "JdbcStringBasedStoreConfiguration [table=" + table + ", attributes=" + attributes + ", connectionFactory=" + connectionFactory() + ", async=" + async()
-            + ", singletonStore()=" + singletonStore() + "]";
+      return "JdbcStringBasedStoreConfiguration [table=" + table + ", attributes=" + attributes +
+            ", connectionFactory=" + connectionFactory() + ", async=" + async() + "]";
    }
 
    @Override
@@ -86,10 +85,7 @@ public class JdbcStringBasedStoreConfiguration extends AbstractJdbcStoreConfigur
          return false;
       JdbcStringBasedStoreConfiguration other = (JdbcStringBasedStoreConfiguration) obj;
       if (table == null) {
-         if (other.table != null)
-            return false;
-      } else if (!table.equals(other.table))
-         return false;
-      return true;
+         return other.table == null;
+      } else return table.equals(other.table);
    }
 }

@@ -1,7 +1,5 @@
 package org.infinispan.commons.marshall;
 
-import static org.infinispan.commons.util.CollectionFactory.computeCapacity;
-
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
@@ -13,6 +11,7 @@ import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.infinispan.commons.io.ByteBuffer;
 import org.infinispan.commons.logging.Log;
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.util.Util;
@@ -31,6 +30,16 @@ public class MarshallUtil {
    private static final byte NULL_VALUE = -1;
 
    private static final Log log = LogFactory.getLog(MarshallUtil.class);
+
+   public static byte[] toByteArray(ByteBuffer buf) {
+      if (buf.getOffset() == 0 && buf.getLength() == buf.getBuf().length) {
+         return buf.getBuf();
+      } else {
+         byte[] bytes = new byte[buf.getLength()];
+         System.arraycopy(buf.getBuf(), buf.getOffset(), bytes, 0, buf.getLength());
+         return bytes;
+      }
+   }
 
    /**
     * Marshall the {@code map} to the {@code ObjectOutput}.
@@ -58,7 +67,7 @@ public class MarshallUtil {
    /**
     * Unmarshall the {@link Map}.
     * <p>
-    * If the marshalled map is {@link null}, then the {@link MapBuilder} is not invoked.
+    * If the marshalled map is {@code null}, then the {@link MapBuilder} is not invoked.
     *
     * @param in      {@link ObjectInput} to read.
     * @param builder {@link MapBuilder} to create the concrete {@link Map} implementation.
@@ -72,7 +81,7 @@ public class MarshallUtil {
       if (size == NULL_VALUE) {
          return null;
       }
-      final T map = Objects.requireNonNull(builder, "MapBuilder must be non-null").build(computeCapacity(size));
+      final T map = Objects.requireNonNull(builder, "MapBuilder must be non-null").build(size);
       for (int i = 0; i < size; i++) //noinspection unchecked
          map.put((K) in.readObject(), (V) in.readObject());
       return map;
@@ -104,7 +113,7 @@ public class MarshallUtil {
    /**
     * Unmarshall the {@link Map}.
     * <p>
-    * If the marshalled map is {@link null}, then the {@link MapBuilder} is not invoked.
+    * If the marshalled map is {@code null}, then the {@link MapBuilder} is not invoked.
     *
     * @param in      {@link ObjectInput} to read.
     * @param builder {@link MapBuilder} to create the concrete {@link Map} implementation.
@@ -118,7 +127,7 @@ public class MarshallUtil {
       if (size == NULL_VALUE) {
          return null;
       }
-      final T map = Objects.requireNonNull(builder, "MapBuilder must be non-null").build(computeCapacity(size));
+      final T map = Objects.requireNonNull(builder, "MapBuilder must be non-null").build(size);
       for (int i = 0; i < size; i++) //noinspection unchecked
          map.put(keyReader.readFrom(in), valueReader.readFrom(in));
       return map;
@@ -127,7 +136,7 @@ public class MarshallUtil {
    /**
     * Marshall the {@link UUID} by sending the most and lest significant bits.
     * <p>
-    * This method supports {@code null} if {@code checkNull} is set to {@link true}.
+    * This method supports {@code null} if {@code checkNull} is set to {@code true}.
     *
     * @param uuid      {@link UUID} to marshall.
     * @param out       {@link ObjectOutput} to write.
@@ -150,7 +159,7 @@ public class MarshallUtil {
     * Unmarshall {@link UUID}.
     *
     * @param in        {@link ObjectInput} to read.
-    * @param checkNull If {@code true}, it checks if the {@link UUID} marshalled was {@link null}.
+    * @param checkNull If {@code true}, it checks if the {@link UUID} marshalled was {@code null}.
     * @return {@link UUID} marshalled.
     * @throws IOException If any of the usual Input/Output related exceptions occur.
     * @see #marshallUUID(UUID, ObjectOutput, boolean).

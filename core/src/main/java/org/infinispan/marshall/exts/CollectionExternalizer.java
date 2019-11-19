@@ -1,28 +1,29 @@
 package org.infinispan.marshall.exts;
 
-import org.infinispan.commons.marshall.AdvancedExternalizer;
-import org.infinispan.commons.marshall.MarshallUtil;
-import org.infinispan.commons.util.FastCopyHashMap;
-import org.infinispan.commons.util.Util;
-import org.infinispan.distribution.util.ReadOnlySegmentAwareCollection;
-import org.infinispan.marshall.core.Ids;
-import org.jboss.marshalling.util.IdentityIntMap;
-
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.util.AbstractMap;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+
+import org.infinispan.commons.marshall.AdvancedExternalizer;
+import org.infinispan.commons.marshall.MarshallUtil;
+import org.infinispan.commons.util.FastCopyHashMap;
+import org.infinispan.commons.util.Util;
+import org.infinispan.distribution.util.ReadOnlySegmentAwareCollection;
+import org.infinispan.marshall.core.Ids;
 
 public class CollectionExternalizer implements AdvancedExternalizer<Collection> {
 
@@ -39,7 +40,7 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
    private static final int ENTRY_SET = 10;
    private static final int EMPTY_SET = 11;
 
-   private final IdentityIntMap<Class<?>> numbers = new IdentityIntMap<>(16);
+   private final Map<Class<?>, Integer> numbers = new HashMap<>(16);
 
    public CollectionExternalizer() {
       numbers.put(ArrayList.class, ARRAY_LIST);
@@ -63,7 +64,7 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
 
    @Override
    public void writeObject(ObjectOutput output, Collection collection) throws IOException {
-      int number = numbers.get(collection.getClass(), -1);
+      int number = numbers.getOrDefault(collection.getClass(), -1);
       output.writeByte(number);
       switch (number) {
          case ARRAY_LIST:
@@ -137,18 +138,32 @@ public class CollectionExternalizer implements AdvancedExternalizer<Collection> 
 
    @Override
    public Set<Class<? extends Collection>> getTypeClasses() {
-      return Util.asSet(ArrayList.class, LinkedList.class,
-            getPrivateArrayListClass(),
-            getPrivateUnmodifiableListClass(),
-            getPrivateSingletonListClass(),
-            getPrivateEmptyListClass(),
-            getPrivateEmptySetClass(),
+      Set<Class<? extends Collection>> typeClasses = Util.asSet(ArrayList.class, LinkedList.class,
             HashSet.class, TreeSet.class,
-            getPrivateSingletonSetClass(),
-            getPrivateSynchronizedSetClass(), getPrivateUnmodifiableSetClass(),
             ArrayDeque.class,
             ReadOnlySegmentAwareCollection.class,
             FastCopyHashMap.KeySet.class, FastCopyHashMap.Values.class, FastCopyHashMap.EntrySet.class);
+      typeClasses.addAll(getSupportedPrivateClasses());
+      return typeClasses;
+   }
+
+   /**
+    * Returns an immutable Set that contains all of the private classes (e.g. java.util.Collections$EmptyList) that
+    * are supported by this Externalizer. This method is to be used by external sources if these private classes
+    * need additional processing to be available.
+    * @return immutable set of the private classes
+    */
+   public static Set<Class<Collection>> getSupportedPrivateClasses() {
+      Set<Class<Collection>> classNames = new HashSet<>(Arrays.asList(
+            getPrivateArrayListClass(),
+            getPrivateUnmodifiableListClass(),
+            getPrivateEmptyListClass(),
+            getPrivateEmptySetClass(),
+            getPrivateSingletonListClass(),
+            getPrivateSingletonSetClass(),
+            getPrivateSynchronizedSetClass(),
+            getPrivateUnmodifiableSetClass()));
+      return Collections.unmodifiableSet(classNames);
    }
 
    private static Class<Collection> getPrivateArrayListClass() {

@@ -1,0 +1,36 @@
+CAS(1)
+======
+:doctype: manpage
+
+
+NAME
+----
+cas - performs 'compare-and-swap' operations on strong counters.
+
+
+SYNOPSIS
+--------
+*cas* ['OPTIONS'] ['COUNTER_NAME']
+
+
+OPTIONS
+-------
+*--expect*='nnn'::
+Specifies the expected value of the counter.
+
+*--value*='nnn'::
+Sets a new value for the counter.
+
+*-q, --quiet*='[true|false]'::
+Hides return values. The default is false.
+
+
+EXAMPLE
+-------
+`cas --expect=10 --value=20 cnt_a` +
+Sets the value of `cnt_a` to `20` only if the current value is `10`
+
+
+SEE ALSO
+--------
+add(1), cas(1), reset(1)

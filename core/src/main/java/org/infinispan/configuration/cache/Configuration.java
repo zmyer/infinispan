@@ -25,7 +25,7 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
       return new AttributeSet(Configuration.class, SIMPLE_CACHE);
    }
 
-   public static ElementDefinition ELEMENT_DEFINITION = new ElementDefinition<Configuration>() {
+   public static final ElementDefinition ELEMENT_DEFINITION = new ElementDefinition<Configuration>() {
       @Override
       public boolean isTopLevel() {
          return true;
@@ -46,44 +46,34 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
    private final Attribute<Boolean> simpleCache;
    private final ClusteringConfiguration clusteringConfiguration;
    private final CustomInterceptorsConfiguration customInterceptorsConfiguration;
-   private final DataContainerConfiguration dataContainerConfiguration;
    private final MemoryConfiguration memoryConfiguration;
-   private final DeadlockDetectionConfiguration deadlockDetectionConfiguration;
    private final EncodingConfiguration encodingConfiguration;
-   private final EvictionConfiguration evictionConfiguration;
    private final ExpirationConfiguration expirationConfiguration;
    private final IndexingConfiguration indexingConfiguration;
    private final InvocationBatchingConfiguration invocationBatchingConfiguration;
    private final JMXStatisticsConfiguration jmxStatisticsConfiguration;
    private final PersistenceConfiguration persistenceConfiguration;
    private final LockingConfiguration lockingConfiguration;
-   private final StoreAsBinaryConfiguration storeAsBinaryConfiguration;
    private final TransactionConfiguration transactionConfiguration;
-   private final VersioningConfiguration versioningConfiguration;
    private final UnsafeConfiguration unsafeConfiguration;
    private final Map<Class<?>, ?> moduleConfiguration;
    private final SecurityConfiguration securityConfiguration;
    private final SitesConfiguration sitesConfiguration;
-   private final CompatibilityModeConfiguration compatibilityConfiguration;
    private final AttributeSet attributes;
    private final boolean template;
 
    Configuration(boolean template, AttributeSet attributes,
                  ClusteringConfiguration clusteringConfiguration,
                  CustomInterceptorsConfiguration customInterceptorsConfiguration,
-                 DataContainerConfiguration dataContainerConfiguration, DeadlockDetectionConfiguration deadlockDetectionConfiguration,
-                 EvictionConfiguration evictionConfiguration, ExpirationConfiguration expirationConfiguration,
+                 ExpirationConfiguration expirationConfiguration,
                  EncodingConfiguration encodingConfiguration,
                  IndexingConfiguration indexingConfiguration, InvocationBatchingConfiguration invocationBatchingConfiguration,
                  JMXStatisticsConfiguration jmxStatisticsConfiguration,
                  PersistenceConfiguration persistenceConfiguration,
                  LockingConfiguration lockingConfiguration,
                  SecurityConfiguration securityConfiguration,
-                 StoreAsBinaryConfiguration storeAsBinaryConfiguration,
                  TransactionConfiguration transactionConfiguration, UnsafeConfiguration unsafeConfiguration,
-                 VersioningConfiguration versioningConfiguration,
                  SitesConfiguration sitesConfiguration,
-                 CompatibilityModeConfiguration compatibilityConfiguration,
                  MemoryConfiguration memoryConfiguration,
                  List<?> modules) {
       this.template = template;
@@ -91,30 +81,24 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
       this.simpleCache = attributes.attribute(SIMPLE_CACHE);
       this.clusteringConfiguration = clusteringConfiguration;
       this.customInterceptorsConfiguration = customInterceptorsConfiguration;
-      this.dataContainerConfiguration = dataContainerConfiguration;
-      this.deadlockDetectionConfiguration = deadlockDetectionConfiguration;
       this.encodingConfiguration = encodingConfiguration;
-      this.evictionConfiguration = evictionConfiguration;
       this.expirationConfiguration = expirationConfiguration;
       this.indexingConfiguration = indexingConfiguration;
       this.invocationBatchingConfiguration = invocationBatchingConfiguration;
       this.jmxStatisticsConfiguration = jmxStatisticsConfiguration;
       this.persistenceConfiguration = persistenceConfiguration;
       this.lockingConfiguration = lockingConfiguration;
-      this.storeAsBinaryConfiguration = storeAsBinaryConfiguration;
       this.transactionConfiguration = transactionConfiguration;
       this.unsafeConfiguration = unsafeConfiguration;
-      this.versioningConfiguration = versioningConfiguration;
       this.securityConfiguration = securityConfiguration;
       this.sitesConfiguration = sitesConfiguration;
-      this.compatibilityConfiguration = compatibilityConfiguration;
       this.memoryConfiguration = memoryConfiguration;
       Map<Class<?>, Object> modulesMap = new HashMap<>();
       for(Object module : modules) {
          modulesMap.put(module.getClass(), module);
       }
       this.moduleConfiguration = Collections.unmodifiableMap(modulesMap);
-      this.subElements.addAll(Arrays.asList(clusteringConfiguration, deadlockDetectionConfiguration, sitesConfiguration, dataContainerConfiguration, encodingConfiguration, sitesConfiguration.backupFor(), transactionConfiguration, expirationConfiguration, memoryConfiguration, persistenceConfiguration, lockingConfiguration, indexingConfiguration, securityConfiguration, customInterceptorsConfiguration, jmxStatisticsConfiguration, unsafeConfiguration, invocationBatchingConfiguration, compatibilityConfiguration));
+      this.subElements.addAll(Arrays.asList(clusteringConfiguration, sitesConfiguration, encodingConfiguration, sitesConfiguration.backupFor(), transactionConfiguration, expirationConfiguration, memoryConfiguration, persistenceConfiguration, lockingConfiguration, indexingConfiguration, securityConfiguration, customInterceptorsConfiguration, jmxStatisticsConfiguration, unsafeConfiguration, invocationBatchingConfiguration));
    }
 
    public AttributeSet attributes() {
@@ -139,32 +123,16 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
       return clusteringConfiguration;
    }
 
+   /**
+    * @deprecated Since 10.0, custom interceptors support will be removed and only modules will be able to define interceptors
+    */
+   @Deprecated
    public CustomInterceptorsConfiguration customInterceptors() {
       return customInterceptorsConfiguration;
    }
 
-   public DataContainerConfiguration dataContainer() {
-      return dataContainerConfiguration;
-   }
-
-   /**
-    * @deprecated Since 9.0, will be ignored.
-    */
-   @Deprecated
-   public DeadlockDetectionConfiguration deadlockDetection() {
-      return deadlockDetectionConfiguration;
-   }
-
    public EncodingConfiguration encoding() {
       return encodingConfiguration;
-   }
-
-   /**
-    * @deprecated please use {@link Configuration#memory()}
-    */
-   @Deprecated
-   public EvictionConfiguration eviction() {
-      return evictionConfiguration;
    }
 
    public ExpirationConfiguration expiration() {
@@ -202,14 +170,6 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
       return moduleConfiguration;
    }
 
-   /**
-    * @deprecated please use {@link Configuration#memory()}
-    */
-   @Deprecated
-   public StoreAsBinaryConfiguration storeAsBinary() {
-      return storeAsBinaryConfiguration;
-   }
-
    public TransactionConfiguration transaction() {
       return transactionConfiguration;
    }
@@ -226,17 +186,6 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
       return sitesConfiguration;
    }
 
-   /**
-    * @deprecated since 9.0. Infinispan automatically enables versioning when needed.
-    */
-   @Deprecated
-   public VersioningConfiguration versioning() {
-      return versioningConfiguration;
-   }
-
-   public CompatibilityModeConfiguration compatibility() {
-      return compatibilityConfiguration;
-   }
 
    public boolean isTemplate() {
       return template;
@@ -248,10 +197,7 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
             "simpleCache=" + simpleCache +
             ", clustering=" + clusteringConfiguration +
             ", customInterceptors=" + customInterceptorsConfiguration +
-            ", dataContainer=" + dataContainerConfiguration +
-            ", deadlockDetection=" + deadlockDetectionConfiguration +
             ", encodingConfiguration= " + encodingConfiguration +
-            ", eviction=" + evictionConfiguration +
             ", expiration=" + expirationConfiguration +
             ", indexing=" + indexingConfiguration +
             ", invocationBatching=" + invocationBatchingConfiguration +
@@ -260,12 +206,9 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
             ", locking=" + lockingConfiguration +
             ", modules=" + moduleConfiguration +
             ", security=" + securityConfiguration +
-            ", storeAsBinary=" + storeAsBinaryConfiguration +
             ", transaction=" + transactionConfiguration +
-            ", versioning=" + versioningConfiguration +
             ", unsafe=" + unsafeConfiguration +
             ", sites=" + sitesConfiguration +
-            ", compatibility=" + compatibilityConfiguration +
             ", memory=" + memoryConfiguration +
             '}';
    }
@@ -277,13 +220,8 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
       result = prime * result + (simpleCache.get() ? 0 : 1);
       result = prime * result + (template ? 1231 : 1237);
       result = prime * result + ((clusteringConfiguration == null) ? 0 : clusteringConfiguration.hashCode());
-      result = prime * result + ((compatibilityConfiguration == null) ? 0 : compatibilityConfiguration.hashCode());
       result = prime * result
             + ((customInterceptorsConfiguration == null) ? 0 : customInterceptorsConfiguration.hashCode());
-      result = prime * result + ((dataContainerConfiguration == null) ? 0 : dataContainerConfiguration.hashCode());
-      result = prime * result
-            + ((deadlockDetectionConfiguration == null) ? 0 : deadlockDetectionConfiguration.hashCode());
-      result = prime * result + ((evictionConfiguration == null) ? 0 : evictionConfiguration.hashCode());
       result = prime * result + ((encodingConfiguration == null) ? 0 : encodingConfiguration.hashCode());
       result = prime * result + ((expirationConfiguration == null) ? 0 : expirationConfiguration.hashCode());
       result = prime * result + ((indexingConfiguration == null) ? 0 : indexingConfiguration.hashCode());
@@ -295,10 +233,8 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
       result = prime * result + ((persistenceConfiguration == null) ? 0 : persistenceConfiguration.hashCode());
       result = prime * result + ((securityConfiguration == null) ? 0 : securityConfiguration.hashCode());
       result = prime * result + ((sitesConfiguration == null) ? 0 : sitesConfiguration.hashCode());
-      result = prime * result + ((storeAsBinaryConfiguration == null) ? 0 : storeAsBinaryConfiguration.hashCode());
       result = prime * result + ((transactionConfiguration == null) ? 0 : transactionConfiguration.hashCode());
       result = prime * result + ((unsafeConfiguration == null) ? 0 : unsafeConfiguration.hashCode());
-      result = prime * result + ((versioningConfiguration == null) ? 0 : versioningConfiguration.hashCode());
       return result;
    }
 
@@ -322,30 +258,10 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
             return false;
       } else if (!clusteringConfiguration.equals(other.clusteringConfiguration))
          return false;
-      if (compatibilityConfiguration == null) {
-         if (other.compatibilityConfiguration != null)
-            return false;
-      } else if (!compatibilityConfiguration.equals(other.compatibilityConfiguration))
-         return false;
       if (customInterceptorsConfiguration == null) {
          if (other.customInterceptorsConfiguration != null)
             return false;
       } else if (!customInterceptorsConfiguration.equals(other.customInterceptorsConfiguration))
-         return false;
-      if (dataContainerConfiguration == null) {
-         if (other.dataContainerConfiguration != null)
-            return false;
-      } else if (!dataContainerConfiguration.equals(other.dataContainerConfiguration))
-         return false;
-      if (deadlockDetectionConfiguration == null) {
-         if (other.deadlockDetectionConfiguration != null)
-            return false;
-      } else if (!deadlockDetectionConfiguration.equals(other.deadlockDetectionConfiguration))
-         return false;
-      if (evictionConfiguration == null) {
-         if (other.evictionConfiguration != null)
-            return false;
-      } else if (!evictionConfiguration.equals(other.evictionConfiguration))
          return false;
       if (expirationConfiguration == null) {
          if (other.expirationConfiguration != null)
@@ -397,11 +313,6 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
             return false;
       } else if (!sitesConfiguration.equals(other.sitesConfiguration))
          return false;
-      if (storeAsBinaryConfiguration == null) {
-         if (other.storeAsBinaryConfiguration != null)
-            return false;
-      } else if (!storeAsBinaryConfiguration.equals(other.storeAsBinaryConfiguration))
-         return false;
       if (transactionConfiguration == null) {
          if (other.transactionConfiguration != null)
             return false;
@@ -412,11 +323,6 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
             return false;
       } else if (!unsafeConfiguration.equals(other.unsafeConfiguration))
          return false;
-      if (versioningConfiguration == null) {
-         if (other.versioningConfiguration != null)
-            return false;
-      } else if (!versioningConfiguration.equals(other.versioningConfiguration))
-         return false;
       return true;
    }
 
@@ -426,15 +332,7 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
          return false;
       if (!clusteringConfiguration.matches(other.clusteringConfiguration))
          return false;
-      if (!compatibilityConfiguration.matches(other.compatibilityConfiguration))
-         return false;
       if (!customInterceptorsConfiguration.matches(other.customInterceptorsConfiguration))
-         return false;
-      if (!dataContainerConfiguration.matches(other.dataContainerConfiguration))
-         return false;
-      if (!deadlockDetectionConfiguration.matches(other.deadlockDetectionConfiguration))
-         return false;
-      if (!evictionConfiguration.matches(other.evictionConfiguration))
          return false;
       if (!expirationConfiguration.matches(other.expirationConfiguration))
          return false;
@@ -454,13 +352,9 @@ public class Configuration implements BasicConfiguration, Matchable<Configuratio
          return false;
       if (!sitesConfiguration.matches(other.sitesConfiguration))
          return false;
-      if (!storeAsBinaryConfiguration.matches(other.storeAsBinaryConfiguration))
-         return false;
       if (!transactionConfiguration.matches(other.transactionConfiguration))
          return false;
       if (!unsafeConfiguration.matches(other.unsafeConfiguration))
-         return false;
-      if (!versioningConfiguration.matches(other.versioningConfiguration))
          return false;
       for(Map.Entry<Class<?>, ?> module : moduleConfiguration.entrySet()) {
          if (!other.moduleConfiguration.containsKey(module.getKey()))

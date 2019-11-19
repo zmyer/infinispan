@@ -6,23 +6,25 @@ import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 import static org.testng.AssertJUnit.fail;
 
-import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.util.ReflectionUtil;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
+import org.infinispan.marshall.persistence.PersistenceMarshaller;
 import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
 import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfigurationBuilder;
 import org.infinispan.persistence.jdbc.connectionfactory.ConnectionFactory;
-import org.infinispan.persistence.jdbc.table.management.TableManager;
-import org.infinispan.persistence.jdbc.table.management.TableName;
+import org.infinispan.persistence.jdbc.impl.table.TableManager;
+import org.infinispan.persistence.jdbc.impl.table.TableName;
 import org.infinispan.persistence.keymappers.UnsupportedKeyTypeException;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.AbstractInfinispanTest;
+import org.infinispan.test.TestDataSCI;
+import org.infinispan.test.data.Person;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.test.fwk.TestInternalCacheEntryFactory;
-import org.infinispan.test.fwk.UnitTestDatabaseManager;
+import org.infinispan.persistence.jdbc.UnitTestDatabaseManager;
 import org.infinispan.util.PersistenceMockUtil;
 import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.testng.annotations.AfterClass;
@@ -40,9 +42,9 @@ public class JdbcStringBasedStoreAltMapperTest extends AbstractInfinispanTest {
 
    protected AdvancedLoadWriteStore cacheStore;
    protected TableManager tableManager;
-   protected static final Person MIRCEA = new Person("Mircea", "Markus", 28);
-   protected static final Person MANIK = new Person("Manik", "Surtani", 18);
-   protected StreamingMarshaller marshaller;
+   protected static final Person MIRCEA = new Person("Mircea");
+   protected static final Person MANIK = new Person("Manik");
+   protected PersistenceMarshaller marshaller;
 
    protected JdbcStringBasedStoreConfigurationBuilder createJdbcConfig(ConfigurationBuilder builder) {
       JdbcStringBasedStoreConfigurationBuilder storeBuilder = builder
@@ -60,14 +62,14 @@ public class JdbcStringBasedStoreAltMapperTest extends AbstractInfinispanTest {
       UnitTestDatabaseManager.buildTableManipulation(storeBuilder.table());
       UnitTestDatabaseManager.configureUniqueConnectionFactory(storeBuilder);
       cacheStore = new JdbcStringBasedStore();
-      marshaller = new TestObjectStreamMarshaller();
-      cacheStore.init(PersistenceMockUtil.createContext(getClass().getSimpleName(), builder.build(), marshaller));
+      marshaller = new TestObjectStreamMarshaller(TestDataSCI.INSTANCE);
+      cacheStore.init(PersistenceMockUtil.createContext(getClass(), builder.build(), marshaller));
       cacheStore.start();
       tableManager = (TableManager) ReflectionUtil.getValue(cacheStore, "tableManager");
    }
 
    @AfterMethod
-   public void clearStore() throws Exception {
+   public void clearStore() {
       cacheStore.clear();
       assertRowCount(0);
    }

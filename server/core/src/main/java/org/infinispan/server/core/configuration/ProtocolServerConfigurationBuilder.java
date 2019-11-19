@@ -1,27 +1,25 @@
 package org.infinispan.server.core.configuration;
 
-import java.util.Set;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.ADMIN_OPERATION_HANDLER;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.DEFAULT_CACHE_NAME;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.HOST;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.IDLE_TIMEOUT;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.IO_THREADS;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.NAME;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.PORT;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.RECV_BUF_SIZE;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.SEND_BUF_SIZE;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.SOCKET_BINDING;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.START_TRANSPORT;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.TCP_KEEPALIVE;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.TCP_NODELAY;
+import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.WORKER_THREADS;
 
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.server.core.admin.AdminOperationsHandler;
 import org.infinispan.server.core.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.ADMIN_OPERATION_HANDLER;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.DEFAULT_CACHE_NAME;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.IO_THREADS;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.HOST;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.IDLE_TIMEOUT;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.IGNORED_CACHES;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.NAME;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.PORT;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.RECV_BUF_SIZE;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.SEND_BUF_SIZE;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.START_TRANSPORT;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.TCP_KEEPALIVE;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.TCP_NODELAY;
-import static org.infinispan.server.core.configuration.ProtocolServerConfiguration.WORKER_THREADS;
 
 public abstract class ProtocolServerConfigurationBuilder<T extends ProtocolServerConfiguration, S extends ProtocolServerConfigurationChildBuilder<T, S>>
       implements ProtocolServerConfigurationChildBuilder<T, S>, Builder<T> {
@@ -38,12 +36,6 @@ public abstract class ProtocolServerConfigurationBuilder<T extends ProtocolServe
 
    protected ProtocolServerConfigurationBuilder(int port) {
       this(port, ProtocolServerConfiguration.attributeDefinitionSet());
-   }
-
-   @Override
-   public S ignoredCaches(Set<String> ignoredCaches) {
-      attributes.attribute(IGNORED_CACHES).set(ignoredCaches);
-      return this.self();
    }
 
    @Override
@@ -68,10 +60,18 @@ public abstract class ProtocolServerConfigurationBuilder<T extends ProtocolServe
       return this.self();
    }
 
+   public String host() {
+      return attributes.attribute(HOST).get();
+   }
+
    @Override
    public S port(int port) {
       attributes.attribute(PORT).set(port);
       return this.self();
+   }
+
+   public int port() {
+      return attributes.attribute(PORT).get();
    }
 
    @Override
@@ -130,6 +130,12 @@ public abstract class ProtocolServerConfigurationBuilder<T extends ProtocolServe
    @Override
    public S adminOperationsHandler(AdminOperationsHandler handler) {
       attributes.attribute(ADMIN_OPERATION_HANDLER).set(handler);
+      return this.self();
+   }
+
+   @Override
+   public S socketBinding(String name) {
+      attributes.attribute(SOCKET_BINDING).set(name);
       return this.self();
    }
 

@@ -6,11 +6,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheEntryListenerInvocation;
@@ -38,11 +41,13 @@ import org.infinispan.notifications.cachelistener.filter.IndexedFilter;
 import org.infinispan.objectfilter.FilterCallback;
 import org.infinispan.objectfilter.FilterSubscription;
 import org.infinispan.objectfilter.Matcher;
+import org.infinispan.util.concurrent.CompletionStages;
 
 /**
  * @author anistor@redhat.com
  * @since 8.1
  */
+@Scope(Scopes.NAMED_CACHE)
 public abstract class BaseIckleFilterIndexingServiceProvider implements FilterIndexingServiceProvider {
 
    private final ConcurrentMap<Matcher, FilteringListenerInvocation<?, ?>> filteringInvocations = new ConcurrentHashMap<>(4);
@@ -246,6 +251,9 @@ public abstract class BaseIckleFilterIndexingServiceProvider implements FilterIn
          }
 
          boolean conversionDone = false;
+         if (invocations == null) {
+            return;
+         }
          for (DelegatingCacheEntryListenerInvocation<K, V> invocation : invocations) {
             if (invocation.getObservation().shouldInvoke(event.isPre())) {
                if (!conversionDone) {
@@ -258,7 +266,13 @@ public abstract class BaseIckleFilterIndexingServiceProvider implements FilterIn
                   conversionDone = true;
                }
 
-               invocation.invokeNoChecks(new EventWrapper<>(event.getKey(), event), false, filterAndConvert, true);
+               // TODO: We need a way to propagate the CompletionStages down to the caller - so continuous query
+               //   can be non blocking. This is to be fixed in https://issues.jboss.org/browse/ISPN-9729
+               CompletionStage<Void> invocationStage = invocation.invokeNoChecks(new EventWrapper<>(event.getKey(), event),
+                     false, filterAndConvert, true);
+               if (invocationStage != null) {
+                  CompletionStages.join(invocationStage);
+               }
             }
          }
       }
@@ -298,16 +312,20 @@ public abstract class BaseIckleFilterIndexingServiceProvider implements FilterIn
       }
 
       @Override
-      public void invoke(Event<K, V> event) {
+      public CompletionStage<Void> invoke(Event<K, V> event) {
+         return null;
       }
 
       @Override
-      public void invoke(EventWrapper<K, V, CacheEntryEvent<K, V>> event, boolean isLocalNodePrimaryOwner) {
+      public CompletionStage<Void> invoke(EventWrapper<K, V, CacheEntryEvent<K, V>> event, boolean isLocalNodePrimaryOwner) {
+         // TODO: make this non blocking at some point?
          matchEvent(event, matcher);
+         return null;
       }
 
       @Override
-      public void invokeNoChecks(EventWrapper<K, V, CacheEntryEvent<K, V>> event, boolean skipQueue, boolean skipConverter, boolean needsConvert) {
+      public CompletionStage<Void> invokeNoChecks(EventWrapper<K, V, CacheEntryEvent<K, V>> event, boolean skipQueue, boolean skipConverter, boolean needsConvert) {
+         return null;
       }
 
       @Override

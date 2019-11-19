@@ -8,7 +8,10 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.context.impl.ClearInvocationContext;
 import org.infinispan.context.impl.NonTxInvocationContext;
+import org.infinispan.context.impl.SingleKeyNonTxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.remoting.transport.Address;
 
 /**
@@ -19,6 +22,7 @@ import org.infinispan.remoting.transport.Address;
  * @deprecated Since 9.0, this class is going to be moved to an internal package.
  */
 @Deprecated
+@Scope(Scopes.NAMED_CACHE)
 public abstract class AbstractInvocationContextFactory implements InvocationContextFactory {
 
    @Inject protected Configuration config;

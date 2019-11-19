@@ -36,7 +36,7 @@ public class AbstractEmbeddedCacheManagerFactory {
       if (configurationFileLocation != null) {
          ConfigurationBuilderHolder configurationBuilderHolder =
                new ParserRegistry(Thread.currentThread().getContextClassLoader())
-                     .parse(configurationFileLocation.getInputStream());
+                     .parse(configurationFileLocation.getURL());
 
          if(gcb != null) {
             configurationBuilderHolder.getGlobalConfigurationBuilder().read(gcb.build());
@@ -58,11 +58,10 @@ public class AbstractEmbeddedCacheManagerFactory {
          }
 
          if (builder == null) {
-            if (logger.isDebugEnabled()) logger.debug("ConfigurationBuilder is null. Using default new instance.");
-            builder = new ConfigurationBuilder();
+            return new DefaultCacheManager(gcb.build());
+         } else {
+            return new DefaultCacheManager(gcb.build(), builder.build());
          }
-
-         return new DefaultCacheManager(gcb.build(), builder.build());
       }
    }
 

@@ -4,15 +4,17 @@ import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.util.Collection;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
+import org.infinispan.commands.InitializableCommand;
 import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.remote.BaseRpcCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.marshall.MarshallUtil;
 import org.infinispan.commons.util.IntSet;
-import org.infinispan.distexec.DistributedCallable;
+import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.notifications.cachelistener.cluster.ClusterListenerReplicateCallable;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.scattered.BiasManager;
 import org.infinispan.scattered.ScatteredStateProvider;
@@ -27,7 +29,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author anistor@redhat.com
  * @since 5.2
  */
-public class StateRequestCommand extends BaseRpcCommand implements TopologyAffectedCommand {
+public class StateRequestCommand extends BaseRpcCommand implements InitializableCommand, TopologyAffectedCommand {
 
    private static final Log log = LogFactory.getLog(StateRequestCommand.class);
 
@@ -72,9 +74,10 @@ public class StateRequestCommand extends BaseRpcCommand implements TopologyAffec
       this.segments = segments;
    }
 
-   public void init(StateProvider stateProvider, BiasManager biasManager) {
-      this.stateProvider = stateProvider;
-      this.biasManager = biasManager;
+   @Override
+   public void init(ComponentRegistry componentRegistry, boolean isRemote) {
+      this.stateProvider = componentRegistry.getStateTransferManager().getStateProvider();
+      this.biasManager = componentRegistry.getBiasManager().running();
    }
 
    @Override
@@ -84,9 +87,9 @@ public class StateRequestCommand extends BaseRpcCommand implements TopologyAffec
       try {
          switch (type) {
             case GET_TRANSACTIONS:
-               List<TransactionInfo> transactions =
-                     stateProvider.getTransactionsForSegments(getOrigin(), topologyId, segments);
-               return CompletableFuture.completedFuture(transactions);
+               CompletionStage transactionsStage =
+                  stateProvider.getTransactionsForSegments(getOrigin(), topologyId, segments);
+               return transactionsStage.toCompletableFuture();
 
             case START_CONSISTENCY_CHECK:
                stateProvider.startOutboundTransfer(getOrigin(), topologyId, segments, false);
@@ -106,7 +109,7 @@ public class StateRequestCommand extends BaseRpcCommand implements TopologyAffec
                return CompletableFutures.completedNull();
 
             case GET_CACHE_LISTENERS:
-               Collection<DistributedCallable> listeners = stateProvider.getClusterListenersToInstall();
+               Collection<ClusterListenerReplicateCallable<Object, Object>> listeners = stateProvider.getClusterListenersToInstall();
                return CompletableFuture.completedFuture(listeners);
 
             case CONFIRM_REVOKED_SEGMENTS:

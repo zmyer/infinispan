@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-integrationtests-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -18,7 +18,6 @@
       <defaultTestGroup />
       <defaultExcludedTestGroup />
       <infinispan.test.parallel.threads>1</infinispan.test.parallel.threads>
-      <infinispan.test.jgroups.protocol>tcp</infinispan.test.jgroups.protocol>
       <forkJvmArgs>-Xmx500m -XX:HeapDumpPath=${user.dir}</forkJvmArgs>
       <target.tmp.dir>${project.build.directory}/tmp/</target.tmp.dir>
       <skipOSGiTests>${skipTests}</skipOSGiTests>
@@ -62,11 +61,7 @@
       </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-embedded</artifactId>
-      </dependency>
-      <dependency>
-         <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-remote</artifactId>
+         <artifactId>infinispan-client-hotrod</artifactId>
       </dependency>
       <dependency>
          <groupId>org.hibernate</groupId>
@@ -145,6 +140,18 @@
          <scope>test</scope>
       </dependency>
       <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-multimap</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-clustered-lock</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-clustered-counter</artifactId>
+      </dependency>
+      <dependency>
          <groupId>javax.inject</groupId>
          <artifactId>javax.inject</artifactId>
          <scope>test</scope>
@@ -200,6 +207,13 @@
          <artifactId>testng</artifactId>
          <scope>test</scope>
       </dependency>
+      <!-- Uncomment to debug. Included in org.apache.karaf.features.core, but without sources -->
+            <dependency>
+               <groupId>org.apache.felix</groupId>
+               <artifactId>org.apache.felix.resolver</artifactId>
+               <version>1.16.0</version>
+               <scope>test</scope>
+            </dependency>
       <!-- Uncomment to debug surefire and the test container -->
       <!--<dependency>-->
          <!--<groupId>org.apache.maven.surefire</groupId>-->
@@ -304,64 +318,10 @@
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
-            <configuration>
-               <threadCount>1</threadCount>
-               <parallel>classes</parallel>
-               <groups combine.self="override"></groups>
-               <excludedGroups combine.self="override"></excludedGroups>
-               <systemPropertyVariables>
-                  <java.io.tmpdir>${target.tmp.dir}</java.io.tmpdir>
-                  <verbose.karaf>${verbose.karaf}</verbose.karaf>
-               </systemPropertyVariables>
-               <runOrder>alphabetical</runOrder>
-               <skipTests>${skipOSGiTests}</skipTests>
-               <failIfNoTests>false</failIfNoTests>
-               <testNGArtifactName>none:none</testNGArtifactName>
-               <disableXmlReport>false</disableXmlReport>
-               <runOrder>alphabetical</runOrder>
-               <properties>
-                  <usedefaultlisteners>false</usedefaultlisteners>
-                  <listener>${junitListener}</listener>
-               </properties>
-               <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
-            </configuration>
-            <dependencies>
-               <dependency>
-                  <groupId>org.apache.maven.surefire</groupId>
-                  <artifactId>surefire-junit47</artifactId>
-                  <version>${version.maven.surefire}</version>
-               </dependency>
-            </dependencies>
             <executions>
-               <!--
-               Make sure two containers are not started at the same time by separating the
-               PerSuite reactor tests from PerClass/PerMethod(default).
-
-               Note: @Category(PerSuite.class) needs to be specified in addition to the
-               @PaxExamReactor(PerSuite.class) annotation.
-               -->
                <execution>
                   <id>default-test</id>
-                  <phase>test</phase>
-                  <goals>
-                     <goal>test</goal>
-                  </goals>
-                  <configuration>
-                     <!-- Include the tests that can reuse a single Karaf container -->
-                     <groups>org.ops4j.pax.exam.spi.reactors.PerSuite</groups>
-                  </configuration>
-               </execution>
-               <execution>
-                  <id>new-container</id>
-                  <phase>test</phase>
-                  <goals>
-                     <goal>test</goal>
-                  </goals>
-                  <configuration>
-                     <!-- Include the tests that need a separate container for each test/method -->
-                     <groups>org.ops4j.pax.exam.spi.reactors.PerClass,org.ops4j.pax.exam.spi.reactors.PerMethod</groups>
-                     <excludedGroups>org.ops4j.pax.exam.spi.reactors.PerSuite</excludedGroups>
-                  </configuration>
+                  <phase>none</phase>
                </execution>
             </executions>
          </plugin>
@@ -376,14 +336,79 @@
          </properties>
       </profile>
       <profile>
-         <id>jigsaw</id>
-         <activation>
-            <jdk>[9,)</jdk>
-         </activation>
-         <properties>
-            <!-- Until Karaf/Pax Exam work in JDK 10+ -->
-            <skipOSGiTests>true</skipOSGiTests>
-         </properties>
+         <id>java8-test</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <configuration>
+                     <threadCount>1</threadCount>
+                     <parallel>classes</parallel>
+                     <groups combine.self="override"></groups>
+                     <excludedGroups combine.self="override"></excludedGroups>
+                     <systemPropertyVariables>
+                        <java.io.tmpdir>${target.tmp.dir}</java.io.tmpdir>
+                        <verbose.karaf>${verbose.karaf}</verbose.karaf>
+                        <infinispan.test.checkThreadLeaks>false</infinispan.test.checkThreadLeaks>
+                     </systemPropertyVariables>
+                     <runOrder>alphabetical</runOrder>
+                     <skipTests>${skipOSGiTests}</skipTests>
+                     <failIfNoTests>false</failIfNoTests>
+                     <testNGArtifactName>none:none</testNGArtifactName>
+                     <disableXmlReport>false</disableXmlReport>
+                     <runOrder>alphabetical</runOrder>
+                     <properties>
+                        <usedefaultlisteners>false</usedefaultlisteners>
+                        <listener>${junitListener}</listener>
+                     </properties>
+                  </configuration>
+                  <dependencies>
+                     <dependency>
+                        <groupId>org.apache.maven.surefire</groupId>
+                        <artifactId>surefire-junit47</artifactId>
+                        <version>${version.maven.surefire}</version>
+                     </dependency>
+                  </dependencies>
+                  <executions>
+                     <!--
+                     Make sure two containers are not started at the same time by separating the
+                     PerSuite reactor tests from PerClass/PerMethod(default).
+
+                     Note: @Category(PerSuite.class) needs to be specified in addition to the
+                     @PaxExamReactor(PerSuite.class) annotation.
+                     -->
+                     <execution>
+                        <id>java8-test</id>
+                        <phase>test</phase>
+                        <goals>
+                           <goal>test</goal>
+                        </goals>
+                        <configuration>
+                           <!-- Include the tests that can reuse a single Karaf container -->
+                           <groups>org.ops4j.pax.exam.spi.reactors.PerSuite</groups>
+                           <jvm>${env.JAVA8_HOME}/bin/java</jvm>
+                           <argLine>${forkJvmArgs}</argLine>
+                        </configuration>
+                     </execution>
+                     <execution>
+                        <id>java8-test-new-container</id>
+                        <phase>test</phase>
+                        <goals>
+                           <goal>test</goal>
+                        </goals>
+                        <configuration>
+                           <!-- Include the tests that need a separate container for each test/method -->
+                           <groups>org.ops4j.pax.exam.spi.reactors.PerClass,org.ops4j.pax.exam.spi.reactors.PerMethod</groups>
+                           <excludedGroups>org.ops4j.pax.exam.spi.reactors.PerSuite</excludedGroups>
+                           <jvm>${env.JAVA8_HOME}/bin/java</jvm>
+                           <argLine>${forkJvmArgs}</argLine>
+                        </configuration>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
       </profile>
    </profiles>
 </project>

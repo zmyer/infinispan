@@ -1,6 +1,5 @@
 package org.infinispan.interceptors.impl;
 
-import static org.infinispan.persistence.PersistenceUtil.internalMetadata;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.PRIVATE;
 
@@ -19,6 +18,8 @@ import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
 import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.ComputeCommand;
+import org.infinispan.commands.write.ComputeIfAbsentCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -31,6 +32,7 @@ import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.MarshallableEntryFactory;
 import org.infinispan.persistence.support.BatchModification;
+import org.infinispan.util.concurrent.CompletionStages;
 
 /**
  * @author Ryan Emerson
@@ -137,8 +139,20 @@ public class TxBatchUpdater extends AbstractVisitor {
 
    @Override
    public Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
-      persistenceManager.clearAllStores(ctx.isOriginLocal() ? PRIVATE : BOTH);
+      // This is technically blocking - The calling code is not conducive to non-blocking currently and
+      // due to the low priority nature of the clear operation this method has been left as is.
+      CompletionStages.join(persistenceManager.clearAllStores(ctx.isOriginLocal() ? PRIVATE : BOTH));
       return null;
+   }
+
+   @Override
+   public Object visitComputeCommand(InvocationContext ctx, ComputeCommand command) throws Throwable {
+      return visitModify(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitComputeIfAbsentCommand(InvocationContext ctx, ComputeIfAbsentCommand command) throws Throwable {
+      return visitModify(ctx, command, command.getKey());
    }
 
    private Object visitSingleStore(InvocationContext ctx, FlagAffectedCommand command, Object key) throws Throwable {
@@ -146,7 +160,7 @@ public class TxBatchUpdater extends AbstractVisitor {
          if (generateStatistics) putCount++;
          InternalCacheValue sv = entryFactory.getValueFromCtx(key, ctx);
          if (sv != null && sv.getValue() != null) {
-            MarshallableEntry me = marshalledEntryFactory.create(key, sv.getValue(), internalMetadata(sv));
+            MarshallableEntry me = marshalledEntryFactory.create(key, sv.getValue(), sv.getMetadata(), sv.getCreated(), sv.getLastUsed());
             getModifications(ctx, key, command).addMarshalledEntry(key, me);
          }
       }
@@ -164,7 +178,7 @@ public class TxBatchUpdater extends AbstractVisitor {
             if (generateStatistics) putCount++;
             InternalCacheValue sv = entryFactory.getValueFromCtx(key, ctx);
             if (sv != null) {
-               MarshallableEntry me = marshalledEntryFactory.create(key, sv.getValue(), internalMetadata(sv));
+               MarshallableEntry me = marshalledEntryFactory.create(key, sv.getValue(), sv.getMetadata(), sv.getCreated(), sv.getLastUsed());
                getModifications(ctx, key, command).addMarshalledEntry(key, me);
             }
          }

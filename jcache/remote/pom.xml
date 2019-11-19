@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-jcache-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -13,6 +13,11 @@
    <description>JCACHE (JSR-107) implementation using Infinispan client-server mode</description>
 
    <dependencies>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-commons</artifactId>
+      </dependency>
+
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-jcache-commons</artifactId>
@@ -76,6 +81,12 @@
       </dependency>
 
       <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>protostream-processor</artifactId>
+         <scope>test</scope>
+      </dependency>
+
+      <dependency>
          <groupId>javax.cache</groupId>
          <artifactId>cache-api</artifactId>
          <scope>provided</scope>
@@ -84,7 +95,6 @@
       <dependency>
          <groupId>org.kohsuke.metainf-services</groupId>
          <artifactId>metainf-services</artifactId>
-         <optional>true</optional>
       </dependency>
 
       <dependency>
@@ -104,6 +114,10 @@
                <systemPropertyVariables>
                   <infinispan.jcache.mgmt.lookup.skip>true</infinispan.jcache.mgmt.lookup.skip>
                </systemPropertyVariables>
+               <dependenciesToScan>
+                  <!-- TestNGSuiteChecksTest -->
+                  <dependency>org.infinispan:infinispan-commons-test</dependency>
+               </dependenciesToScan>
             </configuration>
          </plugin>
       </plugins>

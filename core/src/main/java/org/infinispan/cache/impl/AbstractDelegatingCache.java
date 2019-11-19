@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -14,11 +15,10 @@ import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.CacheCollection;
 import org.infinispan.CacheSet;
-import org.infinispan.commons.api.BasicCacheContainer;
 import org.infinispan.configuration.format.PropertyFormatter;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.DisplayType;
+import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.lifecycle.ComponentStatus;
@@ -35,6 +35,7 @@ import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
  * @author Mircea.Markus@jboss.com
  * @see org.infinispan.cache.impl.AbstractDelegatingAdvancedCache
  */
+@MBean(objectName = CacheImpl.OBJECT_NAME, description = "Component that represents an individual cache instance.")
 public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
 
    private final Cache<K, V> cache;
@@ -87,20 +88,17 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache name",
          displayName = "Cache name",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public String getCacheName() {
-      String name = getName().equals(BasicCacheContainer.DEFAULT_CACHE_NAME) ? "Default Cache" : getName();
-      return name + "(" + getCacheConfiguration().clustering().cacheMode().toString().toLowerCase() + ")";
+      return getName() + "(" + getCacheConfiguration().clustering().cacheMode().toString().toLowerCase() + ")";
    }
 
    @Override
    @ManagedAttribute(
          description = "Returns the version of Infinispan",
          displayName = "Infinispan version",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public String getVersion() {
       return cache.getVersion();
@@ -341,8 +339,7 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache status",
          displayName = "Cache status",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public String getCacheStatus() {
       return getStatus().toString();
@@ -371,6 +368,11 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
    @Override
    public int size() {
       return cache.size();
+   }
+
+   @Override
+   public CompletableFuture<Long> sizeAsync() {
+      return cache.sizeAsync();
    }
 
    @Override
@@ -425,12 +427,12 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
 
    @Override
    public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit) {
-      return computeIfAbsent(key, mappingFunction, lifespan, lifespanUnit);
+      return cache.computeIfAbsent(key, mappingFunction, lifespan, lifespanUnit);
    }
 
    @Override
    public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
-      return computeIfAbsent(key, mappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
+      return cache.computeIfAbsent(key, mappingFunction, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
    }
 
    @Override
@@ -535,6 +537,11 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
    }
 
    @Override
+   public CompletionStage<Void> addListenerAsync(Object listener) {
+      return cache.addListenerAsync(listener);
+   }
+
+   @Override
    public void addListener(Object listener, KeyFilter<? super K> filter) {
       cache.addListener(listener, filter);
    }
@@ -546,10 +553,21 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
    }
 
    @Override
+   public <C> CompletionStage<Void> addListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter) {
+      return cache.addListenerAsync(listener, filter, converter);
+   }
+
+   @Override
    public void removeListener(Object listener) {
       cache.removeListener(listener);
    }
 
+   @Override
+   public CompletionStage<Void> removeListenerAsync(Object listener) {
+      return cache.removeListenerAsync(listener);
+   }
+
+   @Deprecated
    @Override
    public Set<Object> getListeners() {
       return cache.getListeners();
@@ -563,8 +581,20 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
    }
 
    @Override
+   public <C> CompletionStage<Void> addFilteredListenerAsync(Object listener,
+         CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter,
+         Set<Class<? extends Annotation>> filterAnnotations) {
+      return cache.addFilteredListenerAsync(listener, filter, converter, filterAnnotations);
+   }
+
+   @Override
    public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
       cache.addStorageFormatFilteredListener(listener, filter, converter, filterAnnotations);
+   }
+
+   @Override
+   public <C> CompletionStage<Void> addStorageFormatFilteredListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+      return cache.addStorageFormatFilteredListenerAsync(listener, filter, converter, filterAnnotations);
    }
 
    @Override
@@ -580,8 +610,7 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
    @ManagedAttribute(
          description = "Returns the cache configuration in form of properties",
          displayName = "Cache configuration properties",
-         dataType = DataType.TRAIT,
-         displayType = DisplayType.SUMMARY
+         dataType = DataType.TRAIT
    )
    public Properties getConfigurationAsProperties() {
       return new PropertyFormatter().format(getCacheConfiguration());

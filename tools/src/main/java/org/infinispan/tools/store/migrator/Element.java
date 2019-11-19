@@ -13,6 +13,7 @@ public enum Element {
    COMPRESSION("compression"),
    CONNECTION_URL("connection_url"),
    CONNECTION_POOL("connection_pool"),
+   CONTEXT_INITIALIZERS("context-initializers"),
    DATA("data"),
    DB("db"),
    DIALECT("dialect"),
@@ -39,7 +40,8 @@ public enum Element {
    TABLE_NAME_PREFIX("table_name_prefix"),
    TIMESTAMP("timestamp"),
    TYPE("type"),
-   USERNAME("username");
+   USERNAME("username"),
+   VERSION("version");
 
    private final String name;
 

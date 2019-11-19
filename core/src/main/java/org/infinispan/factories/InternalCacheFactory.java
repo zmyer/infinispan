@@ -1,8 +1,8 @@
 package org.infinispan.factories;
 
 import static java.util.Objects.requireNonNull;
+import static org.infinispan.util.logging.Log.CONTAINER;
 
-import java.lang.invoke.MethodHandles;
 import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -19,8 +19,8 @@ import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.dataconversion.ByteArrayWrapper;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.dataconversion.TranscoderMarshallerAdapter;
-import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.marshall.StreamingMarshaller;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ContentTypeConfiguration;
@@ -30,13 +30,14 @@ import org.infinispan.context.Flag;
 import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.context.impl.ImmutableContext;
 import org.infinispan.encoding.DataConversion;
-import org.infinispan.eviction.ActivationManager;
 import org.infinispan.eviction.PassivationManager;
-import org.infinispan.eviction.impl.ActivationManagerStub;
 import org.infinispan.eviction.impl.PassivationManagerStub;
 import org.infinispan.expiration.impl.InternalExpirationManager;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.annotations.SurvivesRestarts;
 import org.infinispan.factories.impl.BasicComponentRegistry;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.impl.CacheMgmtInterceptor;
 import org.infinispan.jmx.CacheJmxRegistration;
 import org.infinispan.lifecycle.ComponentStatus;
@@ -46,14 +47,10 @@ import org.infinispan.notifications.cachelistener.cluster.ClusterEventManager;
 import org.infinispan.notifications.cachelistener.cluster.impl.ClusterEventManagerStub;
 import org.infinispan.partitionhandling.PartitionHandling;
 import org.infinispan.partitionhandling.impl.PartitionHandlingManager;
-import org.infinispan.persistence.manager.PersistenceManager;
-import org.infinispan.persistence.manager.PersistenceManagerStub;
 import org.infinispan.transaction.xa.recovery.RecoveryAdminOperations;
 import org.infinispan.upgrade.RollingUpgradeManager;
-import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.concurrent.CompletableFutures;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.xsite.XSiteAdminOperations;
 
 /**
@@ -68,7 +65,6 @@ import org.infinispan.xsite.XSiteAdminOperations;
  * @since 4.0
  */
 public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFactory {
-   private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
    /**
     * This implementation clones the configuration passed in before using it.
@@ -82,9 +78,6 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
    public Cache<K, V> createCache(Configuration configuration, GlobalComponentRegistry globalComponentRegistry,
                                   String cacheName) throws CacheConfigurationException {
       try {
-         if (configuration.compatibility().enabled()) {
-            log.warnCompatibilityDeprecated(cacheName);
-         }
          if (configuration.simpleCache()) {
             return createSimpleCache(configuration, globalComponentRegistry, cacheName);
          } else {
@@ -99,7 +92,7 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
 
    private AdvancedCache<K, V> createAndWire(Configuration configuration, GlobalComponentRegistry globalComponentRegistry,
                                              String cacheName) throws Exception {
-      StreamingMarshaller marshaller = globalComponentRegistry.getOrCreateComponent(StreamingMarshaller.class);
+      StreamingMarshaller marshaller = globalComponentRegistry.getOrCreateComponent(StreamingMarshaller.class, KnownComponentNames.INTERNAL_MARSHALLER);
 
       final BiFunction<DataConversion, DataConversion, AdvancedCache<K, V>> actualBuilder = (kc, kv) -> new CacheImpl<>(cacheName);
       BiFunction<DataConversion, DataConversion, AdvancedCache<K, V>> usedBuilder;
@@ -155,21 +148,7 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
       }
       this.configuration = configuration;
 
-      componentRegistry = new ComponentRegistry(cacheName, configuration, cache, globalComponentRegistry,
-                                                globalComponentRegistry.getClassLoader()) {
-         @Override
-         protected void bootstrapComponents() {
-            registerComponent(new ClusterEventManagerStub<K, V>(), ClusterEventManager.class);
-            registerComponent(new PassivationManagerStub(), PassivationManager.class);
-            registerComponent(new ActivationManagerStub(), ActivationManager.class);
-            registerComponent(new PersistenceManagerStub(), PersistenceManager.class);
-         }
-
-         @Override
-         public void cacheComponents() {
-            getOrCreateComponent(InternalExpirationManager.class);
-         }
-      };
+      componentRegistry = new SimpleComponentRegistry<>(cacheName, configuration, cache, globalComponentRegistry);
 
       basicComponentRegistry = componentRegistry.getComponent(BasicComponentRegistry.class);
       basicComponentRegistry.registerAlias(Cache.class.getName(), AdvancedCache.class.getName(), AdvancedCache.class);
@@ -193,15 +172,6 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
       componentRegistry = new ComponentRegistry(cacheName, configuration, cache, globalComponentRegistry, globalComponentRegistry.getClassLoader());
 
       EncoderRegistry encoderRegistry = globalComponentRegistry.getComponent(EncoderRegistry.class);
-
-      // Wraps the compatibility marshaller so that it can be used as a transcoder
-      if (configuration.compatibility().enabled() && configuration.compatibility().marshaller() != null) {
-         Marshaller marshaller = configuration.compatibility().marshaller();
-         componentRegistry.wireDependencies(marshaller);
-         if (!encoderRegistry.isConversionSupported(MediaType.APPLICATION_OBJECT, marshaller.mediaType())) {
-            encoderRegistry.registerTranscoder(new TranscoderMarshallerAdapter(marshaller));
-         }
-      }
 
       // Wraps the GlobalMarshaller so that it can be used as a transcoder
       encoderRegistry.registerTranscoder(new TranscoderMarshallerAdapter(globalMarshaller));
@@ -240,11 +210,12 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
    private static void checkCanRun(Cache<?, ?> cache, String cacheName) {
       ComponentStatus status = cache.getStatus();
       if (status == ComponentStatus.FAILED || status == ComponentStatus.TERMINATED) {
-         throw log.cacheIsTerminated(cacheName, status.toString());
+         throw CONTAINER.cacheIsTerminated(cacheName, status.toString());
       }
    }
 
-   private static abstract class AbstractGetAdvancedCache<K, V, T extends AbstractGetAdvancedCache<K, V, T>> extends AbstractDelegatingAdvancedCache<K, V> {
+   @Scope(Scopes.NAMED_CACHE)
+   static abstract class AbstractGetAdvancedCache<K, V, T extends AbstractGetAdvancedCache<K, V, T>> extends AbstractDelegatingAdvancedCache<K, V> {
 
       @Inject
       protected ComponentRegistry componentRegistry;
@@ -306,9 +277,8 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
       }
    }
 
-   private static class PartitionHandlingCache<K, V> extends AbstractGetAdvancedCache<K, V, PartitionHandlingCache<K, V>> {
-      @Inject
-      private PartitionHandlingManager manager;
+   static class PartitionHandlingCache<K, V> extends AbstractGetAdvancedCache<K, V, PartitionHandlingCache<K, V>> {
+      @Inject PartitionHandlingManager manager;
 
       // We store the flags as bits passed from AdvancedCache.withFlags etc.
       private final long bitFlags;
@@ -385,10 +355,9 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
       }
    }
 
-   private static class StatsCache<K, V> extends AbstractGetAdvancedCache<K, V, StatsCache<K, V>> {
+   static class StatsCache<K, V> extends AbstractGetAdvancedCache<K, V, StatsCache<K, V>> {
 
-      @Inject
-      private TimeService timeService;
+      @Inject TimeService timeService;
       private CacheMgmtInterceptor interceptor;
 
       public StatsCache(AbstractGetAdvancedCache<K, V, ?> cache) {
@@ -440,10 +409,9 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
       }
    }
 
-   private static class GetReplCache<K, V> extends AbstractGetAdvancedCache<K, V, GetReplCache<K, V>> {
+   static class GetReplCache<K, V> extends AbstractGetAdvancedCache<K, V, GetReplCache<K, V>> {
 
-      @Inject
-      private CacheNotifier<K, V> cacheNotifier;
+      @Inject CacheNotifier<K, V> cacheNotifier;
 
       // The hasListeners is commented out until EncoderCache can properly pass down the addListener invocation
       // to the next delegate in the chain. Otherwise we miss listener additions and don't fire events properly.
@@ -525,10 +493,29 @@ public class InternalCacheFactory<K, V> extends AbstractNamedCacheComponentFacto
       public V get(Object key) {
          V value = super.get(key);
          if (value != null/* && hasListeners.get()*/) {
-            cacheNotifier.notifyCacheEntryVisited((K) key, value, true, ImmutableContext.INSTANCE, null);
-            cacheNotifier.notifyCacheEntryVisited((K) key, value, false, ImmutableContext.INSTANCE, null);
+            CompletionStages.join(cacheNotifier.notifyCacheEntryVisited((K) key, value, true, ImmutableContext.INSTANCE, null));
+            CompletionStages.join(cacheNotifier.notifyCacheEntryVisited((K) key, value, false, ImmutableContext.INSTANCE, null));
          }
          return value;
+      }
+   }
+
+   @SurvivesRestarts
+   class SimpleComponentRegistry<K, V> extends ComponentRegistry {
+      public SimpleComponentRegistry(String cacheName, Configuration configuration, AdvancedCache<K, V> cache,
+                                     GlobalComponentRegistry globalComponentRegistry) {
+         super(cacheName, configuration, cache, globalComponentRegistry, globalComponentRegistry.getClassLoader());
+      }
+
+      @Override
+      protected void bootstrapComponents() {
+         registerComponent(new ClusterEventManagerStub<K, V>(), ClusterEventManager.class);
+         registerComponent(new PassivationManagerStub(), PassivationManager.class);
+      }
+
+      @Override
+      public void cacheComponents() {
+         getOrCreateComponent(InternalExpirationManager.class);
       }
    }
 }

@@ -7,9 +7,7 @@ import java.util.Set;
 
 import org.infinispan.commands.CancelCommand;
 import org.infinispan.commands.CreateCacheCommand;
-import org.infinispan.commands.RemoveCacheCommand;
 import org.infinispan.commands.control.LockControlCommand;
-import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.remote.ClusteredGetAllCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
@@ -42,7 +40,11 @@ import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.util.Util;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.marshall.core.Ids;
-import org.infinispan.reactive.publisher.impl.PublisherRequestCommand;
+import org.infinispan.notifications.cachelistener.cluster.MultiClusterEventCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.CancelPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.InitialPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.NextPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.reduction.ReductionPublisherRequestCommand;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
 import org.infinispan.stream.impl.StreamIteratorCloseCommand;
@@ -76,11 +78,10 @@ public final class CacheRpcCommandExternalizer extends AbstractExternalizer<Cach
    @Override
    public Set<Class<? extends CacheRpcCommand>> getTypeClasses() {
       //noinspection unchecked
-      Set<Class<? extends CacheRpcCommand>> coreCommands = Util.asSet(DistributedExecuteCommand.class,
-               LockControlCommand.class,
+      Set<Class<? extends CacheRpcCommand>> coreCommands = Util.asSet(LockControlCommand.class,
                StateRequestCommand.class, StateResponseCommand.class, ClusteredGetCommand.class,
                SingleRpcCommand.class, CommitCommand.class,
-               PrepareCommand.class, RollbackCommand.class, RemoveCacheCommand.class,
+               PrepareCommand.class, RollbackCommand.class,
                TxCompletionNotificationCommand.class, GetInDoubtTransactionsCommand.class,
                GetInDoubtTxInfoCommand.class, CompleteTransactionCommand.class,
                VersionedPrepareCommand.class, CreateCacheCommand.class, CancelCommand.class,
@@ -98,7 +99,9 @@ public final class CacheRpcCommandExternalizer extends AbstractExternalizer<Cach
                InvalidateVersionsCommand.class, StreamIteratorRequestCommand.class,
                StreamIteratorNextCommand.class, StreamIteratorCloseCommand.class,
                RevokeBiasCommand.class, RenewBiasCommand.class, RetrieveLastAccessCommand.class,
-               UpdateLastAccessCommand.class, PublisherRequestCommand.class);
+               UpdateLastAccessCommand.class, ReductionPublisherRequestCommand.class,
+               MultiClusterEventCommand.class, InitialPublisherCommand.class, NextPublisherCommand.class,
+            CancelPublisherCommand.class);
       // Only interested in cache specific replicable commands
       coreCommands.addAll(gcr.getModuleProperties().moduleCacheRpcCommands());
       return coreCommands;

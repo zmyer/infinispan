@@ -29,10 +29,12 @@ import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IntSets;
-import org.infinispan.commons.util.concurrent.ConcurrentHashSet;
+import org.infinispan.context.InvocationContext;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.SuccessfulResponse;
@@ -56,9 +58,10 @@ import io.reactivex.internal.subscriptions.EmptySubscription;
  *
  * @param <K> the cache key type
  */
+@Scope(Scopes.NAMED_CACHE)
 public class ClusterStreamManagerImpl<Original, K> implements ClusterStreamManager<Original, K> {
    protected final Map<String, RequestTracker> currentlyRunning = new ConcurrentHashMap<>();
-   protected final Set<Subscriber> iteratorsRunning = new ConcurrentHashSet<>();
+   protected final Set<Subscriber> iteratorsRunning = ConcurrentHashMap.newKeySet();
    protected final AtomicInteger requestId = new AtomicInteger();
    @Inject protected RpcManager rpc;
    @Inject protected CommandsFactory factory;
@@ -722,5 +725,10 @@ public class ClusterStreamManagerImpl<Original, K> implements ClusterStreamManag
          }
          callback.onSegmentsLost(segments);
       }
+   }
+
+   @Override
+   public InvocationContext getContext() {
+      return null;
    }
 }

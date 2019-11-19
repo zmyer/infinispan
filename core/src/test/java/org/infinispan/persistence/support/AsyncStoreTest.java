@@ -27,7 +27,6 @@ import org.infinispan.configuration.cache.AsyncStoreConfiguration;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
-import org.infinispan.configuration.cache.SingletonStoreConfiguration;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.marshall.TestObjectStreamMarshaller;
 import org.infinispan.marshall.persistence.impl.MarshalledEntryUtil;
@@ -102,7 +101,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
             .enable()
             .threadPoolSize(10);
       dummyCfg.slow(slow);
-      InitializationContext ctx = PersistenceMockUtil.createContext(getClass().getSimpleName(), builder.build(), marshaller);
+      InitializationContext ctx = PersistenceMockUtil.createContext(getClass(), builder.build(), marshaller);
       DummyInMemoryStore underlying = new DummyInMemoryStore();
       underlying.init(ctx);
       underlying.start();
@@ -252,7 +251,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
                .persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class)
                   .storeName(m.getName());
          Configuration configuration = builder.build();
-         InitializationContext ctx = PersistenceMockUtil.createContext(getClass().getSimpleName(), configuration, marshaller);
+         InitializationContext ctx = PersistenceMockUtil.createContext(getClass(), configuration, marshaller);
          writer.init(ctx);
          writer.start();
          underlying.init(ctx);
@@ -446,8 +445,8 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
    @ConfigurationFor(LockableStore.class)
    public static class LockableStoreConfiguration extends DummyInMemoryStoreConfiguration {
 
-      public LockableStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore) {
-         super(attributes, async, singletonStore);
+      public LockableStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async) {
+         super(attributes, async);
       }
    }
 
@@ -459,7 +458,7 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
 
       @Override
       public LockableStoreConfiguration create() {
-         return new LockableStoreConfiguration(attributes.protect(), async.create(), singletonStore.create());
+         return new LockableStoreConfiguration(attributes.protect(), async.create());
       }
    }
 
@@ -473,22 +472,22 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
       }
 
       @Override
-      public void write(MarshallableEntry entry) {
+      public void write(int segment, MarshallableEntry entry) {
          lock.lock();
          try {
             threads.add(Thread.currentThread());
-            super.write(entry);
+            super.write(segment, entry);
          } finally {
             lock.unlock();
          }
       }
 
       @Override
-      public boolean delete(Object key) {
+      public boolean delete(int segment, Object key) {
          lock.lock();
          try {
             threads.add(Thread.currentThread());
-            return super.delete(key);
+            return super.delete(segment, key);
          } finally {
             lock.unlock();
          }
@@ -505,12 +504,10 @@ public class AsyncStoreTest extends AbstractInfinispanTest {
       lcscsBuilder.async()
             .modificationQueueSize(10)
             .threadPoolSize(3);
-      lcscsBuilder.async()
-            .shutdownTimeout(50);
 
       writer = new AdvancedAsyncCacheWriter(underlying);
       InitializationContext ctx =
-            PersistenceMockUtil.createContext(getClass().getSimpleName(), builder.build(), marshaller);
+            PersistenceMockUtil.createContext(getClass(), builder.build(), marshaller);
       writer.init(ctx);
       writer.start();
       underlying.init(ctx);

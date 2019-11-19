@@ -19,9 +19,10 @@ import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.impl.CallInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
@@ -81,7 +82,7 @@ public class TxReplayTest extends MultipleCacheManagersTest {
       builder.clustering()
             .hash().numOwners(2)
             .stateTransfer().fetchInMemoryState(true);
-      createClusteredCaches(3, builder);
+      createClusteredCaches(3, TestDataSCI.INSTANCE, builder);
    }
 
    private void checkKeyInDataContainer(Object key) {
@@ -98,7 +99,7 @@ public class TxReplayTest extends MultipleCacheManagersTest {
       assertFalse("Expected a remote transaction.", table.getRemoteTransactions().isEmpty());
    }
 
-   private static class TxCommandInterceptor extends CommandInterceptor {
+   static class TxCommandInterceptor extends DDAsyncInterceptor {
       //counters
       private final AtomicInteger numberPrepares = new AtomicInteger(0);
       private final AtomicInteger numberCommits = new AtomicInteger(0);
@@ -109,7 +110,7 @@ public class TxReplayTest extends MultipleCacheManagersTest {
          if (!ctx.isOriginLocal()) {
             numberPrepares.incrementAndGet();
          }
-         return invokeNextInterceptor(ctx, command);
+         return invokeNext(ctx, command);
       }
 
       @Override
@@ -117,7 +118,7 @@ public class TxReplayTest extends MultipleCacheManagersTest {
          if (!ctx.isOriginLocal()) {
             numberCommits.incrementAndGet();
          }
-         return invokeNextInterceptor(ctx, command);
+         return invokeNext(ctx, command);
       }
 
       @Override
@@ -125,7 +126,7 @@ public class TxReplayTest extends MultipleCacheManagersTest {
          if (!ctx.isOriginLocal()) {
             numberRollbacks.incrementAndGet();
          }
-         return invokeNextInterceptor(ctx, command);
+         return invokeNext(ctx, command);
       }
 
       public static TxCommandInterceptor inject(Cache cache) {

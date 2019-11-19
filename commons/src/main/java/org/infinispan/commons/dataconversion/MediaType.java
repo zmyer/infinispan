@@ -3,6 +3,7 @@ package org.infinispan.commons.dataconversion;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.stream;
 import static java.util.Collections.emptyMap;
+import static org.infinispan.commons.logging.Log.CONTAINER;
 
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -12,15 +13,16 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.infinispan.commons.logging.Log;
-import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.marshall.Externalizer;
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
 import org.infinispan.commons.marshall.SerializeWith;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
 
 
 /**
@@ -28,11 +30,13 @@ import org.infinispan.commons.marshall.SerializeWith;
  *
  * @since 9.2
  */
+@ProtoTypeId(ProtoStreamTypeIds.MEDIA_TYPE)
 @SerializeWith(value = MediaType.MediaTypeExternalizer.class)
 public final class MediaType {
 
-   private static final Log log = LogFactory.getLog(MediaType.class);
-
+   // OpenMetrics aka Prometheus content type
+   public static final String APPLICATION_OPENMETRICS_TYPE = "application/openmetrics-text";
+   public static final String APPLICATION_JAVASCRIPT_TYPE = "application/javascript";
    public static final String APPLICATION_JSON_TYPE = "application/json";
    public static final String APPLICATION_OCTET_STREAM_TYPE = "application/octet-stream";
    public static final String APPLICATION_OBJECT_TYPE = "application/x-java-object";
@@ -58,31 +62,34 @@ public final class MediaType {
    public static final String APPLICATION_KRYO_TYPE = "application/x-kryo";
    public static final String MATCH_ALL_TYPE = "*/*";
 
-   public static MediaType APPLICATION_JSON = fromString(APPLICATION_JSON_TYPE);
-   public static MediaType APPLICATION_OCTET_STREAM = fromString(APPLICATION_OCTET_STREAM_TYPE);
-   public static MediaType APPLICATION_OBJECT = fromString(APPLICATION_OBJECT_TYPE);
-   public static MediaType APPLICATION_SERIALIZED_OBJECT = fromString(APPLICATION_SERIALIZED_OBJECT_TYPE);
-   public static MediaType APPLICATION_XML = fromString(APPLICATION_XML_TYPE);
-   public static MediaType APPLICATION_PROTOSTREAM = fromString(APPLICATION_PROTOSTREAM_TYPE);
-   public static MediaType APPLICATION_JBOSS_MARSHALLING = fromString(APPLICATION_JBOSS_MARSHALLING_TYPE);
-   public static MediaType APPLICATION_INFINISPAN_MARSHALLED = fromString(APPLICATION_INFINISPAN_MARSHALLING_TYPE);
-   public static MediaType APPLICATION_WWW_FORM_URLENCODED = fromString(WWW_FORM_URLENCODED_TYPE);
-   public static MediaType IMAGE_PNG = fromString(IMAGE_PNG_TYPE);
-   public static MediaType TEXT_PLAIN = fromString(TEXT_PLAIN_TYPE);
-   public static MediaType TEXT_CSS = fromString(TEXT_CSS_TYPE);
-   public static MediaType TEXT_CSV = fromString(TEXT_CSV_TYPE);
-   public static MediaType TEXT_HTML = fromString(TEXT_HTML_TYPE);
-   public static MediaType IMAGE_GIF = fromString(IMAGE_GIF_TYPE);
-   public static MediaType IMAGE_JPEG = fromString(IMAGE_JPEG_TYPE);
-   public static MediaType APPLICATION_PROTOSTUFF = fromString(APPLICATION_PROTOSTUFF_TYPE);
-   public static MediaType APPLICATION_KRYO = fromString(APPLICATION_KRYO_TYPE);
-   public static MediaType APPLICATION_INFINISPAN_BINARY = fromString(APPLICATION_INFINISPAN_BINARY_TYPE);
-   public static MediaType APPLICATION_PDF = fromString(APPLICATION_PDF_TYPE);
-   public static MediaType APPLICATION_RTF = fromString(APPLICATION_RTF_TYPE);
-   public static MediaType APPLICATION_ZIP = fromString(APPLICATION_ZIP_TYPE);
-   public static MediaType APPLICATION_INFINISPAN_MARSHALLING = fromString(APPLICATION_INFINISPAN_MARSHALLING_TYPE);
-   public static MediaType APPLICATION_UNKNOWN = fromString(APPLICATION_UNKNOWN_TYPE);
-   public static MediaType MATCH_ALL = fromString(MATCH_ALL_TYPE);
+   // OpenMetrics aka Prometheus content type
+   public static final MediaType APPLICATION_OPENMETRICS = fromString(APPLICATION_OPENMETRICS_TYPE);
+   public static final MediaType APPLICATION_JAVASCRIPT = fromString(APPLICATION_JAVASCRIPT_TYPE);
+   public static final MediaType APPLICATION_JSON = fromString(APPLICATION_JSON_TYPE);
+   public static final MediaType APPLICATION_OCTET_STREAM = fromString(APPLICATION_OCTET_STREAM_TYPE);
+   public static final MediaType APPLICATION_OBJECT = fromString(APPLICATION_OBJECT_TYPE);
+   public static final MediaType APPLICATION_SERIALIZED_OBJECT = fromString(APPLICATION_SERIALIZED_OBJECT_TYPE);
+   public static final MediaType APPLICATION_XML = fromString(APPLICATION_XML_TYPE);
+   public static final MediaType APPLICATION_PROTOSTREAM = fromString(APPLICATION_PROTOSTREAM_TYPE);
+   public static final MediaType APPLICATION_JBOSS_MARSHALLING = fromString(APPLICATION_JBOSS_MARSHALLING_TYPE);
+   public static final MediaType APPLICATION_INFINISPAN_MARSHALLED = fromString(APPLICATION_INFINISPAN_MARSHALLING_TYPE);
+   public static final MediaType APPLICATION_WWW_FORM_URLENCODED = fromString(WWW_FORM_URLENCODED_TYPE);
+   public static final MediaType IMAGE_PNG = fromString(IMAGE_PNG_TYPE);
+   public static final MediaType TEXT_PLAIN = fromString(TEXT_PLAIN_TYPE);
+   public static final MediaType TEXT_CSS = fromString(TEXT_CSS_TYPE);
+   public static final MediaType TEXT_CSV = fromString(TEXT_CSV_TYPE);
+   public static final MediaType TEXT_HTML = fromString(TEXT_HTML_TYPE);
+   public static final MediaType IMAGE_GIF = fromString(IMAGE_GIF_TYPE);
+   public static final MediaType IMAGE_JPEG = fromString(IMAGE_JPEG_TYPE);
+   public static final MediaType APPLICATION_PROTOSTUFF = fromString(APPLICATION_PROTOSTUFF_TYPE);
+   public static final MediaType APPLICATION_KRYO = fromString(APPLICATION_KRYO_TYPE);
+   public static final MediaType APPLICATION_INFINISPAN_BINARY = fromString(APPLICATION_INFINISPAN_BINARY_TYPE);
+   public static final MediaType APPLICATION_PDF = fromString(APPLICATION_PDF_TYPE);
+   public static final MediaType APPLICATION_RTF = fromString(APPLICATION_RTF_TYPE);
+   public static final MediaType APPLICATION_ZIP = fromString(APPLICATION_ZIP_TYPE);
+   public static final MediaType APPLICATION_INFINISPAN_MARSHALLING = fromString(APPLICATION_INFINISPAN_MARSHALLING_TYPE);
+   public static final MediaType APPLICATION_UNKNOWN = fromString(APPLICATION_UNKNOWN_TYPE);
+   public static final MediaType MATCH_ALL = fromString(MATCH_ALL_TYPE);
 
    private static final String INVALID_TOKENS = "()<>@,;:/[]?=\\\"";
    private static final String WEIGHT_PARAM_NAME = "q";
@@ -114,16 +121,26 @@ public final class MediaType {
       }
    }
 
-   public static MediaType fromString(String mediaType) {
-      return parse(mediaType);
+   @ProtoField(number = 1)
+   String getTree() {
+      return toString();
    }
 
+   /**
+    * @deprecated replaced by {@link #fromString}
+    */
+   @Deprecated
    public static MediaType parse(String str) {
-      if (str == null || str.isEmpty()) throw log.missingMediaType();
-      int separatorIdx = str.indexOf(';');
+      return fromString(str);
+   }
+
+   @ProtoFactory
+   public static MediaType fromString(String tree) {
+      if (tree == null || tree.isEmpty()) throw CONTAINER.missingMediaType();
+      int separatorIdx = tree.indexOf(';');
       boolean emptyParams = separatorIdx == -1;
-      String types = emptyParams ? str : str.substring(0, separatorIdx);
-      String params = emptyParams ? "" : str.substring(separatorIdx + 1);
+      String types = emptyParams ? tree : tree.substring(0, separatorIdx);
+      String params = emptyParams ? "" : tree.substring(separatorIdx + 1);
       Map<String, String> paramMap = parseParams(params);
 
       // "*" is not a valid MediaType according to the https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html,
@@ -133,24 +150,27 @@ public final class MediaType {
          return emptyParams ? MediaType.MATCH_ALL : new MediaType("*", "*", paramMap);
       }
       if (types.indexOf('/') == -1) {
-         throw log.invalidMediaTypeSubtype();
+         throw CONTAINER.invalidMediaTypeSubtype();
       }
 
       String[] typeSubtype = types.split("/");
       return new MediaType(typeSubtype[0].trim(), typeSubtype[1].trim(), paramMap);
    }
 
+   /**
+    * Parse a comma separated list of media type trees.
+    */
    public static Stream<MediaType> parseList(String mediaTypeList) {
       return stream(mediaTypeList.split(","))
-            .map(MediaType::parse)
+            .map(MediaType::fromString)
             .sorted(Comparator.comparingDouble((MediaType m) -> m.weight).reversed());
    }
 
    private static double parseWeight(String weightValue) {
       try {
-         return Double.valueOf(weightValue);
+         return Double.parseDouble(weightValue);
       } catch (NumberFormatException nf) {
-         throw log.invalidWeight(weightValue);
+         throw CONTAINER.invalidWeight(weightValue);
       }
    }
 
@@ -161,7 +181,7 @@ public final class MediaType {
       String[] parameters = params.split(";");
 
       for (String p : parameters) {
-         if (!p.contains("=")) throw log.invalidMediaTypeParam(p);
+         if (!p.contains("=")) throw CONTAINER.invalidMediaTypeParam(p);
          String[] nameValue = p.split("=");
          String paramName = nameValue[0].trim();
          String paramValue = nameValue[1].trim();
@@ -183,13 +203,12 @@ public final class MediaType {
 
    private static void checkValidQuotes(String paramValue) {
       if (!checkStartAndEnd(paramValue, '\'') && !checkStartAndEnd(paramValue, '\"')) {
-         throw log.unquotedMediaTypeParam();
+         throw CONTAINER.unquotedMediaTypeParam();
       }
    }
 
    public boolean match(MediaType other) {
-      return other != null && (other.matchesAll() || this.matchesAll() || (other.typeSubtype.equals(this.typeSubtype))
-      );
+      return other != null && (other.matchesAll() || this.matchesAll() || other.typeSubtype.equals(this.typeSubtype));
    }
 
    public boolean matchesAll() {
@@ -230,15 +249,16 @@ public final class MediaType {
    public boolean equals(Object o) {
       if (this == o) return true;
       if (o == null || getClass() != o.getClass()) return false;
+
       MediaType mediaType = (MediaType) o;
-      return Objects.equals(params, mediaType.params) &&
-            Objects.equals(type, mediaType.type) &&
-            Objects.equals(subType, mediaType.subType);
+      return params.equals(mediaType.params) && typeSubtype.equals(mediaType.typeSubtype);
    }
 
    @Override
    public int hashCode() {
-      return Objects.hash(params, type, subType);
+      int result = params.hashCode();
+      result = 31 * result + typeSubtype.hashCode();
+      return result;
    }
 
    public String getType() {
@@ -269,7 +289,7 @@ public final class MediaType {
       if (token == null) throw new NullPointerException("type and subtype cannot be null");
       for (char c : token.toCharArray()) {
          if (c < 0x20 || c > 0x7F || INVALID_TOKENS.indexOf(c) > 0) {
-            throw log.invalidCharMediaType(c, token);
+            throw CONTAINER.invalidCharMediaType(c, token);
          }
       }
       return token;

@@ -10,7 +10,7 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
-import org.infinispan.manager.CacheContainer;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.transaction.LockingMode;
 
 /**
@@ -19,8 +19,8 @@ import org.infinispan.transaction.LockingMode;
  */
 public abstract class AbstractTwoSitesTest extends AbstractXSiteTest {
 
-   protected static final String LON = "LON";
-   protected static final String NYC = "NYC";
+   protected static final String LON = "LON-1";
+   protected static final String NYC = "NYC-2";
    protected BackupFailurePolicy lonBackupFailurePolicy = BackupFailurePolicy.WARN;
    protected boolean isLonBackupTransactional = false;
    protected BackupConfiguration.BackupStrategy lonBackupStrategy = BackupConfiguration.BackupStrategy.SYNC;
@@ -52,13 +52,13 @@ public abstract class AbstractTwoSitesTest extends AbstractXSiteTest {
 
       if (!implicitBackupCache) {
          ConfigurationBuilder nycBackup = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, false);
-         nycBackup.sites().backupFor().remoteSite(NYC).defaultRemoteCache();
+         nycBackup.sites().backupFor().remoteSite(NYC).remoteCache(getDefaultCacheName());
          startCache(LON, "nycBackup", nycBackup);
          ConfigurationBuilder lonBackup = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, isLonBackupTransactional);
-         lonBackup.sites().backupFor().remoteSite(LON).defaultRemoteCache();
+         lonBackup.sites().backupFor().remoteSite(LON).remoteCache(getDefaultCacheName());
          startCache(NYC, "lonBackup", lonBackup);
          Configuration lonBackupConfig = cache(NYC, "lonBackup", 0).getCacheConfiguration();
-         assertTrue(lonBackupConfig.sites().backupFor().isBackupFor(LON, CacheContainer.DEFAULT_CACHE_NAME));
+         assertTrue(lonBackupConfig.sites().backupFor().isBackupFor(LON, getDefaultCacheName()));
       }
       waitForSites(LON, NYC);
    }
@@ -72,6 +72,7 @@ public abstract class AbstractTwoSitesTest extends AbstractXSiteTest {
             .strategy(lonBackupStrategy)
             .failurePolicyClass(lonCustomFailurePolicyClass)
             .useTwoPhaseCommit(use2Pc)
+            .stateTransfer().maxRetries(1).waitTime(500)
             .sites().addInUseBackupSite(NYC);
       adaptLONConfiguration(lonBackupConfigurationBuilder);
       return lon;
@@ -79,6 +80,7 @@ public abstract class AbstractTwoSitesTest extends AbstractXSiteTest {
 
    protected GlobalConfigurationBuilder globalConfigurationBuilderForSite(String siteName) {
       GlobalConfigurationBuilder builder = GlobalConfigurationBuilder.defaultClusteredBuilder();
+      builder.serialization().addContextInitializer(TestDataSCI.INSTANCE);
       builder.site().localSite(siteName);
       return builder;
    }

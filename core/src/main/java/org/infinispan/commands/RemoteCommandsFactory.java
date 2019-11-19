@@ -16,7 +16,6 @@ import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
 import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
 import org.infinispan.commands.module.ModuleCommandFactory;
-import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.remote.CacheRpcCommand;
@@ -59,6 +58,7 @@ import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.RemoveExpiredCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commons.CacheException;
+import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
@@ -67,7 +67,11 @@ import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.manager.impl.ReplicableManagerFunctionCommand;
 import org.infinispan.manager.impl.ReplicableRunnableCommand;
-import org.infinispan.reactive.publisher.impl.PublisherRequestCommand;
+import org.infinispan.notifications.cachelistener.cluster.MultiClusterEventCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.CancelPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.InitialPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.NextPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.reduction.ReductionPublisherRequestCommand;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
 import org.infinispan.stream.impl.StreamIteratorCloseCommand;
@@ -98,9 +102,10 @@ import org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand;
  */
 @Scope(Scopes.GLOBAL)
 public class RemoteCommandsFactory {
-   @Inject private EmbeddedCacheManager cacheManager;
+   @Inject EmbeddedCacheManager cacheManager;
+   @Inject GlobalComponentRegistry globalComponentRegistry;
    @Inject @ComponentName(KnownComponentNames.MODULE_COMMAND_FACTORIES)
-   private Map<Byte,ModuleCommandFactory> commandFactories;
+   Map<Byte,ModuleCommandFactory> commandFactories;
 
    /**
     * Creates an un-initialized command.  Un-initialized in the sense that parameters will be set, but any components
@@ -275,17 +280,11 @@ public class RemoteCommandsFactory {
             case StateResponseCommand.COMMAND_ID:
                command = new StateResponseCommand(cacheName);
                break;
-            case RemoveCacheCommand.COMMAND_ID:
-               command = new RemoveCacheCommand(cacheName, cacheManager);
-               break;
             case TxCompletionNotificationCommand.COMMAND_ID:
                command = new TxCompletionNotificationCommand(cacheName);
                break;
             case GetInDoubtTransactionsCommand.COMMAND_ID:
                command = new GetInDoubtTransactionsCommand(cacheName);
-               break;
-            case DistributedExecuteCommand.COMMAND_ID:
-               command = new DistributedExecuteCommand(cacheName);
                break;
             case GetInDoubtTxInfoCommand.COMMAND_ID:
                command = new GetInDoubtTxInfoCommand(cacheName);
@@ -359,8 +358,20 @@ public class RemoteCommandsFactory {
             case UpdateLastAccessCommand.COMMAND_ID:
                command = new UpdateLastAccessCommand(cacheName);
                break;
-            case PublisherRequestCommand.COMMAND_ID:
-               command = new PublisherRequestCommand<>(cacheName);
+            case ReductionPublisherRequestCommand.COMMAND_ID:
+               command = new ReductionPublisherRequestCommand<>(cacheName);
+               break;
+            case MultiClusterEventCommand.COMMAND_ID:
+               command = new MultiClusterEventCommand<>(cacheName);
+               break;
+            case InitialPublisherCommand.COMMAND_ID:
+               command = new InitialPublisherCommand<>(cacheName);
+               break;
+            case NextPublisherCommand.COMMAND_ID:
+               command = new NextPublisherCommand(cacheName);
+               break;
+            case CancelPublisherCommand.COMMAND_ID:
+               command = new CancelPublisherCommand(cacheName);
                break;
             default:
                throw new CacheException("Unknown command id " + id + "!");

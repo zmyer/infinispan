@@ -7,39 +7,50 @@ import static org.testng.AssertJUnit.assertTrue;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.infinispan.Cache;
 import org.infinispan.commons.marshall.WrappedByteArray;
+import org.infinispan.commons.util.IntSets;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.container.DataContainer;
+import org.infinispan.container.impl.InternalDataContainer;
+import org.infinispan.distribution.DistributionTestHelper;
+import org.infinispan.distribution.ch.KeyPartitioner;
+import org.infinispan.encoding.DataConversion;
+import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestingUtil;
 import org.testng.annotations.Test;
 
 @Test(groups = "functional", testName = "commands.OffHeapMultiNodeTest")
 public class OffHeapMultiNodeTest extends MultipleCacheManagersTest {
-   protected int numberOfKeys = 10;
+   protected static final int NUMBER_OF_KEYS = 10;
 
    @Override
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder dcc = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, false);
       dcc.memory().storageType(StorageType.OFF_HEAP);
+      dcc.clustering().stateTransfer().timeout(10, TimeUnit.SECONDS);
       createCluster(dcc, 4);
       waitForClusterToForm();
    }
 
    public void testPutMapCommand() {
       Map<String, String> map = new HashMap<>();
-      for (int i = 0; i < numberOfKeys; ++i) {
+      for (int i = 0; i < NUMBER_OF_KEYS; ++i) {
          map.put("key" + i, "value" + i);
       }
 
       cache(0).putAll(map);
 
-      for (int i = 0; i < numberOfKeys; ++i) {
+      for (int i = 0; i < NUMBER_OF_KEYS; ++i) {
          assertEquals("value" + i, cache(0).get("key" + i));
       }
    }
@@ -52,7 +63,7 @@ public class OffHeapMultiNodeTest extends MultipleCacheManagersTest {
 
       assertNull(map.put(key, value));
 
-      for (int i = 0; i < 50; ++i) {
+      for (int i = 0; i < NUMBER_OF_KEYS; ++i) {
          map.put(randomBytes(KEY_SIZE), value);
       }
 
@@ -97,7 +108,7 @@ public class OffHeapMultiNodeTest extends MultipleCacheManagersTest {
    }
 
    public void testIterate() {
-      int cacheSize = 50;
+      int cacheSize = NUMBER_OF_KEYS;
       Map<byte[], byte[]> original = new HashMap<>();
       for (int i = 0; i < cacheSize; ++i) {
          byte[] key = randomBytes(KEY_SIZE);
@@ -114,6 +125,47 @@ public class OffHeapMultiNodeTest extends MultipleCacheManagersTest {
          assertEquals(e.getValue(), map.get(e.getKey()));
       });
       assertEquals(cacheSize, count.get());
+   }
+
+   public void testRemoveSegments() {
+      Cache<String, String> cache = cache(0);
+      if (cache.getCacheConfiguration().clustering().cacheMode() == CacheMode.LOCAL) {
+         // Local caches don't support removing segments
+         return;
+      }
+
+      String key = "some-key";
+      String value = "some-value";
+      DataConversion keyDataConversion = cache.getAdvancedCache().getKeyDataConversion();
+      DataConversion valueDataConversion = cache.getAdvancedCache().getValueDataConversion();
+
+      Object storedKey = keyDataConversion.toStorage(key);
+      Object storedValue = valueDataConversion.toStorage(value);
+
+      Cache<String, String> primaryOwnerCache;
+      int segmentWrittenTo;
+      List<Cache<String, String>> caches = caches();
+      if (caches.size() == 1) {
+         primaryOwnerCache = cache;
+         segmentWrittenTo = 0;
+      } else {
+         primaryOwnerCache = DistributionTestHelper.getFirstOwner(storedKey, caches());
+         KeyPartitioner keyPartitioner = TestingUtil.extractComponent(primaryOwnerCache, KeyPartitioner.class);
+
+         segmentWrittenTo = keyPartitioner.getSegment(storedKey);
+      }
+
+      InternalDataContainer container = TestingUtil.extractComponent(primaryOwnerCache, InternalDataContainer.class);
+
+      assertEquals(0, container.size());
+
+      container.put(storedKey, storedValue, new EmbeddedMetadata.Builder().build());
+
+      assertEquals(1, container.size());
+
+      container.removeSegments(IntSets.immutableSet(segmentWrittenTo));
+
+      assertEquals(0, container.size());
    }
 
    static DataContainer<WrappedByteArray, WrappedByteArray> castDC(Object obj) {

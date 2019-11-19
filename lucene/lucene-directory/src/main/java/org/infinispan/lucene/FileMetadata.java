@@ -1,13 +1,9 @@
 package org.infinispan.lucene;
 
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
-import java.util.Collections;
-import java.util.Set;
-
-import org.infinispan.commons.io.UnsignedNumeric;
-import org.infinispan.commons.marshall.AbstractExternalizer;
+import org.infinispan.commons.marshall.ProtoStreamTypeIds;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoTypeId;
 
 /**
  * Header for Lucene files. Store only basic info about file. File data is divided into byte[]
@@ -17,20 +13,29 @@ import org.infinispan.commons.marshall.AbstractExternalizer;
  * @author Lukasz Moren
  * @see org.infinispan.lucene.FileCacheKey
  */
+@ProtoTypeId(ProtoStreamTypeIds.FILE_METADATA)
 public final class FileMetadata {
 
-   private long size = 0;
    private final int bufferSize;
 
-   public FileMetadata(int bufferSize) {
-      this.bufferSize = bufferSize;
-   }
+   private long size;
 
-   private FileMetadata(long size, int bufferSize) {
+   @ProtoFactory
+   public FileMetadata(int bufferSize, long size) {
+      this.bufferSize = bufferSize;
       this.size = size;
-      this.bufferSize = bufferSize;
    }
 
+   public FileMetadata(int bufferSize) {
+      this(bufferSize, 0);
+   }
+
+   @ProtoField(number = 1, defaultValue = "1024")
+   public int getBufferSize() {
+      return bufferSize;
+   }
+
+   @ProtoField(number = 2, defaultValue = "0")
    public long getSize() {
       return size;
    }
@@ -39,17 +44,9 @@ public final class FileMetadata {
       this.size = size;
    }
 
-   public int getBufferSize() {
-      return bufferSize;
-   }
-
    public int getNumberOfChunks() {
-      if (size % bufferSize == 0) {
-         return (int) size / bufferSize;
-      }
-      else {
-         return (int) (size / bufferSize) + 1;
-      }
+      int numChunks = (int) size / bufferSize;
+      return size % bufferSize == 0 ? numChunks : numChunks + 1;
    }
 
    public boolean isMultiChunked() {
@@ -65,7 +62,7 @@ public final class FileMetadata {
          return false;
       }
       FileMetadata metadata = (FileMetadata) o;
-      return  size == metadata.size && bufferSize == metadata.bufferSize;
+      return size == metadata.size && bufferSize == metadata.bufferSize;
    }
 
    @Override
@@ -75,34 +72,6 @@ public final class FileMetadata {
 
    @Override
    public String toString() {
-      return "FileMetadata{" +  " size=" + size + '}';
+      return "FileMetadata{size=" + size + '}';
    }
-
-   public static final class Externalizer extends AbstractExternalizer<FileMetadata> {
-
-      @Override
-      public void writeObject(ObjectOutput output, FileMetadata metadata) throws IOException {
-         UnsignedNumeric.writeUnsignedLong(output, metadata.size);
-         UnsignedNumeric.writeUnsignedInt(output, metadata.bufferSize);
-      }
-
-      @Override
-      public FileMetadata readObject(ObjectInput input) throws IOException {
-         long size = UnsignedNumeric.readUnsignedLong(input);
-         int bufferSize = UnsignedNumeric.readUnsignedInt(input);
-         return new FileMetadata(size, bufferSize);
-      }
-
-      @Override
-      public Integer getId() {
-         return ExternalizerIds.FILE_METADATA;
-      }
-
-      @Override
-      public Set<Class<? extends FileMetadata>> getTypeClasses() {
-         return Collections.singleton(FileMetadata.class);
-      }
-
-   }
-
 }

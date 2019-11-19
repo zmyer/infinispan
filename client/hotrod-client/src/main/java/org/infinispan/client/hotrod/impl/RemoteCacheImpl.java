@@ -3,6 +3,7 @@ package org.infinispan.client.hotrod.impl;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.infinispan.client.hotrod.filter.Filters.makeFactoryParams;
 import static org.infinispan.client.hotrod.impl.Util.await;
+import static org.infinispan.client.hotrod.logging.Log.HOTROD;
 
 import java.util.AbstractCollection;
 import java.util.AbstractSet;
@@ -59,7 +60,6 @@ import org.infinispan.client.hotrod.impl.operations.StatsOperation;
 import org.infinispan.client.hotrod.jmx.RemoteCacheClientStatisticsMXBean;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
-import org.infinispan.commons.jmx.JmxUtil;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.CloseableIterator;
@@ -144,28 +144,32 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
    }
 
    private void registerMBean(ObjectName jmxParent) {
-      try {
-         StatisticsConfiguration configuration = getRemoteCacheManager().getConfiguration().statistics();
-         if (configuration.jmxEnabled()) {
+      StatisticsConfiguration configuration = getRemoteCacheManager().getConfiguration().statistics();
+      if (configuration.jmxEnabled()) {
+         try {
             MBeanServer mbeanServer = configuration.mbeanServerLookup().getMBeanServer();
-            String groupName = String.format("type=HotRodClient,name=%s", configuration.jmxName());
-            mbeanObjectName = new ObjectName(String.format("%s:%s,cache=%s", jmxParent.getDomain(), groupName, name.equals("") ? "org.infinispan.default" : name));
-            JmxUtil.registerMBean(clientStatistics, mbeanObjectName, mbeanServer);
+            String cacheName = name.isEmpty() ? "org.infinispan.default" : name;
+            mbeanObjectName = new ObjectName(String.format("%s:type=HotRodClient,name=%s,cache=%s", jmxParent.getDomain(), configuration.jmxName(), cacheName));
+            mbeanServer.registerMBean(clientStatistics, mbeanObjectName);
+         } catch (Exception e) {
+            throw HOTROD.jmxRegistrationFailure(e);
          }
-      } catch (Exception e) {
-         log.warn("MBean registration failed", e);
       }
    }
 
    private void unregisterMBean() {
-      try {
-         if (mbeanObjectName != null) {
-            StatisticsConfiguration configuration = getRemoteCacheManager().getConfiguration().statistics();
-            MBeanServer mbeanServer = configuration.mbeanServerLookup().getMBeanServer();
-            JmxUtil.unregisterMBean(mbeanObjectName, mbeanServer);
+      if (mbeanObjectName != null) {
+         try {
+            MBeanServer mBeanServer = getRemoteCacheManager().getConfiguration().statistics()
+                  .mbeanServerLookup().getMBeanServer();
+            if (mBeanServer.isRegistered(mbeanObjectName)) {
+               mBeanServer.unregisterMBean(mbeanObjectName);
+            } else {
+               HOTROD.debugf("MBean not registered: %s", mbeanObjectName);
+            }
+         } catch (Exception e) {
+            throw HOTROD.jmxUnregistrationFailure(e);
          }
-      } catch (Exception e) {
-         log.warn("MBean unregistration failed", e);
       }
    }
 
@@ -302,9 +306,15 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
 
    @Override
    public int size() {
+      long size = await(sizeAsync());
+      return size > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) size;
+   }
+
+   @Override
+   public CompletableFuture<Long> sizeAsync() {
       assertRemoteCacheManagerIsStarted();
       SizeOperation op = operationsFactory.newSizeOperation();
-      return await(op.execute());
+      return op.execute().thenApply(Integer::longValue);
    }
 
    @Override
@@ -512,6 +522,7 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
       await(op.execute());
    }
 
+   @Deprecated
    @Override
    public Set<Object> getListeners() {
       ClientListenerNotifier listenerNotifier = operationsFactory.getListenerNotifier();
@@ -552,9 +563,7 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
    protected void assertRemoteCacheManagerIsStarted() {
       if (!remoteCacheManager.isStarted()) {
          String message = "Cannot perform operations on a cache associated with an unstarted RemoteCacheManager. Use RemoteCacheManager.start before using the remote cache.";
-         if (log.isInfoEnabled()) {
-            log.unstartedRemoteCacheManager();
-         }
+         HOTROD.unstartedRemoteCacheManager();
          throw new RemoteCacheManagerNotStartedException(message);
       }
    }
@@ -857,6 +866,11 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
    @Override
    public DataFormat getDataFormat() {
       return dataFormat;
+   }
+
+   @Override
+   public boolean isTransactional() {
+      return false;
    }
 
    public boolean isObjectStorage() {

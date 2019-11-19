@@ -1,6 +1,7 @@
 package org.infinispan.cli.interpreter;
 
 import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheConfiguration;
+import static org.infinispan.test.fwk.TestCacheManagerFactory.configureGlobalJmx;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 
@@ -11,7 +12,8 @@ import org.infinispan.cli.interpreter.result.ResultKeys;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
-import org.infinispan.commons.api.BasicCacheContainer;
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.factories.GlobalComponentRegistry;
@@ -29,6 +31,7 @@ import org.testng.annotations.Test;
 @Test(testName = "cli.interpreter.UpgradeTest", groups = "functional")
 public class UpgradeTest extends AbstractInfinispanTest {
 
+   private final MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
    private HotRodServer sourceServer;
    private HotRodServer targetServer;
    private EmbeddedCacheManager sourceContainer;
@@ -40,11 +43,11 @@ public class UpgradeTest extends AbstractInfinispanTest {
    private RemoteCacheManager targetRemoteCacheManager;
 
    @BeforeClass
-   public void setup() throws Exception {
+   public void setup() {
       ConfigurationBuilder serverBuilder = hotRodCacheConfiguration(
             TestCacheManagerFactory.getDefaultCacheConfiguration(false));
       GlobalConfigurationBuilder sourceGlobal = new GlobalConfigurationBuilder().nonClusteredDefault();
-      sourceGlobal.globalJmxStatistics().enable();
+      configureGlobalJmx(sourceGlobal, getClass().getSimpleName() + "-source", mBeanServerLookup);
       sourceContainer = TestCacheManagerFactory.createCacheManager(sourceGlobal, serverBuilder);
       sourceServerCache = sourceContainer.getCache();
       sourceServer = HotRodClientTestingUtil.startHotRodServer(sourceContainer);
@@ -54,20 +57,18 @@ public class UpgradeTest extends AbstractInfinispanTest {
       targetConfigurationBuilder.persistence().addStore(RemoteStoreConfigurationBuilder.class).hotRodWrapping(true).addServer().host("localhost").port(sourceServer.getPort());
 
       GlobalConfigurationBuilder targetGlobal = new GlobalConfigurationBuilder().nonClusteredDefault();
-      targetGlobal.globalJmxStatistics().enable();
+      configureGlobalJmx(targetGlobal, getClass().getSimpleName() + "-target", mBeanServerLookup);
       targetContainer = TestCacheManagerFactory.createCacheManager(targetGlobal, targetConfigurationBuilder);
       targetServerCache = targetContainer.getCache();
       targetServer = HotRodClientTestingUtil.startHotRodServer(targetContainer);
 
       sourceRemoteCacheManager = new RemoteCacheManager(
-            new org.infinispan.client.hotrod.configuration.ConfigurationBuilder()
-                  .addServers("localhost:" + sourceServer.getPort()).build());
+         HotRodClientTestingUtil.newRemoteConfigurationBuilder(sourceServer).build());
       sourceRemoteCacheManager.start();
       sourceRemoteCache = sourceRemoteCacheManager.getCache();
 
       targetRemoteCacheManager = new RemoteCacheManager(
-            new org.infinispan.client.hotrod.configuration.ConfigurationBuilder()
-                  .addServers("localhost:" + sourceServer.getPort()).build());
+         HotRodClientTestingUtil.newRemoteConfigurationBuilder(sourceServer).build());
       targetRemoteCacheManager.start();
    }
 
@@ -79,7 +80,7 @@ public class UpgradeTest extends AbstractInfinispanTest {
       }
 
       Interpreter targetInterpreter = getInterpreter(targetContainer);
-      String targetSessionId = targetInterpreter.createSessionId(BasicCacheContainer.DEFAULT_CACHE_NAME);
+      String targetSessionId = targetInterpreter.createSessionId(targetServer.getCacheManager().getCacheManagerConfiguration().defaultCacheName().get());
       Map<String, String> synchronizeResult = targetInterpreter.execute(targetSessionId, "upgrade --synchronize=hotrod;");
       checkNoErrors(synchronizeResult);
 

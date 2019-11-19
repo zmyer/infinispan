@@ -8,10 +8,7 @@ package org.infinispan.hibernate.cache.commons.access;
 
 import java.util.concurrent.CompletableFuture;
 
-import org.infinispan.context.impl.FlagBitSets;
-import org.infinispan.hibernate.cache.commons.util.CacheCommandInitializer;
-import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
-import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -21,11 +18,17 @@ import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.context.impl.FlagBitSets;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.hibernate.cache.commons.util.BeginInvalidationCommand;
+import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
 import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.interceptors.impl.InvalidationInterceptor;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
+import org.infinispan.remoting.transport.Address;
+import org.infinispan.remoting.transport.LocalModeAddress;
+import org.infinispan.remoting.transport.Transport;
 import org.infinispan.remoting.transport.impl.VoidResponseCollector;
 import org.infinispan.util.concurrent.locks.RemoteLockCommand;
 import org.infinispan.util.logging.Log;
@@ -43,13 +46,13 @@ import org.infinispan.util.logging.LogFactory;
  */
 @MBean(objectName = "Invalidation", description = "Component responsible for invalidating entries on remote caches when entries are written to locally.")
 public class NonTxInvalidationInterceptor extends BaseInvalidationInterceptor {
-	@Inject private CacheCommandInitializer commandInitializer;
+	@Inject Transport transport;
 
 	private static final InfinispanMessageLogger log = InfinispanMessageLogger.Provider.getLog(InvalidationInterceptor.class);
    private static final Log ispnLog = LogFactory.getLog(NonTxInvalidationInterceptor.class);
 
-   private final InvocationSuccessFunction handleWriteReturn = this::handleWriteReturn;
-	private final InvocationSuccessFunction handleEvictReturn = this::handleEvictReturn;
+   private final InvocationSuccessFunction<RemoveCommand> handleWriteReturn = this::handleWriteReturn;
+	private final InvocationSuccessFunction<RemoveCommand> handleEvictReturn = this::handleEvictReturn;
 
 	@Override
 	public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) {
@@ -98,16 +101,13 @@ public class NonTxInvalidationInterceptor extends BaseInvalidationInterceptor {
 		InvalidateCommand invalidateCommand;
 		if (!isLocalModeForced(command)) {
 			if (isTransactional) {
-				invalidateCommand = commandInitializer.buildBeginInvalidationCommand(
-               EnumUtil.EMPTY_BIT_SET, new Object[] { key }, keyLockOwner);
+				Address address = transport != null ? transport.getAddress() : LocalModeAddress.INSTANCE;
+				invalidateCommand = new BeginInvalidationCommand(EnumUtil.EMPTY_BIT_SET, CommandInvocationId.generateId(address), new Object[] {key}, keyLockOwner);
 			}
 			else {
             invalidateCommand = commandsFactory.buildInvalidateCommand(EnumUtil.EMPTY_BIT_SET, new Object[] {key });
 			}
 			invalidateCommand.setTopologyId(rpcManager.getTopologyId());
-			if (log.isDebugEnabled()) {
-				log.debug("Cache [" + rpcManager.getAddress() + "] replicating " + invalidateCommand);
-			}
 
 			if (isSynchronous(command)) {
 				return rpcManager.invokeCommandOnAll(invalidateCommand, VoidResponseCollector.ignoreLeavers(), syncRpcOptions)
@@ -124,16 +124,14 @@ public class NonTxInvalidationInterceptor extends BaseInvalidationInterceptor {
       return ispnLog;
    }
 
-   private Object handleWriteReturn(InvocationContext ctx, VisitableCommand command, Object rv) {
-		RemoveCommand removeCmd = (RemoveCommand) command;
+   private Object handleWriteReturn(InvocationContext ctx, RemoveCommand removeCmd, Object rv) {
 		if ( removeCmd.isSuccessful()) {
 			return invalidateAcrossCluster(removeCmd, true, removeCmd.getKey(), removeCmd.getKeyLockOwner());
 		}
 		return null;
 	}
 
-	private Object handleEvictReturn(InvocationContext ctx, VisitableCommand command, Object rv) {
-		RemoveCommand removeCmd = (RemoveCommand) command;
+	private Object handleEvictReturn(InvocationContext ctx, RemoveCommand removeCmd, Object rv) {
 		if ( removeCmd.isSuccessful()) {
 			return invalidateAcrossCluster(removeCmd, false, removeCmd.getKey(), removeCmd.getKeyLockOwner());
 		}

@@ -1,6 +1,7 @@
 package org.infinispan.query.dsl.embedded.impl;
 
-import java.beans.IntrospectionException;
+import static org.infinispan.query.logging.Log.CONTAINER;
+
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -21,7 +22,6 @@ import org.hibernate.search.bridge.builtin.StringEncodingCalendarBridge;
 import org.hibernate.search.bridge.builtin.StringEncodingDateBridge;
 import org.hibernate.search.bridge.builtin.impl.NullEncodingTwoWayFieldBridge;
 import org.hibernate.search.bridge.util.impl.TwoWayString2FieldBridgeAdaptor;
-import org.hibernate.search.elasticsearch.bridge.builtin.impl.ElasticsearchDateBridge;
 import org.hibernate.search.engine.metadata.impl.DocumentFieldMetadata;
 import org.hibernate.search.engine.metadata.impl.EmbeddedTypeMetadata;
 import org.hibernate.search.engine.metadata.impl.PropertyMetadata;
@@ -38,8 +38,6 @@ import org.infinispan.objectfilter.impl.syntax.parser.IckleParsingResult;
 import org.infinispan.objectfilter.impl.syntax.parser.ReflectionPropertyHelper;
 import org.infinispan.objectfilter.impl.util.ReflectionHelper;
 import org.infinispan.objectfilter.impl.util.StringHelper;
-import org.infinispan.query.logging.Log;
-import org.jboss.logging.Logger;
 
 /**
  * Uses the Hibernate Search metadata to resolve property paths. This relies on the Hibernate Search annotations. If
@@ -53,7 +51,7 @@ import org.jboss.logging.Logger;
  */
 public final class HibernateSearchPropertyHelper extends ReflectionPropertyHelper {
 
-   private static final Log log = Logger.getMessageLogger(Log.class, HibernateSearchPropertyHelper.class.getName());
+   private static final String ES_DATE_BRIDGE_CLASS_NAME = "org.hibernate.search.elasticsearch.bridge.builtin.impl.ElasticsearchDateBridge";
 
    private final SearchIntegrator searchFactory;
 
@@ -111,7 +109,7 @@ public final class HibernateSearchPropertyHelper extends ReflectionPropertyHelpe
             TwoWayStringBridge unwrapped = ((TwoWayString2FieldBridgeAdaptor) bridge).unwrap(TwoWayStringBridge.class);
             if (unwrapped instanceof BooleanBridge) {
                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
-                  throw log.getInvalidBooleanLiteralException(value);
+                  throw CONTAINER.getInvalidBooleanLiteralException(value);
                }
             }
             return unwrapped.stringToObject(value);
@@ -134,7 +132,8 @@ public final class HibernateSearchPropertyHelper extends ReflectionPropertyHelpe
             Calendar calendar = Calendar.getInstance();
             calendar.setTime(DateTools.stringToDate(value));
             return calendar;
-         } else if (bridge instanceof StringEncodingDateBridge || bridge instanceof NumericEncodingDateBridge || bridge instanceof ElasticsearchDateBridge) {
+         } else if (bridge instanceof StringEncodingDateBridge || bridge instanceof NumericEncodingDateBridge
+               || bridge.getClass().getName().equals(ES_DATE_BRIDGE_CLASS_NAME)) {
             return DateTools.stringToDate(value);
          } else {
             return value;
@@ -197,7 +196,7 @@ public final class HibernateSearchPropertyHelper extends ReflectionPropertyHelpe
    private EntityIndexBinding getEntityIndexBinding(Class<?> entityType) {
       EntityIndexBinding indexBinding = searchFactory.getIndexBindings().get(entityType);
       if (indexBinding == null) {
-         throw log.getNoIndexedEntityException(entityType.getCanonicalName());
+         throw CONTAINER.notAnIndexedEntityException(entityType.getCanonicalName());
       }
       return indexBinding;
    }
@@ -205,7 +204,7 @@ public final class HibernateSearchPropertyHelper extends ReflectionPropertyHelpe
    private ReflectionHelper.PropertyAccessor getPropertyAccessor(Class<?> type, String propertyName) {
       try {
          return ReflectionHelper.getAccessor(type, propertyName);
-      } catch (IntrospectionException e) {
+      } catch (ReflectiveOperationException e) {
          return null;
       }
    }

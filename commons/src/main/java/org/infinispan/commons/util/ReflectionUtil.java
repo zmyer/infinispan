@@ -1,7 +1,10 @@
 package org.infinispan.commons.util;
 
+import static org.infinispan.commons.logging.Log.CONTAINER;
+
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,6 +15,7 @@ import java.util.List;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.logging.Log;
 import org.infinispan.commons.logging.LogFactory;
+
 /**
  * Basic reflection utilities to enhance what the JDK provides.
  *
@@ -97,7 +101,7 @@ public class ReflectionUtil {
       }
    }
 
-   public static Method findMethod(Class<?> type, String methodName, Class<?>[] parameters) {
+   public static Method findMethod(Class<?> type, String methodName, Class<?>... parameters) {
       try {
          return type.getDeclaredMethod(methodName, parameters);
       } catch (NoSuchMethodException e) {
@@ -177,17 +181,37 @@ public class ReflectionUtil {
     * @param method     method to execute
     * @param parameters parameters
     */
-   public static Object invokeAccessibly(Object instance, Method method, Object[] parameters) {
-      return SecurityActions.invokeAccessibly(instance, method, parameters);
+   public static Object invokeAccessibly(Object instance, Method method, Object... parameters) {
+      method.setAccessible(true);
+      return invokeMethod(instance, method, parameters);
+   }
+
+   public static Object invokeMethod(Object instance, Method method, Object[] parameters) {
+      try {
+         return method.invoke(instance, parameters);
+      } catch (InvocationTargetException e) {
+         Throwable cause = e.getCause() != null ? e.getCause() : e;
+         throw new CacheException("Unable to invoke method " + method + " on object of type " + (instance == null ? "null" : instance
+                                                                                                                                .getClass().getSimpleName()) +
+                                  (parameters != null ? " with parameters " + Arrays.asList(parameters) : ""), cause);
+      } catch (Exception e) {
+         throw new CacheException("Unable to invoke method " + method + " on object of type " + (instance == null ? "null" : instance
+                                                                                                                                .getClass().getSimpleName()) +
+                                  (parameters != null ? " with parameters " + Arrays.asList(parameters) : ""), e);
+      }
    }
 
    public static void setAccessibly(Object instance, Field field, Object value) {
+      field.setAccessible(true);
+      setField(instance, field, value);
+   }
+
+   public static void setField(Object instance, Field field, Object value) {
       try {
-         field.setAccessible(true);
          field.set(instance, value);
       } catch (Exception e) {
          throw new CacheException("Unable to set field " + field.getName() + " on object of type " +
-               (instance == null ? "null" : instance.getClass().getName()) + " to " + value, e);
+                                  (instance == null ? "null" : instance.getClass().getName()) + " to " + value, e);
       }
    }
 
@@ -290,7 +314,6 @@ public class ReflectionUtil {
     * @param ann   annotation to search for.  Must be a class-level annotation.
     * @return the annotation instance, or null
     */
-   @SuppressWarnings("unchecked")
    public static <T extends Annotation> T getAnnotation(Class<?> clazz, Class<T> ann) {
       while (true) {
          // first check class
@@ -370,7 +393,7 @@ public class ReflectionUtil {
       if (clazz != null && clazz.isAssignableFrom(obj.getClass()))
          return clazz.cast(obj);
 
-      throw log.unableToUnwrap(obj, clazz);
+      throw CONTAINER.unableToUnwrap(obj, clazz);
    }
 
    public static <T> T unwrapAny(Class<T> clazz, Object... objs) {
@@ -381,7 +404,7 @@ public class ReflectionUtil {
          }
       }
 
-      throw log.unableToUnwrapAny(Arrays.toString(objs), clazz);
+      throw CONTAINER.unableToUnwrapAny(Arrays.toString(objs), clazz);
    }
 
    public static int getIntAccessibly(Field f, Object instance) {

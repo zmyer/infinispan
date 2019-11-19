@@ -2,6 +2,8 @@ package org.infinispan.container.versioning;
 
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.annotation.TopologyChanged;
@@ -13,6 +15,7 @@ import org.infinispan.notifications.cachelistener.event.TopologyChangedEvent;
  * @author Manik Surtani
  * @since 5.1
  */
+@Scope(Scopes.NAMED_CACHE)
 public class SimpleClusteredVersionGenerator implements VersionGenerator {
    // The current cache topology ID is recorded and used as a part of the version generated, and as such used as the
    // most significant part of a version comparison. If a version is generated based on an old cache topology and another is
@@ -22,7 +25,7 @@ public class SimpleClusteredVersionGenerator implements VersionGenerator {
 
    private static final SimpleClusteredVersion NON_EXISTING = new SimpleClusteredVersion(0, 0);
 
-   @Inject private CacheNotifier<?, ?> cacheNotifier;
+   @Inject CacheNotifier<?, ?> cacheNotifier;
 
    @Start(priority = 11)
    public void start() {
@@ -41,7 +44,7 @@ public class SimpleClusteredVersionGenerator implements VersionGenerator {
    public IncrementableEntryVersion increment(IncrementableEntryVersion initialVersion) {
       if (initialVersion instanceof SimpleClusteredVersion) {
          SimpleClusteredVersion old = (SimpleClusteredVersion) initialVersion;
-         return new SimpleClusteredVersion(topologyId, old.version + 1);
+         return new SimpleClusteredVersion(topologyId, old.getVersion() + 1);
       } else {
          throw new IllegalArgumentException("I only know how to deal with SimpleClusteredVersions, not " + initialVersion.getClass().getName());
       }

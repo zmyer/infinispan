@@ -8,11 +8,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.configuration.cache.MemoryConfiguration;
 import org.infinispan.configuration.cache.StorageType;
+import org.infinispan.container.offheap.OffHeapConcurrentMap;
+import org.infinispan.container.offheap.UnpooledOffHeapMemoryAllocator;
 import org.infinispan.eviction.EvictionType;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.SingleCacheManagerTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Factory;
 import org.testng.annotations.Test;
@@ -38,10 +40,10 @@ public class MemoryBasedEvictionFunctionalTest extends SingleCacheManagerTest {
       if (storageType == StorageType.BINARY) {
          builder.memory().size(CACHE_SIZE);
       } else {
-         builder.memory().size(CACHE_SIZE + MemoryConfiguration.ADDRESS_COUNT.getDefaultValue() * 8);
+         builder.memory().size(CACHE_SIZE + UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(OffHeapConcurrentMap.INITIAL_SIZE << 3));
       }
       configure(builder);
-      EmbeddedCacheManager cm = TestCacheManagerFactory.createCacheManager(builder);
+      EmbeddedCacheManager cm = TestCacheManagerFactory.createCacheManager(TestDataSCI.INSTANCE, builder);
       cache = cm.getCache();
       return cm;
    }

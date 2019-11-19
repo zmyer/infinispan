@@ -1,0 +1,30 @@
+CD(1)
+======
+:doctype: manpage
+
+
+NAME
+----
+cd - navigates the server resource tree.
+
+
+DESCRIPTION
+-----------
+`PATH` can be absolute or relative to the current resource.
+`../` specifies parent resources.
+
+
+SYNOPSIS
+--------
+*cd* ['PATH']
+
+
+EXAMPLE
+-------
+`cd caches` +
+Changes to the `caches` path in the resource tree.
+
+
+SEE ALSO
+--------
+cache(1), ls(1), container(1)

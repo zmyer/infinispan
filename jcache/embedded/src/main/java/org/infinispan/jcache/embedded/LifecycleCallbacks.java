@@ -5,9 +5,12 @@ import java.util.Map;
 import org.infinispan.commons.logging.Log;
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
+import org.infinispan.commons.marshall.SingletonExternalizer;
+import org.infinispan.commons.marshall.SuppliedExternalizer;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.factories.GlobalComponentRegistry;
+import org.infinispan.factories.annotations.InfinispanModule;
 import org.infinispan.jcache.embedded.functions.GetAndPut;
 import org.infinispan.jcache.embedded.functions.GetAndRemove;
 import org.infinispan.jcache.embedded.functions.GetAndReplace;
@@ -20,17 +23,18 @@ import org.infinispan.jcache.embedded.functions.Remove;
 import org.infinispan.jcache.embedded.functions.RemoveConditionally;
 import org.infinispan.jcache.embedded.functions.Replace;
 import org.infinispan.jcache.embedded.functions.ReplaceConditionally;
-import org.infinispan.commons.marshall.SingletonExternalizer;
-import org.infinispan.commons.marshall.SuppliedExternalizer;
 import org.infinispan.lifecycle.ModuleLifecycle;
-import org.kohsuke.MetaInfServices;
+import org.infinispan.marshall.protostream.impl.SerializationContextRegistry;
 
-@MetaInfServices(value = ModuleLifecycle.class)
+@InfinispanModule(name = "jcache", requiredModules = "core")
 public class LifecycleCallbacks implements ModuleLifecycle {
    private static Log log = LogFactory.getLog(LifecycleCallbacks.class);
 
    @Override
    public void cacheManagerStarting(GlobalComponentRegistry gcr, GlobalConfiguration globalConfiguration) {
+      SerializationContextRegistry ctxRegistry = gcr.getComponent(SerializationContextRegistry.class);
+      ctxRegistry.addContextInitializer(SerializationContextRegistry.MarshallerType.PERSISTENCE, new PersistenceContextInitializerImpl());
+
       Map<Integer, AdvancedExternalizer<?>> map = globalConfiguration.serialization().advancedExternalizers();
       add(map, new SuppliedExternalizer<>(ExternalizerIds.READ_WITH_EXPIRY, ReadWithExpiry.class, ReadWithExpiry::new));
       add(map, new SuppliedExternalizer<>(ExternalizerIds.GET_AND_PUT, GetAndPut.class, GetAndPut::new));

@@ -22,8 +22,8 @@ public class NonIndexedClusteredDummyInMemoryStoreQueryDslConditionsTest extends
                .purgeOnStartup(true);
 
       // ensure the data container contains minimal data so the store will need to be accessed to get the rest
-      cfg.locking().concurrencyLevel(1).dataContainer().memory().size(1L);
+      cfg.locking().concurrencyLevel(1).memory().size(1L);
 
-      createClusteredCaches(2, cfg);
+      createClusteredCaches(2, DslSCI.INSTANCE, cfg);
    }
 }

@@ -5,7 +5,7 @@ import java.io.Serializable;
 import javax.persistence.EmbeddedId;
 import javax.persistence.Entity;
 
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.annotations.ProtoField;
 
 /**
  *
@@ -13,17 +13,14 @@ import org.infinispan.marshall.core.ExternalPojo;
  *
  */
 @Entity
-public class Vehicle implements Serializable, ExternalPojo {
-   /**
-    *
-    */
-   private static final long serialVersionUID = 3726691096915715402L;
+public class Vehicle implements Serializable {
 
    @EmbeddedId
    private VehicleId id;
 
    private String color;
 
+   @ProtoField(number = 1)
    public VehicleId getId() {
       return id;
    }
@@ -32,6 +29,7 @@ public class Vehicle implements Serializable, ExternalPojo {
       this.id = id;
    }
 
+   @ProtoField(number = 2)
    public String getColor() {
       return color;
    }

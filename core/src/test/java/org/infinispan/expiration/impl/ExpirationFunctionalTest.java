@@ -7,15 +7,16 @@ import static org.testng.AssertJUnit.assertNull;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.infinispan.commons.time.TimeService;
+import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.StorageType;
-import org.infinispan.filter.KeyFilter;
+import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.ControlledTimeService;
-import org.infinispan.commons.time.TimeService;
 import org.testng.annotations.Factory;
 import org.testng.annotations.Test;
 
@@ -25,19 +26,29 @@ public class ExpirationFunctionalTest extends SingleCacheManagerTest {
    protected final int SIZE = 10;
    protected ControlledTimeService timeService = new ControlledTimeService();
    protected StorageType storage;
+   protected CacheMode cacheMode;
+   protected ExpirationManager expirationManager;
 
    @Factory
    public Object[] factory() {
       return new Object[]{
-            new ExpirationFunctionalTest().withStorage(StorageType.BINARY),
-            new ExpirationFunctionalTest().withStorage(StorageType.OBJECT),
-            new ExpirationFunctionalTest().withStorage(StorageType.OFF_HEAP)
+         new ExpirationFunctionalTest().cacheMode(CacheMode.LOCAL).withStorage(StorageType.BINARY),
+         new ExpirationFunctionalTest().cacheMode(CacheMode.LOCAL).withStorage(StorageType.OBJECT),
+         new ExpirationFunctionalTest().cacheMode(CacheMode.LOCAL).withStorage(StorageType.OFF_HEAP),
+         new ExpirationFunctionalTest().cacheMode(CacheMode.DIST_SYNC).withStorage(StorageType.BINARY),
+         new ExpirationFunctionalTest().cacheMode(CacheMode.DIST_SYNC).withStorage(StorageType.OBJECT),
+         new ExpirationFunctionalTest().cacheMode(CacheMode.DIST_SYNC).withStorage(StorageType.OFF_HEAP)
       };
+   }
+
+   protected ExpirationFunctionalTest cacheMode(CacheMode mode) {
+      this.cacheMode = mode;
+      return this;
    }
 
    @Override
    protected String parameters() {
-      return "[" + storage + "]";
+      return "[" + cacheMode + ", " + storage + "]";
    }
 
    protected EmbeddedCacheManager createCacheManager() throws Exception {
@@ -46,22 +57,31 @@ public class ExpirationFunctionalTest extends SingleCacheManagerTest {
       EmbeddedCacheManager cm = createCacheManager(builder);
       TestingUtil.replaceComponent(cm, TimeService.class, timeService, true);
       cache = cm.getCache();
+      expirationManager = cache.getAdvancedCache().getExpirationManager();
       afterCacheCreated(cm);
       return cm;
    }
 
    protected EmbeddedCacheManager createCacheManager(ConfigurationBuilder builder) {
-      return TestCacheManagerFactory.createCacheManager(builder);
+      if (builder.clustering().cacheMode().isClustered()) {
+         return TestCacheManagerFactory.createClusteredCacheManager(builder);
+      } else {
+         return TestCacheManagerFactory.createCacheManager(builder);
+      }
    }
 
    protected void configure(ConfigurationBuilder config) {
-      config
+      config.clustering().cacheMode(cacheMode)
             .expiration().disableReaper()
             .memory().storageType(storage);
    }
 
    protected void afterCacheCreated(EmbeddedCacheManager cm) {
 
+   }
+
+   protected void processExpiration() {
+      expirationManager.processExpiration();
    }
 
    public ExpirationFunctionalTest withStorage(StorageType storage) {
@@ -86,6 +106,12 @@ public class ExpirationFunctionalTest extends SingleCacheManagerTest {
          cache.put("key-" + i, "value-" + i,-1, null, 1, TimeUnit.MILLISECONDS);
       }
       timeService.advance(2);
+
+      if (cacheMode.isClustered()) {
+         assertEquals(SIZE, cache.size());
+         processExpiration();
+      }
+
       assertEquals(0, cache.size());
    }
 
@@ -121,10 +147,11 @@ public class ExpirationFunctionalTest extends SingleCacheManagerTest {
       }
       timeService.advance(2);
 
-      for (int i = 0; i < SIZE; i++) {
-         cache.getAdvancedCache().getDataContainer().executeTask(KeyFilter.ACCEPT_ALL_FILTER,
-               (k, ice) -> { throw new RuntimeException("No task should be executed on expired entry"); });
-      }
+      cache.getAdvancedCache().getDataContainer()
+           .forEach(ice -> {
+              throw new RuntimeException(
+                 "No task should be executed on expired entry");
+           });
    }
 
    public void testExpirationMaxIdleInExec() throws Exception {
@@ -133,17 +160,17 @@ public class ExpirationFunctionalTest extends SingleCacheManagerTest {
       }
       timeService.advance(2);
 
-      if (cache.getCacheConfiguration().clustering().cacheMode().isClustered()) {
+      if (cacheMode.isClustered()) {
          AtomicInteger invocationCount = new AtomicInteger();
-         cache.getAdvancedCache().getDataContainer().executeTask(KeyFilter.ACCEPT_ALL_FILTER,
-               (k, ice) -> invocationCount.incrementAndGet());
+         cache.getAdvancedCache().getDataContainer().iterator().forEachRemaining(ice -> invocationCount.incrementAndGet());
          assertEquals(SIZE, invocationCount.get());
-      } else {
-         cache.getAdvancedCache().getDataContainer().executeTask(KeyFilter.ACCEPT_ALL_FILTER,
-               (k, ice) -> {
-                  throw new RuntimeException("No task should be executed on expired entry");
-               });
+         processExpiration();
       }
+      cache.getAdvancedCache().getDataContainer()
+            .forEach(ice -> {
+              throw new RuntimeException(
+                 "No task should be executed on expired entry");
+           });
    }
 
    public void testExpiredEntriesCleared() {

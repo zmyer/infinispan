@@ -7,40 +7,42 @@ import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
-import java.io.Serializable;
 import java.lang.reflect.Method;
 import java.util.Map;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import javax.transaction.TransactionManager;
-
 import org.infinispan.Cache;
 import org.infinispan.CacheSet;
-import org.infinispan.atomic.AtomicMap;
-import org.infinispan.atomic.AtomicMapLookup;
 import org.infinispan.commons.util.ByRef;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
 import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.configuration.cache.StoreConfiguration;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.eviction.EvictionType;
+import org.infinispan.factories.annotations.SurvivesRestarts;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.marshall.core.ExternalPojo;
-import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.manager.PersistenceManagerStub;
 import org.infinispan.persistence.spi.CacheLoader;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.infinispan.test.SingleCacheManagerTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.data.Person;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
+import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.testng.annotations.Test;
 
 /**
@@ -50,6 +52,8 @@ import org.testng.annotations.Test;
  */
 @Test(groups = {"unit", "smoke"}, testName = "persistence.BaseStoreFunctionalTest")
 public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
+
+   private static final SerializationContextInitializer CONTEXT_INITIALIZER = TestDataSCI.INSTANCE;
 
    protected abstract PersistenceConfigurationBuilder createCacheStoreConfig(PersistenceConfigurationBuilder persistence, boolean preload);
 
@@ -73,7 +77,14 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
-      return TestCacheManagerFactory.createCacheManager(false);
+      GlobalConfigurationBuilder global = new GlobalConfigurationBuilder();
+      global.globalState().persistentLocation(TestingUtil.tmpDirectory(this.getClass()));
+      global.serialization().addContextInitializer(getSerializationContextInitializer());
+      return TestCacheManagerFactory.newDefaultCacheManager(false, global, new ConfigurationBuilder());
+   }
+
+   protected SerializationContextInitializer getSerializationContextInitializer() {
+      return CONTEXT_INITIALIZER;
    }
 
    public void testTwoCachesSameCacheStore() {
@@ -131,82 +142,26 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
       ConfigurationBuilder cb = TestCacheManagerFactory.getDefaultCacheConfiguration(false);
       createCacheStoreConfig(cb.persistence(), true).memory().storageType(StorageType.BINARY);
       cacheManager.defineConfiguration("testPreloadStoredAsBinary", cb.build());
-      Cache<String, Pojo> cache = cacheManager.getCache("testPreloadStoredAsBinary");
+      Cache<String, Person> cache = cacheManager.getCache("testPreloadStoredAsBinary");
       cache.start();
 
       assert cache.getCacheConfiguration().persistence().preload();
       assertEquals(StorageType.BINARY, cache.getCacheConfiguration().memory().storageType());
 
-      cache.put("k1", new Pojo(1));
-      cache.put("k2", new Pojo(2), 111111, TimeUnit.MILLISECONDS);
-      cache.put("k3", new Pojo(3), -1, TimeUnit.MILLISECONDS, 222222, TimeUnit.MILLISECONDS);
-      cache.put("k4", new Pojo(4), 333333, TimeUnit.MILLISECONDS, 444444, TimeUnit.MILLISECONDS);
+      cache.put("k1", new Person("1"));
+      cache.put("k2", new Person("2"), 111111, TimeUnit.MILLISECONDS);
+      cache.put("k3", new Person("3"), -1, TimeUnit.MILLISECONDS, 222222, TimeUnit.MILLISECONDS);
+      cache.put("k4", new Person("4"), 333333, TimeUnit.MILLISECONDS, 444444, TimeUnit.MILLISECONDS);
 
       cache.stop();
 
       cache.start();
 
       assertEquals(4, cache.entrySet().size());
-      assertEquals(new Pojo(1), cache.get("k1"));
-      assertEquals(new Pojo(2), cache.get("k2"));
-      assertEquals(new Pojo(3), cache.get("k3"));
-      assertEquals(new Pojo(4), cache.get("k4"));
-   }
-
-   public static class Pojo implements Serializable, ExternalPojo {
-
-      private final int i;
-
-      public Pojo(int i) {
-         this.i = i;
-      }
-
-      @Override
-      public boolean equals(Object o) {
-         if (this == o) return true;
-         if (o == null || getClass() != o.getClass()) return false;
-
-         Pojo pojo = (Pojo) o;
-
-         return i == pojo.i;
-
-      }
-
-      @Override
-      public int hashCode() {
-         return i;
-      }
-
-   }
-
-   public void testRestoreAtomicMap(Method m) {
-      cacheManager.defineConfiguration(m.getName(), configureCacheLoader(null, false).build());
-      Cache<String, Object> cache = cacheManager.getCache(m.getName());
-      AtomicMap<String, String> map = AtomicMapLookup.getAtomicMap(cache, m.getName());
-      map.put("a", "b");
-
-      //evict from memory
-      cache.evict(m.getName());
-
-      // now re-retrieve the map
-      assertEquals("b", AtomicMapLookup.getAtomicMap(cache, m.getName()).get("a"));
-   }
-
-   @Test
-   public void testRestoreTransactionalAtomicMap(final Method m) throws Exception {
-      cacheManager.defineConfiguration(m.getName(), configureCacheLoader(null, false).build());
-      Cache<String, Object> cache = cacheManager.getCache(m.getName());
-      TransactionManager tm = cache.getAdvancedCache().getTransactionManager();
-      tm.begin();
-      final AtomicMap<String, String> map = AtomicMapLookup.getAtomicMap(cache, m.getName());
-      map.put("a", "b");
-      tm.commit();
-
-      //evict from memory
-      cache.evict(m.getName());
-
-      // now re-retrieve the map and make sure we see the diffs
-      assertEquals("b", AtomicMapLookup.getAtomicMap(cache, m.getName()).get("a"));
+      assertEquals(new Person("1"), cache.get("k1"));
+      assertEquals(new Person("2"), cache.get("k2"));
+      assertEquals(new Person("3"), cache.get("k3"));
+      assertEquals(new Person("4"), cache.get("k4"));
    }
 
    public void testStoreByteArrays(final Method m) throws PersistenceException {
@@ -232,9 +187,12 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
    }
 
    public void testRemoveCache() {
+      GlobalConfigurationBuilder global = new GlobalConfigurationBuilder();
+      global.globalState().persistentLocation(TestingUtil.tmpDirectory(this.getClass()));
+      global.serialization().addContextInitializer(getSerializationContextInitializer());
       ConfigurationBuilder cb = TestCacheManagerFactory.getDefaultCacheConfiguration(false);
       createCacheStoreConfig(cb.persistence(), true);
-      EmbeddedCacheManager local = TestCacheManagerFactory.createCacheManager(cb);
+      EmbeddedCacheManager local = TestCacheManagerFactory.createCacheManager(global, cb);
       try {
          final String cacheName = "to-be-removed";
          local.defineConfiguration(cacheName, local.getDefaultCacheConfiguration());
@@ -250,9 +208,12 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
    }
 
    public void testRemoveCacheWithPassivation() {
+      GlobalConfigurationBuilder global = new GlobalConfigurationBuilder();
+      global.globalState().persistentLocation(TestingUtil.tmpDirectory(this.getClass()));
+      global.serialization().addContextInitializer(getSerializationContextInitializer());
       ConfigurationBuilder cb = TestCacheManagerFactory.getDefaultCacheConfiguration(false);
       createCacheStoreConfig(cb.persistence().passivation(true), true);
-      EmbeddedCacheManager local = TestCacheManagerFactory.createCacheManager(cb);
+      EmbeddedCacheManager local = TestCacheManagerFactory.createCacheManager(global, cb);
       try {
          final String cacheName = "to-be-removed";
          local.defineConfiguration(cacheName, local.getDefaultCacheConfiguration());
@@ -262,23 +223,12 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
          assertCacheEntry(cache, "1", "v1", -1, -1);
          ByRef<Boolean> passivate = new ByRef<>(false);
          PersistenceManager actual = cache.getAdvancedCache().getComponentRegistry().getComponent(PersistenceManager.class);
-         PersistenceManager stub = new PersistenceManagerStub() {
-            @Override
-            public void stop() {
-               actual.stop();
-            }
-
-            @Override
-            public void writeBatchToAllNonTxStores(Iterable<MarshallableEntry> entries,
-                  Predicate<? super StoreConfiguration> predicate, long flags) {
-               passivate.set(true);
-            }
-         };
+         PersistenceManager stub = new DelegatingPersistenceManager(actual, passivate);
          TestingUtil.replaceComponent(cache, PersistenceManager.class, stub, true);
          local.administration().removeCache(cacheName);
          assertFalse(local.isRunning(cacheName));
          assertFalse(passivate.get());
-         assertEquals(0, actual.size());
+         assertEquals(-1, CompletionStages.join(actual.size()).intValue());
       } finally {
          TestingUtil.killCacheManagers(local);
       }
@@ -361,5 +311,28 @@ public abstract class BaseStoreFunctionalTest extends SingleCacheManagerTest {
       assertEquals(maxIdleMillis, ice.getMaxIdle());
       if (lifespanMillis > -1) assert ice.getCreated() > -1 : "Lifespan is set but created time is not";
       if (maxIdleMillis > -1) assert ice.getLastUsed() > -1 : "Max idle is set but last used is not";
+   }
+
+   @SurvivesRestarts
+   static class DelegatingPersistenceManager extends PersistenceManagerStub {
+      private final PersistenceManager actual;
+      private final ByRef<Boolean> passivate;
+
+      public DelegatingPersistenceManager(PersistenceManager actual, ByRef<Boolean> passivate) {
+         this.actual = actual;
+         this.passivate = passivate;
+      }
+
+      @Override
+      public void stop() {
+         actual.stop();
+      }
+
+      @Override
+      public CompletionStage<Void> writeBatchToAllNonTxStores(Iterable<MarshallableEntry> entries,
+                                                              Predicate<? super StoreConfiguration> predicate, long flags) {
+          passivate.set(true);
+          return CompletableFutures.completedNull();
+      }
    }
 }

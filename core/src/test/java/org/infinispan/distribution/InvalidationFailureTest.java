@@ -4,8 +4,8 @@ import javax.transaction.Transaction;
 
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.manager.CacheContainer;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.testng.annotations.Test;
 
@@ -22,12 +22,13 @@ public class InvalidationFailureTest extends MultipleCacheManagersTest {
       ConfigurationBuilder config = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
       config.clustering().l1().enable().hash().numOwners(1);
       config.locking().isolationLevel(IsolationLevel.READ_COMMITTED);
-      createCluster(config, 2);
+      createCluster(TestDataSCI.INSTANCE, config, 2);
+      final String cacheName = manager(0).getCacheManagerConfiguration().defaultCacheName().get();
       manager(0).defineConfiguration("second", config.build());
       manager(1).defineConfiguration("second", config.build());
-      manager(0).startCaches(CacheContainer.DEFAULT_CACHE_NAME, "second");
-      manager(1).startCaches(CacheContainer.DEFAULT_CACHE_NAME, "second");
-      waitForClusterToForm(CacheContainer.DEFAULT_CACHE_NAME, "second");
+      manager(0).startCaches(cacheName, "second");
+      manager(1).startCaches(cacheName, "second");
+      waitForClusterToForm(cacheName, "second");
       cache(0).put("k","v");
       cache(0,"second").put("k","v");
       assert cache(1).get("k").equals("v");

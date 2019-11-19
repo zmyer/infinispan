@@ -7,6 +7,7 @@ import static org.infinispan.configuration.cache.InterceptorConfiguration.INDEX;
 import static org.infinispan.configuration.cache.InterceptorConfiguration.INTERCEPTOR;
 import static org.infinispan.configuration.cache.InterceptorConfiguration.INTERCEPTOR_CLASS;
 import static org.infinispan.configuration.cache.InterceptorConfiguration.POSITION;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.util.Properties;
 
@@ -21,16 +22,14 @@ import org.infinispan.configuration.cache.InterceptorConfiguration.Position;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.BaseCustomAsyncInterceptor;
-import org.infinispan.interceptors.base.BaseCustomInterceptor;
-import org.infinispan.interceptors.base.CommandInterceptor;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * This builder defines details of a specific custom interceptor.
+ *
+ * @deprecated Since 10.0, custom interceptors support will be removed and only modules will be able to define interceptors
  */
+@Deprecated
 public class InterceptorConfigurationBuilder extends AbstractCustomInterceptorsConfigurationChildBuilder implements Builder<InterceptorConfiguration>, ConfigurationBuilderInfo {
-   private static final Log log = LogFactory.getLog(InterceptorConfigurationBuilder.class);
    private final AttributeSet attributes;
 
    InterceptorConfigurationBuilder(CustomInterceptorsConfigurationBuilder builder) {
@@ -78,15 +77,6 @@ public class InterceptorConfigurationBuilder extends AbstractCustomInterceptorsC
     */
    public InterceptorConfigurationBuilder interceptorClass(Class<? extends AsyncInterceptor> interceptorClass) {
       attributes.attribute(INTERCEPTOR_CLASS).set(interceptorClass);
-      return this;
-   }
-
-   /**
-    * @deprecated Since 9.0, please use {@link #interceptor(AsyncInterceptor)} instead.
-    */
-   @Deprecated
-   public InterceptorConfigurationBuilder interceptor(CommandInterceptor interceptor) {
-      attributes.attribute(INTERCEPTOR).set(interceptor);
       return this;
    }
 
@@ -168,21 +158,20 @@ public class InterceptorConfigurationBuilder extends AbstractCustomInterceptorsC
 
 
       if (!interceptorClassAttribute.isNull() && !interceptorAttribute.isNull()) {
-         throw log.interceptorClassAndInstanceDefined(interceptorClassAttribute.get().getName(), interceptorAttribute.get().toString());
+         throw CONFIG.interceptorClassAndInstanceDefined(interceptorClassAttribute.get().getName(), interceptorAttribute.get().toString());
       } else if (interceptorClassAttribute.isNull() && interceptorAttribute.isNull()) {
-         throw log.customInterceptorMissingClass();
+         throw CONFIG.customInterceptorMissingClass();
       }
       Class<? extends AsyncInterceptor> interceptorClass = interceptorClassAttribute.get();
       if (interceptorClass == null) {
          interceptorClass = interceptorAttribute.get().getClass();
       }
 
-      if (!BaseCustomInterceptor.class.isAssignableFrom(interceptorClass) &&
-            !BaseCustomAsyncInterceptor.class.isAssignableFrom(interceptorClass)) {
+      if (!BaseCustomAsyncInterceptor.class.isAssignableFrom(interceptorClass)) {
          final String className = interceptorClass.getName();
          //Suppress noisy warnings if the interceptor is one of our own (like one of those from Query):
          if (! className.startsWith("org.infinispan.")) {
-            log.suggestCustomInterceptorInheritance(className);
+            CONFIG.suggestCustomInterceptorInheritance(className);
          }
       }
 
@@ -196,11 +185,11 @@ public class InterceptorConfigurationBuilder extends AbstractCustomInterceptorsC
 
       switch (positions) {
          case 0:
-            throw log.missingCustomInterceptorPosition(interceptorClass.getName());
+            throw CONFIG.missingCustomInterceptorPosition(interceptorClass.getName());
          case 1:
             break;
          default:
-            throw log.multipleCustomInterceptorPositions(interceptorClass.getName());
+            throw CONFIG.multipleCustomInterceptorPositions(interceptorClass.getName());
       }
    }
 

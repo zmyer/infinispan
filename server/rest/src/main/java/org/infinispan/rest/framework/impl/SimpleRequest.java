@@ -1,10 +1,14 @@
 package org.infinispan.rest.framework.impl;
 
-import java.security.Principal;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
+import javax.security.auth.Subject;
+
+import org.infinispan.commons.api.CacheContainerAdmin.AdminFlag;
 import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.context.Flag;
 import org.infinispan.rest.framework.ContentSource;
 import org.infinispan.rest.framework.Method;
 import org.infinispan.rest.framework.RestRequest;
@@ -21,7 +25,7 @@ public class SimpleRequest implements RestRequest {
    private final ContentSource contents;
    private Map<String, String> variables;
    private String action;
-   private Principal principal;
+   private Subject subject;
 
    private SimpleRequest(Method method, String path, Map<String, String> headers, ContentSource contents) {
       QueryStringDecoder queryStringDecoder = new QueryStringDecoder(path);
@@ -44,6 +48,21 @@ public class SimpleRequest implements RestRequest {
    @Override
    public String path() {
       return path;
+   }
+
+   @Override
+   public String uri() {
+      return null;
+   }
+
+   @Override
+   public String header(String name) {
+      return null;
+   }
+
+   @Override
+   public List<String> headers(String name) {
+      return null;
    }
 
    @Override
@@ -103,7 +122,7 @@ public class SimpleRequest implements RestRequest {
    }
 
    @Override
-   public String getEtagIfModifiedSinceHeader() {
+   public String getIfModifiedSinceHeader() {
       return null;
    }
 
@@ -113,7 +132,7 @@ public class SimpleRequest implements RestRequest {
    }
 
    @Override
-   public String getEtagIfUnmodifiedSinceHeader() {
+   public String getIfUnmodifiedSinceHeader() {
       return null;
    }
 
@@ -123,23 +142,38 @@ public class SimpleRequest implements RestRequest {
    }
 
    @Override
-   public boolean getPerformAsyncHeader() {
-      return false;
-   }
-
-   @Override
    public Long getTimeToLiveSecondsHeader() {
       return null;
    }
 
    @Override
-   public Principal getPrincipal() {
-      return principal;
+   public EnumSet<AdminFlag> getAdminFlags() {
+      return null;
    }
 
    @Override
-   public void setPrincipal(Principal principal) {
-      this.principal = principal;
+   public Flag[] getFlags() {
+      return new Flag[0];
+   }
+
+   @Override
+   public Long getCreatedHeader() {
+      return null;
+   }
+
+   @Override
+   public Long getLastUsedHeader() {
+      return null;
+   }
+
+   @Override
+   public Subject getSubject() {
+      return subject;
+   }
+
+   @Override
+   public void setSubject(Subject principal) {
+      this.subject = subject;
    }
 
    @Override

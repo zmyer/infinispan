@@ -68,8 +68,8 @@ public final class ProtobufMatcherEvalContext extends MatcherEvalContext<Descrip
                entityTypeName = (String) tagValue;
                break;
 
-            case WrappedMessage.WRAPPED_DESCRIPTOR_ID:
-               entityTypeName = serializationContext.getTypeNameById((Integer) tagValue);
+            case WrappedMessage.WRAPPED_DESCRIPTOR_TYPE_ID:
+               entityTypeName = serializationContext.getDescriptorByTypeId((Integer) tagValue).getFullName();
                break;
 
             case WrappedMessage.WRAPPED_MESSAGE:

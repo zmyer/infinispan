@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -14,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.commands.write.InvalidateCommand;
-import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.entries.InternalCacheEntry;
@@ -25,25 +26,27 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.distribution.L1WriteSynchronizer;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.impl.MapResponseCollector;
-import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
+@Scope(Scopes.NAMED_CACHE)
 public class L1ManagerImpl implements L1Manager, RemoteValueRetrievedListener {
    private static final Log log = LogFactory.getLog(L1ManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private Configuration configuration;
-   @Inject private RpcManager rpcManager;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private TimeService timeService;
+   @Inject Configuration configuration;
+   @Inject RpcManager rpcManager;
+   @Inject CommandsFactory commandsFactory;
+   @Inject TimeService timeService;
    @Inject @ComponentName(KnownComponentNames.EXPIRATION_SCHEDULED_EXECUTOR)
-   private ScheduledExecutorService scheduledExecutor;
+   ScheduledExecutorService scheduledExecutor;
 
    private int threshold;
    private long l1Lifespan;
@@ -53,8 +56,8 @@ public class L1ManagerImpl implements L1Manager, RemoteValueRetrievedListener {
    private ScheduledFuture<?> scheduledRequestorsCleanupTask;
 
    public L1ManagerImpl() {
-      requestors = CollectionFactory.makeConcurrentMap();
-      synchronizers = CollectionFactory.makeConcurrentMap();
+      requestors = new ConcurrentHashMap<>();
+      synchronizers = new ConcurrentHashMap<>();
    }
 
    @Start (priority = 3)
@@ -101,7 +104,7 @@ public class L1ManagerImpl implements L1Manager, RemoteValueRetrievedListener {
       long now = timeService.wallClockTime();
       if (as == null) {
          // only if needed we create a new HashSet, but make sure we don't replace another one being created
-         as = CollectionFactory.makeConcurrentMap();
+         as = new ConcurrentHashMap<>();
          as.put(origin, now);
          ConcurrentMap<Address, Long> previousAs = requestors.putIfAbsent(key, as);
          if (previousAs != null) {

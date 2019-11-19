@@ -1,5 +1,7 @@
 package org.infinispan.remoting.rpc;
 
+import static org.infinispan.util.logging.Log.CLUSTER;
+
 import java.text.NumberFormat;
 import java.util.Collection;
 import java.util.List;
@@ -32,9 +34,10 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.impl.ComponentRef;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.jmx.JmxStatisticsExposer;
 import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
@@ -47,6 +50,7 @@ import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.BackupResponse;
 import org.infinispan.remoting.transport.ResponseCollector;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.remoting.transport.XSiteResponse;
 import org.infinispan.remoting.transport.impl.MapResponseCollector;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.util.concurrent.CompletableFutures;
@@ -68,24 +72,27 @@ import org.infinispan.xsite.XSiteReplicateCommand;
  * @since 4.0
  */
 @MBean(objectName = "RpcManager", description = "Manages all remote calls to remote cache instances in the cluster.")
+@Scope(Scopes.NAMED_CACHE)
 public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
 
    private static final Log log = LogFactory.getLog(RpcManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private Transport t;
-   @Inject private Configuration configuration;
-   @Inject private ComponentRef<CommandsFactory> cf;
-   @Inject private DistributionManager distributionManager;
-   @Inject private TimeService timeService;
+   @Inject Transport t;
+   @Inject Configuration configuration;
+   @Inject ComponentRef<CommandsFactory> cf;
+   @Inject DistributionManager distributionManager;
+   @Inject TimeService timeService;
 
    private final Function<ReplicableCommand, ReplicableCommand> toCacheRpcCommand = this::toCacheRpcCommand;
    private final AttributeListener<Long> updateRpcOptions = this::updateRpcOptions;
+   private final XSiteResponse.XSiteResponseCompleted xSiteResponseCompleted = this::registerXSiteTime;
 
    private final AtomicLong replicationCount = new AtomicLong(0);
    private final AtomicLong replicationFailures = new AtomicLong(0);
    private final AtomicLong totalReplicationTime = new AtomicLong(0);
    private volatile SimpleStat syncXSiteReplicationTime = new DefaultSimpleStat();
+   private volatile SimpleStat asyncXSiteReplicationTime = new DefaultSimpleStat();
    private final LongAdder asyncXSiteCounter = new LongAdder();
 
    private boolean statisticsEnabled = false; // by default, don't gather statistics.
@@ -95,7 +102,7 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
 
 
    @Start(priority = 9)
-   private void start() {
+   void start() {
       statisticsEnabled = configuration.jmxStatistics().enabled();
 
       if (configuration.transaction().transactionProtocol().isTotalOrder())
@@ -108,7 +115,7 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
    }
 
    @Stop
-   private void stop() {
+   void stop() {
       configuration.clustering()
                    .attributes().attribute(ClusteringConfiguration.REMOTE_TIMEOUT)
                    .removeListener(updateRpcOptions);
@@ -301,7 +308,7 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
                options.responseFilter(), options.deliverOrder(),
                configuration.clustering().cacheMode().isDistributed());
       } catch (Exception e) {
-         log.unexpectedErrorReplicating(e);
+         CLUSTER.unexpectedErrorReplicating(e);
          if (statisticsEnabled) replicationFailures.incrementAndGet();
          return rethrowAsCacheException(e);
       }
@@ -321,7 +328,7 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
          log.trace("Replication exception", throwable);
          throw ((CacheException) throwable);
       } else {
-         log.unexpectedErrorReplicating(throwable);
+         CLUSTER.unexpectedErrorReplicating(throwable);
          throw new CacheException(throwable);
       }
    }
@@ -412,6 +419,7 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
       }
       BackupResponse response = t.backupRemotely(sites, command);
       response.notifyFinish(this::registerXsiteReplicationTime);
+      response.notifyAsyncAck(this::registerAsyncXSiteReplicationTime);
       int asyncCount = 0;
       for (XSiteBackup b : sites) {
          if (!b.isSync()) {
@@ -424,12 +432,39 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
       return response;
    }
 
+   @Override
+   public XSiteResponse invokeXSite(XSiteBackup backup, XSiteReplicateCommand command) {
+      if (!statisticsEnabled) {
+         return t.backupRemotely(backup, command);
+      }
+      if (!backup.isSync()) {
+         asyncXSiteCounter.increment();
+      }
+      XSiteResponse rsp = t.backupRemotely(backup, command);
+      rsp.whenCompleted(xSiteResponseCompleted);
+      return rsp;
+   }
+
+   private void registerXSiteTime(XSiteBackup backup, long sendDurationNanos, long durationNanos, Throwable ignored) {
+      long durationMillis = TimeUnit.NANOSECONDS.toMillis(durationNanos);
+      if (backup.isSync()) {
+         syncXSiteReplicationTime.record(durationMillis);
+      } else {
+         asyncXSiteReplicationTime.record(durationMillis);
+      }
+   }
+
    private void registerXsiteReplicationTime(long durationMillis) {
       syncXSiteReplicationTime.record(durationMillis);
    }
 
+   private void registerAsyncXSiteReplicationTime(long sendTimeNanos, String siteNameIgnored, Throwable throwable) {
+      long durationMillis = timeService.timeDuration(sendTimeNanos, TimeUnit.MILLISECONDS);
+      asyncXSiteReplicationTime.record(durationMillis);
+   }
+
    private <T> T errorReplicating(Throwable t) {
-      log.unexpectedErrorReplicating(t);
+      CLUSTER.unexpectedErrorReplicating(t);
       if (statisticsEnabled) replicationFailures.incrementAndGet();
       return rethrowAsCacheException(t);
    }
@@ -462,9 +497,10 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
       totalReplicationTime.set(0);
       syncXSiteReplicationTime = new DefaultSimpleStat();
       asyncXSiteCounter.reset();
+      asyncXSiteReplicationTime = new DefaultSimpleStat();
    }
 
-   @ManagedAttribute(description = "Number of successful replications", displayName = "Number of successful replications", measurementType = MeasurementType.TRENDSUP, displayType = DisplayType.SUMMARY)
+   @ManagedAttribute(description = "Number of successful replications", displayName = "Number of successful replications", measurementType = MeasurementType.TRENDSUP)
    public long getReplicationCount() {
       if (!isStatisticsEnabled()) {
          return -1;
@@ -472,7 +508,7 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
       return replicationCount.get();
    }
 
-   @ManagedAttribute(description = "Number of failed replications", displayName = "Number of failed replications", measurementType = MeasurementType.TRENDSUP, displayType = DisplayType.SUMMARY)
+   @ManagedAttribute(description = "Number of failed replications", displayName = "Number of failed replications", measurementType = MeasurementType.TRENDSUP)
    public long getReplicationFailures() {
       if (!isStatisticsEnabled()) {
          return -1;
@@ -509,7 +545,7 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
       return NumberFormat.getInstance().format(ration) + "%";
    }
 
-   @ManagedAttribute(description = "Successful replications as a ratio of total replications in numeric double format", displayName = "Successful replication ratio", units = Units.PERCENTAGE, displayType = DisplayType.SUMMARY)
+   @ManagedAttribute(description = "Successful replications as a ratio of total replications in numeric double format", displayName = "Successful replication ratio", units = Units.PERCENTAGE)
    public double getSuccessRatioFloatingPoint() {
       if (replicationCount.get() == 0 || !statisticsEnabled) return 0;
       return calculateSuccessRatio();
@@ -520,7 +556,7 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
       return replicationCount.get() / totalCount;
    }
 
-   @ManagedAttribute(description = "The average time spent in the transport layer, in milliseconds", displayName = "Average time spent in the transport layer", units = Units.MILLISECONDS, displayType = DisplayType.SUMMARY)
+   @ManagedAttribute(description = "The average time spent in the transport layer, in milliseconds", displayName = "Average time spent in the transport layer", units = Units.MILLISECONDS)
    public long getAverageReplicationTime() {
       if (replicationCount.get() == 0) {
          return 0;
@@ -536,42 +572,62 @@ public class RpcManagerImpl implements RpcManager, JmxStatisticsExposer {
 
    @ManagedAttribute(description = "Returns the average replication time, in milliseconds, for a cross-site replication request",
          displayName = "Average Cross-Site replication time",
-         units = Units.MILLISECONDS,
-         displayType = DisplayType.SUMMARY)
+         units = Units.MILLISECONDS)
    public long getAverageXSiteReplicationTime() {
       return isStatisticsEnabled() ? syncXSiteReplicationTime.getAverage(-1) : -1;
    }
 
    @ManagedAttribute(description = "Returns the minimum replication time, in milliseconds, for a cross-site replication request",
          displayName = "Minimum Cross-Site replication time",
-         units = Units.MILLISECONDS,
-         displayType = DisplayType.SUMMARY)
+         units = Units.MILLISECONDS)
    public long getMinimumXSiteReplicationTime() {
       return isStatisticsEnabled() ? syncXSiteReplicationTime.getMin(-1) : -1;
    }
 
    @ManagedAttribute(description = "Returns the maximum replication time, in milliseconds, for a cross-site replication request",
          displayName = "Minimum Cross-Site replication time",
-         units = Units.MILLISECONDS,
-         displayType = DisplayType.SUMMARY)
+         units = Units.MILLISECONDS)
    public long getMaximumXSiteReplicationTime() {
       return isStatisticsEnabled() ? syncXSiteReplicationTime.getMax(-1) : -1;
    }
 
    @ManagedAttribute(description = "Returns the number of sync cross-site requests",
-         displayName = "Sync Cross-Site replication requests",
-         units = Units.NONE,
-         displayType = DisplayType.SUMMARY)
+         displayName = "Sync Cross-Site replication requests")
    public long getSyncXSiteCount() {
       return isStatisticsEnabled() ? syncXSiteReplicationTime.count() : 0;
    }
 
    @ManagedAttribute(description = "Returns the number of async cross-site requests",
-         displayName = "Async Cross-Site replication requests",
-         units = Units.NONE,
-         displayType = DisplayType.SUMMARY)
+         displayName = "Async Cross-Site replication requests")
    public long getAsyncXSiteCount() {
       return isStatisticsEnabled() ? asyncXSiteCounter.sum() : 0;
+   }
+
+   @ManagedAttribute(description = "Returns the average replication time, in milliseconds, for an asynchronous cross-site replication request",
+         displayName = "Average async Cross-Site replication time",
+         units = Units.MILLISECONDS)
+   public long getAverageAsyncXSiteReplicationTime() {
+      return isStatisticsEnabled() ? asyncXSiteReplicationTime.getAverage(-1) : -1;
+   }
+
+   @ManagedAttribute(description = "Returns the minimum replication time, in milliseconds, for an asynchronous cross-site replication request",
+         displayName = "Minimum async Cross-Site replication time",
+         units = Units.MILLISECONDS)
+   public long getMinimumAsyncXSiteReplicationTime() {
+      return isStatisticsEnabled() ? asyncXSiteReplicationTime.getMin(-1) : -1;
+   }
+
+   @ManagedAttribute(description = "Returns the maximum replication time, in milliseconds, for an asynchronous cross-site replication request",
+         displayName = "Maximum async Cross-Site replication time",
+         units = Units.MILLISECONDS)
+   public long getMaximumAsyncXSiteReplicationTime() {
+      return isStatisticsEnabled() ? asyncXSiteReplicationTime.getMax(-1) : -1;
+   }
+
+   @ManagedAttribute(description = "Returns the number of async cross-site acknowledges received",
+         displayName = "Async Cross-Site replication acks")
+   public long getAsyncXSiteAcksCount() {
+      return isStatisticsEnabled() ? asyncXSiteReplicationTime.count() : 0;
    }
 
    // mainly for unit testing

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <infinispan
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} http://www.infinispan.org/schemas/infinispan-config:${infinispan.core.schema.version}
-                            urn:org:jgroups http://www.jgroups.org/schema/jgroups-4.0.xsd"
+        xsi:schemaLocation="urn:infinispan:config:${infinispan.core.schema.version} https://infinispan.org/schemas/infinispan-config:${infinispan.core.schema.version}
+                            urn:org:jgroups http://www.jgroups.org/schema/jgroups-4.1.xsd"
         xmlns="urn:infinispan:config:${infinispan.core.schema.version}">
    <jgroups>
       <stack name="bridge">
@@ -19,7 +19,7 @@
               thread_pool.max_threads="8"
               thread_pool.keep_alive_time="5000"
          />
-         <org.infinispan.test.fwk.TEST_PING ergonomics="false" testName=""/>
+         <LOCAL_PING/>
          <MERGE3 max_interval="5000"
                  min_interval="3000"/>
          <FD_SOCK bind_addr="127.0.0.1"/>
@@ -40,10 +40,14 @@
                         max_bytes="1M"
          />
          <pbcast.GMS print_local_addr="false"
-                     join_timeout="${jgroups.join_timeout:2000}"/>
-         <MFC max_credits="2M"
+                     join_timeout="${jgroups.join_timeout:2000}"
+                     max_join_attempts="1"
+                     max_leave_attempts="1"
+         />
+         <UFC_NB max_credits="3m"
               min_threshold="0.40"/>
-         <RSVP />
+         <MFC_NB max_credits="3m"
+              min_threshold="0.40"/>
          <FRAG3/>
       </stack>
       <stack name="xsite" extends="udp">

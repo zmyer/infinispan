@@ -1,0 +1,26 @@
+HELP(1)
+=======
+:doctype: manpage
+
+
+NAME
+----
+
+help - prints manual pages for commands.
+
+
+SYNOPSIS
+--------
+
+*help* ['COMMAND']
+
+
+EXAMPLE
+-------
+`help get` +
+Prints the manual page for the *get* command.
+
+
+SEE ALSO
+--------
+version(1)

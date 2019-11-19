@@ -1,32 +1,36 @@
 package org.infinispan.stats.impl;
 
+import java.util.Collection;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.time.TimeService;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.jmx.JmxStatisticsExposer;
 import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.DisplayType;
+import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.Units;
-import org.infinispan.commons.time.TimeService;
 import org.infinispan.util.logging.Log;
 
 /**
  * @author Ryan Emerson
  * @since 9.0
  */
+@MBean
+@Scope(Scopes.NONE)
 public abstract class AbstractClusterStats implements JmxStatisticsExposer {
 
    public static final long DEFAULT_STALE_STATS_THRESHOLD = 3000;
 
-   @Inject private TimeService timeService;
+   @Inject TimeService timeService;
    private volatile long staleStatsThreshold = DEFAULT_STALE_STATS_THRESHOLD;
    private volatile long statsUpdateTimestamp = 0;
    volatile boolean statisticsEnabled = false;
@@ -74,8 +78,7 @@ public abstract class AbstractClusterStats implements JmxStatisticsExposer {
    @ManagedAttribute(
          description = "Number of seconds since the cluster-wide statistics were last reset",
          displayName = "Seconds since cluster-wide statistics were reset",
-         units = Units.SECONDS,
-         displayType = DisplayType.SUMMARY
+         units = Units.SECONDS
    )
    public long getTimeSinceReset() {
       long result = -1;
@@ -121,7 +124,7 @@ public abstract class AbstractClusterStats implements JmxStatisticsExposer {
       }
    }
 
-   long addLongAttributes(List<Map<String, Number>> responseList, String attribute) {
+   private long addLongAttributes(Collection<Map<String, Number>> responseList, String attribute) {
       long total = 0;
       for (Map<String, Number> m : responseList) {
          Number value = m.get(attribute);
@@ -133,7 +136,7 @@ public abstract class AbstractClusterStats implements JmxStatisticsExposer {
       return total;
    }
 
-   double addDoubleAttributes(List<Map<String, Number>> responseList, String attribute) {
+   double addDoubleAttributes(Collection<Map<String, Number>> responseList, String attribute) {
       double total = 0;
       for (Map<String, Number> m : responseList) {
          Number value = m.get(attribute);
@@ -145,7 +148,7 @@ public abstract class AbstractClusterStats implements JmxStatisticsExposer {
       return total;
    }
 
-   int addIntAttributes(List<Map<String, Number>> responseList, String attribute) {
+   private int addIntAttributes(Collection<Map<String, Number>> responseList, String attribute) {
       int total = 0;
       for (Map<String, Number> m : responseList) {
          Number value = m.get(attribute);
@@ -157,7 +160,7 @@ public abstract class AbstractClusterStats implements JmxStatisticsExposer {
       return total;
    }
 
-   int maxIntAttributes(List<Map<String, Number>> responseList, String attribute) {
+   private int maxIntAttributes(Collection<Map<String, Number>> responseList, String attribute) {
       int max = 0;
       for (Map<String, Number> m : responseList) {
          Number value = m.get(attribute);
@@ -167,7 +170,7 @@ public abstract class AbstractClusterStats implements JmxStatisticsExposer {
       return max;
    }
 
-   void putLongAttributesAverage(List<Map<String, Number>> responseList, String attribute) {
+   void putLongAttributesAverage(Collection<Map<String, Number>> responseList, String attribute) {
       long nonZeroValues = 0;
       long total = 0;
       for (Map<String, Number> m : responseList) {
@@ -182,15 +185,15 @@ public abstract class AbstractClusterStats implements JmxStatisticsExposer {
       statsMap.put(attribute, average);
    }
 
-   void putLongAttributes(List<Map<String, Number>> responseList, String attribute) {
+   void putLongAttributes(Collection<Map<String, Number>> responseList, String attribute) {
       statsMap.put(attribute, addLongAttributes(responseList, attribute));
    }
 
-   void putIntAttributes(List<Map<String, Number>> responseList, String attribute) {
+   void putIntAttributes(Collection<Map<String, Number>> responseList, String attribute) {
       statsMap.put(attribute, addIntAttributes(responseList, attribute));
    }
 
-   void putIntAttributesMax(List<Map<String, Number>> responseList, String attribute) {
+   void putIntAttributesMax(Collection<Map<String, Number>> responseList, String attribute) {
       statsMap.put(attribute, maxIntAttributes(responseList, attribute));
    }
 

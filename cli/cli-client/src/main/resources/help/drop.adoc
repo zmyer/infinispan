@@ -1,0 +1,29 @@
+DROP(1)
+=======
+:doctype: manpage
+
+
+NAME
+----
+drop - deletes caches and counters.
+
+
+SYNOPSIS
+--------
+*drop cache* `CACHE_NAME`
+
+*drop counter* `COUNTER_NAME`
+
+
+EXAMPLES
+--------
+`drop cache mycache` +
+Deletes the `mycache` cache.
+
+`drop counter cnt_a` +
+Deletes the `cnt_a` counter.
+
+
+SEE ALSO
+--------
+create(1), clearcache(1)

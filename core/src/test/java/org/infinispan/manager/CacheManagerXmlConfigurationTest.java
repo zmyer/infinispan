@@ -7,12 +7,18 @@ import static org.testng.AssertJUnit.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.security.PrivilegedAction;
 
+import javax.security.auth.Subject;
 import javax.transaction.TransactionManager;
 
 import org.infinispan.Cache;
+import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.remoting.transport.Transport;
+import org.infinispan.security.Security;
 import org.infinispan.test.AbstractInfinispanTest;
+import org.infinispan.test.TestException;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
@@ -26,19 +32,31 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "manager.CacheManagerXmlConfigurationTest")
 public class CacheManagerXmlConfigurationTest extends AbstractInfinispanTest {
    EmbeddedCacheManager cm;
+   private Subject KING = TestingUtil.makeSubject("king");
 
    @AfterMethod
    public void tearDown() {
-      if (cm != null) cm.stop();
+      if (cm != null)
+         Security.doAs(KING, (PrivilegedAction<Void>) () -> {
+            cm.stop();
+            return null;
+         });
       cm =null;
    }
 
-   public void testNamedCacheXML() throws IOException {
-      cm = TestCacheManagerFactory.fromXml("configs/named-cache-test.xml");
+   public void testNamedCacheXML() {
+      cm = Security.doAs(KING, (PrivilegedAction<EmbeddedCacheManager>) () -> {
+         try {
+            return TestCacheManagerFactory.fromXml("configs/named-cache-test.xml");
+         } catch (IOException e) {
+            throw new TestException(e);
+         }
+      });
 
-      assertEquals("s1", cm.getCacheManagerConfiguration().transport().siteId());
-      assertEquals("r1", cm.getCacheManagerConfiguration().transport().rackId());
-      assertEquals("m1", cm.getCacheManagerConfiguration().transport().machineId());
+      GlobalConfiguration globalConfiguration = TestingUtil.extractGlobalConfiguration(cm);
+      assertEquals("s1", globalConfiguration.transport().siteId());
+      assertEquals("r1", globalConfiguration.transport().rackId());
+      assertEquals("m1", globalConfiguration.transport().machineId());
 
       // test default cache
       Cache c = cm.getCache();
@@ -105,6 +123,18 @@ public class CacheManagerXmlConfigurationTest extends AbstractInfinispanTest {
          assertTrue(c.getCacheConfiguration().invocationBatching().enabled());
          Cache c2 = cm.getCache("tml");
          assertTrue(c2.getCacheConfiguration().transaction().transactionMode().isTransactional());
+      } finally {
+         cm.stop();
+      }
+   }
+
+   public void testXInclude() throws Exception {
+      EmbeddedCacheManager cm = TestCacheManagerFactory.fromXml("configs/include.xml");
+      try {
+         assertEquals("included", cm.getCacheManagerConfiguration().defaultCacheName().get());
+         assertNotNull(cm.getCacheConfiguration("included"));
+         assertEquals(CacheMode.LOCAL, cm.getCacheConfiguration("included").clustering().cacheMode());
+         assertEquals(CacheMode.LOCAL, cm.getCacheConfiguration("another-included").clustering().cacheMode());
       } finally {
          cm.stop();
       }

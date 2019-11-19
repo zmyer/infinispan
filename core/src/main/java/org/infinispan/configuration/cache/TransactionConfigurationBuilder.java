@@ -12,8 +12,8 @@ import static org.infinispan.configuration.cache.TransactionConfiguration.TRANSA
 import static org.infinispan.configuration.cache.TransactionConfiguration.TRANSACTION_SYNCHRONIZATION_REGISTRY_LOOKUP;
 import static org.infinispan.configuration.cache.TransactionConfiguration.USE_1_PC_FOR_AUTO_COMMIT_TRANSACTIONS;
 import static org.infinispan.configuration.cache.TransactionConfiguration.USE_SYNCHRONIZATION;
+import static org.infinispan.util.logging.Log.CONFIG;
 
-import java.lang.invoke.MethodHandles;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
@@ -33,8 +33,6 @@ import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.TransactionProtocol;
 import org.infinispan.transaction.lookup.TransactionSynchronizationRegistryLookup;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * Defines transactional (JTA) characteristics of the cache.
@@ -43,7 +41,6 @@ import org.infinispan.util.logging.LogFactory;
  * @author Pedro Ruivo
  */
 public class TransactionConfigurationBuilder extends AbstractConfigurationChildBuilder implements Builder<TransactionConfiguration>, ConfigurationBuilderInfo {
-   private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
    private final AttributeSet attributes;
    private final RecoveryConfigurationBuilder recovery;
 
@@ -119,46 +116,6 @@ public class TransactionConfigurationBuilder extends AbstractConfigurationChildB
 
    LockingMode lockingMode() {
       return attributes.attribute(LOCKING_MODE).get();
-   }
-
-   /**
-    * If true, the cluster-wide commit phase in two-phase commit (2PC) transactions will be
-    * synchronous, so Infinispan will wait for responses from all nodes to which the commit was
-    * sent. Otherwise, the commit phase will be asynchronous. Keeping it as false improves
-    * performance of 2PC transactions, but it can lead to inconsistencies when a backup owner
-    * only commits the transaction after the primary owner released the lock.
-    *
-    * @deprecated since 9.0. no longer supported
-    */
-   @Deprecated
-   public TransactionConfigurationBuilder syncCommitPhase(boolean b) {
-      return this;
-   }
-
-   /**
-    * See {@link #syncCommitPhase(boolean)}
-    *
-    * @return {@code true} if sync commit phase is enabled
-    * @deprecated since 9.0. no longer supported
-    */
-   @Deprecated
-   boolean syncCommitPhase() {
-      return true;
-   }
-
-   /**
-    * If true, the cluster-wide rollback phase in two-phase commit (2PC) transactions will be
-    * synchronous, so Infinispan will wait for responses from all nodes to which the rollback was
-    * sent. Otherwise, the rollback phase will be asynchronous.
-    *
-    * Keeping it as false can lead to inconsistencies when a transaction is rolled back because of
-    * a commit timeout, as a backup owner could commit the transaction after the primary released the lock.
-    *
-    * @deprecated since 9.0. no longer supported
-    */
-   @Deprecated
-   public TransactionConfigurationBuilder syncRollbackPhase(boolean b) {
-      return this;
    }
 
    /**
@@ -266,6 +223,10 @@ public class TransactionConfigurationBuilder extends AbstractConfigurationChildB
       return this;
    }
 
+   /**
+    * @deprecated Since 10.0. Total Order will be removed.
+    */
+   @Deprecated
    public TransactionConfigurationBuilder transactionProtocol(TransactionProtocol transactionProtocol) {
       attributes.attribute(TRANSACTION_PROTOCOL).set(transactionProtocol);
       return this;
@@ -295,30 +256,30 @@ public class TransactionConfigurationBuilder extends AbstractConfigurationChildB
       Attribute<Long> reaperWakeUpInterval = attributes.attribute(REAPER_WAKE_UP_INTERVAL);
       Attribute<Long> completedTxTimeout = attributes.attribute(COMPLETED_TX_TIMEOUT);
       if (reaperWakeUpInterval.get()< 0)
-         throw log.invalidReaperWakeUpInterval(reaperWakeUpInterval.get());
+         throw CONFIG.invalidReaperWakeUpInterval(reaperWakeUpInterval.get());
       if (completedTxTimeout.get() < 0)
-         throw log.invalidCompletedTxTimeout(completedTxTimeout.get());
+         throw CONFIG.invalidCompletedTxTimeout(completedTxTimeout.get());
       CacheMode cacheMode = clustering().cacheMode();
       if(attributes.attribute(TRANSACTION_PROTOCOL).get() == TransactionProtocol.TOTAL_ORDER) {
          //total order only supports transactional caches
          if(transactionMode() != TransactionMode.TRANSACTIONAL) {
-            throw log.invalidTxModeForTotalOrder(transactionMode());
+            throw CONFIG.invalidTxModeForTotalOrder(transactionMode());
          }
 
          //total order only supports replicated and distributed mode
          if(!cacheMode.isReplicated() && !cacheMode.isDistributed()) {
-            throw log.invalidCacheModeForTotalOrder(clustering().cacheMode().friendlyCacheModeString());
+            throw CONFIG.invalidCacheModeForTotalOrder(clustering().cacheMode().friendlyCacheModeString());
          }
 
          if (lockingMode() != LockingMode.OPTIMISTIC) {
-            throw log.invalidLockingModeForTotalOrder(lockingMode());
+            throw CONFIG.invalidLockingModeForTotalOrder(lockingMode());
          }
       }
       if (!attributes.attribute(NOTIFICATIONS).get() && !getBuilder().template()) {
-         log.transactionNotificationsDisabled();
+         CONFIG.transactionNotificationsDisabled();
       }
       if (attributes.attribute(TRANSACTION_MODE).get() == TransactionMode.TRANSACTIONAL && !cacheMode.isSynchronous()) {
-         throw log.unsupportedAsyncCacheMode(cacheMode);
+         throw CONFIG.unsupportedAsyncCacheMode(cacheMode);
       }
       recovery.validate();
    }

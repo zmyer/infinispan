@@ -1,6 +1,9 @@
 package org.infinispan.commons.configuration;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import org.infinispan.commons.CacheConfigurationException;
@@ -9,6 +12,9 @@ import org.infinispan.commons.configuration.attributes.AttributeSerializer;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
 
+/**
+ * @since 10.0
+ */
 public class JsonWriter {
 
    static {
@@ -25,7 +31,7 @@ public class JsonWriter {
    void writeElement(Json parent, ConfigurationInfo element, boolean renderName) {
       ElementDefinition configurationElement = element.getElementDefinition();
       if (configurationElement == null) {
-         throw new CacheConfigurationException("No ElementDefinition found for " + this.getClass());
+         throw new CacheConfigurationException("No ElementDefinition found for " + element.getClass());
       }
 
       AttributeSet attributes = element.attributes();
@@ -41,17 +47,17 @@ public class JsonWriter {
          writeAttributes(body, attributes, element);
       }
 
-      if (isArray(childElements)) {
-         writeArray(body, element, childElements);
-      } else {
-         for (ConfigurationInfo subElement : childElements) {
+      Map<String, List<ConfigurationInfo>> elementsByName = groupElementsByName(childElements);
+      elementsByName.forEach((name, cfg) -> {
+         if (cfg.size() > 1) {
+            writeArray(body, element, cfg);
+         } else {
+            ConfigurationInfo subElement = cfg.iterator().next();
             ElementDefinition definition = subElement.getElementDefinition();
-            if (definition != null) {
-               writeElement(body, subElement, definition.isTopLevel());
-            }
+            writeElement(body, subElement, definition.isTopLevel());
          }
-      }
-      if (!body.asJsonMap().isEmpty()) {
+      });
+      if (!body.asJsonMap().isEmpty() || !configurationElement.omitIfEmpty()) {
          if (renderName) {
             String name = elementOutput.getName();
             Json existingElement = parent.at(name);
@@ -79,25 +85,16 @@ public class JsonWriter {
       Json json = Json.object();
 
       for (Attribute<?> attribute : attributeSet.attributes()) {
-         boolean isPersistent = attribute.isPersistent();
-         attribute.getAttributeDefinition().getSerializerConfig();
          AttributeSerializer serializerConfig = attribute.getAttributeDefinition().getSerializerConfig();
-         String topLevelElement = serializerConfig.getParentElement(element);
          String attrName = serializerConfig.getSerializationName(attribute, element);
          Object attrValue = serializerConfig.getSerializationValue(attribute, element);
-
-         if (attribute.isModified()) isPersistent = true;
-
-         if (isPersistent && !topLevelElement.isEmpty() && json.at(topLevelElement) == null) {
-            json.set(topLevelElement, Json.object());
-         }
-
          if (attribute.isModified()) {
-            if (attrName != null && !attrName.isEmpty() && attrValue != null) {
-               if (topLevelElement.isEmpty()) {
+            if (attrName == null && attrValue instanceof Map) {
+               Map<String, Object> valueMap = (Map<String, Object>) attrValue;
+               valueMap.forEach(json::set);
+            } else {
+               if (attrName != null && !attrName.isEmpty() && attrValue != null) {
                   json.set(attrName, attrValue);
-               } else {
-                  json.at(topLevelElement, Json.object()).set(attrName, attrValue);
                }
             }
          }
@@ -105,16 +102,16 @@ public class JsonWriter {
       if (json != null) parent.asJsonMap().putAll(json.asJsonMap());
    }
 
-   private boolean isArray(List<ConfigurationInfo> configurationInfos) {
-      if (configurationInfos.size() < 2) return false;
-
-      ConfigurationInfo first = configurationInfos.iterator().next();
-      ElementDefinition elementDefinition = first.getElementDefinition();
-      if (elementDefinition == null) return false;
-
-      String firstElementName = elementDefinition.toExternalName(first).getName();
-      return configurationInfos.stream()
-            .allMatch(c -> c.getElementDefinition() != null && c.getElementDefinition().toExternalName(c).getName().equals(firstElementName));
+   private Map<String, List<ConfigurationInfo>> groupElementsByName(List<ConfigurationInfo> configurationInfos) {
+      Map<String, List<ConfigurationInfo>> configsByName = new LinkedHashMap<>();
+      configurationInfos.forEach(c -> {
+         ElementDefinition elementDefinition = c.getElementDefinition();
+         if (elementDefinition != null) {
+            String elementName = elementDefinition.toExternalName(c).getName();
+            configsByName.computeIfAbsent(elementName, v -> new ArrayList<>()).add(c);
+         }
+      });
+      return configsByName;
    }
 
 }

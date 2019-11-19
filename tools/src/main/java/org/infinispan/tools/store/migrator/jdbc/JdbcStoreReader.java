@@ -6,20 +6,20 @@ import static org.infinispan.tools.store.migrator.Element.SOURCE;
 import java.util.Iterator;
 
 import org.infinispan.commons.CacheConfigurationException;
-import org.infinispan.commons.marshall.StreamingMarshaller;
+import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfiguration;
 import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfigurationBuilder;
 import org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration;
 import org.infinispan.persistence.jdbc.connectionfactory.ConnectionFactory;
-import org.infinispan.persistence.jdbc.connectionfactory.PooledConnectionFactory;
-import org.infinispan.persistence.jdbc.table.management.DbMetaData;
-import org.infinispan.persistence.jdbc.table.management.TableManager;
-import org.infinispan.persistence.jdbc.table.management.TableManagerFactory;
+import org.infinispan.persistence.jdbc.impl.connectionfactory.PooledConnectionFactory;
+import org.infinispan.persistence.jdbc.impl.table.DbMetaData;
+import org.infinispan.persistence.jdbc.impl.table.TableManager;
+import org.infinispan.persistence.jdbc.impl.table.TableManagerFactory;
 import org.infinispan.persistence.keymappers.DefaultTwoWayKey2StringMapper;
 import org.infinispan.persistence.keymappers.TwoWayKey2StringMapper;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.tools.store.migrator.Element;
 import org.infinispan.tools.store.migrator.StoreIterator;
 import org.infinispan.tools.store.migrator.StoreProperties;
@@ -33,7 +33,7 @@ import org.infinispan.tools.store.migrator.marshaller.SerializationConfigUtil;
 public class JdbcStoreReader implements StoreIterator {
 
    private final StoreProperties props;
-   private final StreamingMarshaller marshaller;
+   private final Marshaller marshaller;
    private final JdbcStringBasedStoreConfiguration config;
    private final ConnectionFactory connectionFactory;
    private final DbMetaData metaData;
@@ -65,7 +65,9 @@ public class JdbcStoreReader implements StoreIterator {
          case JDBC_BINARY:
             return new BinaryJdbcIterator(connectionFactory, getTableManager(true), marshaller);
          case JDBC_STRING:
-            return new StringJdbcIterator(connectionFactory, getTableManager(false), marshaller, getTwoWayMapper());
+            return props.getMajorVersion() > 9 ?
+                  new StringJdbcIterator10(connectionFactory, getTableManager(false), marshaller, getTwoWayMapper()) :
+                  new StringJdbcIterator(connectionFactory, getTableManager(false), marshaller, getTwoWayMapper());
          case JDBC_MIXED:
             return new MixedJdbcIterator(connectionFactory, getTableManager(true), getTableManager(false),
                   marshaller, getTwoWayMapper());
@@ -76,8 +78,7 @@ public class JdbcStoreReader implements StoreIterator {
 
    private TableManager getTableManager(boolean binary) {
       TableManipulationConfiguration tableConfig = binary ? binaryConfig : stringConfig;
-      TableManager tableManager = TableManagerFactory.getManager(metaData, connectionFactory, tableConfig);
-      tableManager.setCacheName(props.cacheName());
+      TableManager tableManager = TableManagerFactory.getManager(metaData, connectionFactory, tableConfig, props.cacheName());
       return tableManager;
    }
 

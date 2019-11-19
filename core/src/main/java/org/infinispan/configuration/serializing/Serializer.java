@@ -2,17 +2,19 @@ package org.infinispan.configuration.serializing;
 
 import static org.infinispan.configuration.serializing.SerializeUtils.writeOptional;
 import static org.infinispan.configuration.serializing.SerializeUtils.writeTypedProperties;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ThreadFactory;
 
 import javax.xml.stream.XMLStreamException;
 
-import org.infinispan.Version;
 import org.infinispan.commons.configuration.ConfigurationFor;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.dataconversion.MediaType;
@@ -21,9 +23,9 @@ import org.infinispan.commons.executors.CachedThreadPoolExecutorFactory;
 import org.infinispan.commons.executors.ScheduledThreadPoolExecutorFactory;
 import org.infinispan.commons.executors.ThreadPoolExecutorFactory;
 import org.infinispan.commons.marshall.AdvancedExternalizer;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.TypedProperties;
 import org.infinispan.commons.util.Util;
+import org.infinispan.commons.util.Version;
 import org.infinispan.configuration.cache.AbstractStoreConfiguration;
 import org.infinispan.configuration.cache.AuthorizationConfiguration;
 import org.infinispan.configuration.cache.BackupConfiguration;
@@ -32,12 +34,12 @@ import org.infinispan.configuration.cache.ClusteringConfiguration;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.CustomInterceptorsConfiguration;
 import org.infinispan.configuration.cache.CustomStoreConfiguration;
-import org.infinispan.configuration.cache.DataContainerConfiguration;
 import org.infinispan.configuration.cache.GroupsConfiguration;
 import org.infinispan.configuration.cache.IndexingConfiguration;
 import org.infinispan.configuration.cache.InterceptorConfiguration;
 import org.infinispan.configuration.cache.JMXStatisticsConfiguration;
 import org.infinispan.configuration.cache.MemoryConfiguration;
+import org.infinispan.configuration.cache.MemoryStorageConfiguration;
 import org.infinispan.configuration.cache.PartitionHandlingConfiguration;
 import org.infinispan.configuration.cache.PersistenceConfiguration;
 import org.infinispan.configuration.cache.RecoveryConfiguration;
@@ -51,10 +53,13 @@ import org.infinispan.configuration.global.GlobalAuthorizationConfiguration;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalJmxStatisticsConfiguration;
 import org.infinispan.configuration.global.GlobalStateConfiguration;
+import org.infinispan.configuration.global.GlobalStatePathConfiguration;
 import org.infinispan.configuration.global.SerializationConfiguration;
 import org.infinispan.configuration.global.ShutdownHookBehavior;
+import org.infinispan.configuration.global.TemporaryGlobalStatePathConfiguration;
 import org.infinispan.configuration.global.ThreadPoolConfiguration;
 import org.infinispan.configuration.global.TransportConfiguration;
+import org.infinispan.configuration.global.WhiteListConfiguration;
 import org.infinispan.configuration.parsing.Attribute;
 import org.infinispan.configuration.parsing.Element;
 import org.infinispan.configuration.parsing.Parser.TransactionMode;
@@ -62,6 +67,7 @@ import org.infinispan.conflict.EntryMergePolicy;
 import org.infinispan.conflict.MergePolicy;
 import org.infinispan.distribution.group.Grouper;
 import org.infinispan.factories.threads.DefaultThreadFactory;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.infinispan.remoting.transport.jgroups.EmbeddedJGroupsChannelConfigurator;
 import org.infinispan.remoting.transport.jgroups.FileJGroupsChannelConfigurator;
 import org.infinispan.remoting.transport.jgroups.JGroupsTransport;
@@ -70,8 +76,6 @@ import org.infinispan.security.Role;
 import org.infinispan.security.impl.ClusterRoleMapper;
 import org.infinispan.security.impl.CommonNameRoleMapper;
 import org.infinispan.security.impl.IdentityRoleMapper;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 import org.jgroups.conf.ProtocolConfiguration;
 import org.jgroups.conf.ProtocolStackConfigurator;
 
@@ -82,11 +86,10 @@ import org.jgroups.conf.ProtocolStackConfigurator;
  * @since 9.0
  */
 public class Serializer extends AbstractStoreSerializer implements ConfigurationSerializer<ConfigurationHolder> {
-   private static final Log log = LogFactory.getLog(Serializer.class);
    private static final Map<String, Element> THREAD_POOL_FACTORIES;
 
    static {
-      THREAD_POOL_FACTORIES = CollectionFactory.makeConcurrentMap();
+      THREAD_POOL_FACTORIES = new ConcurrentHashMap<>();
       THREAD_POOL_FACTORIES.put(CachedThreadPoolExecutorFactory.class.getName(), Element.CACHED_THREAD_POOL);
       THREAD_POOL_FACTORIES.put(BlockingThreadPoolExecutorFactory.class.getName(), Element.BLOCKING_BOUNDED_QUEUE_THREAD_POOL);
       THREAD_POOL_FACTORIES.put(ScheduledThreadPoolExecutorFactory.class.getName(), Element.SCHEDULED_THREAD_POOL);
@@ -139,7 +142,7 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
 
    private void writeThreads(XMLExtendedStreamWriter writer, GlobalConfiguration globalConfiguration) throws XMLStreamException {
       writer.writeStartElement(Element.THREADS);
-      ConcurrentMap<String, DefaultThreadFactory> threadFactories = CollectionFactory.makeConcurrentMap();
+      ConcurrentMap<String, DefaultThreadFactory> threadFactories = new ConcurrentHashMap<>();
       for (ThreadPoolConfiguration threadPoolConfiguration : Arrays.asList(globalConfiguration.expirationThreadPool(), globalConfiguration.listenerThreadPool(),
             globalConfiguration.persistenceThreadPool(), globalConfiguration.stateTransferThreadPool(),
             globalConfiguration.transport().remoteCommandThreadPool(), globalConfiguration.transport().transportThreadPool())) {
@@ -152,13 +155,13 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
       for (DefaultThreadFactory threadFactory : threadFactories.values()) {
          writeThreadFactory(writer, threadFactory);
       }
-      writeThreadPool(writer, "async-pool", globalConfiguration.asyncThreadPool());
-      writeThreadPool(writer, "expiration-pool", globalConfiguration.expirationThreadPool());
-      writeThreadPool(writer, "listener-pool", globalConfiguration.listenerThreadPool());
-      writeThreadPool(writer, "persistence-pool", globalConfiguration.persistenceThreadPool());
-      writeThreadPool(writer, "state-transfer-pool", globalConfiguration.stateTransferThreadPool());
-      writeThreadPool(writer, "remote-command-pool", globalConfiguration.transport().remoteCommandThreadPool());
-      writeThreadPool(writer, "transport-pool", globalConfiguration.transport().transportThreadPool());
+      writeThreadPool(writer, globalConfiguration.asyncThreadPoolName(), globalConfiguration.asyncThreadPool());
+      writeThreadPool(writer, globalConfiguration.expirationThreadPoolName(), globalConfiguration.expirationThreadPool());
+      writeThreadPool(writer, globalConfiguration.listenerThreadPoolName(), globalConfiguration.listenerThreadPool());
+      writeThreadPool(writer, globalConfiguration.persistenceThreadPoolName(), globalConfiguration.persistenceThreadPool());
+      writeThreadPool(writer, globalConfiguration.stateTransferThreadPoolName(), globalConfiguration.stateTransferThreadPool());
+      writeThreadPool(writer, globalConfiguration.transport().remoteThreadPoolName(), globalConfiguration.transport().remoteCommandThreadPool());
+      writeThreadPool(writer, globalConfiguration.transport().transportThreadPoolName(), globalConfiguration.transport().transportThreadPool());
       writer.writeEndElement();
    }
 
@@ -196,25 +199,26 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
       writer.writeStartElement(Element.CACHE_CONTAINER);
       GlobalConfiguration globalConfiguration = holder.getGlobalConfiguration();
       if (globalConfiguration != null) {
-         writer.writeAttribute(Attribute.NAME, globalConfiguration.globalJmxStatistics().cacheManagerName());
+         writer.writeAttribute(Attribute.NAME, globalConfiguration.cacheManagerName());
          if (globalConfiguration.shutdown().hookBehavior() != ShutdownHookBehavior.DEFAULT) {
             writer.writeAttribute(Attribute.SHUTDOWN_HOOK, globalConfiguration.shutdown().hookBehavior().name());
          }
-         globalConfiguration.globalJmxStatistics().attributes().write(writer, GlobalJmxStatisticsConfiguration.ENABLED, Attribute.STATISTICS);
+         writer.writeAttribute(Attribute.STATISTICS, String.valueOf(globalConfiguration.globalJmxStatistics().enabled()));
+
          if (globalConfiguration.asyncThreadPool().threadPoolFactory() != null) {
-            writer.writeAttribute(Attribute.ASYNC_EXECUTOR, "async-pool");
+            writer.writeAttribute(Attribute.ASYNC_EXECUTOR, globalConfiguration.asyncThreadPoolName());
          }
          if (globalConfiguration.expirationThreadPool().threadPoolFactory() != null) {
-            writer.writeAttribute(Attribute.EXPIRATION_EXECUTOR, "expiration-pool");
+            writer.writeAttribute(Attribute.EXPIRATION_EXECUTOR, globalConfiguration.expirationThreadPoolName());
          }
          if (globalConfiguration.listenerThreadPool().threadPoolFactory() != null) {
-            writer.writeAttribute(Attribute.LISTENER_EXECUTOR, "listener-pool");
+            writer.writeAttribute(Attribute.LISTENER_EXECUTOR, globalConfiguration.listenerThreadPoolName());
          }
          if (globalConfiguration.persistenceThreadPool().threadPoolFactory() != null) {
-            writer.writeAttribute(Attribute.PERSISTENCE_EXECUTOR, "persistence-pool");
+            writer.writeAttribute(Attribute.PERSISTENCE_EXECUTOR, globalConfiguration.persistenceThreadPoolName());
          }
          if (globalConfiguration.stateTransferThreadPool().threadPoolFactory() != null) {
-            writer.writeAttribute(Attribute.STATE_TRANSFER_EXECUTOR, "state-transfer-pool");
+            writer.writeAttribute(Attribute.STATE_TRANSFER_EXECUTOR, globalConfiguration.stateTransferThreadPoolName());
          }
          writeTransport(writer, globalConfiguration);
          writeSecurity(writer, globalConfiguration);
@@ -259,7 +263,7 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
             ConfigurationSerializer<Object> serializer = Util.getInstanceStrict(serializedWith.value());
             serializer.serialize(writer, entry.getValue());
          } catch (InstantiationException | IllegalAccessException e) {
-            throw log.unableToInstantiateSerializer(serializedWith.value());
+            throw CONFIG.unableToInstantiateSerializer(serializedWith.value());
          }
       }
 
@@ -270,42 +274,42 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
       GlobalStateConfiguration configuration = globalConfiguration.globalState();
       if (configuration.enabled()) {
          writer.writeStartElement(Element.GLOBAL_STATE);
-         if (configuration.attributes().attribute(GlobalStateConfiguration.PERSISTENT_LOCATION).isModified()) {
+
+         if (configuration.persistenceConfiguration().attributes().attribute(GlobalStatePathConfiguration.PATH).isModified()) {
             writer.writeStartElement(Element.PERSISTENT_LOCATION);
             writer.writeAttribute(Attribute.PATH, configuration.persistentLocation());
             writer.writeEndElement();
          }
-         if (configuration.attributes().attribute(GlobalStateConfiguration.SHARED_PERSISTENT_LOCATION).isModified()) {
+         if (configuration.sharedPersistenceConfiguration().attributes().attribute(GlobalStatePathConfiguration.PATH).isModified()) {
             writer.writeStartElement(Element.SHARED_PERSISTENT_LOCATION);
             writer.writeAttribute(Attribute.PATH, configuration.sharedPersistentLocation());
             writer.writeEndElement();
          }
-         if (configuration.attributes().attribute(GlobalStateConfiguration.TEMPORARY_LOCATION).isModified()) {
+         if (configuration.temporaryLocationConfiguration().attributes().attribute(TemporaryGlobalStatePathConfiguration.PATH).isModified()) {
             writer.writeStartElement(Element.TEMPORARY_LOCATION);
             writer.writeAttribute(Attribute.PATH, configuration.temporaryLocation());
             writer.writeEndElement();
          }
-         if (configuration.attributes().attribute(GlobalStateConfiguration.CONFIGURATION_STORAGE).isModified()) {
-            switch (configuration.configurationStorage()) {
-               case IMMUTABLE:
-                  writer.writeEmptyElement(Element.IMMUTABLE_CONFIGURATION_STORAGE);
-                  break;
-               case VOLATILE:
-                  writer.writeEmptyElement(Element.VOLATILE_CONFIGURATION_STORAGE);
-                  break;
-               case OVERLAY:
-                  writer.writeEmptyElement(Element.OVERLAY_CONFIGURATION_STORAGE);
-                  break;
-               case MANAGED:
-                  writer.writeEmptyElement(Element.MANAGED_CONFIGURATION_STORAGE);
-                  break;
-               case CUSTOM:
-                  writer.writeStartElement(Element.CUSTOM_CONFIGURATION_STORAGE);
-                  writer.writeAttribute(Attribute.CLASS, configuration.configurationStorageClass().get().getClass().getName());
-                  writer.writeEndElement();
-                  break;
-            }
+         switch (configuration.configurationStorage()) {
+            case IMMUTABLE:
+               writer.writeEmptyElement(Element.IMMUTABLE_CONFIGURATION_STORAGE);
+               break;
+            case VOLATILE:
+               writer.writeEmptyElement(Element.VOLATILE_CONFIGURATION_STORAGE);
+               break;
+            case OVERLAY:
+               writer.writeEmptyElement(Element.OVERLAY_CONFIGURATION_STORAGE);
+               break;
+            case MANAGED:
+               writer.writeEmptyElement(Element.MANAGED_CONFIGURATION_STORAGE);
+               break;
+            case CUSTOM:
+               writer.writeStartElement(Element.CUSTOM_CONFIGURATION_STORAGE);
+               writer.writeAttribute(Attribute.CLASS, configuration.configurationStorageClass().get().getClass().getName());
+               writer.writeEndElement();
+               break;
          }
+
          writer.writeEndElement();
       }
    }
@@ -405,10 +409,10 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
             writer.writeAttribute(Attribute.STACK, properties.getProperty("stack"));
          }
          if (transport.remoteCommandThreadPool().threadPoolFactory() != null) {
-            writer.writeAttribute(Attribute.REMOTE_COMMAND_EXECUTOR, "remote-command-pool");
+            writer.writeAttribute(Attribute.REMOTE_COMMAND_EXECUTOR, transport.remoteThreadPoolName());
          }
          if (transport.transportThreadPool().threadPoolFactory() != null) {
-            writer.writeAttribute(Attribute.EXECUTOR, "transport-pool");
+            writer.writeAttribute(Attribute.EXECUTOR, transport.transportThreadPoolName());
          }
          attributes.write(writer, TransportConfiguration.DISTRIBUTED_SYNC_TIMEOUT, Attribute.LOCK_TIMEOUT);
          attributes.write(writer, TransportConfiguration.INITIAL_CLUSTER_SIZE, Attribute.INITIAL_CLUSTER_SIZE);
@@ -426,17 +430,49 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
          if (attributes.attribute(SerializationConfiguration.VERSION).isModified()) {
             writer.writeAttribute(Attribute.VERSION, Version.decodeVersion(serialization.version()));
          }
-         writeAdvancedSerializers(writer, globalConfiguration);
+         SerializationConfiguration config = globalConfiguration.serialization();
+         writeAdvancedSerializers(writer, config);
+         writeSerializationContextInitializers(writer,config);
+         writeClassWhiteList(writer, config.whiteList());
          writer.writeEndElement();
       }
    }
 
-   private void writeAdvancedSerializers(XMLExtendedStreamWriter writer, GlobalConfiguration globalConfiguration) throws XMLStreamException {
-      Map<Integer, AdvancedExternalizer<?>> externalizers = globalConfiguration.serialization().advancedExternalizers();
-      for (Entry<Integer, AdvancedExternalizer<?>> externalizer : externalizers.entrySet()) {
-         writer.writeStartElement(Element.ADVANCED_EXTERNALIZER);
-         writer.writeAttribute(Attribute.ID, Integer.toString(externalizer.getKey()));
-         writer.writeAttribute(Attribute.CLASS, externalizer.getValue().getClass().getName());
+   private void writeAdvancedSerializers(XMLExtendedStreamWriter writer, SerializationConfiguration config) throws XMLStreamException {
+      Map<Integer, AdvancedExternalizer<?>> externalizers = config.advancedExternalizers();
+      boolean userExternalizerExists = externalizers.entrySet().stream().anyMatch(entry -> entry.getKey() >= AdvancedExternalizer.USER_EXT_ID_MIN);
+      if (userExternalizerExists) {
+         for (Entry<Integer, AdvancedExternalizer<?>> externalizer : externalizers.entrySet()) {
+            writer.writeStartElement(Element.ADVANCED_EXTERNALIZER);
+            writer.writeAttribute(Attribute.ID, Integer.toString(externalizer.getKey()));
+            writer.writeAttribute(Attribute.CLASS, externalizer.getValue().getClass().getName());
+            writer.writeEndElement();
+         }
+      }
+   }
+
+   private void writeSerializationContextInitializers(XMLExtendedStreamWriter writer, SerializationConfiguration config) throws XMLStreamException {
+      List<SerializationContextInitializer> scis = config.contextInitializers();
+      if (scis != null) {
+         for (SerializationContextInitializer sci : config.contextInitializers()) {
+            writer.writeStartElement(Element.SERIALIZATION_CONTEXT_INITIALIZER);
+            writer.writeAttribute(Attribute.CLASS, sci.getClass().getName());
+            writer.writeEndElement();
+         }
+      }
+   }
+
+   private void writeClassWhiteList(XMLExtendedStreamWriter writer, WhiteListConfiguration config) throws XMLStreamException {
+      writer.writeStartElement(Element.WHITE_LIST);
+      writeClassWhiteListElements(writer, Element.CLASS, config.getClasses());
+      writeClassWhiteListElements(writer, Element.REGEX, config.getRegexps());
+      writer.writeEndElement();
+   }
+
+   private void writeClassWhiteListElements(XMLExtendedStreamWriter writer, Element element, Collection<String> values) throws XMLStreamException {
+      for (String value : values) {
+         writer.writeStartElement(element);
+         writer.writeCharacters(value);
          writer.writeEndElement();
       }
    }
@@ -501,11 +537,8 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
       configuration.locking().attributes().write(writer, Element.LOCKING.getLocalName());
       writeTransaction(writer, configuration);
       configuration.expiration().attributes().write(writer, Element.EXPIRATION.getLocalName());
-      if (configuration.compatibility().enabled())
-         configuration.compatibility().attributes().write(writer, Element.COMPATIBILITY.getLocalName());
       writeMemory(writer, configuration);
       writePersistence(writer, configuration);
-      writeDataContainer(writer, configuration);
       writeIndexing(writer, configuration);
       writeCustomInterceptors(writer, configuration);
       writeSecurity(writer, configuration);
@@ -569,31 +602,22 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
       }
    }
 
-   private void writeDataContainer(XMLExtendedStreamWriter writer, Configuration configuration) throws XMLStreamException {
-      DataContainerConfiguration dataContainer = configuration.dataContainer();
-      AttributeSet attributes = dataContainer.attributes();
-      if (attributes.isModified()) {
-         writer.writeStartElement(Element.DATA_CONTAINER);
-         attributes.write(writer, DataContainerConfiguration.DATA_CONTAINER, Attribute.CLASS);
-         writeTypedProperties(writer, dataContainer.properties());
-         writer.writeEndElement();
-      }
-   }
-
    private void writeMemory(XMLExtendedStreamWriter writer, Configuration configuration) throws XMLStreamException {
       MemoryConfiguration memory = configuration.memory();
-      AttributeSet attributes = memory.attributes();
+      AttributeSet attributes = memory.heapConfiguration().attributes();
       if (attributes.isModified()) {
          writer.writeStartElement(Element.MEMORY);
          writer.writeStartElement(memory.storageType().getElement());
          switch (memory.storageType()) {
             case OFF_HEAP:
-               attributes.write(writer, MemoryConfiguration.ADDRESS_COUNT, Attribute.ADDRESS_COUNT);
-               attributes.write(writer, MemoryConfiguration.EVICTION_STRATEGY, Attribute.STRATEGY);
+               attributes.write(writer, MemoryStorageConfiguration.ADDRESS_COUNT, Attribute.ADDRESS_COUNT);
+               attributes.write(writer, MemoryStorageConfiguration.EVICTION_STRATEGY, Attribute.STRATEGY);
+               // fall through
             case BINARY:
-               attributes.write(writer, MemoryConfiguration.EVICTION_TYPE, Attribute.EVICTION);
+               attributes.write(writer, MemoryStorageConfiguration.EVICTION_TYPE, Attribute.EVICTION);
+               // fall through
             case OBJECT:
-               attributes.write(writer, MemoryConfiguration.SIZE, Attribute.SIZE);
+               attributes.write(writer, MemoryStorageConfiguration.SIZE, Attribute.SIZE);
          }
          writer.writeEndElement();
          writer.writeEndElement();
@@ -651,7 +675,7 @@ public class Serializer extends AbstractStoreSerializer implements Configuration
                serializer = Util.getInstanceStrict(serializedWith.value());
                serializer.serialize(writer, configuration);
             } catch (Exception e) {
-               throw log.unableToInstantiateSerializer(serializedWith.value());
+               throw CONFIG.unableToInstantiateSerializer(serializedWith.value());
             }
          }
       }

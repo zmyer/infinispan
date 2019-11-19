@@ -19,6 +19,7 @@ import org.infinispan.configuration.parsing.ParserRegistry;
 import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
 import org.infinispan.hibernate.cache.spi.EmbeddedCacheManagerProvider;
 import org.infinispan.hibernate.cache.spi.InfinispanProperties;
+import org.infinispan.jboss.marshalling.core.JBossUserMarshaller;
 import org.infinispan.manager.DefaultCacheManager;
 import org.infinispan.manager.EmbeddedCacheManager;
 
@@ -52,7 +53,7 @@ public class DefaultCacheManagerProvider implements EmbeddedCacheManagerProvider
       if (globalStatsProperty != null) {
          holder.getGlobalConfigurationBuilder().globalJmxStatistics().enabled(Boolean.parseBoolean(globalStatsProperty));
       }
-
+      holder.getGlobalConfigurationBuilder().serialization().marshaller(new JBossUserMarshaller());
       return holder;
    }
 
@@ -88,7 +89,7 @@ public class DefaultCacheManagerProvider implements EmbeddedCacheManagerProvider
       ClassLoader originalClassLoader = currentThread.getContextClassLoader();
       try {
          currentThread.setContextClassLoader(classLoader);
-         ConfigurationBuilderHolder builderHolder = parser.parse(input);
+         ConfigurationBuilderHolder builderHolder = parser.parse(input, null);
          // Workaround Infinispan's ClassLoader strategies to bend to our will:
          builderHolder.getGlobalConfigurationBuilder().classLoader(classLoader);
          return builderHolder;

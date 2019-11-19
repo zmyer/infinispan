@@ -22,5 +22,4 @@ final class ObjectReflectionMatcher extends ReflectionMatcher {
       if (searchIntegrator == null) return new ObjectReflectionMatcher(entityNameResolver);
       return new ObjectReflectionMatcher(new HibernateSearchPropertyHelper(searchIntegrator, entityNameResolver));
    }
-
 }

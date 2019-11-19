@@ -23,12 +23,8 @@ public interface ElementDefinition<C extends ConfigurationInfo> {
     */
    ElementOutput toExternalName(C configuration);
 
-   /**
-    * @return true if the attributeName inside the element is not mapped to any {@link Attribute}, but
-    * as a helper to identify the element when reading it back.
-    */
-   default boolean isSynthetic(String attributeName) {
-      return false;
+   default boolean omitIfEmpty() {
+      return true;
    }
 
    /**

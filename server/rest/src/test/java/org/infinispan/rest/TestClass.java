@@ -2,12 +2,13 @@ package org.infinispan.rest;
 
 import java.io.Serializable;
 
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.annotations.ProtoField;
 
-public class TestClass implements Serializable, ExternalPojo {
+public class TestClass implements Serializable {
 
    private String name;
 
+   @ProtoField(number = 1)
    public String getName() {
       return name;
    }
@@ -22,6 +23,4 @@ public class TestClass implements Serializable, ExternalPojo {
             "name='" + name + '\'' +
             '}';
    }
-
-
 }

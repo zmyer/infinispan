@@ -1,26 +1,39 @@
 package org.infinispan.stream;
 
-import java.io.Serializable;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.spy;
+
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.infinispan.Cache;
 import org.infinispan.CacheStream;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.HashConfigurationBuilder;
 import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.entries.ImmortalCacheEntry;
+import org.infinispan.distribution.MagicKey;
 import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.distribution.ch.impl.DefaultConsistentHash;
 import org.infinispan.distribution.ch.impl.ScatteredConsistentHash;
 import org.infinispan.filter.Converter;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.marshall.core.ExternalPojo;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.protostream.SerializationContextInitializer;
+import org.infinispan.protostream.annotations.AutoProtoSchemaBuilder;
+import org.infinispan.protostream.annotations.ProtoFactory;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.annotations.ProtoName;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.BaseControlledConsistentHashFactory;
@@ -36,6 +49,7 @@ import org.testng.annotations.Test;
 public abstract class BaseSetupStreamIteratorTest extends MultipleCacheManagersTest {
    protected final String CACHE_NAME = "testCache";
    protected ConfigurationBuilder builderUsed;
+   protected SerializationContextInitializer sci;
 
    public BaseSetupStreamIteratorTest(boolean tx, CacheMode mode) {
       transactional = tx;
@@ -49,6 +63,7 @@ public abstract class BaseSetupStreamIteratorTest extends MultipleCacheManagersT
    @Override
    protected void createCacheManagers() throws Throwable {
       builderUsed = new ConfigurationBuilder();
+      sci = new StreamSerializationContextImpl();
       HashConfigurationBuilder hashConfiguration = builderUsed.clustering().cacheMode(cacheMode).hash().numSegments(3);
       if (!cacheMode.isReplicated()) {
          BaseControlledConsistentHashFactory<? extends ConsistentHash> chf =
@@ -61,10 +76,10 @@ public abstract class BaseSetupStreamIteratorTest extends MultipleCacheManagersT
       if (cacheMode.isClustered()) {
          builderUsed.clustering().stateTransfer().chunkSize(50);
          enhanceConfiguration(builderUsed);
-         createClusteredCaches(3, CACHE_NAME, builderUsed);
+         createClusteredCaches(3, CACHE_NAME, sci, builderUsed);
       } else {
          enhanceConfiguration(builderUsed);
-         EmbeddedCacheManager cm = TestCacheManagerFactory.createCacheManager(builderUsed);
+         EmbeddedCacheManager cm = TestCacheManagerFactory.createCacheManager(sci, builderUsed);
          cacheManagers.add(cm);
          cm.defineConfiguration(CACHE_NAME, builderUsed.build());
       }
@@ -83,11 +98,16 @@ public abstract class BaseSetupStreamIteratorTest extends MultipleCacheManagersT
       return stream.collect(() -> Collectors.toMap(CacheEntry::getKey, CacheEntry::getValue));
    }
 
-   protected static class StringTruncator implements Converter<Object, String, String>, Serializable, ExternalPojo {
-      private final int beginning;
-      private final int length;
+   @ProtoName("BaseSetupStreamStringTrunctator")
+   public static class StringTruncator implements Converter<Object, String, String> {
+      @ProtoField(number = 1, defaultValue = "0")
+      final int beginning;
 
-      public StringTruncator(int beginning, int length) {
+      @ProtoField(number = 2, defaultValue = "0")
+      final int length;
+
+      @ProtoFactory
+      StringTruncator(int beginning, int length) {
          this.beginning = beginning;
          this.length = length;
       }
@@ -102,7 +122,7 @@ public abstract class BaseSetupStreamIteratorTest extends MultipleCacheManagersT
       }
    }
 
-   private static class TestDefaultConsistentHashFactory
+   public static class TestDefaultConsistentHashFactory
          extends BaseControlledConsistentHashFactory<DefaultConsistentHash> {
       TestDefaultConsistentHashFactory() {
          super(new DefaultTrait(), 3);
@@ -123,7 +143,7 @@ public abstract class BaseSetupStreamIteratorTest extends MultipleCacheManagersT
       }
    }
 
-   private static class TestScatteredConsistentHashFactory
+   public static class TestScatteredConsistentHashFactory
          extends BaseControlledConsistentHashFactory<ScatteredConsistentHash> {
       TestScatteredConsistentHashFactory() {
          super(new ScatteredTrait(), 3);
@@ -142,5 +162,40 @@ public abstract class BaseSetupStreamIteratorTest extends MultipleCacheManagersT
                return new int[][]{{0}, {1}, {2}};
          }
       }
+   }
+
+   protected <C> C replaceComponentWithSpy(Cache<?,?> cache, Class<C> componentClass) {
+      C component = TestingUtil.extractComponent(cache, componentClass);
+      C spiedComponent = spy(component);
+      TestingUtil.replaceComponent(cache, componentClass, spiedComponent, true);
+      reset(spiedComponent);
+      return spiedComponent;
+   }
+
+   protected Map<Integer, Set<Map.Entry<Object, String>>> generateEntriesPerSegment(KeyPartitioner keyPartitioner,
+                                                                                  Iterable<Map.Entry<Object, String>> entries) {
+      Map<Integer, Set<Map.Entry<Object, String>>> returnMap = new HashMap<>();
+
+      for (Map.Entry<Object, String> value : entries) {
+         int segment = keyPartitioner.getSegment(value.getKey());
+         Set<Map.Entry<Object, String>> set = returnMap.computeIfAbsent(segment, k -> new LinkedHashSet<>());
+         set.add(new ImmortalCacheEntry(value.getKey(), value.getValue()));
+      }
+      return returnMap;
+   }
+
+   @AutoProtoSchemaBuilder(
+         // TODO use this or just explicitly add required classes?
+//         dependsOn = org.infinispan.test.TestDataSCI.class,
+         includeClasses = {
+               BaseSetupStreamIteratorTest.StringTruncator.class,
+               BaseSetupStreamIteratorTest.TestDefaultConsistentHashFactory.class,
+               BaseSetupStreamIteratorTest.TestScatteredConsistentHashFactory.class,
+               MagicKey.class
+         },
+         schemaFileName = "core.stream.proto",
+         schemaFilePath = "proto/generated",
+         schemaPackageName = "org.infinispan.test.core.stream")
+   interface StreamSerializationContext extends SerializationContextInitializer {
    }
 }

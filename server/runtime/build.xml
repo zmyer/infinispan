@@ -1,0 +1,30 @@
+<project name="server" basedir=".">
+
+   <target name="clean">
+      <delete dir="${output.dir}"/>
+   </target>
+
+   <target name="build">
+      <mkdir dir="${output.dir}"/>
+      <copy todir="${output.dir}">
+         <fileset dir="${server.dir}"/>
+         <filterset refid="brandfilter"/>
+      </copy>
+      <chmod dir="${output.dir}/bin" perm="ugo+x" includes="*.sh"/>
+      <copy todir="${output.dir}/boot" flatten="true">
+         <fileset file="${project.build.directory}/${project.artifactId}-${project.version}-loader.jar"/>
+      </copy>
+      <copy todir="${output.dir}/lib" flatten="true">
+         <fileset refid="maven.project.dependencies"/>
+         <fileset file="${project.build.directory}/${project.artifactId}-${project.version}.jar"/>
+      </copy>
+      <copy todir="${test.lib.dir}" flatten="true">
+         <fileset refid="maven.test.dependencies"/>
+      </copy>
+   </target>
+
+   <target name="default">
+      <echo message="This script needs to be executed by the maven ant plugin"/>
+   </target>
+
+</project>

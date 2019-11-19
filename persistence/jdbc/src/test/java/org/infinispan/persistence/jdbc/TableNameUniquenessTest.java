@@ -8,10 +8,9 @@ import java.sql.Connection;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.StoreConfiguration;
 import org.infinispan.manager.CacheContainer;
-import org.infinispan.marshall.core.ExternalPojo;
 import org.infinispan.persistence.jdbc.configuration.JdbcStringBasedStoreConfiguration;
 import org.infinispan.persistence.jdbc.stringbased.JdbcStringBasedStore;
-import org.infinispan.persistence.jdbc.table.management.TableName;
+import org.infinispan.persistence.jdbc.impl.table.TableName;
 import org.infinispan.persistence.spi.CacheLoader;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.AbstractInfinispanTest;
@@ -42,7 +41,7 @@ public class TableNameUniquenessTest extends AbstractInfinispanTest {
          JdbcStringBasedStore firstCs = (JdbcStringBasedStore) TestingUtil.getFirstLoader(first);
          JdbcStringBasedStore secondCs = (JdbcStringBasedStore) TestingUtil.getFirstLoader(second);
 
-         assertTableExistence(firstCs.getConnectionFactory().getConnection(), firstCs.getTableManager().getIdentifierQuoteString(),
+         assertTableExistence(firstCs.getConnectionFactory().getConnection(), firstCs.getTableManager(first.getName()).getIdentifierQuoteString(),
                               "second", "first", "ISPN_STRING_TABLE");
 
          assertNoOverlapingState(first, second, firstCs, secondCs);
@@ -51,7 +50,7 @@ public class TableNameUniquenessTest extends AbstractInfinispanTest {
       }
    }
 
-   static class Person implements Serializable, ExternalPojo {
+   static class Person implements Serializable {
       int age;
       String name;
       private static final long serialVersionUID = 4227565864228124235L;

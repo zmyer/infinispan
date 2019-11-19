@@ -1,5 +1,12 @@
 package org.infinispan.test.hibernate.cache.commons.functional;
 
+import static org.infinispan.test.TestingUtil.extractInterceptorChain;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
@@ -11,25 +18,17 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.hibernate.PessimisticLockException;
-import org.infinispan.hibernate.cache.spi.InfinispanProperties;
-import org.infinispan.hibernate.cache.commons.InfinispanBaseRegion;
-import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
-
 import org.hibernate.testing.TestForIssue;
-import org.infinispan.test.hibernate.cache.commons.functional.entities.Item;
-import org.infinispan.test.hibernate.cache.commons.util.TestRegionFactory;
-import org.junit.Test;
-
 import org.infinispan.AdvancedCache;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.interceptors.base.BaseCustomInterceptor;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import org.infinispan.hibernate.cache.commons.InfinispanBaseRegion;
+import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
+import org.infinispan.hibernate.cache.spi.InfinispanProperties;
+import org.infinispan.interceptors.DDAsyncInterceptor;
+import org.infinispan.test.hibernate.cache.commons.functional.entities.Item;
+import org.infinispan.test.hibernate.cache.commons.util.TestRegionFactory;
+import org.junit.Test;
 
 /**
  * Tests specific to invalidation mode caches
@@ -64,7 +63,7 @@ public class InvalidationTest extends SingleNodeTest {
       HookInterceptor hook = new HookInterceptor();
 
       AdvancedCache pendingPutsCache = getPendingPutsCache(Item.class);
-      pendingPutsCache.addInterceptor(hook, 0);
+      extractInterceptorChain(pendingPutsCache).addInterceptor(hook, 0);
       AtomicBoolean getThreadBlockedInDB = new AtomicBoolean(false);
 
       Thread deleteThread = new Thread(() -> {
@@ -241,7 +240,7 @@ public class InvalidationTest extends SingleNodeTest {
       }
    }
 
-   private static class HookInterceptor extends BaseCustomInterceptor {
+   static class HookInterceptor extends DDAsyncInterceptor {
       Phaser phaser;
       Thread thread;
 

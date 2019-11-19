@@ -1,18 +1,15 @@
 package org.infinispan.server.memcached;
 
-import java.util.Properties;
+import static org.infinispan.test.fwk.TestCacheManagerFactory.configureGlobalJmx;
 
-import javax.management.AttributeNotFoundException;
-import javax.management.InstanceNotFoundException;
-import javax.management.MBeanException;
-import javax.management.MBeanServer;
-import javax.management.MBeanServerFactory;
-import javax.management.MalformedObjectNameException;
-import javax.management.ReflectionException;
+import javax.management.JMException;
+import javax.management.ObjectName;
 
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.jmx.MBeanServerLookup;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
@@ -26,40 +23,31 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "server.memcached.MemcachedClusteredStatsTest")
 public class MemcachedClusteredStatsTest extends MemcachedMultiNodeTest {
 
-   private String jmxDomain = MemcachedClusteredStatsTest.class.getSimpleName();
+   private static final String JMX_DOMAIN = MemcachedClusteredStatsTest.class.getSimpleName();
 
-   private MBeanServerLookup mbeanServerLookup = new ProvidedMBeanServerLookup(MBeanServerFactory.createMBeanServer());
+   private final MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
 
    @Override
    public EmbeddedCacheManager createCacheManager(int index) {
+      GlobalConfigurationBuilder globalBuilder = GlobalConfigurationBuilder.defaultClusteredBuilder();
+      configureGlobalJmx(globalBuilder, JMX_DOMAIN + "-" + index, mBeanServerLookup);
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.clustering().cacheMode(CacheMode.REPL_SYNC);
-      // Per-thread mbean server won't work here because the registration will
-      // happen in the 'main' thread and the remote call will try to resolve it
-      // in a lookup instance associated with an 'OOB-' thread.
-      return TestCacheManagerFactory.createClusteredCacheManagerEnforceJmxDomain(jmxDomain,
-            jmxDomain + "-" + index, true,
-            false, builder, mbeanServerLookup);
+      return TestCacheManagerFactory.createClusteredCacheManager(globalBuilder, builder);
    }
 
-   public void testSingleConnectionPerServer() throws MalformedObjectNameException, AttributeNotFoundException,
-         MBeanException, ReflectionException, InstanceNotFoundException {
-      MBeanServer mBeanServer = mbeanServerLookup.getMBeanServer(null);
-      ConnectionStatsTest.testGlobalConnections(jmxDomain + "-0", "Memcached-" + jmxDomain, 2,
-            mBeanServer);
+   public void testSingleConnectionPerServer() throws Exception {
+      ObjectName objectName = new ObjectName(String.format("%s-0:type=Server,component=Transport,name=Memcached-%s-%d",
+            JMX_DOMAIN, getClass().getSimpleName(), servers.get(0).getPort()));
+
+      // Now verify that via JMX as well, these stats are also as expected
+      eventuallyEquals(2, () -> {
+         try {
+            return mBeanServerLookup.getMBeanServer().getAttribute(objectName, "NumberOfGlobalConnections");
+         } catch (JMException e) {
+            log.debug("Exception encountered", e);
+         }
+         return 0;
+      });
    }
-
-   class ProvidedMBeanServerLookup implements MBeanServerLookup {
-      private final MBeanServer mbeanServer;
-
-      ProvidedMBeanServerLookup(MBeanServer mbeanServer) {
-         this.mbeanServer = mbeanServer;
-      }
-
-      @Override
-      public MBeanServer getMBeanServer(Properties properties) {
-         return mbeanServer;
-      }
-   }
-
 }

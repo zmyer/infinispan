@@ -10,6 +10,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import org.infinispan.commands.ReplicableCommand;
+import org.infinispan.factories.annotations.Start;
+import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.rpc.ResponseFilter;
@@ -24,6 +28,7 @@ import org.infinispan.xsite.XSiteReplicateCommand;
  * @author Pedro Ruivo
  * @since 6.0
  */
+@Scope(Scopes.GLOBAL)
 public abstract class AbstractDelegatingTransport implements Transport {
 
    protected final Transport actual;
@@ -82,6 +87,14 @@ public abstract class AbstractDelegatingTransport implements Transport {
    }
 
    @Override
+   public XSiteResponse backupRemotely(XSiteBackup backup, XSiteReplicateCommand rpcCommand) {
+      beforeBackupRemotely(rpcCommand);
+      XSiteResponse cs = actual.backupRemotely(backup, rpcCommand);
+      cs.whenComplete((aVoid, throwable) -> afterBackupRemotely(rpcCommand, throwable));
+      return cs;
+   }
+
+   @Override
    public boolean isCoordinator() {
       return actual.isCoordinator();
    }
@@ -107,15 +120,22 @@ public abstract class AbstractDelegatingTransport implements Transport {
    }
 
    @Override
+   public List<Address> getMembersPhysicalAddresses() {
+      return actual.getMembersPhysicalAddresses();
+   }
+
+   @Override
    public boolean isMulticastCapable() {
       return actual.isMulticastCapable();
    }
 
+   @Start
    @Override
    public void start() {
       actual.start();
    }
 
+   @Stop
    @Override
    public void stop() {
       actual.stop();
@@ -185,9 +205,21 @@ public abstract class AbstractDelegatingTransport implements Transport {
     * @param command  the command invoked remotely.
     * @param response can be null if not response is expected.
     * @return the new response map
+    * @deprecated since 10.0. Use {@link #afterBackupRemotely(ReplicableCommand, Throwable)}
     */
+   @Deprecated
    protected BackupResponse afterBackupRemotely(ReplicableCommand command, BackupResponse response) {
       return response;
+   }
+
+   /**
+    * Method invoked after a cross-site request.
+    *
+    * @param command The command sent.
+    * @param throwable The {@link Throwable} if the request failed, or {@code null} if successful.
+    */
+   protected void afterBackupRemotely(ReplicableCommand command, Throwable throwable) {
+      //no-op
    }
 
    @Override

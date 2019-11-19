@@ -1,17 +1,13 @@
 package org.infinispan.eviction;
 
+import java.util.concurrent.CompletionStage;
+
+import net.jcip.annotations.ThreadSafe;
 import org.infinispan.container.entries.InternalCacheEntry;
-import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.jmx.JmxStatisticsExposer;
-import org.infinispan.jmx.annotations.MBean;
-import org.infinispan.jmx.annotations.ManagedAttribute;
-import org.infinispan.jmx.annotations.ManagedOperation;
-import org.infinispan.jmx.annotations.MeasurementType;
 import org.infinispan.persistence.spi.PersistenceException;
-
-import net.jcip.annotations.ThreadSafe;
 
 /**
  * A passivation manager
@@ -21,17 +17,29 @@ import net.jcip.annotations.ThreadSafe;
  */
 @ThreadSafe
 @Scope(Scopes.NAMED_CACHE)
-@MBean(objectName = "Passivation", description = "Component that handles passivating entries to a CacheStore on eviction.")
 public interface PassivationManager extends JmxStatisticsExposer {
 
    boolean isEnabled();
 
+   /**
+    * Almost the same as {@link #passivateAsync(InternalCacheEntry)} except that it is performed
+    * synchronously on the same thread that invoked it.
+    * @deprecated since 10.0 - please use {@link #passivateAsync(InternalCacheEntry)} instead.
+    */
+   @Deprecated
    void passivate(InternalCacheEntry entry);
 
-   @Stop(priority = 9)
-   @ManagedOperation(
-         description = "Passivate all entries to the CacheStore",
-         displayName = "Passivate all")
+   /**
+    * Passivates the entry in a non blocking fashion.
+    * @param entry entry to passivate
+    * @return CompletionStage that when complete will have passivated the entry and notified listeners
+    */
+   CompletionStage<Void> passivateAsync(InternalCacheEntry entry);
+
+   /**
+    * Passivates all entries that are in memory. This method does not notify listeners of passivation.
+    * @throws PersistenceException
+    */
    void passivateAll() throws PersistenceException;
 
    /**
@@ -39,15 +47,7 @@ public interface PassivationManager extends JmxStatisticsExposer {
     */
    void skipPassivationOnStop(boolean skip);
 
-   @ManagedAttribute(
-         description = "Number of passivation events",
-         displayName = "Number of cache passivations",
-         measurementType = MeasurementType.TRENDSUP
-   )
    long getPassivations();
 
-   @ManagedOperation(
-         description = "Resets statistics gathered by this component",
-         displayName = "Reset statistics")
    void resetStatistics();
 }

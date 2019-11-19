@@ -7,6 +7,7 @@ import org.infinispan.persistence.BaseStoreFunctionalTest;
 import org.infinispan.persistence.jpa.configuration.JpaStoreConfigurationBuilder;
 import org.infinispan.persistence.jpa.entity.KeyValueEntity;
 import org.infinispan.persistence.spi.PersistenceException;
+import org.infinispan.protostream.SerializationContextInitializer;
 import org.testng.annotations.Test;
 
 /**
@@ -14,14 +15,21 @@ import org.testng.annotations.Test;
  */
 @Test(groups = {"unit", "smoke"}, testName = "persistence.JpaStoreFunctionalTest")
 public class JpaStoreFunctionalTest extends BaseStoreFunctionalTest {
+
    @Override
    protected PersistenceConfigurationBuilder createCacheStoreConfig(PersistenceConfigurationBuilder persistence, boolean preload) {
       persistence.addStore(JpaStoreConfigurationBuilder.class)
             .persistenceUnitName("org.infinispan.persistence.jpa")
             .entityClass(KeyValueEntity.class)
             .preload(preload)
+            .segmented(false)
             .create();
       return persistence;
+   }
+
+   @Override
+   protected SerializationContextInitializer getSerializationContextInitializer() {
+      return JpaSCI.INSTANCE;
    }
 
    @Override
@@ -51,17 +59,5 @@ public class JpaStoreFunctionalTest extends BaseStoreFunctionalTest {
    @Override
    public void testStoreByteArrays(Method m) throws PersistenceException {
       // byte arrays are not entities  (no need to test how we can wrap them)
-   }
-
-   @Test(enabled = false, description = "Not applicable")
-   @Override
-   public void testRestoreAtomicMap(Method m) {
-      // Atomic maps are not entities
-   }
-
-   @Test(enabled = false, description = "Not applicable")
-   @Override
-   public void testRestoreTransactionalAtomicMap(Method m) throws Exception {
-      // Atomic maps are not entities
    }
 }

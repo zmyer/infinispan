@@ -6,7 +6,6 @@ import static org.infinispan.context.Flag.SKIP_REMOTE_LOOKUP;
 import static org.infinispan.context.Flag.SKIP_XSITE_BACKUP;
 
 import java.util.concurrent.atomic.AtomicReference;
-
 import javax.transaction.TransactionManager;
 
 import org.infinispan.commands.CommandsFactory;
@@ -16,10 +15,12 @@ import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.InvocationContextFactory;
-import org.infinispan.context.SingleKeyNonTxInvocationContext;
+import org.infinispan.context.impl.SingleKeyNonTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.ch.KeyPartitioner;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.statetransfer.CommitManager;
 import org.infinispan.util.logging.Log;
@@ -31,6 +32,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author Pedro Ruivo
  * @since 7.0
  */
+@Scope(Scopes.NAMED_CACHE)
 public class XSiteStateConsumerImpl implements XSiteStateConsumer {
 
    private static final long STATE_TRANSFER_PUT_FLAGS = EnumUtil.bitSetOf(PUT_FOR_X_SITE_STATE_TRANSFER,
@@ -40,12 +42,12 @@ public class XSiteStateConsumerImpl implements XSiteStateConsumer {
    private static final boolean trace = log.isTraceEnabled();
    private static final boolean debug = log.isDebugEnabled();
 
-   @Inject private TransactionManager transactionManager;
-   @Inject private InvocationContextFactory invocationContextFactory;
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private AsyncInterceptorChain interceptorChain;
-   @Inject private CommitManager commitManager;
-   @Inject private KeyPartitioner keyPartitioner;
+   @Inject TransactionManager transactionManager;
+   @Inject InvocationContextFactory invocationContextFactory;
+   @Inject CommandsFactory commandsFactory;
+   @Inject AsyncInterceptorChain interceptorChain;
+   @Inject CommitManager commitManager;
+   @Inject KeyPartitioner keyPartitioner;
 
    private AtomicReference<String> sendingSite = new AtomicReference<>(null);
 

@@ -17,26 +17,13 @@ import org.infinispan.commons.util.Util;
  */
 public abstract class AttributeSerializer<T, U extends ConfigurationInfo, B extends ConfigurationBuilderInfo> {
 
-   public enum SerializationMode {AS_ELEMENT, AS_ATTRIBUTE}
-
-   public boolean canRead(String enclosing, String nestingName, String nestedName, AttributeDefinition attributeDefinition) {
-      return nestingName == null && nestedName != null && nestedName.equals(attributeDefinition.xmlName());
-   }
-
-   public SerializationMode getSerializationMode() {
-      return SerializationMode.AS_ATTRIBUTE;
-   }
-
-
-   /**
-    * Returns the parent element that this attribute should be placed under when serializing, or empty String if the attribute is not nested.
-    */
-   public String getParentElement(U configurationElement) {
-      return "";
+   public boolean canRead(String name, AttributeDefinition attributeDefinition) {
+      return name != null && name.equals(attributeDefinition.xmlName());
    }
 
    /**
-    * @return The desired serialised attribute name.
+    * @return The desired serialised attribute name or null if the attribute name is to be omitted and the value will
+    * be written directly
     */
    public String getSerializationName(Attribute<T> attribute, U configurationElement) {
       return attribute.getAttributeDefinition().xmlName();
@@ -50,24 +37,18 @@ public abstract class AttributeSerializer<T, U extends ConfigurationInfo, B exte
    }
 
    /**
-    * Read attribute value from serialized format, if {@link #canRead(String, String, String, AttributeDefinition)} is true
+    * Read attribute value from serialized format, if {@link #canRead(String, AttributeDefinition)} is true
     * for this instance of serializer.
     *
     * @param enclosingElement The parent element where the attribute is located.
-    * @param nesting In case the attributed is serialized as an element, the name of this element or null otherwise.
-    * @param name The serialized attribute name.
-    * @param value The serialize attribute value.
+    * @param attributeDefinition The serialized attribute definition.
+    * @param attrValue The serialize attribute value.
     * @param builderInfo the {@link ConfigurationBuilderInfo} where the attribute is defined.
     * @return The attribute value deserialized.
     */
-   public Object readAttributeValue(String enclosingElement, String nesting, AttributeDefinition attributeDefinition, Object attrValue, B builderInfo) {
+   public Object readAttributeValue(String enclosingElement, AttributeDefinition attributeDefinition, Object attrValue, B builderInfo) {
       if (attrValue == null) return null;
       Class type = attributeDefinition.getType();
-      AttributeSerializer serializerConfig = attributeDefinition.getSerializerConfig();
-      SerializationMode serializationMode = serializerConfig.getSerializationMode();
-
-      boolean isElementSerialization = serializationMode == SerializationMode.AS_ELEMENT;
-      if (isElementSerialization) return null;
 
       if (attrValue instanceof Map && type == TypedProperties.class) {
          TypedProperties typedProperties = new TypedProperties();

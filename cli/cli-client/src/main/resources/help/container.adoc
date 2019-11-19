@@ -1,0 +1,25 @@
+CONTAINER(1)
+============
+:doctype: manpage
+
+
+NAME
+----
+container - selects the container for running subsequent commands.
+
+
+SYNOPSIS
+--------
+*container* ['CONTAINER_NAME']
+
+
+EXAMPLE
+-------
+`container default` +
+Selects the default container and is the same as navigating the resource tree
+using `cd containers/default`.
+
+
+SEE ALSO
+--------
+cd(1), clear(1), container(1), get(1), put(1), remove(1)

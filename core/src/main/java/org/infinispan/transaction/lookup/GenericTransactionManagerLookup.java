@@ -1,5 +1,7 @@
 package org.infinispan.transaction.lookup;
 
+import static org.infinispan.util.logging.Log.CONTAINER;
+
 import javax.naming.InitialContext;
 import javax.naming.NamingException;
 import javax.transaction.TransactionManager;
@@ -9,6 +11,8 @@ import org.infinispan.commons.tx.lookup.TransactionManagerLookup;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.transaction.tm.EmbeddedTransactionManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -22,6 +26,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author Markus Plesser
  * @since 4.0
  */
+@Scope(Scopes.GLOBAL)
 public class GenericTransactionManagerLookup implements TransactionManagerLookup {
 
    private static final Log log = LogFactory.getLog(GenericTransactionManagerLookup.class);
@@ -48,7 +53,7 @@ public class GenericTransactionManagerLookup implements TransactionManagerLookup
     */
    private TransactionManager tm = null;
 
-   @Inject private GlobalConfiguration globalCfg;
+   @Inject GlobalConfiguration globalCfg;
 
    /**
     * Get the system-wide used TransactionManager
@@ -78,7 +83,7 @@ public class GenericTransactionManagerLookup implements TransactionManagerLookup
 
    private void useDummyTM() {
       tm = EmbeddedTransactionManager.getInstance();
-      log.fallingBackToEmbeddedTm();
+      CONTAINER.fallingBackToEmbeddedTm();
    }
 
    private void tryEmbeddedJBossTM() {
@@ -110,7 +115,7 @@ public class GenericTransactionManagerLookup implements TransactionManagerLookup
          ctx = new InitialContext();
       }
       catch (NamingException e) {
-         log.failedToCreateInitialCtx(e);
+         CONTAINER.failedToCreateInitialCtx(e);
          lookupFailed = true;
          return;
       }

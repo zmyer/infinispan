@@ -1,10 +1,14 @@
 package org.infinispan.rest.framework;
 
-import java.security.Principal;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
+import javax.security.auth.Subject;
+
+import org.infinispan.commons.api.CacheContainerAdmin.AdminFlag;
 import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.context.Flag;
 
 /**
  * @since 10.0
@@ -14,6 +18,8 @@ public interface RestRequest {
    Method method();
 
    String path();
+
+   String uri();
 
    ContentSource contents();
 
@@ -37,24 +43,33 @@ public interface RestRequest {
 
    String getEtagIfMatchHeader();
 
-   String getEtagIfModifiedSinceHeader();
+   String getIfModifiedSinceHeader();
 
    String getEtagIfNoneMatchHeader();
 
-   String getEtagIfUnmodifiedSinceHeader();
+   String getIfUnmodifiedSinceHeader();
 
    Long getMaxIdleTimeSecondsHeader();
 
-   boolean getPerformAsyncHeader();
-
    Long getTimeToLiveSecondsHeader();
 
-   Principal getPrincipal();
+   EnumSet<AdminFlag> getAdminFlags();
 
-   void setPrincipal(Principal principal);
+   Flag[] getFlags();
+
+   Long getCreatedHeader();
+
+   Long getLastUsedHeader();
+
+   Subject getSubject();
+
+   void setSubject(Subject subject);
 
    void setVariables(Map<String, String> variables);
 
    void setAction(String action);
 
+   String header(String name);
+
+   List<String> headers(String name);
 }

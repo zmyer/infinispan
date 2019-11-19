@@ -3,6 +3,7 @@ package org.infinispan.configuration.cache;
 import java.io.File;
 
 import org.infinispan.commons.configuration.attributes.AttributeSet;
+import org.infinispan.persistence.spi.InitializationContext;
 
 /**
  * Abstract store configuration that should be extended when the store configuration supports being segmented.
@@ -10,9 +11,8 @@ import org.infinispan.commons.configuration.attributes.AttributeSet;
  * @since 9.4
  */
 public abstract class AbstractSegmentedStoreConfiguration<T extends AbstractStoreConfiguration> extends AbstractStoreConfiguration {
-   public AbstractSegmentedStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async,
-         SingletonStoreConfiguration singletonStore) {
-      super(attributes, async, singletonStore);
+   public AbstractSegmentedStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async) {
+      super(attributes, async);
    }
 
    /**
@@ -20,15 +20,31 @@ public abstract class AbstractSegmentedStoreConfiguration<T extends AbstractStor
     * configuration that is configured to be persisted using the given segment.
     * @param segment the segment to use
     * @return the newly created configuration
+    * @deprecated since 10.0 - please implement {@link #newConfigurationFrom(int, InitializationContext)}.
     */
-   public abstract T newConfigurationFrom(int segment);
+   @Deprecated
+   public T newConfigurationFrom(int segment) {
+      throw new UnsupportedOperationException("Please make sure you are implementing newConfigurationFrom(int, InitializationContext)");
+   }
+
+   /**
+    * Same as {@link #newConfigurationFrom(int)} except that you can utilize the intialization context when
+    * initializing the segmented store object. This method
+    * @param segment the segment to use
+    * @param ctx the initialization context from the persistence layer
+    * @return the newly created configuration
+    * @implSpec This invokes the {@link #newConfigurationFrom(int)} method and this default impl will be removed in the future
+    */
+   public T newConfigurationFrom(int segment, InitializationContext ctx) {
+      return newConfigurationFrom(segment);
+   }
 
    /**
     * Transforms a file location to a segment based one. This is useful for file based stores where all you need to
     * do is append a segment to the name of the directory. If the provided location is a directory, that is that it is
     * terminated by in {@link File#separatorChar}, it will add a new directory onto that that is the segment. If the
     * location is a file, that is that it is not terminated by {@link File#separatorChar}, this will treat the location
-    * as a directory and append a segment file in it. The underlying store may or may not preseve this and could still
+    * as a directory and append a segment file in it. The underlying store may or may not preserve this and could still
     * turn the segment into a directory.
     * @param location original file location
     * @param segment the segment to append

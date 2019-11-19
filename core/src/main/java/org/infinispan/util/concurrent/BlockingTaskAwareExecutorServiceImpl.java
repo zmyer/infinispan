@@ -66,6 +66,8 @@ public class BlockingTaskAwareExecutorServiceImpl extends AbstractExecutorServic
    @Override
    public void shutdown() {
       shutdown = true;
+      controllerThread.interrupt();
+      executorService.shutdown();
    }
 
    @Override
@@ -126,6 +128,7 @@ public class BlockingTaskAwareExecutorServiceImpl extends AbstractExecutorServic
       } catch (RejectedExecutionException rejected) {
          //put it back!
          blockedTasks.offer(runnable);
+         checkForReadyTasks();
       }
    }
 

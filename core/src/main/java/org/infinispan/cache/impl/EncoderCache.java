@@ -1,5 +1,7 @@
 package org.infinispan.cache.impl;
 
+import static org.infinispan.util.logging.Log.CONTAINER;
+
 import java.lang.annotation.Annotation;
 import java.util.AbstractMap;
 import java.util.ArrayList;
@@ -11,6 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -27,8 +30,6 @@ import org.infinispan.commons.dataconversion.IdentityWrapper;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.dataconversion.Wrapper;
 import org.infinispan.commons.util.InjectiveFunction;
-import org.infinispan.compat.BiFunctionMapper;
-import org.infinispan.compat.FunctionMapper;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.ForwardingCacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
@@ -36,6 +37,8 @@ import org.infinispan.container.impl.InternalEntryFactory;
 import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.impl.BasicComponentRegistry;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.ListenerHolder;
@@ -43,8 +46,7 @@ import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
 import org.infinispan.util.WriteableCacheCollectionMapper;
 import org.infinispan.util.WriteableCacheSetMapper;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
+import org.infinispan.util.concurrent.CompletionStages;
 
 /**
  * Cache decoration that makes use of the {@link Encoder} and {@link Wrapper} to convert between storage value and
@@ -52,14 +54,11 @@ import org.infinispan.util.logging.LogFactory;
  *
  * @since 9.1
  */
+@Scope(Scopes.NAMED_CACHE)
 public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
-   private static Log log = LogFactory.getLog(EncoderCache.class);
-
-   @Inject
-   private InternalEntryFactory entryFactory;
-   @Inject
-   private BasicComponentRegistry componentRegistry;
+   @Inject InternalEntryFactory entryFactory;
+   @Inject BasicComponentRegistry componentRegistry;
 
    private final DataConversion keyDataConversion;
    private final DataConversion valueDataConversion;
@@ -557,7 +556,7 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    private void checkSubclass(Class<?> configured, Class<?> required) {
       if (!required.isAssignableFrom(configured)) {
-         throw log.invalidEncodingClass(configured, required);
+         throw CONTAINER.invalidEncodingClass(configured, required);
       }
    }
 
@@ -827,12 +826,17 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    @Override
    public void addListener(Object listener) {
-      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
+      CompletionStages.join(addListenerAsync(listener));
+   }
+
+   @Override
+   public CompletionStage<Void> addListenerAsync(Object listener) {
       Cache unwrapped = super.unwrapCache(this.cache);
       if (unwrapped instanceof CacheImpl) {
-         ((CacheImpl) unwrapped).addListener(listenerHolder);
+         ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
+         return ((CacheImpl) unwrapped).addListenerAsync(listenerHolder);
       } else {
-         super.addListener(listener);
+         return super.addListenerAsync(listener);
       }
    }
 
@@ -849,37 +853,58 @@ public class EncoderCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> {
 
    @Override
    public <C> void addListener(Object listener, CacheEventFilter<? super K, ? super V> filter,
-                               CacheEventConverter<? super K, ? super V, C> converter) {
-      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
-      Cache unwrapped = super.unwrapCache(this.cache);
-      if (unwrapped instanceof CacheImpl) {
-         ((CacheImpl) unwrapped).addListener(listenerHolder, filter, converter);
-      } else {
-         super.addListener(listener);
-      }
+         CacheEventConverter<? super K, ? super V, C> converter) {
+      CompletionStages.join(addListenerAsync(listener, filter, converter));
    }
 
-   public <C> void addFilteredListener(Object listener,
-                                       CacheEventFilter<? super K, ? super V> filter,
-                                       CacheEventConverter<? super K, ? super V, C> converter,
-                                       Set<Class<? extends Annotation>> filterAnnotations) {
-      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
+   @Override
+   public <C> CompletionStage<Void> addListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter,
+                               CacheEventConverter<? super K, ? super V, C> converter) {
       Cache unwrapped = super.unwrapCache(this.cache);
       if (unwrapped instanceof CacheImpl) {
-         ((CacheImpl) unwrapped).addFilteredListener(listenerHolder, filter, converter, filterAnnotations);
+         ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
+         return ((CacheImpl) unwrapped).addListenerAsync(listenerHolder, filter, converter);
       } else {
-         super.addFilteredListener(listener, filter, converter, filterAnnotations);
+         return super.addListenerAsync(listener);
       }
    }
 
    @Override
-   public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
-      ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, true);
+   public <C> void addFilteredListener(Object listener,
+         CacheEventFilter<? super K, ? super V> filter,
+         CacheEventConverter<? super K, ? super V, C> converter,
+         Set<Class<? extends Annotation>> filterAnnotations) {
+      CompletionStages.join(addFilteredListenerAsync(listener, filter, converter, filterAnnotations));
+   }
+
+   @Override
+   public <C> CompletionStage<Void> addFilteredListenerAsync(Object listener,
+                                       CacheEventFilter<? super K, ? super V> filter,
+                                       CacheEventConverter<? super K, ? super V, C> converter,
+                                       Set<Class<? extends Annotation>> filterAnnotations) {
       Cache unwrapped = super.unwrapCache(this.cache);
       if (unwrapped instanceof CacheImpl) {
-         ((CacheImpl) unwrapped).addFilteredListener(listenerHolder, filter, converter, filterAnnotations);
+         ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, false);
+         return ((CacheImpl) unwrapped).addFilteredListenerAsync(listenerHolder, filter, converter, filterAnnotations);
       } else {
-         super.addFilteredListener(listener, filter, converter, filterAnnotations);
+         return super.addFilteredListenerAsync(listener, filter, converter, filterAnnotations);
+      }
+   }
+
+   @Override
+   public <C> void addStorageFormatFilteredListener(Object listener, CacheEventFilter<? super K, ? super V> filter,
+         CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+      CompletionStages.join(addStorageFormatFilteredListenerAsync(listener, filter, converter, filterAnnotations));
+   }
+
+   @Override
+   public <C> CompletionStage<Void> addStorageFormatFilteredListenerAsync(Object listener, CacheEventFilter<? super K, ? super V> filter, CacheEventConverter<? super K, ? super V, C> converter, Set<Class<? extends Annotation>> filterAnnotations) {
+      Cache unwrapped = super.unwrapCache(this.cache);
+      if (unwrapped instanceof CacheImpl) {
+         ListenerHolder listenerHolder = new ListenerHolder(listener, keyDataConversion, valueDataConversion, true);
+         return ((CacheImpl) unwrapped).addFilteredListenerAsync(listenerHolder, filter, converter, filterAnnotations);
+      } else {
+         return super.addFilteredListenerAsync(listener, filter, converter, filterAnnotations);
       }
    }
 

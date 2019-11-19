@@ -21,17 +21,17 @@ import org.infinispan.util.logging.LogFactory;
  * @author Manik Surtani
  * @since 9.0
  */
-public class ClusteredCacheLoaderInterceptor extends CacheLoaderInterceptor {
+public class ClusteredCacheLoaderInterceptor<K, V> extends CacheLoaderInterceptor<K, V> {
 
    private static final Log log = LogFactory.getLog(ClusteredCacheLoaderInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private DistributionManager distributionManager;
+   @Inject DistributionManager distributionManager;
 
    private boolean transactional;
 
    @Start(priority = 15)
-   private void startClusteredCacheLoaderInterceptor() {
+   void startClusteredCacheLoaderInterceptor() {
       transactional = cacheConfiguration.transaction().transactionMode().isTransactional();
    }
 

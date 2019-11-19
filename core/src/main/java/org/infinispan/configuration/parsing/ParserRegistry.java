@@ -3,6 +3,7 @@ package org.infinispan.configuration.parsing;
 import static javax.xml.stream.XMLStreamConstants.END_DOCUMENT;
 import static javax.xml.stream.XMLStreamConstants.START_DOCUMENT;
 import static javax.xml.stream.XMLStreamConstants.START_ELEMENT;
+import static org.infinispan.util.logging.Log.CONFIG;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -15,12 +16,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Properties;
 import java.util.ServiceLoader;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import javax.xml.namespace.QName;
@@ -30,21 +33,18 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import javax.xml.stream.XMLStreamWriter;
 
-import org.infinispan.Version;
 import org.infinispan.commons.CacheConfigurationException;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.FileLookup;
 import org.infinispan.commons.util.FileLookupFactory;
 import org.infinispan.commons.util.ServiceFinder;
 import org.infinispan.commons.util.Util;
+import org.infinispan.commons.util.Version;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.serializing.ConfigurationHolder;
 import org.infinispan.configuration.serializing.Serializer;
 import org.infinispan.configuration.serializing.XMLExtendedStreamWriter;
 import org.infinispan.configuration.serializing.XMLExtendedStreamWriterImpl;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * ParserRegistry is a namespace-mapping-aware meta-parser which provides a way to delegate the
@@ -58,7 +58,6 @@ import org.infinispan.util.logging.LogFactory;
  * @since 5.2
  */
 public class ParserRegistry implements NamespaceMappingParser {
-   private static final Log log = LogFactory.getLog(ParserRegistry.class);
    private final WeakReference<ClassLoader> cl;
    private final ConcurrentMap<QName, NamespaceParserPair> parserMappings;
    private final Properties properties;
@@ -72,7 +71,7 @@ public class ParserRegistry implements NamespaceMappingParser {
    }
 
    public ParserRegistry(ClassLoader classLoader, boolean defaultOnly, Properties properties) {
-      this.parserMappings = CollectionFactory.makeConcurrentMap();
+      this.parserMappings = new ConcurrentHashMap<>();
       this.cl = new WeakReference<>(classLoader);
       this.properties = properties;
       Collection<ConfigurationParser> parsers = ServiceFinder.load(ConfigurationParser.class, cl.get(), ParserRegistry.class.getClassLoader());
@@ -80,7 +79,7 @@ public class ParserRegistry implements NamespaceMappingParser {
 
          Namespace[] namespaces = parser.getNamespaces();
          if (namespaces == null) {
-            throw log.parserDoesNotDeclareNamespaces(parser.getClass().getName());
+            throw CONFIG.parserDoesNotDeclareNamespaces(parser.getClass().getName());
          }
 
          boolean skipParser = defaultOnly;
@@ -98,25 +97,31 @@ public class ParserRegistry implements NamespaceMappingParser {
                QName qName = new QName(ns.uri(), ns.root());
                NamespaceParserPair existing = parserMappings.putIfAbsent(qName, new NamespaceParserPair(ns, parser));
                if (existing != null && !parser.getClass().equals(existing.parser.getClass())) {
-                  log.parserRootElementAlreadyRegistered(qName, parser.getClass().getName(), existing.parser.getClass().getName());
+                  CONFIG.parserRootElementAlreadyRegistered(qName, parser.getClass().getName(), existing.parser.getClass().getName());
                }
             }
          }
       }
    }
 
-   public ConfigurationBuilderHolder parseFile(String filename) throws IOException {
-      FileLookup fileLookup = FileLookupFactory.newInstance();
-      InputStream is = fileLookup.lookupFile(filename, cl.get());
-      if (is == null) {
-         throw new FileNotFoundException(filename);
-      }
-      try {
-         return parse(is);
-      } finally {
-         Util.close(is);
+   public ConfigurationBuilderHolder parse(URL url) throws IOException {
+      try (InputStream is = url.openStream()) {
+         return parse(is, new URLXMLResourceResolver(url));
       }
    }
+
+   public ConfigurationBuilderHolder parseFile(String filename) throws IOException {
+      FileLookup fileLookup = FileLookupFactory.newInstance();
+      URL url = fileLookup.lookupFileLocation(filename, cl.get());
+      if (url == null) {
+         throw new FileNotFoundException(filename);
+      }
+      try (InputStream is = url.openStream()) {
+         return parse(is, new URLXMLResourceResolver(url));
+      }
+   }
+
+
 
    public ConfigurationBuilderHolder parseFile(File file) throws IOException {
       InputStream is = new FileInputStream(file);
@@ -124,25 +129,26 @@ public class ParserRegistry implements NamespaceMappingParser {
          throw new FileNotFoundException(file.getAbsolutePath());
       }
       try {
-         return parse(is);
+         return parse(is, new URLXMLResourceResolver(file.toURI().toURL()));
       } finally {
          Util.close(is);
       }
    }
 
    public ConfigurationBuilderHolder parse(String s) {
-      return parse(new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8)));
+      return parse(new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8)), null);
    }
 
    /**
     * Parses the supplied {@link InputStream} returning a new {@link ConfigurationBuilderHolder}
     * @param is an {@link InputStream} pointing to a configuration file
+    * @param resourceResolver an optional resolver for Xinclude
     * @return a new {@link ConfigurationBuilderHolder} which contains the parsed configuration
     */
-   public ConfigurationBuilderHolder parse(InputStream is) {
+   public ConfigurationBuilderHolder parse(InputStream is, XMLResourceResolver resourceResolver) {
       try {
          ConfigurationBuilderHolder holder = new ConfigurationBuilderHolder(cl.get());
-         parse(is, holder);
+         parse(is, holder, resourceResolver);
          holder.validate();
          return holder;
       } catch (CacheConfigurationException e) {
@@ -158,13 +164,19 @@ public class ParserRegistry implements NamespaceMappingParser {
       }
    }
 
-   public ConfigurationBuilderHolder parse(InputStream is, ConfigurationBuilderHolder holder) throws XMLStreamException {
+   public ConfigurationBuilderHolder parse(URL url, ConfigurationBuilderHolder holder) throws IOException, XMLStreamException {
+      try(InputStream is = url.openStream()) {
+         return parse(is, holder, new URLXMLResourceResolver(url));
+      }
+   }
+
+   public ConfigurationBuilderHolder parse(InputStream is, ConfigurationBuilderHolder holder, XMLResourceResolver resourceResolver) throws XMLStreamException {
       BufferedInputStream input = new BufferedInputStream(is);
       XMLInputFactory factory = XMLInputFactory.newInstance();
       setIfSupported(factory, XMLInputFactory.IS_VALIDATING, Boolean.FALSE);
       setIfSupported(factory, XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
       XMLStreamReader subReader = factory.createXMLStreamReader(input);
-      XMLExtendedStreamReader reader = new XMLExtendedStreamReaderImpl(this, subReader, properties);
+      XMLExtendedStreamReader reader = new XMLExtendedStreamReaderImpl(factory, resourceResolver, this, subReader, properties);
       parse(reader, holder);
       subReader.close();
       // Fire all parsingComplete events if any
@@ -205,7 +217,7 @@ public class ParserRegistry implements NamespaceMappingParser {
          parser = parserMappings.get(new QName(baseUri, name.getLocalPart()));
          // See if we can get a default parser instead
          if (parser == null || !isSupportedNamespaceVersion(parser.namespace, uri.substring(lastColon + 1)))
-            throw log.unsupportedConfiguration(name.getLocalPart(), name.getNamespaceURI());
+            throw CONFIG.unsupportedConfiguration(name.getLocalPart(), name.getNamespaceURI());
       }
       Schema oldSchema = reader.getSchema();
       reader.setSchema(Schema.fromNamespaceURI(name.getNamespaceURI()));

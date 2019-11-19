@@ -3,8 +3,10 @@ package org.infinispan.marshall.exts;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -19,7 +21,6 @@ import org.infinispan.commons.util.Util;
 import org.infinispan.container.versioning.EntryVersionsMap;
 import org.infinispan.distribution.util.ReadOnlySegmentAwareMap;
 import org.infinispan.marshall.core.Ids;
-import org.jboss.marshalling.util.IdentityIntMap;
 
 /**
  * Map externalizer for all map implementations except immutable maps and singleton maps, i.e. FastCopyHashMap, HashMap,
@@ -37,7 +38,7 @@ public class MapExternalizer extends AbstractExternalizer<Map> {
    private static final int ENTRYVERSIONMAP = 5;
    private static final int SINGLETONMAP = 6;
    private static final int EMPTYMAP = 7;
-   private final IdentityIntMap<Class<?>> numbers = new IdentityIntMap<Class<?>>(9);
+   private final Map<Class<?>, Integer> numbers = new HashMap<>(9);
 
    public MapExternalizer() {
       numbers.put(HashMap.class, HASHMAP);
@@ -53,7 +54,7 @@ public class MapExternalizer extends AbstractExternalizer<Map> {
 
    @Override
    public void writeObject(ObjectOutput output, Map map) throws IOException {
-      int number = numbers.get(map.getClass(), -1);
+      int number = numbers.getOrDefault(map.getClass(), -1);
       output.write(number);
       switch (number) {
          case HASHMAP:
@@ -116,10 +117,26 @@ public class MapExternalizer extends AbstractExternalizer<Map> {
 
    @Override
    public Set<Class<? extends Map>> getTypeClasses() {
-      return Util.<Class<? extends Map>>asSet(
+      Set<Class<? extends Map>> typeClasses = Util.asSet(
             HashMap.class, TreeMap.class, FastCopyHashMap.class, EquivalentHashMap.class,
             ReadOnlySegmentAwareMap.class, ConcurrentHashMap.class,
-            EntryVersionsMap.class, getPrivateSingletonMapClass(), getPrivateEmptyMapClass());
+            EntryVersionsMap.class);
+      typeClasses.addAll(getSupportedPrivateClasses());
+      return typeClasses;
+   }
+
+   /**
+    * Returns an immutable Set that contains all of the private classes (e.g. java.util.Collections$EmptyMap) that
+    * are supported by this Externalizer. This method is to be used by external sources if these private classes
+    * need additional processing to be available.
+    * @return immutable set of the private classes
+    */
+   public static Set<Class<? extends Map>> getSupportedPrivateClasses() {
+      Set<Class<? extends Map>> classNames = new HashSet<>(Arrays.asList(
+            getPrivateSingletonMapClass(),
+            getPrivateEmptyMapClass()
+      ));
+      return Collections.unmodifiableSet(classNames);
    }
 
    private static Class<? extends Map> getPrivateSingletonMapClass() {

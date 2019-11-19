@@ -1,5 +1,6 @@
 package org.infinispan.distribution.groups;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,11 +21,11 @@ import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.interceptors.AsyncInterceptorChain;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
-import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.persistence.manager.PersistenceManager;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.CheckPoint;
 import org.infinispan.util.logging.Log;
@@ -141,7 +142,7 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
       AssertJUnit.assertEquals(expectedGroupSet, groupKeySet);
 
       testCache.testCache.removeGroup(GROUP);
-      AssertJUnit.assertTrue(testCache.testCache.getGroup(GROUP).isEmpty());
+      AssertJUnit.assertEquals(Collections.emptyMap(), testCache.testCache.getGroup(GROUP));
    }
 
    public void testRemoveGroupKeysWithPersistence() {
@@ -152,7 +153,7 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
       AssertJUnit.assertEquals(expectedGroupSet, groupKeySet);
 
       testCache.testCache.removeGroup(GROUP);
-      AssertJUnit.assertTrue(testCache.testCache.getGroup(GROUP).isEmpty());
+      AssertJUnit.assertEquals(Collections.emptyMap(), testCache.testCache.getGroup(GROUP));
    }
 
    public void testRemoveGroupKeysWithPersistenceAndPassivation() {
@@ -163,7 +164,7 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
       AssertJUnit.assertEquals(expectedGroupSet, groupKeySet);
 
       testCache.testCache.removeGroup(GROUP);
-      AssertJUnit.assertTrue(testCache.testCache.getGroup(GROUP).isEmpty());
+      AssertJUnit.assertEquals(Collections.emptyMap(), testCache.testCache.getGroup(GROUP));
    }
 
    public void testRemoveGroupKeysWithPersistenceAndSkipCacheWriter() {
@@ -189,7 +190,7 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
 
    @Override
    protected void createCacheManagers() throws Throwable {
-      createClusteredCaches(3, amendConfiguration(createConfigurationBuilder(transactional)));
+      createClusteredCaches(3, GroupTestsSCI.INSTANCE, amendConfiguration(createConfigurationBuilder(transactional)));
       defineConfigurationOnAllManagers(PERSISTENCE_CACHE,
                                        amendConfiguration(createConfigurationBuilderWithPersistence(transactional, false)));
       waitForClusterToForm(PERSISTENCE_CACHE);
@@ -245,7 +246,7 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
       return interceptor;
    }
 
-   private static class BlockCommandInterceptor extends CommandInterceptor {
+   static class BlockCommandInterceptor extends DDAsyncInterceptor {
 
       private volatile CheckPoint checkPoint;
       private volatile boolean open;
@@ -263,7 +264,7 @@ public class GetGroupKeysTest extends BaseUtilGroupTest {
             checkPoint.trigger("before");
             checkPoint.awaitStrict("after", 30, TimeUnit.SECONDS);
          }
-         return invokeNextInterceptor(ctx, command);
+         return invokeNext(ctx, command);
       }
 
       public final void awaitCommandBlock() throws TimeoutException, InterruptedException {

@@ -5,18 +5,14 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import javax.management.DynamicMBean;
-import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
-import org.infinispan.IllegalLifecycleStateException;
+import org.infinispan.commons.IllegalLifecycleStateException;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.jmx.JmxUtil;
 import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.GlobalJmxStatisticsConfiguration;
-import org.infinispan.factories.components.ManageableComponentMetadata;
-import org.infinispan.jmx.ResourceDMBean;
+import org.infinispan.jmx.CacheManagerJmxRegistration;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.server.core.configuration.ProtocolServerConfiguration;
 import org.infinispan.server.core.logging.Log;
@@ -33,8 +29,7 @@ import io.netty.util.concurrent.DefaultThreadFactory;
  * @author wburns
  * @since 4.1
  */
-public abstract class AbstractProtocolServer<A extends ProtocolServerConfiguration> extends AbstractCacheIgnoreAware
-      implements ProtocolServer<A> {
+public abstract class AbstractProtocolServer<A extends ProtocolServerConfiguration> implements ProtocolServer<A> {
 
    private static final Log log = LogFactory.getLog(AbstractProtocolServer.class, Log.class);
 
@@ -43,14 +38,19 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
    protected NettyTransport transport;
    protected EmbeddedCacheManager cacheManager;
    protected A configuration;
+   private CacheIgnoreManager cacheIgnore;
    private ObjectName transportObjName;
-   private MBeanServer mbeanServer;
+   private CacheManagerJmxRegistration jmxRegistration;
    private ThreadPoolExecutor executor;
    private ObjectName executorObjName;
 
-
    protected AbstractProtocolServer(String protocolName) {
       this.protocolName = protocolName;
+   }
+
+   @Override
+   public String getName() {
+      return protocolName;
    }
 
    protected void startInternal(A configuration, EmbeddedCacheManager cacheManager) {
@@ -66,7 +66,7 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
       // Start default cache
       startDefaultCache();
 
-      if(configuration.startTransport())
+      if (configuration.startTransport())
          startTransport();
    }
 
@@ -81,10 +81,23 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
       }
    }
 
+   protected boolean isCacheIgnored(String cache) {
+      return cacheIgnore.isCacheIgnored(cache);
+   }
+
+   public CacheIgnoreManager getCacheIgnore() {
+      return cacheIgnore;
+   }
+
    @Override
    public final void start(A configuration, EmbeddedCacheManager cacheManager) {
+      start(configuration, cacheManager, new CacheIgnoreManager(cacheManager));
+   }
+
+   @Override
+   public void start(A configuration, EmbeddedCacheManager cacheManager, CacheIgnoreManager cacheIgnore) {
+      this.cacheIgnore = cacheIgnore;
       try {
-         configuration.ignoredCaches().forEach(this::ignoreCache);
          startInternal(configuration, cacheManager);
       } catch (RuntimeException t) {
          stop();
@@ -112,10 +125,10 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
       }
    }
 
-   protected ThreadPoolExecutor getExecutor() {
+   public ThreadPoolExecutor getExecutor() {
       if (this.executor == null || this.executor.isShutdown()) {
          DefaultThreadFactory factory = new DefaultThreadFactory(getQualifiedName() + "-ServerHandler");
-         int workerThreads = getWorkerThreads();
+         int workerThreads = configuration.workerThreads();
          this.executor = new ThreadPoolExecutor(
                workerThreads,
                workerThreads,
@@ -138,41 +151,30 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
    };
 
    protected void registerServerMBeans() {
-      GlobalConfiguration globalCfg = cacheManager.getCacheManagerConfiguration();
+      GlobalConfiguration globalCfg = SecurityActions.getCacheManagerConfiguration(cacheManager);
       GlobalJmxStatisticsConfiguration jmxConfig = globalCfg.globalJmxStatistics();
       if (jmxConfig.enabled()) {
-         mbeanServer = JmxUtil.lookupMBeanServer(jmxConfig.mbeanServerLookup(), jmxConfig.properties());
-         String groupName = String.format("type=Server,name=%s", getQualifiedName());
-         String jmxDomain = JmxUtil.buildJmxDomain(jmxConfig.domain(), mbeanServer, groupName);
-
+         jmxRegistration = SecurityActions.getGlobalComponentRegistry(cacheManager).getComponent(CacheManagerJmxRegistration.class);
+         String groupName = String.format("type=Server,name=%s-%d", getQualifiedName(), configuration.port());
          try {
-            transportObjName = registerMBean(transport, jmxDomain, groupName, null);
-            executorObjName = registerMBean(new ManageableThreadPoolExecutorService(getExecutor()), jmxDomain, groupName, "WorkerExecutor");
+            transportObjName = jmxRegistration.registerExternalMBean(transport, groupName);
+            executorObjName = jmxRegistration.registerExternalMBean(new ManageableThreadPoolExecutorService(getExecutor()), groupName);
          } catch (Exception e) {
             throw new RuntimeException(e);
          }
       }
    }
 
-   private ObjectName registerMBean(Object instance, String jmxDomain, String groupName, String name) throws Exception {
-      // Pick up metadata from the component metadata repository
-      ManageableComponentMetadata meta = LifecycleCallbacks.componentMetadataRepo
-            .findComponentMetadata(instance.getClass()).toManageableComponentMetadata();
-      DynamicMBean dynamicMBean = new ResourceDMBean(instance, meta);
-      ObjectName objectName = new ObjectName(String.format("%s:%s,component=%s", jmxDomain, groupName, name != null ? name : meta.getJmxObjectName()));
-      JmxUtil.registerMBean(dynamicMBean, objectName, mbeanServer);
-      return objectName;
-   }
-
    protected void unregisterServerMBeans() throws Exception {
-      // Unregister mbean(s)
-      if (transportObjName != null)
-         JmxUtil.unregisterMBean(transportObjName, mbeanServer);
-      if (executorObjName != null)
-         JmxUtil.unregisterMBean(executorObjName, mbeanServer);
+      if (transportObjName != null) {
+         jmxRegistration.unregisterMBean(transportObjName);
+      }
+      if (executorObjName != null) {
+         jmxRegistration.unregisterMBean(executorObjName);
+      }
    }
 
-   public String getQualifiedName() {
+   public final String getQualifiedName() {
       return protocolName + (configuration.name().length() > 0 ? "-" : "") + configuration.name();
    }
 
@@ -180,7 +182,7 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
    public void stop() {
       boolean isDebug = log.isDebugEnabled();
       if (isDebug && configuration != null)
-         log.debugf("Stopping server listening in %s:%d", configuration.host(), configuration.port());
+         log.debugf("Stopping server %s listening at %s:%d", getQualifiedName(), configuration.host(), configuration.port());
 
       if (executor != null) executor.shutdownNow();
 
@@ -191,6 +193,10 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
          unregisterServerMBeans();
       } catch (Exception e) {
          throw new CacheException(e);
+      }
+
+      if (cacheIgnore != null) {
+         cacheIgnore.stop();
       }
 
       if (isDebug)
@@ -218,7 +224,18 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
    }
 
    protected void startDefaultCache() {
-      cacheManager.getCache(configuration.defaultCacheName());
+      String name = defaultCacheName();
+      if (name != null) {
+         cacheManager.getCache(name);
+      }
+   }
+
+   public String defaultCacheName() {
+      if (configuration.defaultCacheName() != null) {
+         return configuration.defaultCacheName();
+      } else {
+         return SecurityActions.getCacheManagerConfiguration(cacheManager).defaultCacheName().orElse(null);
+      }
    }
 
    public boolean isTransportEnabled() {
@@ -228,10 +245,4 @@ public abstract class AbstractProtocolServer<A extends ProtocolServerConfigurati
    public NettyTransport getTransport() {
       return transport;
    }
-
-   /**
-    * @deprecated Use the {@link #getExecutor()} to obtain information about the worker executor instead
-    */
-   @Deprecated
-   public abstract int getWorkerThreads();
 }

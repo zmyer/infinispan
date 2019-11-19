@@ -1,12 +1,14 @@
 package org.infinispan.counter.impl.manager;
 
 import static org.infinispan.counter.configuration.ConvertUtil.parsedConfigToConfig;
-import static org.infinispan.counter.util.Utils.validateStrongCounterBounds;
+import static org.infinispan.counter.impl.Utils.validateStrongCounterBounds;
+import static org.infinispan.counter.logging.Log.CONTAINER;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -19,7 +21,6 @@ import org.infinispan.counter.api.CounterConfiguration;
 import org.infinispan.counter.configuration.AbstractCounterConfiguration;
 import org.infinispan.counter.configuration.CounterManagerConfiguration;
 import org.infinispan.counter.impl.CounterModuleLifecycle;
-import org.infinispan.counter.logging.Log;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.globalstate.GlobalConfigurationManager;
 import org.infinispan.globalstate.ScopeFilter;
@@ -32,7 +33,6 @@ import org.infinispan.notifications.cachelistener.annotation.CacheEntryModified;
 import org.infinispan.notifications.cachelistener.event.Event;
 import org.infinispan.stream.CacheCollectors;
 import org.infinispan.util.concurrent.CompletableFutures;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * Stores all the defined counter's configuration.
@@ -47,7 +47,6 @@ import org.infinispan.util.logging.LogFactory;
 public class CounterConfigurationManager {
 
    public static final String COUNTER_SCOPE = "counter";
-   private static final Log log = LogFactory.getLog(CounterConfigurationManager.class, Log.class);
    private final AtomicBoolean counterCacheStarted = new AtomicBoolean(false);
    private final EmbeddedCacheManager cacheManager;
    private final List<AbstractCounterConfiguration> configuredCounters;
@@ -60,7 +59,7 @@ public class CounterConfigurationManager {
    CounterConfigurationManager(EmbeddedCacheManager cacheManager, CounterConfigurationStorage storage) {
       this.cacheManager = cacheManager;
       this.storage = storage;
-      GlobalConfiguration globalConfig = cacheManager.getGlobalComponentRegistry().getGlobalConfiguration();
+      GlobalConfiguration globalConfig = SecurityActions.getCacheManagerConfiguration(cacheManager);
       CounterManagerConfiguration counterManagerConfig = globalConfig.module(CounterManagerConfiguration.class);
       this.configuredCounters = counterManagerConfig == null ?
             Collections.emptyList() :
@@ -140,6 +139,17 @@ public class CounterConfigurationManager {
    }
 
    /**
+    * Remove a configuration
+    *
+    * @param name the name of the counter
+    *
+    * @return true if the configuration was removed
+    */
+   CompletableFuture<Boolean> removeConfiguration(String name) {
+      return stateCache.removeAsync(stateKey(name)).thenApply(Objects::nonNull);
+   }
+
+   /**
     * @return all the defined counter's name, even the one in Infinispan's configuration.
     */
    public Collection<String> getCounterNames() {
@@ -213,7 +223,7 @@ public class CounterConfigurationManager {
             break;
          case WEAK:
             if (configuration.concurrencyLevel() < 1) {
-               throw log.invalidConcurrencyLevel(configuration.concurrencyLevel());
+               throw CONTAINER.invalidConcurrencyLevel(configuration.concurrencyLevel());
             }
             break;
       }
@@ -221,23 +231,20 @@ public class CounterConfigurationManager {
 
    private void startCounterCache() {
       if (counterCacheStarted.compareAndSet(false, true)) {
-         cacheManager.getGlobalComponentRegistry()
+         SecurityActions.getGlobalComponentRegistry(cacheManager)
                .getComponent(Executor.class, KnownComponentNames.ASYNC_OPERATIONS_EXECUTOR)
                .execute(() -> {
                   String oldName = Thread.currentThread().getName();
                   try {
-                     Thread.currentThread().setName(threadName());
+                     GlobalConfiguration configuration = SecurityActions.getCacheManagerConfiguration(cacheManager);
+                     String threadName = "CounterCacheStartThread," + configuration.transport().nodeName();
+                     SecurityActions.setThreadName(threadName);
                      cacheManager.getCache(CounterModuleLifecycle.COUNTER_CACHE_NAME);
                   } finally {
-                     Thread.currentThread().setName(oldName);
+                     SecurityActions.setThreadName(oldName);
                   }
                });
       }
-   }
-
-   private String threadName() {
-      GlobalConfiguration configuration = cacheManager.getCacheManagerConfiguration();
-      return "CounterCacheStartThread," + configuration.transport().nodeName();
    }
 
    //can be async!

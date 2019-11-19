@@ -1,5 +1,6 @@
 package org.infinispan.tx;
 
+import static org.infinispan.test.TestingUtil.extractInterceptorChain;
 import static org.testng.AssertJUnit.assertEquals;
 
 import org.infinispan.commands.tx.CommitCommand;
@@ -7,8 +8,9 @@ import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.impl.TxInvocationContext;
-import org.infinispan.interceptors.base.CommandInterceptor;
+import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.testng.annotations.Test;
 
@@ -28,16 +30,15 @@ public class NoRpcOnReadonlyTransactionsTest extends MultipleCacheManagersTest {
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder config = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, true);
       config.clustering().hash().numOwners(1);
-      createCluster(config, 3);
+      createCluster(TestDataSCI.INSTANCE, config, 3);
       waitForClusterToForm();
 
       i0 = new TxCheckInterceptor();
       i1 = new TxCheckInterceptor();
       i2 = new TxCheckInterceptor();
-      advancedCache(0).addInterceptor(i0, 1);
-      advancedCache(1).addInterceptor(i1, 1);
-      advancedCache(2).addInterceptor(i2, 1);
-
+      extractInterceptorChain(advancedCache(0)).addInterceptor(i0, 1);
+      extractInterceptorChain(advancedCache(1)).addInterceptor(i1, 1);
+      extractInterceptorChain(advancedCache(2)).addInterceptor(i2, 1);
    }
 
    public void testReadOnlyTxNoNetworkCallAtCommit() throws Exception {
@@ -121,7 +122,7 @@ public class NoRpcOnReadonlyTransactionsTest extends MultipleCacheManagersTest {
 
    }
 
-   private static class TxCheckInterceptor extends CommandInterceptor {
+   static class TxCheckInterceptor extends DDAsyncInterceptor {
       private volatile int remotePrepares;
       private volatile int remoteCommits;
 

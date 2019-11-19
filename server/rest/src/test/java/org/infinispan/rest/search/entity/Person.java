@@ -1,20 +1,22 @@
 package org.infinispan.rest.search.entity;
 
 import java.io.Serializable;
+import java.util.HashSet;
 import java.util.Set;
 
 import org.hibernate.search.annotations.Field;
 import org.hibernate.search.annotations.Indexed;
 import org.hibernate.search.annotations.IndexedEmbedded;
 import org.hibernate.search.annotations.NumericField;
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.protostream.annotations.ProtoField;
+import org.infinispan.protostream.descriptors.Type;
 
 /**
  * @since 9.2
  */
 @Indexed
 @SuppressWarnings("unused")
-public class Person implements Serializable, ExternalPojo {
+public class Person implements Serializable {
 
    @Field
    private Integer id;
@@ -51,6 +53,7 @@ public class Person implements Serializable, ExternalPojo {
       this.phoneNumbers = phoneNumbers;
    }
 
+   @ProtoField(number = 1)
    public Integer getId() {
       return id;
    }
@@ -59,6 +62,7 @@ public class Person implements Serializable, ExternalPojo {
       this.id = id;
    }
 
+   @ProtoField(number = 2)
    public String getName() {
       return name;
    }
@@ -67,6 +71,7 @@ public class Person implements Serializable, ExternalPojo {
       this.name = name;
    }
 
+   @ProtoField(number = 3)
    public String getSurname() {
       return surname;
    }
@@ -75,6 +80,7 @@ public class Person implements Serializable, ExternalPojo {
       this.surname = surname;
    }
 
+   @ProtoField(number = 4)
    public Gender getGender() {
       return gender;
    }
@@ -83,6 +89,7 @@ public class Person implements Serializable, ExternalPojo {
       this.gender = gender;
    }
 
+   @ProtoField(number = 5)
    public Address getAddress() {
       return address;
    }
@@ -91,6 +98,7 @@ public class Person implements Serializable, ExternalPojo {
       this.address = address;
    }
 
+   @ProtoField(number = 6, collectionImplementation = HashSet.class)
    public Set<PhoneNumber> getPhoneNumbers() {
       return phoneNumbers;
    }
@@ -99,6 +107,7 @@ public class Person implements Serializable, ExternalPojo {
       this.phoneNumbers = phoneNumbers;
    }
 
+   @ProtoField(number = 7, type = Type.UINT32)
    public Integer getAge() {
       return age;
    }

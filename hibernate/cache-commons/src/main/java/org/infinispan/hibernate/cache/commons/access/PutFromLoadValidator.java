@@ -16,19 +16,17 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
-import org.hibernate.engine.spi.SessionImplementor;
-import org.infinispan.factories.impl.BasicComponentRegistry;
-import org.infinispan.hibernate.cache.spi.InfinispanProperties;
-import org.infinispan.hibernate.cache.commons.TimeSource;
-import org.infinispan.hibernate.cache.commons.util.CacheCommandInitializer;
-import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
 import org.hibernate.cache.spi.RegionFactory;
-
+import org.hibernate.engine.spi.SessionImplementor;
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.factories.impl.BasicComponentRegistry;
+import org.infinispan.hibernate.cache.commons.TimeSource;
+import org.infinispan.hibernate.cache.commons.util.InfinispanMessageLogger;
+import org.infinispan.hibernate.cache.spi.InfinispanProperties;
 import org.infinispan.interceptors.AsyncInterceptor;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.impl.EntryWrappingInterceptor;
@@ -142,10 +140,9 @@ public class PutFromLoadValidator {
 		if (cacheManager.getCacheConfiguration(pendingPutsName) != null) {
 			log.pendingPutsCacheAlreadyDefined(pendingPutsName);
 		} else {
-			Configuration cacheConfiguration = cache.getCacheConfiguration();
 			ConfigurationBuilder configurationBuilder = new ConfigurationBuilder();
 			configurationBuilder.read(pendingPutsConfiguration);
-			configurationBuilder.dataContainer().keyEquivalence(cacheConfiguration.dataContainer().keyEquivalence());
+			configurationBuilder.template(false);
 			cacheManager.defineConfiguration(pendingPutsName, configurationBuilder.build());
 		}
 
@@ -164,8 +161,7 @@ public class PutFromLoadValidator {
 		CacheMode cacheMode = cache.getCacheConfiguration().clustering().cacheMode();
 		// Since we need to intercept both invalidations of entries that are in the cache and those
 		// that are not, we need to use custom interceptor, not listeners (which fire only for present entries).
-		NonTxPutFromLoadInterceptor nonTxPutFromLoadInterceptor = null;
-		if (cacheMode.isClustered()) {
+      if (cacheMode.isClustered()) {
 			if (!cacheMode.isInvalidation()) {
 				throw new IllegalArgumentException("PutFromLoadValidator in clustered caches requires invalidation mode.");
 			}
@@ -229,9 +225,11 @@ public class PutFromLoadValidator {
 		}
 		log.debugf("New interceptor chain is: ", cache.getAsyncInterceptorChain());
 
-      CacheCommandInitializer cacheCommandInitializer =
-         componentRegistry.getComponent(CacheCommandInitializer.class).running();
-		cacheCommandInitializer.addPutFromLoadValidator(cache.getName(), validator);
+		if (componentRegistry.getComponent(PutFromLoadValidator.class) == null) {
+			componentRegistry.registerComponent(PutFromLoadValidator.class, validator, false);
+		} else{
+			componentRegistry.replaceComponent(PutFromLoadValidator.class.getName(), validator, false);
+		}
 	}
 
 	/**
@@ -265,8 +263,8 @@ public class PutFromLoadValidator {
                chain.replaceInterceptor(lockingInterceptor, LockingInterceptor.class);
             });
 
-		CacheCommandInitializer cci = cr.getComponent(CacheCommandInitializer.class).running();
-		return cci.removePutFromLoadValidator(cache.getName());
+
+      return cr.getComponent(PutFromLoadValidator.class).running();
 	}
 
 	public void destroy() {

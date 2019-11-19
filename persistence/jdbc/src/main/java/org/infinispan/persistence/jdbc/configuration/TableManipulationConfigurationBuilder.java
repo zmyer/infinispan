@@ -2,17 +2,14 @@ package org.infinispan.persistence.jdbc.configuration;
 
 import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.BATCH_SIZE;
 import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.CREATE_ON_START;
-import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.DATA_COLUMN_NAME;
-import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.DATA_COLUMN_TYPE;
 import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.DROP_ON_EXIT;
 import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.FETCH_SIZE;
-import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.ID_COLUMN_NAME;
-import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.ID_COLUMN_TYPE;
-import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.SEGMENT_COLUMN_NAME;
-import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.SEGMENT_COLUMN_TYPE;
 import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.TABLE_NAME_PREFIX;
-import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.TIMESTAMP_COLUMN_NAME;
-import static org.infinispan.persistence.jdbc.configuration.TableManipulationConfiguration.TIMESTAMP_COLUMN_TYPE;
+import static org.infinispan.persistence.jdbc.logging.Log.CONFIG;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 
 import org.infinispan.commons.configuration.Builder;
 import org.infinispan.commons.configuration.ConfigurationBuilderInfo;
@@ -20,9 +17,7 @@ import org.infinispan.commons.configuration.Self;
 import org.infinispan.commons.configuration.attributes.AttributeDefinition;
 import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.commons.configuration.elements.ElementDefinition;
-import org.infinispan.commons.logging.LogFactory;
 import org.infinispan.configuration.global.GlobalConfiguration;
-import org.infinispan.persistence.jdbc.logging.Log;
 
 /**
  * TableManipulationConfigurationBuilder.
@@ -33,18 +28,28 @@ import org.infinispan.persistence.jdbc.logging.Log;
 public abstract class TableManipulationConfigurationBuilder<B extends AbstractJdbcStoreConfigurationBuilder<?, B>, S extends TableManipulationConfigurationBuilder<B, S>>
       extends AbstractJdbcStoreConfigurationChildBuilder<B>
       implements Builder<TableManipulationConfiguration>, Self<S>, ConfigurationBuilderInfo {
-
-   private static final Log log = LogFactory.getLog(TableManipulationConfigurationBuilder.class, Log.class);
    private final AttributeSet attributes;
+   private final DataColumnConfigurationBuilder dataColumn = new DataColumnConfigurationBuilder();
+   private final IdColumnConfigurationBuilder idColumn = new IdColumnConfigurationBuilder();
+   private final TimestampColumnConfigurationBuilder timeStampColumn = new TimestampColumnConfigurationBuilder();
+   private final SegmentColumnConfigurationBuilder segmentColumn;
+   private List<ConfigurationBuilderInfo> subElements;
 
    TableManipulationConfigurationBuilder(AbstractJdbcStoreConfigurationBuilder<?, B> builder) {
       super(builder);
       attributes = TableManipulationConfiguration.attributeSet();
+      segmentColumn = new SegmentColumnConfigurationBuilder(builder);
+      subElements = Arrays.asList(idColumn, dataColumn, timeStampColumn, segmentColumn);
    }
 
    @Override
    public ElementDefinition getElementDefinition() {
       return TableManipulationConfiguration.ELEMENT_DEFINITION;
+   }
+
+   @Override
+   public Collection<ConfigurationBuilderInfo> getChildrenInfo() {
+      return subElements;
    }
 
    @Override
@@ -104,7 +109,7 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
     * The name of the database column used to store the keys
     */
    public S idColumnName(String idColumnName) {
-      attributes.attribute(ID_COLUMN_NAME).set(idColumnName);
+      idColumn.idColumnName(idColumnName);
       return self();
    }
 
@@ -112,7 +117,7 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
     * The type of the database column used to store the keys
     */
    public S idColumnType(String idColumnType) {
-      attributes.attribute(ID_COLUMN_TYPE).set(idColumnType);
+      idColumn.idColumnType(idColumnType);
       return self();
    }
 
@@ -120,7 +125,7 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
     * The name of the database column used to store the entries
     */
    public S dataColumnName(String dataColumnName) {
-      attributes.attribute(DATA_COLUMN_NAME).set(dataColumnName);
+      dataColumn.dataColumnName(dataColumnName);
       return self();
    }
 
@@ -128,7 +133,7 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
     * The type of the database column used to store the entries
     */
    public S dataColumnType(String dataColumnType) {
-      attributes.attribute(DATA_COLUMN_TYPE).set(dataColumnType);
+      dataColumn.dataColumnType(dataColumnType);
       return self();
    }
 
@@ -136,7 +141,7 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
     * The name of the database column used to store the timestamps
     */
    public S timestampColumnName(String timestampColumnName) {
-      attributes.attribute(TIMESTAMP_COLUMN_NAME).set(timestampColumnName);
+      timeStampColumn.dataColumnName(timestampColumnName);
       return self();
    }
 
@@ -144,7 +149,7 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
     * The type of the database column used to store the timestamps
     */
    public S timestampColumnType(String timestampColumnType) {
-      attributes.attribute(TIMESTAMP_COLUMN_TYPE).set(timestampColumnType);
+      timeStampColumn.dataColumnType(timestampColumnType);
       return self();
    }
 
@@ -152,7 +157,7 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
     * The name of the database column used to store the segments
     */
    public S segmentColumnName(String segmentColumnName) {
-      attributes.attribute(SEGMENT_COLUMN_NAME).set(segmentColumnName);
+      segmentColumn.columnName(segmentColumnName);
       return self();
    }
 
@@ -160,21 +165,24 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
     * The type of the database column used to store the segments
     */
    public S segmentColumnType(String segmentColumnType) {
-      attributes.attribute(SEGMENT_COLUMN_TYPE).set(segmentColumnType);
+      segmentColumn.columnType(segmentColumnType);
       return self();
    }
 
    @Override
    public void validate() {
-      validateIfSet(ID_COLUMN_NAME, ID_COLUMN_TYPE, DATA_COLUMN_NAME, DATA_COLUMN_TYPE, TIMESTAMP_COLUMN_NAME,
-            TIMESTAMP_COLUMN_TYPE, SEGMENT_COLUMN_NAME, SEGMENT_COLUMN_TYPE, TABLE_NAME_PREFIX);
+      validateIfSet(attributes, TABLE_NAME_PREFIX);
+      idColumn.validate();
+      dataColumn.validate();
+      timeStampColumn.validate();
+      segmentColumn.validate();
    }
 
-   private void validateIfSet(AttributeDefinition<?>... definitions) {
+   static void validateIfSet(AttributeSet attributes, AttributeDefinition<?>... definitions) {
       for(AttributeDefinition<?> definition : definitions) {
          String value = attributes.attribute(definition).asObject();
          if(value == null || value.isEmpty()) {
-            throw log.tableManipulationAttributeNotSet(definition.name());
+            throw CONFIG.tableManipulationAttributeNotSet(definition.name());
          }
       }
    }
@@ -185,12 +193,16 @@ public abstract class TableManipulationConfigurationBuilder<B extends AbstractJd
 
    @Override
    public TableManipulationConfiguration create() {
-      return new TableManipulationConfiguration(attributes.protect());
+      return new TableManipulationConfiguration(attributes.protect(), idColumn.create(), dataColumn.create(), timeStampColumn.create(), segmentColumn.create());
    }
 
    @Override
    public Builder<?> read(TableManipulationConfiguration template) {
       attributes.read(template.attributes());
+      idColumn.read(template.idColumnConfiguration());
+      dataColumn.read(template.dataColumnConfiguration());
+      timeStampColumn.read(template.timeStampColumnConfiguration());
+      segmentColumn.read(template.segmentColumnConfiguration());
       return this;
    }
 

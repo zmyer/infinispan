@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <infinispan
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:infinispan:config:10.0 http://www.infinispan.org/schemas/infinispan-config-10.0.xsd"
-      xmlns="urn:infinispan:config:10.0">
+      xsi:schemaLocation="urn:infinispan:config:10.1 https://infinispan.org/schemas/infinispan-config-10.1.xsd"
+      xmlns="urn:infinispan:config:10.1">
 
    <!--
       ******************************************************************************************************************
@@ -126,10 +126,6 @@
    -->
    <!--
       Other cache attributes that can be configured:
-         deadlock-detection-spin :
-            Enables deadlock detection
-            http://infinispan.org/docs/7.0.x/user_guide/user_guide.html#_deadlock_detection
-
          batching :
             Used to enable invocation batching and allow the use of Cache.startBatch()/endBatch() methods.
             http://infinispan.org/docs/7.0.x/user_guide/user_guide.html#_batching
@@ -149,7 +145,6 @@
       -->
       <locking isolation="READ_COMMITTED"
          acquire-timeout="20000"
-         write-skew="false"
          concurrency-level="5000"
          striping="false"
       />
@@ -278,10 +273,9 @@
    -->
    <!--
    <local-cache name="evictionAndPassivationCache">
-      <eviction
-         max-entries="5000"
-         strategy="LIRS"
-      />
+      <memory>
+         <object size="2"/>
+      </memory>
       <expiration
          interval="500"
          lifespan="60000"
@@ -305,7 +299,7 @@
       <persistence>
          <cluster-loader remote-timeout="20000" preload="false"/>
       </persistence>
-   </namedCache>
+   </invalidation-cache>
    -->
 
    <!--

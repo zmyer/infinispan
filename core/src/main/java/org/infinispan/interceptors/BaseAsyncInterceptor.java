@@ -9,7 +9,11 @@ import org.infinispan.commons.util.Experimental;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.impl.SimpleAsyncInvocationStage;
+import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 
 /**
  * Base class for an interceptor in the new asynchronous invocation chain.
@@ -18,8 +22,9 @@ import org.infinispan.interceptors.impl.SimpleAsyncInvocationStage;
  * @since 9.0
  */
 @Experimental
+@Scope(Scopes.NAMED_CACHE)
 public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
-   private final InvocationSuccessFunction invokeNextFunction = (rCtx, rCommand, rv) -> invokeNext(rCtx, rCommand);
+   private final InvocationSuccessFunction<VisitableCommand> invokeNextFunction = (rCtx, rCommand, rv) -> invokeNext(rCtx, rCommand);
 
    @Inject protected Configuration cacheConfiguration;
    private AsyncInterceptor nextInterceptor;
@@ -56,7 +61,7 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
             return nextInterceptor.visitCommand(ctx, command);
          }
       } catch (Throwable throwable) {
-         return new SimpleAsyncInvocationStage(throwable);
+         return new ExceptionSyncInvocationStage(throwable);
       }
    }
 
@@ -66,8 +71,8 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
     *
     * <p>You need to wrap the result with {@link #makeStage(Object)} if you need to add another handler.</p>
     */
-   public final Object invokeNextThenApply(InvocationContext ctx, VisitableCommand command,
-                                           InvocationSuccessFunction function) {
+   public final <C extends VisitableCommand> Object invokeNextThenApply(InvocationContext ctx, C command,
+                                           InvocationSuccessFunction<C> function) {
       try {
          Object rv;
          if (nextDDInterceptor != null) {
@@ -80,7 +85,7 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
          }
          return function.apply(ctx, command, rv);
       } catch (Throwable throwable) {
-         return new SimpleAsyncInvocationStage(throwable);
+         return new ExceptionSyncInvocationStage(throwable);
       }
    }
 
@@ -90,8 +95,8 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
     *
     * <p>You need to wrap the result with {@link #makeStage(Object)} if you need to add another handler.</p>
     */
-   public final Object invokeNextThenAccept(InvocationContext ctx, VisitableCommand command,
-                                           InvocationSuccessAction action) {
+   public final <C extends VisitableCommand> Object invokeNextThenAccept(InvocationContext ctx, C command,
+                                           InvocationSuccessAction<C> action) {
       try {
          Object rv;
          if (nextDDInterceptor != null) {
@@ -105,7 +110,7 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
          action.accept(ctx, command, rv);
          return rv;
       } catch (Throwable throwable) {
-         return new SimpleAsyncInvocationStage(throwable);
+         return new ExceptionSyncInvocationStage(throwable);
       }
    }
 
@@ -115,8 +120,8 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
     *
     * <p>You need to wrap the result with {@link #makeStage(Object)} if you need to add another handler.</p>
     */
-   public final Object invokeNextAndExceptionally(InvocationContext ctx, VisitableCommand command,
-                                                  InvocationExceptionFunction function) {
+   public final <C extends VisitableCommand> Object invokeNextAndExceptionally(InvocationContext ctx, C command,
+                                                  InvocationExceptionFunction<C> function) {
       try {
          Object rv;
          if (nextDDInterceptor != null) {
@@ -130,7 +135,7 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
          // No exception
          return rv;
       } catch (Throwable throwable) {
-         return new SimpleAsyncInvocationStage(throwable);
+         return new ExceptionSyncInvocationStage(throwable);
       }
    }
 
@@ -140,8 +145,8 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
     *
     * <p>You need to wrap the result with {@link #makeStage(Object)} if you need to add another handler.</p>
     */
-   public final Object invokeNextAndFinally(InvocationContext ctx, VisitableCommand command,
-                                            InvocationFinallyAction action) {
+   public final <C extends VisitableCommand> Object invokeNextAndFinally(InvocationContext ctx, C command,
+                                            InvocationFinallyAction<C> action) {
       try {
          Object rv;
          Throwable throwable;
@@ -161,9 +166,9 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
             throwable = t;
          }
          action.accept(ctx, command, rv, throwable);
-         return throwable == null ? rv : new SimpleAsyncInvocationStage(throwable);
+         return throwable == null ? rv : new ExceptionSyncInvocationStage(throwable);
       } catch (Throwable t) {
-         return new SimpleAsyncInvocationStage(t);
+         return new ExceptionSyncInvocationStage(t);
       }
    }
 
@@ -173,8 +178,8 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
     *
     * <p>You need to wrap the result with {@link #makeStage(Object)} if you need to add another handler.</p>
     */
-   public final Object invokeNextAndHandle(InvocationContext ctx, VisitableCommand command,
-                                           InvocationFinallyFunction function) {
+   public final <C extends VisitableCommand> Object invokeNextAndHandle(InvocationContext ctx, C command,
+                                           InvocationFinallyFunction<C> function) {
       try {
          Object rv;
          Throwable throwable;
@@ -195,7 +200,7 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
          }
          return function.apply(ctx, command, rv, throwable);
       } catch (Throwable throwable) {
-         return new SimpleAsyncInvocationStage(throwable);
+         return new ExceptionSyncInvocationStage(throwable);
       }
    }
 
@@ -215,12 +220,17 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
    /**
     * Suspend the invocation until {@code delay} completes, then if successful invoke the next interceptor.
     *
+    * <p>If {@code delay} is null or already completed normally, immediately invoke the next interceptor in this thread.</p>
+    *
     * <p>If {@code delay} completes exceptionally, skip the next interceptor and continue with the exception.</p>
     *
     * <p>You need to wrap the result with {@link #makeStage(Object)} if you need to add another handler.</p>
     */
    public final Object asyncInvokeNext(InvocationContext ctx, VisitableCommand command,
                                        CompletionStage<?> delay) {
+      if (delay == null || CompletionStages.isCompletedSuccessfully(delay)) {
+         return invokeNext(ctx, command);
+      }
       return asyncValue(delay).thenApply(ctx, command, invokeNextFunction);
    }
 
@@ -279,6 +289,69 @@ public abstract class BaseAsyncInterceptor implements AsyncInterceptor {
          return (InvocationStage) rv;
       } else {
          return new SyncInvocationStage(rv);
+      }
+   }
+
+   /**
+    * Returns an InvocationStage if the provided CompletionStage is null, not completed or completed via exception.
+    * If these are not true the sync value is returned directly.
+    * @param stage wait for completion of this if not null
+    * @param syncValue sync value to return if stage is complete or as stage value
+    * @return invocation stage or sync value
+    */
+   public static Object delayedValue(CompletionStage<?> stage, Object syncValue) {
+      if (stage != null) {
+         CompletableFuture<?> future = stage.toCompletableFuture();
+         if (!future.isDone()) {
+            return asyncValue(stage.thenApply(v -> syncValue));
+         }
+         if (future.isCompletedExceptionally()) {
+            return asyncValue(stage);
+         }
+      }
+      return syncValue;
+   }
+
+   /**
+    * This method should be used instead of {@link #delayedValue(CompletionStage, Object)} when a
+    * {@link InvocationFinallyFunction} is used to properly handle the exception if any is present.
+    * @param stage
+    * @param syncValue
+    * @param throwable
+    * @return
+    */
+   public static Object delayedValue(CompletionStage<?> stage, Object syncValue, Throwable throwable) {
+      if (throwable == null) {
+         return delayedValue(stage, syncValue);
+      }
+      if (stage != null) {
+         CompletableFuture<?> future = stage.toCompletableFuture();
+         if (!future.isDone() || future.isCompletedExceptionally()) {
+            return asyncValue(
+                  stage.handle((ignore, t) -> {
+                     if (t != null) {
+                        throwable.addSuppressed(t);
+                     }
+                     return null;
+                  }).thenCompose(ignore -> CompletableFutures.completedExceptionFuture(throwable))
+            );
+         }
+      }
+      return new ExceptionSyncInvocationStage(throwable);
+   }
+
+   /**
+    * The same as {@link #delayedValue(CompletionStage, Object)}, except that it is optimizes cases where the return
+    * value is null.
+    * @param stage wait for completion of this if not null
+    * @return invocation stage or null sync value
+    */
+   public static Object delayedNull(CompletionStage<Void> stage) {
+      // If stage was null - meant we didn't notify or if it already completed, no reason to create a stage instance
+      if (stage == null || CompletionStages.isCompletedSuccessfully(stage)) {
+         return null;
+      } else {
+         return asyncValue(stage);
       }
    }
 

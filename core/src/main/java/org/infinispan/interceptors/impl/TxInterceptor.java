@@ -17,7 +17,6 @@ import org.infinispan.Cache;
 import org.infinispan.CacheSet;
 import org.infinispan.cache.impl.Caches;
 import org.infinispan.commands.CommandsFactory;
-import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.functional.ReadOnlyKeyCommand;
@@ -51,6 +50,7 @@ import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CloseableSpliterator;
+import org.infinispan.commons.util.IntSet;
 import org.infinispan.commons.util.IteratorMapper;
 import org.infinispan.commons.util.RemovableCloseableIterator;
 import org.infinispan.configuration.cache.Configurations;
@@ -66,7 +66,6 @@ import org.infinispan.interceptors.DDAsyncInterceptor;
 import org.infinispan.interceptors.InvocationStage;
 import org.infinispan.jmx.JmxStatisticsExposer;
 import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
@@ -84,6 +83,7 @@ import org.infinispan.transaction.xa.recovery.RecoveryManager;
 import org.infinispan.util.EntryWrapper;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
+import org.reactivestreams.Publisher;
 
 /**
  * Interceptor in charge with handling transaction related operations, e.g enlisting cache as an transaction
@@ -104,10 +104,10 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    private final AtomicLong commits = new AtomicLong(0);
    private final AtomicLong rollbacks = new AtomicLong(0);
 
-   @Inject private CommandsFactory commandsFactory;
-   @Inject private ComponentRef<Cache<K, V>> cache;
-   @Inject private RecoveryManager recoveryManager;
-   @Inject private TransactionTable txTable;
+   @Inject CommandsFactory commandsFactory;
+   @Inject ComponentRef<Cache<K, V>> cache;
+   @Inject RecoveryManager recoveryManager;
+   @Inject TransactionTable txTable;
 
    private boolean isTotalOrder;
    private boolean useOnePhaseForAutoCommitTx;
@@ -137,14 +137,12 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
          ((RemoteTransaction) ctx.getCacheTransaction()).setLookedUpEntriesTopology(command.getTopologyId());
          Object verifyResult = invokeNextAndHandle(ctx, command, (rCtx, rCommand, rv, throwable) -> {
             if (!rCtx.isOriginLocal()) {
-               return verifyRemoteTransaction((RemoteTxInvocationContext) rCtx,
-                                              (AbstractTransactionBoundaryCommand) rCommand, rv, throwable);
+               return verifyRemoteTransaction((RemoteTxInvocationContext) rCtx, rCommand, rv, throwable);
             }
 
             return valueOrException(rv, throwable);
          });
-         return makeStage(verifyResult).thenAccept(ctx, command, (rCtx, rCommand, rv) -> {
-            PrepareCommand prepareCommand = (PrepareCommand) rCommand;
+         return makeStage(verifyResult).thenAccept(ctx, command, (rCtx, prepareCommand, rv) -> {
             if (prepareCommand.isOnePhaseCommit()) {
                txTable.remoteTransactionCommitted(prepareCommand.getGlobalTransaction(), true);
             } else {
@@ -205,7 +203,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
          //for tx that rollback we do not send a TxCompletionNotification, so we should cleanup
          // the recovery info here
          if (recoveryManager != null) {
-            GlobalTransaction gtx = ((RollbackCommand) rCommand).getGlobalTransaction();
+            GlobalTransaction gtx = rCommand.getGlobalTransaction();
             recoveryManager.removeRecoveryInformation(((RecoverableTransactionIdentifier) gtx).getXid());
          }
       });
@@ -222,8 +220,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
 
       return invokeNextAndHandle(ctx, command, (rCtx, rCommand, rv, throwable) -> {
          if (!rCtx.isOriginLocal()) {
-            return verifyRemoteTransaction((RemoteTxInvocationContext) rCtx,
-                                           (AbstractTransactionBoundaryCommand) rCommand, rv, throwable);
+            return verifyRemoteTransaction((RemoteTxInvocationContext) rCtx, rCommand, rv, throwable);
          }
          return valueOrException(rv, throwable);
       });
@@ -278,7 +275,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    @Override
    public Object visitKeySetCommand(InvocationContext ctx, KeySetCommand command) throws Throwable {
       enlistIfNeeded(ctx);
-      if (ctx.isInTxScope()) {
+      if (ctx.isInTxScope() && !command.hasAnyFlag(FlagBitSets.IGNORE_TRANSACTION)) {
          // Acquire the remote iteration flag and set it for all below - so they won't wrap unnecessarily
          boolean isRemoteIteration = command.hasAnyFlag(FlagBitSets.REMOTE_ITERATION);
          command.addFlags(FlagBitSets.REMOTE_ITERATION);
@@ -293,7 +290,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    @Override
    public Object visitEntrySetCommand(InvocationContext ctx, EntrySetCommand command) throws Throwable {
       enlistIfNeeded(ctx);
-      if (ctx.isInTxScope()) {
+      if (ctx.isInTxScope() && !command.hasAnyFlag(FlagBitSets.IGNORE_TRANSACTION)) {
          // Acquire the remote iteration flag and set it for all below - so they won't wrap unnecessarily
          boolean isRemoteIteration = command.hasAnyFlag(FlagBitSets.REMOTE_ITERATION);
          command.addFlags(FlagBitSets.REMOTE_ITERATION);
@@ -399,9 +396,8 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
             command.addFlags(FlagBitSets.SKIP_LOCKING);
          }
       }
-      return invokeNextAndFinally(ctx, command, (rCtx, rCommand, rv, t) -> {
+      return invokeNextAndFinally(ctx, command, (rCtx, writeCommand, rv, t) -> {
          // We shouldn't mark the transaction for rollback if it's going to be retried
-         WriteCommand writeCommand = (WriteCommand) rCommand;
          if (t != null && !(t instanceof OutdatedTopologyException)) {
             // Don't mark the transaction for rollback if it's fail silent (i.e. putForExternalRead)
             if (rCtx.isOriginLocal() && rCtx.isInTxScope() && !writeCommand.hasAnyFlag(FlagBitSets.FAIL_SILENTLY)) {
@@ -476,8 +472,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    @ManagedAttribute(
          description = "Number of transaction prepares performed since last reset",
          displayName = "Prepares",
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getPrepares() {
       return prepares.get();
@@ -486,8 +481,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    @ManagedAttribute(
          description = "Number of transaction commits performed since last reset",
          displayName = "Commits",
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getCommits() {
       return commits.get();
@@ -496,8 +490,7 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
    @ManagedAttribute(
          description = "Number of transaction rollbacks performed since last reset",
          displayName = "Rollbacks",
-         measurementType = MeasurementType.TRENDSUP,
-         displayType = DisplayType.SUMMARY
+         measurementType = MeasurementType.TRENDSUP
    )
    public long getRollbacks() {
       return rollbacks.get();
@@ -723,10 +716,22 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
       private final boolean isRemoteIteration;
       private final InvocationContext rCtx;
 
-      TxKeyCacheSet(VisitableCommand rCommand, CacheSet<K> set, InvocationContext rCtx, boolean isRemoteIteration) {
-         super(Caches.getCacheWithFlags(TxInterceptor.this.cache.wired(), (FlagAffectedCommand) rCommand), set);
+      TxKeyCacheSet(KeySetCommand rCommand, CacheSet<K> set, InvocationContext rCtx, boolean isRemoteIteration) {
+         super(Caches.getCacheWithFlags(TxInterceptor.this.cache.wired(), rCommand), set);
          this.isRemoteIteration = isRemoteIteration;
          this.rCtx = rCtx;
+      }
+
+      @Override
+      public Publisher<K> localPublisher(IntSet segments) {
+         // TODO: need to implement this before these methods can be made non experimental
+         return super.localPublisher(segments);
+      }
+
+      @Override
+      public Publisher<K> localPublisher(int segment) {
+         // TODO: need to implement this before these methods can be made non experimental
+         return super.localPublisher(segment);
       }
 
       @Override
@@ -799,9 +804,9 @@ public class TxInterceptor<K, V> extends DDAsyncInterceptor implements JmxStatis
       private final InvocationContext rCtx;
       private final boolean isRemoteIteration;
 
-      TxEntryCacheSet(VisitableCommand rCommand, CacheSet<CacheEntry<K, V>> set, InvocationContext rCtx,
+      TxEntryCacheSet(EntrySetCommand rCommand, CacheSet<CacheEntry<K, V>> set, InvocationContext rCtx,
                       boolean isRemoteIteration) {
-         super(Caches.getCacheWithFlags(TxInterceptor.this.cache.wired(), (FlagAffectedCommand) rCommand), set);
+         super(Caches.getCacheWithFlags(TxInterceptor.this.cache.wired(), rCommand), set);
          this.rCtx = rCtx;
          this.isRemoteIteration = isRemoteIteration;
       }

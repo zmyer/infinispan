@@ -2,6 +2,8 @@ package org.infinispan.rest.search;
 
 import static org.eclipse.jetty.http.HttpMethod.GET;
 import static org.eclipse.jetty.http.HttpMethod.POST;
+import static org.eclipse.jetty.http.HttpStatus.BAD_REQUEST_400;
+import static org.eclipse.jetty.http.HttpStatus.OK_200;
 import static org.infinispan.commons.dataconversion.MediaType.APPLICATION_JSON_TYPE;
 import static org.infinispan.query.remote.client.ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME;
 import static org.infinispan.query.remote.json.JSONConstants.HIT;
@@ -9,6 +11,7 @@ import static org.infinispan.query.remote.json.JSONConstants.QUERY_MODE;
 import static org.infinispan.query.remote.json.JSONConstants.TOTAL_RESULTS;
 import static org.infinispan.rest.JSONConstants.TYPE;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 
 import java.net.URLEncoder;
@@ -25,9 +28,14 @@ import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.infinispan.commons.dataconversion.MediaType;
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.query.dsl.IndexedQueryMode;
+import org.infinispan.query.remote.impl.indexing.ProtobufValueWrapper;
+import org.infinispan.rest.RestTestSCI;
 import org.infinispan.rest.assertion.ResponseAssertion;
 import org.infinispan.rest.helper.RestServerHelper;
 import org.infinispan.test.MultipleCacheManagersTest;
@@ -51,9 +59,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 @Test(groups = "functional")
 public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
 
+   private MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
+
    private static final String CACHE_NAME = "search-rest";
    private static final String PROTO_FILE_NAME = "person.proto";
-   protected static final ObjectMapper MAPPER = new ObjectMapper();
+   static final ObjectMapper MAPPER = new ObjectMapper();
 
    protected HttpClient client;
    private List<RestServerHelper> restServers = new ArrayList<>();
@@ -65,8 +75,12 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
 
    @Override
    protected void createCacheManagers() {
+      GlobalConfigurationBuilder globalCfg = GlobalConfigurationBuilder.defaultClusteredBuilder();
+      globalCfg.serialization().addContextInitializer(RestTestSCI.INSTANCE);
+      globalCfg.cacheContainer().statistics(true).globalJmxStatistics().mBeanServerLookup(mBeanServerLookup).jmxDomain(getClass().getName());
       ConfigurationBuilder builder = getConfigBuilder();
-      createClusteredCaches(getNumNodes(), builder, isServerMode(), CACHE_NAME, "default");
+      builder.jmxStatistics().enabled(true);
+      createClusteredCaches(getNumNodes(), globalCfg, builder, isServerMode(), CACHE_NAME, "default");
       waitForClusterToForm(CACHE_NAME);
    }
 
@@ -129,10 +143,10 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
                .method(GET)
                .send();
       }
-      assertEquals(response.getStatus(), HttpStatus.BAD_REQUEST_400);
+      assertEquals(response.getStatus(), BAD_REQUEST_400);
       String contentAsString = response.getContentAsString();
-      assertTrue(contentAsString.contains("Message descriptor not found") ||
-            contentAsString.contains("Unknown entity"));
+      assertTrue(contentAsString.contains("Unknown entity name") ||
+            contentAsString.contains("Unknown type name"), contentAsString);
    }
 
    @Test(dataProvider = "HttpMethodProvider")
@@ -200,7 +214,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
    }
 
    @Test(dataProvider = "HttpMethodProvider")
-   public void testOffSet(HttpMethod method) throws Exception {
+   public void testOffset(HttpMethod method) throws Exception {
       String q = "select p.name from org.infinispan.rest.search.entity.Person p order by p.name desc";
       JsonNode results = query(q, method, 2, 2, CACHE_NAME);
 
@@ -249,7 +263,90 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
       ContentResponse response = executeQueryRequest(CACHE_NAME, HttpMethod.GET,
             "from org.infinispan.rest.search.entity.Person where id:1", 0, 10);
 
-      assertEquals(response.getStatus(), HttpStatus.BAD_REQUEST_400);
+      assertEquals(response.getStatus(), BAD_REQUEST_400);
+   }
+
+   private int getCount() throws Exception {
+      JsonNode results = query("from org.infinispan.rest.search.entity.Person", GET);
+      return results.get("total_results").asInt();
+   }
+
+   @Test
+   public void testMassIndexing() throws Exception {
+      boolean indexEnabled = getConfigBuilder().indexing().enabled();
+      RestServerHelper helper = restServers.get(0);
+      int port = helper.getPort();
+
+      String clearIndexURL = String.format("http://localhost:%d/rest/v2/caches/%s/search/indexes?action=clear", port, CACHE_NAME);
+      String massIndexURL = String.format("http://localhost:%d/rest/v2/caches/%s/search/indexes?action=mass-index", port, CACHE_NAME);
+      Request massIndexRequest = client.newRequest(massIndexURL);
+      Request clearIndexRequest = client.newRequest(clearIndexURL);
+
+      ContentResponse clearResponse = clearIndexRequest.send();
+      assertEquals(clearResponse.getStatus(), indexEnabled ? OK_200 : BAD_REQUEST_400);
+
+      if (indexEnabled) eventually(() -> getCount() == 0);
+
+      ContentResponse massIndexResponse = massIndexRequest.send();
+
+      assertEquals(massIndexResponse.getStatus(), indexEnabled ? OK_200 : BAD_REQUEST_400);
+
+      eventually(() -> getCount() == 4);
+   }
+
+   @Test
+   public void testQueryStats() throws Exception {
+      RestServerHelper helper = restServers.get(0);
+      int port = helper.getPort();
+      String getStatsURL = String.format("http://localhost:%d/rest/v2/caches/%s/search/query/stats", port, CACHE_NAME);
+      String resetStatsURL = String.format("http://localhost:%d/rest/v2/caches/%s/search/query/stats?action=clear", port, CACHE_NAME);
+      Request statsRequest = client.newRequest(getStatsURL);
+      Request clearStatsRequest = client.newRequest(resetStatsURL);
+      ContentResponse response = statsRequest.send();
+      if (!getConfigBuilder().indexing().enabled()) {
+         assertEquals(response.getStatus(), BAD_REQUEST_400);
+      } else {
+         assertEquals(response.getStatus(), OK_200);
+         JsonNode stats = MAPPER.readTree(response.getContentAsString());
+         assertTrue(stats.get("search_query_execution_count").asInt() >= 0);
+         assertTrue(stats.get("search_query_total_time").asInt() >= 0);
+         assertTrue(stats.get("search_query_execution_max_time").asInt() >= 0);
+         assertTrue(stats.get("search_query_execution_avg_time").asInt() >= 0);
+         assertTrue(stats.get("object_loading_total_time").asInt() >= 0);
+         assertTrue(stats.get("object_loading_execution_max_time").asInt() >= 0);
+         assertTrue(stats.get("object_loading_execution_avg_time").asInt() >= 0);
+         assertTrue(stats.get("objects_loaded_count").asInt() >= 0);
+         assertNotNull(stats.get("search_query_execution_max_time_query_string").asText());
+
+         ContentResponse clearResponse = clearStatsRequest.send();
+         response = statsRequest.send();
+         stats = MAPPER.readTree(response.getContentAsString());
+         assertEquals(clearResponse.getStatus(), OK_200);
+         assertEquals(stats.get("search_query_execution_count").asInt(), 0);
+         assertEquals(stats.get("search_query_execution_max_time").asInt(), 0);
+      }
+   }
+
+   @Test
+   public void testIndexStats() throws Exception {
+      RestServerHelper helper = restServers.get(0);
+      int port = helper.getPort();
+      String getStatsURL = String.format("http://localhost:%d/rest/v2/caches/%s/search/indexes/stats", port, CACHE_NAME);
+      Request statsRequest = client.newRequest(getStatsURL);
+
+      ContentResponse response = statsRequest.send();
+      if (!getConfigBuilder().indexing().enabled()) {
+         assertEquals(response.getStatus(), BAD_REQUEST_400);
+      } else {
+         assertEquals(response.getStatus(), OK_200);
+         JsonNode stats = MAPPER.readTree(response.getContentAsString());
+         ArrayNode indexClassNames = (ArrayNode) stats.get("indexed_class_names");
+         String indexedClass = ProtobufValueWrapper.class.getName();
+
+         assertEquals(indexClassNames.get(0).asText(), indexedClass);
+         assertNotNull(stats.get("indexed_entities_count"));
+         assertTrue(stats.get("index_sizes").get(CACHE_NAME + "_protobuf").asInt() > 0);
+      }
    }
 
    @AfterClass
@@ -285,7 +382,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
             .content(new StringContentProvider(contents))
             .header(HttpHeader.CONTENT_TYPE, contentType.toString())
             .send();
-      assertEquals(response.getStatus(), HttpStatus.OK_200);
+      assertEquals(response.getStatus(), HttpStatus.NO_CONTENT_204);
    }
 
    protected ContentResponse get(String id, String accept) throws Exception {
@@ -323,7 +420,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
             .content(new StringContentProvider(protoFileContents))
             .method(POST)
             .send();
-      assertEquals(response.getStatus(), HttpStatus.OK_200);
+      assertEquals(response.getStatus(), HttpStatus.NO_CONTENT_204);
       String errorKey = protoFileName.concat(".error");
 
       ContentResponse errorCheck = client.newRequest(getProtobufMetadataUrl(errorKey)).method(GET).send();
@@ -356,12 +453,11 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
          queryReq.put(QUERY_MODE, mode);
          request = client.newRequest(searchUrl).method(POST).content(new StringContentProvider(queryReq.toString()));
       } else {
-         StringBuilder queryReq = new StringBuilder(searchUrl);
-         queryReq.append("&query=").append(URLEncoder.encode(q, "UTF-8"));
-         queryReq.append("&offset=").append(offset);
-         queryReq.append("&max_results=").append(maxResults);
-         queryReq.append("&").append(QUERY_MODE).append("=").append(mode);
-         request = client.newRequest(queryReq.toString()).method(GET);
+         String queryReq = searchUrl + "&query=" + URLEncoder.encode(q, "UTF-8") +
+               "&offset=" + offset +
+               "&max_results=" + maxResults +
+               "&" + QUERY_MODE + "=" + mode;
+         request = client.newRequest(queryReq).method(GET);
       }
       return request.send();
    }
@@ -369,7 +465,7 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
    private JsonNode query(String q, HttpMethod method, int offset, int maxResults, String cacheName) throws Exception {
       ContentResponse response = executeQueryRequest(cacheName, method, q, offset, maxResults);
       String contentAsString = response.getContentAsString();
-      assertEquals(response.getStatus(), HttpStatus.OK_200);
+      assertEquals(response.getStatus(), OK_200);
       return MAPPER.readTree(contentAsString);
    }
 
@@ -382,5 +478,4 @@ public abstract class BaseRestSearchTest extends MultipleCacheManagersTest {
    IndexedQueryMode getQueryMode() {
       return IndexedQueryMode.FETCH;
    }
-
 }

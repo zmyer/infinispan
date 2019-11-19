@@ -1,5 +1,7 @@
 package org.infinispan.persistence.file;
 
+import static org.infinispan.util.logging.Log.PERSISTENCE;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -75,6 +77,8 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
    private static final byte[] ZERO_INT = {0, 0, 0, 0};
    private static final int KEYLEN_POS = 4;
    private static final int KEY_POS = 4 + 4 + 4 + 4 + 8;
+   // bytes required by created and lastUsed timestamps
+   private static final int TIMESTAMP_BYTES = 8 + 8;
    private static final int SMALLEST_ENTRY_SIZE = 128;
 
    private SingleFileStoreConfiguration configuration;
@@ -90,7 +94,7 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
    // Prevent clear() from truncating the file after a write() allocated the entry but before it wrote the data
    private ReadWriteLock resizeLock = new ReentrantReadWriteLock();
    private TimeService timeService;
-   private MarshallableEntryFactory entryFactory;
+   private MarshallableEntryFactory<K, V> entryFactory;
 
    @Override
    public void init(InitializationContext ctx) {
@@ -105,14 +109,14 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
       try {
          // open the data file
          String location = configuration.location();
-         if (location == null || location.trim().length() == 0)
-            location = "Infinispan-SingleFileStore";
-
+         if (location == null || location.trim().length() == 0) {
+            location = ctx.getGlobalConfiguration().globalState().persistentLocation();
+         }
          file = new File(location, ctx.getCache().getName() + ".dat");
          if (!file.exists()) {
             File dir = file.getParentFile();
             if (!dir.mkdirs() && !dir.exists()) {
-               throw log.directoryCannotBeCreated(dir.getAbsolutePath());
+               throw PERSISTENCE.directoryCannotBeCreated(dir.getAbsolutePath());
             }
          }
          channel = new RandomAccessFile(file, "rw").getChannel();
@@ -197,7 +201,7 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
 
          // sanity check
          if (fe.size < KEY_POS + fe.keyLen + fe.dataLen + fe.metadataLen) {
-            throw log.errorReadingFileStore(file.getPath(), filePos);
+            throw PERSISTENCE.errorReadingFileStore(file.getPath(), filePos);
          }
 
          // update file pointer
@@ -214,7 +218,7 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
 
             // deserialize key and add to entries map
             // Marshaller should allow for provided type return for safety
-            K key = (K) ctx.getMarshaller().objectFromByteBuffer(buf.array(), 0, fe.keyLen);
+            K key = (K) ctx.getPersistenceMarshaller().objectFromByteBuffer(buf.array(), 0, fe.keyLen);
             entries.put(key, fe);
          } else {
             // add to free list
@@ -334,15 +338,14 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
          org.infinispan.commons.io.ByteBuffer metadata = marshalledEntry.getMetadataBytes();
 
          // allocate file entry and store in cache file
-         int metadataLength = metadata == null ? 0 : metadata.getLength();
+         int metadataLength = metadata == null ? 0 : metadata.getLength() + TIMESTAMP_BYTES;
          int len = KEY_POS + key.getLength() + data.getLength() + metadataLength;
          FileEntry newEntry;
          FileEntry oldEntry = null;
          resizeLock.readLock().lock();
          try {
             newEntry = allocate(len);
-            long expiryTime = metadata != null ? marshalledEntry.getMetadata().expiryTime() : -1;
-            newEntry = new FileEntry(newEntry, key.getLength(), data.getLength(), metadataLength, expiryTime);
+            newEntry = new FileEntry(newEntry.offset, newEntry.size, key.getLength(), data.getLength(), metadataLength, marshalledEntry.expiryTime());
 
             ByteBuffer buf = ByteBuffer.allocate(len);
             buf.putInt(newEntry.size);
@@ -352,8 +355,15 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
             buf.putLong(newEntry.expiryTime);
             buf.put(key.getBuf(), key.getOffset(), key.getLength());
             buf.put(data.getBuf(), data.getOffset(), data.getLength());
-            if (metadata != null)
+            if (metadata != null) {
                buf.put(metadata.getBuf(), metadata.getOffset(), metadata.getLength());
+
+               // Only write created & lastUsed if expiryTime is set
+               if (newEntry.expiryTime > 0) {
+                  buf.putLong(marshalledEntry.created());
+                  buf.putLong(marshalledEntry.lastUsed());
+               }
+            }
             buf.flip();
             channel.write(buf, newEntry.offset);
             if (trace) log.tracef("Wrote entry %s:%d at %d:%d", marshalledEntry.getKey(), len, newEntry.offset, newEntry.size);
@@ -473,7 +483,7 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
       // If we only require the key, then no need to read disk
       if (!loadValue && !loadMetadata) {
          try {
-            return entryFactory.create(key, valueBb, metadataBb);
+            return entryFactory.create(key);
          } finally {
             fe.unlock();
          }
@@ -496,13 +506,20 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
       if (trace) log.tracef("Read entry %s at %d:%d", key, fe.offset, fe.actualSize());
       ByteBufferFactory factory = ctx.getByteBufferFactory();
       org.infinispan.commons.io.ByteBuffer keyBb = factory.newByteBuffer(data, 0, fe.keyLen);
+
       if (loadValue) {
          valueBb = factory.newByteBuffer(data, fe.keyLen, fe.dataLen);
       }
       if (loadMetadata && fe.metadataLen > 0) {
-         metadataBb = factory.newByteBuffer(data, fe.keyLen + fe.dataLen, fe.metadataLen);
+         int metaLength = fe.metadataLen - TIMESTAMP_BYTES;
+         metadataBb = factory.newByteBuffer(data, fe.keyLen + fe.dataLen, metaLength);
+         ByteBuffer buffer = ByteBuffer.wrap(data, fe.keyLen + fe.dataLen + metaLength, TIMESTAMP_BYTES);
+
+         long created = fe.expiryTime > 0 ? buffer.getLong() : -1;
+         long lastUsed = fe.expiryTime > 0 ? buffer.getLong() : -1;
+         return entryFactory.create(keyBb, valueBb, metadataBb, created, lastUsed);
       }
-      return entryFactory.create(keyBb, valueBb, metadataBb);
+      return entryFactory.create(keyBb, valueBb);
    }
 
    @Override
@@ -553,7 +570,7 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
             return entry;
          }).filter(me -> me != entryFactory.getEmpty());
       } else {
-         return publishKeys(filter).map(k -> entryFactory.create(k, (Object) null, null));
+         return publishKeys(filter).map(k -> entryFactory.create(k));
       }
    }
 
@@ -785,10 +802,6 @@ public class SingleFileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
          this.dataLen = dataLen;
          this.metadataLen = metadataLen;
          this.expiryTime = expiryTime;
-      }
-
-      FileEntry(FileEntry fe, int keyLen, int dataLen, int metadataLen, long expiryTime) {
-         this(fe.offset, fe.size, keyLen, dataLen, metadataLen, expiryTime);
       }
 
       synchronized boolean isLocked() {

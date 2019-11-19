@@ -27,6 +27,7 @@ import org.infinispan.query.Search;
 import org.infinispan.query.SearchManager;
 import org.infinispan.query.test.AnotherGrassEater;
 import org.infinispan.query.test.Person;
+import org.infinispan.query.test.QueryTestSCI;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestException;
 import org.infinispan.test.TestingUtil;
@@ -56,7 +57,7 @@ public class TransactionIsolationTest extends MultipleCacheManagersTest {
             .addIndexedEntity(AnotherGrassEater.class)
             .addProperty("hibernate.search.default.directory_provider", "local-heap")
             .addProperty("lucene_version", "LUCENE_CURRENT");
-      createClusteredCaches(2, builder);
+      createClusteredCaches(2, QueryTestSCI.INSTANCE, builder);
    }
 
    public void testDuringTransactionPrimary() throws Exception {
@@ -145,7 +146,7 @@ public class TransactionIsolationTest extends MultipleCacheManagersTest {
             .filter(key -> topology.getDistribution(key).isPrimary()).findAny().get();
    }
 
-   private static class FailPrepare extends DDAsyncInterceptor {
+   static class FailPrepare extends DDAsyncInterceptor {
       @Override
       public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
          return invokeNextThenApply(ctx, command, ((rCtx, rCommand, rv) -> {

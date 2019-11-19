@@ -24,8 +24,10 @@ import org.infinispan.lucene.IndexScopedKey;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.query.CacheQuery;
 import org.infinispan.query.Search;
+import org.infinispan.query.test.QueryTestSCI;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.test.fwk.CleanupAfterMethod;
+import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
 /**
@@ -37,15 +39,27 @@ import org.testng.annotations.Test;
 @CleanupAfterMethod
 public class AffinityTest extends BaseAffinityTest {
 
+   private ExecutorService executorService;
+
    @Override
    protected void createCacheManagers() throws Throwable {
-      createClusteredCaches(3, getDefaultCacheConfigBuilder());
+      createClusteredCaches(3, QueryTestSCI.INSTANCE, getDefaultCacheConfigBuilder());
+   }
+
+   @AfterMethod(alwaysRun = true)
+   @Override
+   protected void clearContent() throws Throwable {
+      if (executorService != null) {
+         executorService.shutdownNow();
+         executorService = null;
+      }
+      super.clearContent();
    }
 
    public void testConcurrentWrites() throws Exception {
       int numThreads = 2;
       AtomicInteger counter = new AtomicInteger(0);
-      ExecutorService executorService = Executors.newFixedThreadPool(numThreads);
+      executorService = Executors.newFixedThreadPool(numThreads);
       List<Cache<String, Entity>> cacheList = caches();
 
       log.info("Starting threads");

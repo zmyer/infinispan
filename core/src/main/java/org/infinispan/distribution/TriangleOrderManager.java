@@ -2,6 +2,8 @@ package org.infinispan.distribution;
 
 import net.jcip.annotations.GuardedBy;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.statetransfer.OutdatedTopologyException;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -19,12 +21,13 @@ import org.infinispan.util.logging.LogFactory;
  * @author Pedro Ruivo
  * @since 9.0
  */
+@Scope(Scopes.NAMED_CACHE)
 public class TriangleOrderManager {
 
    private static final Log log = LogFactory.getLog(TriangleOrderManager.class);
    private static final boolean trace = log.isTraceEnabled();
    private final TriangleSequencer[] sequencers;
-   @Inject private DistributionManager distributionManager;
+   @Inject DistributionManager distributionManager;
 
    public TriangleOrderManager(int segments) {
       TriangleSequencer[] triangleSequencers = new TriangleSequencer[segments];

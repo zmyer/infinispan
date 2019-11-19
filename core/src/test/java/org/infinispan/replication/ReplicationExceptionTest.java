@@ -1,5 +1,6 @@
 package org.infinispan.replication;
 
+import static org.infinispan.test.TestingUtil.extractInterceptorChain;
 import static org.testng.AssertJUnit.assertNotNull;
 import static org.testng.AssertJUnit.assertTrue;
 import static org.testng.AssertJUnit.fail;
@@ -14,12 +15,11 @@ import javax.transaction.TransactionManager;
 import org.infinispan.AdvancedCache;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.marshall.NotSerializableException;
+import org.infinispan.commons.marshall.MarshallingException;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.interceptors.base.CommandInterceptor;
-import org.infinispan.marshall.core.ExternalPojo;
+import org.infinispan.interceptors.BaseAsyncInterceptor;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.transaction.lookup.EmbeddedTransactionManagerLookup;
@@ -58,31 +58,20 @@ public class ReplicationExceptionTest extends MultipleCacheManagersTest {
       return mgr;
    }
 
-   public void testNonSerializableRepl() throws Exception {
-      doNonSerializableReplTest("syncReplCacheNoTx");
+   @Test(expectedExceptions = MarshallingException.class)
+   public void testNonMarshallableRepl() {
+      doNonMarshallableReplTest("syncReplCacheNoTx");
    }
 
-   public void testNonSerializableAsyncRepl() throws Exception {
-      doNonSerializableReplTest("asyncReplCacheNoTx");
+   @Test(expectedExceptions = MarshallingException.class)
+   public void testNonMarshallableAsyncRepl() {
+      doNonMarshallableReplTest("asyncReplCacheNoTx");
    }
 
-   private void doNonSerializableReplTest(String cacheName) {
+   private void doNonMarshallableReplTest(String cacheName) {
       AdvancedCache<Object, Object> cache1 = advancedCache(0, cacheName);
       AdvancedCache<Object, Object> cache2 = advancedCache(1, cacheName);
-      try {
-         cache1.put("test", new ContainerData());
-         // We should not come here.
-         assertNotNull("NonSerializableData should not be null on cache2", cache2.get("test"));
-      } catch (RuntimeException runtime) {
-         Throwable t = runtime.getCause();
-         if (runtime instanceof NotSerializableException
-                  || t instanceof NotSerializableException
-                  || t.getCause() instanceof NotSerializableException) {
-            log.trace("received NotSerializableException - as expected");
-         } else {
-            throw runtime;
-         }
-      }
+      cache1.put("test", new ContainerData());
    }
 
    public void testNonSerializableReplWithTx() throws Exception {
@@ -109,15 +98,7 @@ public class ReplicationExceptionTest extends MultipleCacheManagersTest {
    public void testSyncReplTimeout() {
       AdvancedCache<Object, Object> cache1 = advancedCache(0, "syncReplCache");
       AdvancedCache<Object, Object> cache2 = advancedCache(1, "syncReplCache");
-      cache2.addInterceptor(new CommandInterceptor() {
-         @Override
-         protected Object handleDefault(InvocationContext ctx, VisitableCommand cmd)
-                  throws Throwable {
-            // Add a delay
-            Thread.sleep(100);
-            return super.handleDefault(ctx, cmd);
-         }
-      }, 0);
+      extractInterceptorChain(cache2).addInterceptor(new DelayInterceptor(), 0);
 
       cache1.getCacheConfiguration().clustering().remoteTimeout(10);
       cache2.getCacheConfiguration().clustering().remoteTimeout(10);
@@ -147,7 +128,7 @@ public class ReplicationExceptionTest extends MultipleCacheManagersTest {
       int i;
    }
 
-   public static class ContainerData implements Serializable, ExternalPojo {
+   public static class ContainerData implements Serializable {
       int i;
       NonSerializabeData non_serializable_data;
       private static final long serialVersionUID = -8322197791060897247L;
@@ -155,6 +136,15 @@ public class ReplicationExceptionTest extends MultipleCacheManagersTest {
       public ContainerData() {
          i = 99;
          non_serializable_data = new NonSerializabeData();
+      }
+   }
+
+   static class DelayInterceptor extends BaseAsyncInterceptor {
+      @Override
+      public Object visitCommand(InvocationContext ctx, VisitableCommand command) throws Throwable {
+         // Add a delay
+         Thread.sleep(100);
+         return invokeNext(ctx, command);
       }
    }
 }

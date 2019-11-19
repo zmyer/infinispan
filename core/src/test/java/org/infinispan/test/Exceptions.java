@@ -34,6 +34,9 @@ public class Exceptions {
       }
    }
 
+   /**
+    * Expect an exception of class {@code exceptionClass} or its subclasses.
+    */
    public static void assertExceptionNonStrict(Class<? extends Throwable> exceptionClass, Throwable t) {
       if (t == null) {
          throw new AssertionError("Should have thrown an " + exceptionClass, null);
@@ -175,7 +178,7 @@ public class Exceptions {
       assertException(wrapperExceptionClass, exceptionClass, t.getCause().getCause());
    }
 
-   private static Throwable extractException(ExceptionRunnable runnable) {
+   public static Throwable extractException(ExceptionRunnable runnable) {
       Throwable exception = null;
       try {
          runnable.run();
@@ -183,5 +186,31 @@ public class Exceptions {
          exception = t;
       }
       return exception;
+   }
+
+   public static void unchecked(ExceptionRunnable runnable) {
+      try {
+         runnable.run();
+      } catch (InterruptedException e) {
+         Thread.currentThread().interrupt();
+         throw new RuntimeException(e);
+      } catch (RuntimeException e) {
+         throw e;
+      } catch (Throwable t) {
+         throw new RuntimeException(t);
+      }
+   }
+
+   public static <T> T unchecked(ThrowableSupplier<T> supplier) {
+      try {
+         return supplier.get();
+      } catch (InterruptedException e) {
+         Thread.currentThread().interrupt();
+         throw new RuntimeException(e);
+      } catch (RuntimeException e) {
+         throw e;
+      } catch (Throwable t) {
+         throw new RuntimeException(t);
+      }
    }
 }

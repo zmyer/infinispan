@@ -23,11 +23,9 @@ import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.jmx.annotations.DataType;
-import org.infinispan.jmx.annotations.DisplayType;
 import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
-import org.infinispan.jmx.annotations.Units;
 import org.infinispan.remoting.inboundhandler.action.ReadyAction;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
 import org.infinispan.remoting.responses.ExceptionResponse;
@@ -38,6 +36,7 @@ import org.infinispan.statetransfer.StateTransferLock;
 import org.infinispan.util.concurrent.BlockingRunnable;
 import org.infinispan.util.concurrent.BlockingTaskAwareExecutorService;
 import org.infinispan.util.concurrent.CompletableFutures;
+import org.infinispan.util.concurrent.CompletionStages;
 import org.infinispan.util.logging.Log;
 
 /**
@@ -54,9 +53,9 @@ public abstract class BasePerCacheInboundInvocationHandler implements PerCacheIn
 
    @Inject @ComponentName(REMOTE_COMMAND_EXECUTOR)
    protected BlockingTaskAwareExecutorService remoteCommandsExecutor;
-   @Inject private StateTransferLock stateTransferLock;
-   @Inject private ResponseGenerator responseGenerator;
-   @Inject private CancellationService cancellationService;
+   @Inject StateTransferLock stateTransferLock;
+   @Inject ResponseGenerator responseGenerator;
+   @Inject CancellationService cancellationService;
    @Inject protected Configuration configuration;
 
    private volatile boolean stopped = false;
@@ -115,6 +114,17 @@ public abstract class BasePerCacheInboundInvocationHandler implements PerCacheIn
             cancellationService.register(Thread.currentThread(), ((CancellableCommand) cmd).getUUID());
          }
          CompletableFuture<Object> future = cmd.invokeAsync();
+         if (CompletionStages.isCompletedSuccessfully(future)) {
+            Object obj = future.join();
+            if (cmd instanceof CancellableCommand) {
+               cancellationService.unregister(((CancellableCommand) cmd).getUUID());
+            }
+            Response response = responseGenerator.getResponse(cmd, obj);
+            if (response == null) {
+               return CompletableFutures.completedNull();
+            }
+            return CompletableFuture.completedFuture(response);
+         }
          return future.handle((rv, throwable) -> {
             if (cmd instanceof CancellableCommand) {
                cancellationService.unregister(((CancellableCommand) cmd).getUUID());
@@ -240,17 +250,13 @@ public abstract class BasePerCacheInboundInvocationHandler implements PerCacheIn
    }
 
    @ManagedAttribute(description = "Returns the number of sync cross-site requests received by this node",
-         displayName = "Sync Cross-Site Requests Received",
-         units = Units.NONE,
-         displayType = DisplayType.SUMMARY)
+         displayName = "Sync Cross-Site Requests Received")
    public long getSyncXSiteRequestsReceived() {
       return statisticsEnabled ? syncXsiteReceived.sum() : 0;
    }
 
    @ManagedAttribute(description = "Returns the number of async cross-site requests received by this node",
-         displayName = "Async Cross-Site Requests Received",
-         units = Units.NONE,
-         displayType = DisplayType.SUMMARY)
+         displayName = "Async Cross-Site Requests Received")
    public long getAsyncXSiteRequestsReceived() {
       return statisticsEnabled ? asyncXsiteReceived.sum() : 0;
    }

@@ -5,32 +5,36 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-integrationtests-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
    <artifactId>infinispan-wildfly-module-integrationtests</artifactId>
-   <name>Integration tests - Wildfly Module Integration Tests</name>
-   <description>Integration tests - Wildfly Module Integration Tests</description>
+   <name>Integration tests - WildFly Module Integration Tests</name>
+   <description>Integration tests - WildFly Module Integration Tests</description>
 
    <properties>
-      <ispnserver.project.dir>${basedir}/../../server/integration</ispnserver.project.dir>
-      <server.build.dist>${ispnserver.project.dir}/build/target/server-distribution-thin/${infinispan.brand.prefix}-server-${infinispan.brand.version}</server.build.dist>
+      <ispnserver.project.dir>${basedir}/../../server/runtime</ispnserver.project.dir>
+      <server.build.dist>${ispnserver.project.dir}/target/${infinispan.brand.prefix}-server-${infinispan.brand.version}</server.build.dist>
       <ispnserver.dist>${basedir}/target/infinispan-server</ispnserver.dist>
-      <server.jvm>${env.JAVA_HOME}</server.jvm>
       <resources.dir>${basedir}/src/test/resources</resources.dir>
       <serverMemoryJvmArgs>-Xmx300m ${testjvm.commonArgs}</serverMemoryJvmArgs>
       <jvm.x64.args />
-      <default.transport.stack>udp</default.transport.stack>
-      <transport.stack>-Djboss.default.jgroups.stack=${default.transport.stack}</transport.stack>
+      <transport.stack>-Dinfinispan.cluster.stack=${infinispan.cluster.stack}</transport.stack>
       <jvm.ip.stack>-Djava.net.preferIPv4Stack=true</jvm.ip.stack>
       <mcast.ip>234.99.54.14</mcast.ip>
       <jvm.ip.stack>-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false -Djboss.default.multicast.address=${mcast.ip}</jvm.ip.stack>
-      <server.jvm.args>${jvm.ip.stack} ${serverMemoryJvmArgs} ${transport.stack} ${jvm.x64.args} ${testjvm.jigsawArgs}</server.jvm.args>
+      <server.jvm>${env.JAVA_HOME}</server.jvm>
+      <server.jvm.args>${testjvm.extraArgs} ${jvm.ip.stack} ${serverMemoryJvmArgs} ${transport.stack} ${jvm.x64.args} ${testjvm.jigsawArgs}</server.jvm.args>
       <log4j.configurationFile>log4j2.xml</log4j.configurationFile>
    </properties>
 
    <dependencies>
+      <dependency>
+         <groupId>org.infinispan.protostream</groupId>
+         <artifactId>protostream-processor</artifactId>
+         <scope>test</scope>
+      </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-cdi-embedded</artifactId>
@@ -43,12 +47,43 @@
       </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-core</artifactId>
+         <scope>test</scope>
+         <type>test-jar</type>
+      </dependency>
+      <dependency>
+         <groupId>org.eclipse.microprofile.config</groupId>
+         <artifactId>microprofile-config-api</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>io.smallrye</groupId>
+         <artifactId>smallrye-config</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.eclipse.microprofile.metrics</groupId>
+         <artifactId>microprofile-metrics-api</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>io.smallrye</groupId>
+         <artifactId>smallrye-metrics</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
          <artifactId>infinispan-client-hotrod</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-remote-query-client</artifactId>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.infinispan</groupId>
+         <artifactId>infinispan-server-runtime</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -84,11 +119,6 @@
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-query</artifactId>
-         <scope>test</scope>
-      </dependency>
-      <dependency>
-         <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-tree</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
@@ -134,15 +164,8 @@
       </dependency>
 
       <dependency>
-         <groupId>org.infinispan</groupId>
-         <artifactId>infinispan-query</artifactId>
-          <classifier>tests</classifier>
-         <scope>test</scope>
-      </dependency>
-
-      <dependency>
-         <groupId>org.infinispan.server</groupId>
-         <artifactId>infinispan-server-infinispan</artifactId>
+         <groupId>org.infinispan.wildfly</groupId>
+         <artifactId>infinispan-wildfly-infinispan</artifactId>
          <scope>test</scope>
       </dependency>
 
@@ -205,7 +228,6 @@
                   <usedefaultlisteners>false</usedefaultlisteners>
                   <listener>${junitListener}</listener>
                </properties>
-               <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
             </configuration>
             <executions>
                <execution>
@@ -334,13 +356,14 @@
                   <goals>
                      <goal>run</goal>
                   </goals>
-                  <phase>generate-resources</phase>
+                  <phase>package</phase>
                   <configuration>
                      <skip>${skipTests}</skip>
                      <target>
-                        <ant antfile="${basedir}/../../server/integration/src/main/ant/infinispan-server.xml" target="create-distro">
+                        <ant antfile="${basedir}/../../server/runtime/src/main/ant/infinispan-server.xml" target="create-distro">
                            <property name="server.build.dist" value="${server.build.dist}" />
                            <property name="server.dist" value="${ispnserver.dist}" />
+                           <property name="ispn.config.file" value="${project.build.testOutputDirectory}/infinispan-custom.xml" />
                         </ant>
                      </target>
                   </configuration>
@@ -354,16 +377,15 @@
                   <configuration>
                      <skip>${skipTests}</skip>
                      <target>
-                        <ant antfile="${basedir}/../../server/integration/src/main/ant/infinispan-server.xml" target="kill-server">
+                        <ant antfile="${basedir}/../../server/runtime/src/main/ant/infinispan-server.xml" target="kill-server">
                            <property name="hotrod.port" value="11222" />
                         </ant>
-                        <ant antfile="${basedir}/../../server/integration/src/main/ant/infinispan-server.xml" target="start-server">
+                        <ant antfile="${basedir}/../../server/runtime/src/main/ant/infinispan-server.xml" target="start-server">
                            <property name="server.dist" value="${ispnserver.dist}" />
                            <property name="port.offset" value="0" />
-                           <property name="management.port" value="9990" />
                            <property name="hotrod.port" value="11222" />
                            <property name="jboss.node.name" value="ispn-server" />
-                           <property name="jboss.config.file" value="standalone.xml" />
+                           <property name="jboss.config.file" value="infinispan-custom.xml" />
                         </ant>
                      </target>
                   </configuration>
@@ -377,7 +399,7 @@
                   <configuration>
                      <skip>${skipTests}</skip>
                      <target>
-                        <ant antfile="${basedir}/../../server/integration/src/main/ant/infinispan-server.xml" target="kill-server">
+                        <ant antfile="${basedir}/../../server/runtime/src/main/ant/infinispan-server.xml" target="kill-server">
                            <property name="hotrod.port" value="11222" />
                         </ant>
                      </target>
@@ -385,14 +407,10 @@
                </execution>
             </executions>
          </plugin>
-
-
-
       </plugins>
    </build>
 
    <profiles>
-
       <profile>
          <id>nexus-staging</id>
          <activation>
@@ -426,6 +444,17 @@
                </plugin>
             </plugins>
          </build>
+      </profile>
+
+      <profile>
+         <id>java8-test</id>
+         <activation>
+            <activeByDefault>false</activeByDefault>
+         </activation>
+         <properties>
+            <server.jvm>${env.JAVA8_HOME}</server.jvm>
+            <server.jvm.args>${testjvm.extraArgs} ${jvm.ip.stack} ${serverMemoryJvmArgs} ${transport.stack} ${jvm.x64.args}</server.jvm.args>
+         </properties>
       </profile>
    </profiles>
 </project>

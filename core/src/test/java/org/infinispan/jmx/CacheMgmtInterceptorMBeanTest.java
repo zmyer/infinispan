@@ -5,6 +5,8 @@ import static org.infinispan.test.TestingUtil.getCacheObjectName;
 import static org.infinispan.test.TestingUtil.k;
 import static org.infinispan.test.TestingUtil.v;
 import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertNull;
+import static org.testng.AssertJUnit.assertTrue;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;
@@ -16,8 +18,10 @@ import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
 import org.infinispan.AdvancedCache;
-import org.infinispan.commons.jmx.PerThreadMBeanServerLookup;
+import org.infinispan.commons.jmx.MBeanServerLookup;
+import org.infinispan.commons.jmx.TestMBeanServerLookup;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
@@ -27,8 +31,10 @@ import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
+import io.reactivex.exceptions.Exceptions;
+
 /**
- * Test functionality in {@link org.infinispan.interceptors.CacheMgmtInterceptor}.
+ * Test functionality in {@link org.infinispan.interceptors.impl.CacheMgmtInterceptor}.
  *
  * @author Mircea.Markus@jboss.com
  * @author Galder Zamarreño
@@ -36,60 +42,68 @@ import org.testng.annotations.Test;
 @Test(groups = "functional", testName = "jmx.CacheMgmtInterceptorMBeanTest")
 public class CacheMgmtInterceptorMBeanTest extends SingleCacheManagerTest {
    private ObjectName mgmtInterceptor;
-   private MBeanServer server;
-   AdvancedCache<?, ?> advanced;
-   AdvancedLoadWriteStore loader;
+   private AdvancedCache<?, ?> advanced;
+   private AdvancedLoadWriteStore loader;
    private static final String JMX_DOMAIN = CacheMgmtInterceptorMBeanTest.class.getSimpleName();
+   private final MBeanServerLookup mBeanServerLookup = TestMBeanServerLookup.create();
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
-      cacheManager = TestCacheManagerFactory.createCacheManagerEnforceJmxDomain(JMX_DOMAIN);
+      GlobalConfigurationBuilder globalConfiguration = new GlobalConfigurationBuilder();
+      globalConfiguration
+            .cacheContainer().statistics(true)
+            .globalJmxStatistics()
+            .jmxDomain(JMX_DOMAIN)
+            .mBeanServerLookup(mBeanServerLookup);
 
       ConfigurationBuilder configuration = getDefaultStandaloneCacheConfig(false);
       configuration.memory().size(1)
-              .persistence()
-              .passivation(true)
-              .addStore(DummyInMemoryStoreConfigurationBuilder.class);
+            .persistence()
+            .passivation(true)
+            .addStore(DummyInMemoryStoreConfigurationBuilder.class);
 
       configuration.jmxStatistics().enable();
+
+      cacheManager = TestCacheManagerFactory.createCacheManager(globalConfiguration, configuration);
+
       cacheManager.defineConfiguration("test", configuration.build());
       cache = cacheManager.getCache("test");
       advanced = cache.getAdvancedCache();
       mgmtInterceptor = getCacheObjectName(JMX_DOMAIN, "test(local)", "Statistics");
-      loader = (AdvancedLoadWriteStore) TestingUtil.getFirstLoader(cache);
+      loader = TestingUtil.getFirstLoader(cache);
 
-      server = PerThreadMBeanServerLookup.getThreadMBeanServer();
       return cacheManager;
    }
 
    @AfterMethod
    public void resetStats() throws Exception {
-      server.invoke(mgmtInterceptor, "resetStatistics", new Object[0], new String[0]);
+      mBeanServerLookup.getMBeanServer().invoke(mgmtInterceptor, "resetStatistics", new Object[0], new String[0]);
    }
 
    public void testJmxOperationMetadata() throws Exception {
-      checkMBeanOperationParameterNaming(mgmtInterceptor);
+      checkMBeanOperationParameterNaming(mBeanServerLookup.getMBeanServer(), mgmtInterceptor);
    }
 
    public void testEviction(Method m) throws Exception {
       assertEvictions(0);
-      assert cache.get(k(m, "1")) == null;
+      assertNull(cache.get(k(m, "1")));
       cache.put(k(m, "1"), v(m, 1));
       //test explicit evict command
       cache.evict(k(m, "1"));
-      assert loader.contains(k(m, "1")) : "the entry should have been evicted";
+      assertTrue("the entry should have been evicted", loader.contains(k(m, "1")));
       assertEvictions(1);
-      assert cache.get(k(m, "1")).equals(v(m, 1));
+      assertEquals(v(m, 1), cache.get(k(m, "1")));
       //test implicit eviction
       cache.put(k(m, "2"), v(m, 2));
-      assert loader.contains(k(m, "1")) : "the entry should have been evicted";
-      assertEvictions(2);
+      // Evictions of unrelated keys are non blocking now so it may not be updated immediately
+      eventuallyAssertEvictions(2);
+      assertTrue("the entry should have been evicted", loader.contains(k(m, "1")));
    }
 
    public void testGetKeyValue() throws Exception {
       assertMisses(0);
       assertHits(0);
-      assert 0 == advanced.getStats().getHits();
+      assertEquals(0, advanced.getStats().getHits());
       assertAttributeValue("HitRatio", 0);
 
       cache.put("key", "value");
@@ -98,14 +112,14 @@ public class CacheMgmtInterceptorMBeanTest extends SingleCacheManagerTest {
       assertHits(0);
       assertAttributeValue("HitRatio", 0);
 
-      assert cache.get("key").equals("value");
+      assertEquals("value", cache.get("key"));
       assertMisses(0);
       assertHits(1);
       assertAttributeValue("HitRatio", 1);
 
-      assert cache.get("key_ne") == null;
-      assert cache.get("key_ne") == null;
-      assert cache.get("key_ne") == null;
+      assertNull(cache.get("key_ne"));
+      assertNull(cache.get("key_ne"));
+      assertNull(cache.get("key_ne"));
       assertMisses(3);
       assertHits(1);
       assertAttributeValue("HitRatio", 0.25f);
@@ -129,6 +143,7 @@ public class CacheMgmtInterceptorMBeanTest extends SingleCacheManagerTest {
       toAdd.put("key2", "value2");
       cache.putAll(toAdd);
       assertStores(4);
+      TestingUtil.cleanUpDataContainerForCache(cache);
       assertCurrentNumberOfEntriesInMemory(1);
       assertCurrentNumberOfEntries(2);
 
@@ -139,7 +154,9 @@ public class CacheMgmtInterceptorMBeanTest extends SingleCacheManagerTest {
       toAdd.put("key4", "value4");
       cache.putAll(toAdd);
       assertStores(2);
+      TestingUtil.cleanUpDataContainerForCache(cache);
       assertCurrentNumberOfEntriesInMemory(1);
+      eventuallyAssertEvictions(2);
       assertCurrentNumberOfEntries(4);
    }
 
@@ -182,6 +199,8 @@ public class CacheMgmtInterceptorMBeanTest extends SingleCacheManagerTest {
    }
 
    public void testGetAll() throws Exception {
+      MBeanServer server = mBeanServerLookup.getMBeanServer();
+
       assertEquals(0, advanced.getStats().getMisses());
       assertEquals(0, advanced.getStats().getHits());
       String hitRatioString = server.getAttribute(mgmtInterceptor, "HitRatio").toString();
@@ -207,48 +226,64 @@ public class CacheMgmtInterceptorMBeanTest extends SingleCacheManagerTest {
       assertEquals(0.5f, hitRatio);
    }
 
+   private void eventuallyAssertAttributeValue(String attrName, float expectedValue) {
+      eventuallyEquals(expectedValue, () -> {
+         try {
+            String receivedVal = mBeanServerLookup.getMBeanServer().getAttribute(mgmtInterceptor, attrName).toString();
+            return Float.parseFloat(receivedVal);
+         } catch (Exception e) {
+            throw Exceptions.propagate(e);
+         }
+      });
+   }
+
    private void assertAttributeValue(String attrName, float expectedValue) throws Exception {
-      String receivedVal = server.getAttribute(mgmtInterceptor, attrName).toString();
-      assert Float.parseFloat(receivedVal) == expectedValue : "expecting " + expectedValue + " for " + attrName + ", but received " + receivedVal;
+      String receivedVal = mBeanServerLookup.getMBeanServer().getAttribute(mgmtInterceptor, attrName).toString();
+      assertEquals("expecting " + expectedValue + " for " + attrName + ", but received " + receivedVal, expectedValue, Float.parseFloat(receivedVal));
    }
 
-   private void assertEvictions(float expectedValue) throws Exception {
+   private void eventuallyAssertEvictions(long expectedValue) {
+      eventuallyAssertAttributeValue("Evictions", expectedValue);
+      assertEquals(expectedValue, advanced.getStats().getEvictions());
+   }
+
+   private void assertEvictions(long expectedValue) throws Exception {
       assertAttributeValue("Evictions", expectedValue);
-      assert expectedValue == advanced.getStats().getEvictions();
+      assertEquals(expectedValue, advanced.getStats().getEvictions());
    }
 
-   private void assertMisses(float expectedValue) throws Exception {
+   private void assertMisses(long expectedValue) throws Exception {
       assertAttributeValue("Misses", expectedValue);
-      assert expectedValue == advanced.getStats().getMisses();
+      assertEquals(expectedValue, advanced.getStats().getMisses());
    }
 
-   private void assertHits(float expectedValue) throws Exception {
+   private void assertHits(long expectedValue) throws Exception {
       assertAttributeValue("Hits", expectedValue);
-      assert expectedValue == advanced.getStats().getHits();
+      assertEquals(expectedValue, advanced.getStats().getHits());
    }
 
-   private void assertStores(float expectedValue) throws Exception {
+   private void assertStores(long expectedValue) throws Exception {
       assertAttributeValue("Stores", expectedValue);
-      assert expectedValue == advanced.getStats().getStores();
+      assertEquals(expectedValue, advanced.getStats().getStores());
    }
 
-   private void assertRemoveHits(float expectedValue) throws Exception {
+   private void assertRemoveHits(long expectedValue) throws Exception {
       assertAttributeValue("RemoveHits", expectedValue);
-      assert expectedValue == advanced.getStats().getRemoveHits();
+      assertEquals(expectedValue, advanced.getStats().getRemoveHits());
    }
 
-   private void assertRemoveMisses(float expectedValue) throws Exception {
+   private void assertRemoveMisses(long expectedValue) throws Exception {
       assertAttributeValue("RemoveMisses", expectedValue);
-      assert expectedValue == advanced.getStats().getRemoveMisses();
+      assertEquals(expectedValue, advanced.getStats().getRemoveMisses());
    }
 
-   private void assertCurrentNumberOfEntries(float expectedValue) throws Exception {
+   private void assertCurrentNumberOfEntries(int expectedValue) throws Exception {
       assertAttributeValue("NumberOfEntries", expectedValue);
-      assert expectedValue == advanced.getStats().getCurrentNumberOfEntries();
+      assertEquals(expectedValue, advanced.getStats().getCurrentNumberOfEntries());
    }
 
-   private void assertCurrentNumberOfEntriesInMemory(float expectedValue) throws Exception {
+   private void assertCurrentNumberOfEntriesInMemory(int expectedValue) throws Exception {
       assertAttributeValue("NumberOfEntriesInMemory", expectedValue);
-      assert expectedValue == advanced.getStats().getCurrentNumberOfEntriesInMemory();
+      assertEquals(expectedValue, advanced.getStats().getCurrentNumberOfEntriesInMemory());
    }
 }

@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-integrationtests-parent</artifactId>
-      <version>10.0.0-SNAPSHOT</version>
+      <version>10.1.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -103,7 +103,6 @@
                         <node0.mgmt.addr>127.0.0.1</node0.mgmt.addr>
                         <node1.mgmt.addr>127.0.0.1</node1.mgmt.addr>
                      </systemPropertyVariables>
-                     <argLine>${forkJvmArgs} ${testjvm.jigsawArgs}</argLine>
                   </configuration>
                </execution>
             </executions>

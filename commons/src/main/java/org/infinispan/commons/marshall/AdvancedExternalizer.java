@@ -41,8 +41,17 @@ import java.util.Set;
  *
  * @author Galder Zamarreño
  * @since 5.0
+ * @deprecated since 10.0, will be removed in a future release. Please configure a {@link
+ * org.infinispan.protostream.SerializationContextInitializer} and utilise ProtoStream annotations on Java objects instead, or
+ * specify a custom {@link Marshaller} implementation via the SerializationConfiguration.
  */
+@Deprecated
 public interface AdvancedExternalizer<T> extends Externalizer<T> {
+
+   /**
+    * The minimum ID which will be respected by Infinispan for user specified {@link AdvancedExternalizer} implementations.
+    */
+   int USER_EXT_ID_MIN = 2500;
 
    /**
     * Returns a collection of Class instances representing the types that this

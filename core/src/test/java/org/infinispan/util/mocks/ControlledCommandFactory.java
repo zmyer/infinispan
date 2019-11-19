@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,17 +26,19 @@ import org.infinispan.commands.CreateCacheCommand;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.functional.Mutation;
 import org.infinispan.commands.functional.ReadOnlyKeyCommand;
 import org.infinispan.commands.functional.ReadOnlyManyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
 import org.infinispan.commands.functional.ReadWriteManyCommand;
 import org.infinispan.commands.functional.ReadWriteManyEntriesCommand;
+import org.infinispan.commands.functional.TxReadOnlyKeyCommand;
+import org.infinispan.commands.functional.TxReadOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyKeyCommand;
 import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
 import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
-import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
@@ -87,10 +88,14 @@ import org.infinispan.encoding.DataConversion;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.functional.EntryView;
 import org.infinispan.functional.impl.Params;
-import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.notifications.cachelistener.cluster.ClusterEvent;
+import org.infinispan.notifications.cachelistener.cluster.MultiClusterEventCommand;
 import org.infinispan.reactive.publisher.impl.DeliveryGuarantee;
-import org.infinispan.reactive.publisher.impl.PublisherRequestCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.CancelPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.InitialPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.batch.NextPublisherCommand;
+import org.infinispan.reactive.publisher.impl.commands.reduction.ReductionPublisherRequestCommand;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.StateChunk;
 import org.infinispan.statetransfer.StateRequestCommand;
@@ -169,7 +174,7 @@ public class ControlledCommandFactory implements CommandsFactory {
 
       //hack: re-add the component registry to the GlobalComponentRegistry's "namedComponents" (CHM) in order to correctly publish it for
       // when it will be read by the InboundInvocationHandlder. InboundInvocationHandlder reads the value from the GlobalComponentRegistry.namedComponents before using it
-      componentRegistry.getGlobalComponentRegistry().registerNamedComponentRegistry(componentRegistry, EmbeddedCacheManager.DEFAULT_CACHE_NAME);
+      componentRegistry.getGlobalComponentRegistry().registerNamedComponentRegistry(componentRegistry, TestingUtil.getDefaultCacheName(cache.getCacheManager()));
       return ccf;
    }
 
@@ -358,11 +363,6 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public <T> DistributedExecuteCommand<T> buildDistributedExecuteCommand(Callable<T> callable, Address sender, Collection keys) {
-      return actual.buildDistributedExecuteCommand(callable, sender, keys);
-   }
-
-   @Override
    public GetInDoubtTxInfoCommand buildGetInDoubtTxInfoCommand() {
       return actual.buildGetInDoubtTxInfoCommand();
    }
@@ -513,6 +513,16 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
+   public <K, V, R> TxReadOnlyKeyCommand<K, V, R> buildTxReadOnlyKeyCommand(Object key, Function<EntryView.ReadEntryView<K, V>, R> f, List<Mutation<K, V, ?>> mutations, int segment, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return actual.buildTxReadOnlyKeyCommand(key, f, mutations, segment, params, keyDataConversion, valueDataConversion);
+   }
+
+   @Override
+   public <K, V, R> TxReadOnlyManyCommand<K, V, R> buildTxReadOnlyManyCommand(Collection<?> keys, List<List<Mutation<K, V, ?>>> mutations, Params params, DataConversion keyDataConversion, DataConversion valueDataConversion) {
+      return actual.buildTxReadOnlyManyCommand(keys, mutations, params, keyDataConversion, valueDataConversion);
+   }
+
+   @Override
    public BackupAckCommand buildBackupAckCommand(long id, int topologyId) {
       return actual.buildBackupAckCommand(id, topologyId);
    }
@@ -569,17 +579,37 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public <K, R> PublisherRequestCommand<K> buildKeyPublisherCommand(boolean parallelStream,
+   public <K, R> ReductionPublisherRequestCommand<K> buildKeyReductionPublisherCommand(boolean parallelStream,
          DeliveryGuarantee deliveryGuarantee, IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader,
          Function<? super Publisher<K>, ? extends CompletionStage<R>> transformer,
          Function<? super Publisher<R>, ? extends CompletionStage<R>> finalizer) {
-      return actual.buildKeyPublisherCommand(parallelStream, deliveryGuarantee, segments, keys, excludedKeys,
+      return actual.buildKeyReductionPublisherCommand(parallelStream, deliveryGuarantee, segments, keys, excludedKeys,
             includeLoader, transformer, finalizer);
    }
 
    @Override
-   public <K, V, R> PublisherRequestCommand<K> buildEntryPublisherCommand(boolean parallelStream, DeliveryGuarantee deliveryGuarantee, IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader, Function<? super Publisher<CacheEntry<K, V>>, ? extends CompletionStage<R>> transformer, Function<? super Publisher<R>, ? extends CompletionStage<R>> finalizer) {
-      return actual.buildEntryPublisherCommand(parallelStream, deliveryGuarantee, segments, keys, excludedKeys,
+   public <K, V, R> ReductionPublisherRequestCommand<K> buildEntryReductionPublisherCommand(boolean parallelStream, DeliveryGuarantee deliveryGuarantee, IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader, Function<? super Publisher<CacheEntry<K, V>>, ? extends CompletionStage<R>> transformer, Function<? super Publisher<R>, ? extends CompletionStage<R>> finalizer) {
+      return actual.buildEntryReductionPublisherCommand(parallelStream, deliveryGuarantee, segments, keys, excludedKeys,
             includeLoader, transformer, finalizer);
+   }
+
+   @Override
+   public <K, I, R> InitialPublisherCommand<K, I, R> buildInitialPublisherCommand(Object requestId, DeliveryGuarantee deliveryGuarantee, int batchSize, IntSet segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader, boolean entryStream, boolean trackKeys, Function<? super Publisher<I>, ? extends Publisher<R>> transformer) {
+      return actual.buildInitialPublisherCommand(requestId, deliveryGuarantee, batchSize, segments, keys, excludedKeys, includeLoader, entryStream, trackKeys, transformer);
+   }
+
+   @Override
+   public NextPublisherCommand buildNextPublisherCommand(Object requestId) {
+      return actual.buildNextPublisherCommand(requestId);
+   }
+
+   @Override
+   public CancelPublisherCommand buildCancelPublisherCommand(Object requestId) {
+      return actual.buildCancelPublisherCommand(requestId);
+   }
+
+   @Override
+   public <K, V> MultiClusterEventCommand<K, V> buildMultiClusterEventCommand(Map<UUID, Collection<ClusterEvent<K, V>>> events) {
+      return actual.buildMultiClusterEventCommand(events);
    }
 }

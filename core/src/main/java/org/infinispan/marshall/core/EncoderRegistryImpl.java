@@ -1,19 +1,18 @@
 package org.infinispan.marshall.core;
 
+import static org.infinispan.util.logging.Log.CONTAINER;
+
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.infinispan.commons.dataconversion.Encoder;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.dataconversion.Transcoder;
 import org.infinispan.commons.dataconversion.Wrapper;
-import org.infinispan.commons.util.CollectionFactory;
-import org.infinispan.commons.util.concurrent.ConcurrentHashSet;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 /**
  * @see EncoderRegistry
@@ -21,14 +20,11 @@ import org.infinispan.util.logging.LogFactory;
  */
 @Scope(Scopes.GLOBAL)
 public class EncoderRegistryImpl implements EncoderRegistry {
-
-   private static final Log log = LogFactory.getLog(EncoderRegistryImpl.class);
-
-   private final Map<Class<? extends Encoder>, Encoder> encoderMap = CollectionFactory.makeConcurrentMap(10);
-   private final Map<Class<? extends Wrapper>, Wrapper> wrapperMap = CollectionFactory.makeConcurrentMap(2);
-   private final Map<Short, Class<? extends Encoder>> encoderById = CollectionFactory.makeConcurrentMap(10);
-   private final Map<Byte, Class<? extends Wrapper>> wrapperById = CollectionFactory.makeConcurrentMap(2);
-   private final Set<Transcoder> transcoders = new ConcurrentHashSet<>();
+   private final Map<Class<? extends Encoder>, Encoder> encoderMap = new ConcurrentHashMap<>(10);
+   private final Map<Class<? extends Wrapper>, Wrapper> wrapperMap = new ConcurrentHashMap<>(2);
+   private final Map<Short, Class<? extends Encoder>> encoderById = new ConcurrentHashMap<>(10);
+   private final Map<Byte, Class<? extends Wrapper>> wrapperById = new ConcurrentHashMap<>(2);
+   private final Set<Transcoder> transcoders = ConcurrentHashMap.newKeySet();
 
    @Override
    public void registerEncoder(Encoder encoder) {
@@ -37,7 +33,7 @@ public class EncoderRegistryImpl implements EncoderRegistry {
       }
       short id = encoder.id();
       if (encoderById.containsKey(id)) {
-         throw log.duplicateIdEncoder(id);
+         throw CONTAINER.duplicateIdEncoder(id);
       }
       encoderById.put(id, encoder.getClass());
       encoderMap.put(encoder.getClass(), encoder);
@@ -50,7 +46,7 @@ public class EncoderRegistryImpl implements EncoderRegistry {
       }
       byte id = wrapper.id();
       if (wrapperById.containsKey(id)) {
-         throw log.duplicateIdWrapper(id);
+         throw CONTAINER.duplicateIdWrapper(id);
       }
       wrapperById.put(id, wrapper.getClass());
       wrapperMap.put(wrapper.getClass(), wrapper);
@@ -68,9 +64,16 @@ public class EncoderRegistryImpl implements EncoderRegistry {
             .filter(t -> t.supportsConversion(mediaType, another))
             .findAny();
       if (!transcoder.isPresent()) {
-         throw log.cannotFindTranscoder(mediaType, another);
+         throw CONTAINER.cannotFindTranscoder(mediaType, another);
       }
       return transcoder.get();
+   }
+
+   @Override
+   public <T extends Transcoder> T getTranscoder(Class<T> clazz) {
+      Transcoder transcoder = transcoders.stream().filter(p -> p.getClass().equals(clazz)).findFirst().orElse(null);
+      if (transcoder == null) return null;
+      return clazz.cast(transcoder);
    }
 
    @Override
@@ -88,11 +91,11 @@ public class EncoderRegistryImpl implements EncoderRegistry {
       }
       Class<? extends Encoder> encoderClass = clazz == null ? encoderById.get(encoderId) : clazz;
       if (encoderClass == null) {
-         throw log.encoderIdNotFound(encoderId);
+         throw CONTAINER.encoderIdNotFound(encoderId);
       }
       Encoder encoder = encoderMap.get(encoderClass);
       if (encoder == null) {
-         throw log.encoderClassNotFound(clazz);
+         throw CONTAINER.encoderClassNotFound(clazz);
       }
       return encoder;
    }
@@ -109,11 +112,11 @@ public class EncoderRegistryImpl implements EncoderRegistry {
       }
       Class<? extends Wrapper> wrapperClass = clazz == null ? wrapperById.get(wrapperId) : clazz;
       if (wrapperClass == null) {
-         throw log.wrapperIdNotFound(wrapperId);
+         throw CONTAINER.wrapperIdNotFound(wrapperId);
       }
       Wrapper wrapper = wrapperMap.get(wrapperClass);
       if (wrapper == null) {
-         throw log.wrapperClassNotFound(clazz);
+         throw CONTAINER.wrapperClassNotFound(clazz);
       }
       return wrapper;
    }

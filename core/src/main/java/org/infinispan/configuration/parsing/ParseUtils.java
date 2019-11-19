@@ -37,6 +37,10 @@ public final class ParseUtils {
         return new XMLStreamException("Unexpected element '" + reader.getName() + "' encountered", reader.getLocation());
     }
 
+    public static <T extends Enum<T>> XMLStreamException unexpectedElement(final XMLStreamReader reader, T element) {
+        return new XMLStreamException("Unexpected element '" + element.toString() + "' encountered", reader.getLocation());
+    }
+
     /**
      * Get an exception reporting an unexpected end tag for an XML element.
      * @param reader the stream reader
@@ -296,9 +300,9 @@ public final class ParseUtils {
        return null;
     }
 
-   public static String[] getListAttributeValue(String value) {
-      return value.split("\\s+");
-   }
+    public static String[] getListAttributeValue(String value) {
+       return value.split("\\s+");
+    }
 
     public static String resolvePath(String path, String relativeTo) {
         if (path == null) {
@@ -309,6 +313,16 @@ public final class ParseUtils {
             return new File(new File(relativeTo), path).getAbsolutePath();
         } else {
             return path;
+        }
+    }
+
+    public static String requireAttributeProperty(final XMLStreamReader reader, int i) throws XMLStreamException {
+        String property = reader.getAttributeValue(i);
+        Object value = reader.getProperty(property);
+        if (value == null) {
+            throw new XMLStreamException("Missing required property '" + property +"' for attribute '" + reader.getAttributeLocalName(i) + "'", reader.getLocation());
+        } else {
+            return value.toString();
         }
     }
 }

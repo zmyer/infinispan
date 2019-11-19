@@ -1,16 +1,16 @@
 package org.infinispan.container.offheap;
 
 import java.lang.invoke.MethodHandles;
-import java.util.Collections;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.StampedLock;
 import java.util.function.Supplier;
 
 import org.infinispan.commons.marshall.WrappedBytes;
-import org.infinispan.commons.util.Util;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.impl.AbstractDelegatingInternalDataContainer;
+import org.infinispan.container.impl.AbstractInternalDataContainer;
 import org.infinispan.container.impl.DefaultSegmentedDataContainer;
 import org.infinispan.container.impl.InternalDataContainer;
 import org.infinispan.eviction.EvictionManager;
@@ -21,7 +21,10 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
 import org.infinispan.factories.impl.ComponentRef;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.util.concurrent.DataOperationOrderer;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
@@ -29,6 +32,7 @@ import org.infinispan.util.logging.LogFactory;
  * @author wburns
  * @since 9.4
  */
+@Scope(Scopes.NAMED_CACHE)
 public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInternalDataContainer<WrappedBytes, WrappedBytes> {
    private static final Log log = LogFactory.getLog(MethodHandles.lookup().lookupClass());
    private static final boolean trace = log.isTraceEnabled();
@@ -43,28 +47,27 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
 
    @Inject protected EvictionManager evictionManager;
    @Inject protected ComponentRef<PassivationManager> passivator;
+   @Inject protected DataOperationOrderer orderer;
 
    protected final long maxSize;
    protected final Lock lruLock;
    protected final boolean useCount;
+   protected final int numSegments;
 
-   protected long currentSize;
+   // Must be updated inside lruLock#writeLock - but can be read outside of lock
+   protected volatile long currentSize;
    protected long firstAddress;
    protected long lastAddress;
 
    protected DefaultSegmentedDataContainer dataContainer;
 
-   public SegmentedBoundedOffHeapDataContainer(int addressCount, int numSegments, long maxSize, EvictionType type) {
-      int sizePerSegment = addressCount / numSegments;
+   public SegmentedBoundedOffHeapDataContainer(int numSegments, long maxSize, EvictionType type) {
+      this.numSegments = numSegments;
       offHeapListener = new OffHeapListener();
 
       this.maxSize = maxSize;
       this.useCount = type == EvictionType.COUNT;
-      if (useCount) {
-         offHeapMapSupplier = new OffHeapMapSupplier(false, sizePerSegment);
-      } else {
-         offHeapMapSupplier = new OffHeapMapSupplier(true, sizePerSegment);
-      }
+      offHeapMapSupplier = new OffHeapMapSupplier();
       this.lruLock = new ReentrantLock();
       firstAddress = 0;
 
@@ -152,10 +155,15 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
     * If the LRU list head changes, we release both locks and try again.
     */
    private void ensureSize() {
+      // Try reading outside of lock first to allow for less locking for insert that doesn't require eviction
+      if (currentSize <= maxSize) {
+         return;
+      }
 
       while (true) {
          long addressToRemove;
-         Lock entryWriteLock;
+         StampedLock stampedLock;
+         long writeStamp;
          OffHeapConcurrentMap map;
          lruLock.lock();
          try {
@@ -172,8 +180,8 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
             if (map != null) {
                int hashCode = offHeapEntryFactory.getHashCode(firstAddress);
                // This is always non null
-               entryWriteLock = map.getLocks().getLockFromHashCode(hashCode).writeLock();
-               if (entryWriteLock.tryLock()) {
+               stampedLock = map.getStampedLock(hashCode);
+               if ((writeStamp = stampedLock.tryWriteLock()) != 0) {
                   addressToRemove = firstAddress;
                } else {
                   addressToRemove = 0;
@@ -191,7 +199,7 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
          // write lock and then acquire the lruLock, since they have to be acquired in that order (exception using
          // try lock as above)
          if (addressToRemove == 0) {
-            entryWriteLock.lock();
+            writeStamp = stampedLock.writeLock();
             try {
                lruLock.lock();
                try {
@@ -204,8 +212,8 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
                   OffHeapConcurrentMap protectedMap = getMapThatContainsKey(key);
                   if (protectedMap == map) {
                      int hashCode = offHeapEntryFactory.getHashCode(firstAddress);
-                     Lock innerLock = map.getLocks().getLockFromHashCode(hashCode).writeLock();
-                     if (innerLock == entryWriteLock) {
+                     StampedLock innerLock = map.getStampedLock(hashCode);
+                     if (innerLock == stampedLock) {
                         addressToRemove = firstAddress;
                      }
                   }
@@ -214,7 +222,7 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
                }
             } finally {
                if (addressToRemove == 0) {
-                  entryWriteLock.unlock();
+                  stampedLock.unlockWrite(writeStamp);
                }
             }
          }
@@ -226,11 +234,12 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
             }
             try {
                InternalCacheEntry<WrappedBytes, WrappedBytes> ice = offHeapEntryFactory.fromMemory(addressToRemove);
-               passivator.running().passivate(ice);
                map.remove(ice.getKey(), addressToRemove);
-               evictionManager.onEntryEviction(Collections.singletonMap(ice.getKey(), ice));
+               // Note this is non blocking now - this MUST be invoked after removing the entry from the
+               // underlying map
+               AbstractInternalDataContainer.handleEviction(ice, orderer, passivator.running(), evictionManager, this, null);
             } finally {
-               entryWriteLock.unlock();
+               stampedLock.unlockWrite(writeStamp);
             }
          }
       }
@@ -238,51 +247,43 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
 
    private class OffHeapMapSupplier implements Supplier<ConcurrentMap<WrappedBytes,
          InternalCacheEntry<WrappedBytes, WrappedBytes>>> {
-      private final boolean addAllocationSize;
-      private final int allocationSize;
-
-      /**
-       * Supplier that creates a new OffHeapConcurrentMap per invocation
-       * @param addAllocationSize whether starting/stopping map should add the alloction size to count
-       * @param allocationSize rounded up to nearest power of two
-       */
-      private OffHeapMapSupplier(boolean addAllocationSize, int allocationSize) {
-         this.addAllocationSize = addAllocationSize;
-         this.allocationSize = Util.findNextHighestPowerOfTwo(allocationSize);
-      }
-
       @Override
       public ConcurrentMap<WrappedBytes, InternalCacheEntry<WrappedBytes, WrappedBytes>> get() {
-         // OffHeap concurrent map will round allocationSize to nearest power of 2
-         OffHeapConcurrentMap map = new OffHeapConcurrentMap(allocationSize, allocator, offHeapEntryFactory,
-               offHeapListener) {
-            @Override
-            public void stop() {
-               super.stop();
-               if (addAllocationSize) {
-                  lruLock.lock();
-                  try {
-                     currentSize -= UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(allocationSize << 3);
-                  } finally {
-                     lruLock.unlock();
-                  }
-               }
-            }
-         };
-         if (addAllocationSize) {
-            lruLock.lock();
-            try {
-               currentSize += UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(allocationSize << 3);
-            } finally {
-               lruLock.unlock();
-            }
-         }
-         map.start();
-         return map;
+         return new OffHeapConcurrentMap(allocator, offHeapEntryFactory, offHeapListener);
       }
    }
 
    private class OffHeapListener implements OffHeapConcurrentMap.EntryListener {
+
+      @Override
+      public boolean resize(int pointerCount) {
+         if (useCount) {
+            return true;
+         }
+         lruLock.lock();
+         try {
+            boolean isNegative = pointerCount < 0;
+            long memoryUsed = ((long) Math.abs(pointerCount)) << 3;
+            long change = UnpooledOffHeapMemoryAllocator.estimateSizeOverhead(memoryUsed);
+
+            // We only attempt to deny resizes that are an increase in pointers
+            if (!isNegative) {
+               long changeSizeForAllSegments = change * numSegments;
+               // If the pointers for all segments alone would fill the entire memory cache region, don't let it resize
+               if (changeSizeForAllSegments < 0 || changeSizeForAllSegments >= maxSize) {
+                  return false;
+               }
+            }
+            if (isNegative) {
+               currentSize -= change;
+            } else {
+               currentSize += change;
+            }
+         } finally {
+            lruLock.unlock();
+         }
+         return true;
+      }
 
       @Override
       public void entryCreated(long newAddress) {
@@ -304,7 +305,6 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
             // Current size has to be updated in the lock
             currentSize -=  removedSize;
             removeNode(removedAddress);
-            allocator.deallocate(removedAddress, offHeapEntryFactory.getSize(removedAddress, false));
          } finally {
             lruLock.unlock();
          }
@@ -321,8 +321,6 @@ public class SegmentedBoundedOffHeapDataContainer extends AbstractDelegatingInte
 
             currentSize += newSize;
             currentSize -= oldSize;
-            // Must only remove entry while holding lru lock now
-            allocator.deallocate(oldAddress, offHeapEntryFactory.getSize(oldAddress, false));
          } finally {
             lruLock.unlock();
          }

@@ -1,29 +1,45 @@
 = {brandname} {infinispanversion} Documentation
-The {brandname} community
+Written and maintained by the {brandname} community
 :icons: font
 
-{brandname}'s documentation is organized as several individual 'books'.  Each
-one can be read independently, however they do reference one another,
-particularly the link:user_guide/user_guide.html[User Guide].
+Get answers and find help in the {brandname} {infinispanversion} titles.
 
-We hope you find this useful.  Any and all feedback should be directed to the
-{brandname} link:http://www.infinispan.org/community[user forums].
+Getting Started::
++
+* link:titles/overview/overview.html[Technical Overview]
+* link:titles/getting_started/getting_started.html[Getting Started Guide]
 
-TIP: This is written specifically for *{brandname} {infinispanversion}*.  While
-the majority of it will apply to other versions as well, it is best that you
-reference the version of documentation that corresponds to your version of
-{brandname}.
+Configuring and Running::
++
+* link:titles/configuring/configuring.html[Configuring Infinispan]
+* link:titles/embedding/embedding.html[Embedding Infinispan]
+* link:titles/server/server.html[Infinispan Server Guide]
+* link:https://infinispan.org/infinispan-operator/master/operator.html[Infinispan Operator Guide]
+* link:titles/cli/cli.html[Using the Command Line Interface]
+* link:titles/xsite/xsite.html[Setting Up Cross Site Replication]
 
-.Books
- * A link:getting_started/getting_started.html[Getting Started Guide] (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/getting_started.pdf[PDF])
- * A link:user_guide/user_guide.html[User Guide] (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/user_guide.pdf[PDF])
- * A link:server_guide/server_guide.html[Server Guide] if you are running the server (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/server_guide.pdf[PDF])
- * A link:performance_guide/performance_guide.html[Performance Guide] (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/performance_guide.pdf[PDF])
- * An link:upgrading/upgrading.html[Upgrading Guide] (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/upgrading.pdf[PDF])
- * A description of the link:hotrod_protocol/hotrod_protocol.html[Hot Rod protocol] (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/hotrod_protocol.pdf[PDF])
- * A link:glossary/glossary.html[Glossary] (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/glossary.pdf[PDF])
- * A set of link:faqs/faqs.html[Frequently Asked Questions] (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/faqs.pdf[PDF])
- * A guide to link:extending/extending.html[extending] {brandname} (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/extending.pdf[PDF])
- * A guide to link:contributing/contributing.html[contributing] to {brandname} (link:https://docs.jboss.org/infinispan/{infinispanversion}/pdf/contributing.pdf[PDF])
- * ... and finally some link:videos/videos.html[videos]
+Developing and Integrating::
++
+* link:titles/developing/developing.html[Infinispan Developer's Guide]
+* link:titles/integrating/integrating.html[Integrating Infinispan]
+* link:https://infinispan.org/infinispan-spring-boot/master/spring_boot_starter.html[Infinispan Spring Boot Starter]
 
+Remotely Accessing Infinispan Endpoints::
++
+* link:titles/hotrod_java/hotrod_java.html[Using the Hot Rod Server]
+* link:titles/hotrod_protocol/hotrod_protocol.html[Hot Rod Protocol Reference]
+* link:titles/rest/rest.html[Using the REST Server]
+* link:titles/memcached/memcached.html[Using the Memcached Server]
+
+Administering Infinispan::
++
+* link:titles/admin/admin.html[Administration Guide]
+* link:titles/security/security.html[Security Guide]
+* link:titles/tuning/tuning.html[Tuning Infinispan Performance]
+* link:titles/upgrading/upgrading.html[Upgrading Infinispan]
+
+See link:http://www.infinispan.org/documentation[Infinispan Documentation] home for other versions.
+
+Come and join the link:http://www.infinispan.org/community[Infinispan community] to submit feedback or ask questions.
+
+Interested in getting involved with Infinispan? See the link:titles/contributing/contributing.html[Contributor's Guide].

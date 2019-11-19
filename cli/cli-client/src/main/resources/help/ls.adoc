@@ -1,0 +1,27 @@
+LS(1)
+======
+:doctype: manpage
+
+
+NAME
+----
+ls - lists resources for the current path or a given path.
+
+
+SYNOPSIS
+--------
+*ls* ['PATH']
+
+
+EXAMPLES
+--------
+`ls caches` +
+Lists the available caches.
+
+`ls ../` +
+Lists parent resources.
+
+
+SEE ALSO
+--------
+cd(1)

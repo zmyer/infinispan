@@ -3,12 +3,13 @@ package org.infinispan.statetransfer;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 import org.infinispan.commons.util.IntSet;
 import org.infinispan.conflict.impl.StateReceiver;
-import org.infinispan.distexec.DistributedCallable;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.notifications.cachelistener.cluster.ClusterListenerReplicateCallable;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.topology.CacheTopology;
 
@@ -36,13 +37,13 @@ public interface StateProvider {
     * StateRequestCommand of type StateRequestCommand.Type.GET_TRANSACTIONS.
     *
     * @param destination the address of the requester
-    * @param topologyId
-    * @param segments
-    * @return list transactions and locks for the given segments
+    * @param topologyId required topology before we can start collecting transactions
+    * @param segments only return transactions affecting these segments
+    * @return a {@code CompletionStage} that completes with the list transactions and locks for the given segments
     */
-   List<TransactionInfo> getTransactionsForSegments(Address destination, int topologyId, IntSet segments) throws InterruptedException;
+   CompletionStage<List<TransactionInfo>> getTransactionsForSegments(Address destination, int topologyId, IntSet segments);
 
-   Collection<DistributedCallable> getClusterListenersToInstall();
+   Collection<ClusterListenerReplicateCallable<Object, Object>> getClusterListenersToInstall();
 
    /**
     * Start to send cache entries that belong to the given set of segments. This is invoked in response to a
@@ -50,13 +51,12 @@ public interface StateProvider {
     *
     * If the applyState field is set to false, then upon delivery at the destination the cache entries are processed
     * by a {@link StateReceiver} and are not applied to the local cache.
-    *
-    * @param destination the address of the requester
+    *  @param destination the address of the requester
     * @param topologyId
     * @param segments
     * @param applyState
     */
-   void startOutboundTransfer(Address destination, int topologyId, IntSet segments, boolean applyState) throws InterruptedException;
+   void startOutboundTransfer(Address destination, int topologyId, IntSet segments, boolean applyState);
 
    /**
     * Cancel sending of cache entries that belong to the given set of segments. This is invoked in response to a

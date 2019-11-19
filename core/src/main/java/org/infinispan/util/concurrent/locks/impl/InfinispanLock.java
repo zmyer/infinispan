@@ -15,10 +15,10 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-import org.infinispan.interceptors.InvocationStage;
-import org.infinispan.interceptors.SyncInvocationStage;
-import org.infinispan.interceptors.impl.SimpleAsyncInvocationStage;
 import org.infinispan.commons.time.TimeService;
+import org.infinispan.interceptors.ExceptionSyncInvocationStage;
+import org.infinispan.interceptors.InvocationStage;
+import org.infinispan.interceptors.impl.SimpleAsyncInvocationStage;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.locks.DeadlockChecker;
 import org.infinispan.util.concurrent.locks.DeadlockDetectedException;
@@ -358,7 +358,11 @@ public class InfinispanLock {
 
       @Override
       public void addListener(LockListener listener) {
-         notifier.thenAccept(listener::onEvent);
+         if (notifier.isDone() && !notifier.isCompletedExceptionally()) {
+            listener.onEvent(notifier.join());
+         } else {
+            notifier.thenAccept(listener::onEvent);
+         }
       }
 
       @Override
@@ -405,8 +409,8 @@ public class InfinispanLock {
       @Override
       public InvocationStage toInvocationStage(Supplier<TimeoutException> timeoutSupplier) {
          if (notifier.isDone()) {
-            return checkState(notifier.getNow(lockState), SyncInvocationStage::new,
-                  SimpleAsyncInvocationStage::new, timeoutSupplier);
+            return checkState(notifier.getNow(lockState), InvocationStage::completedNullStage,
+                  ExceptionSyncInvocationStage::new, timeoutSupplier);
          }
          return new SimpleAsyncInvocationStage(notifier.thenApplyAsync(state -> {
             Object rv = checkState(state, () -> null, throwable -> throwable, timeoutSupplier);

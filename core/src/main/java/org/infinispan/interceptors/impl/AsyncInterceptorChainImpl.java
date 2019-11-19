@@ -13,12 +13,9 @@ import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.ImmutableListCopy;
-import org.infinispan.commons.util.ReflectionUtil;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
-import org.infinispan.factories.annotations.Stop;
-import org.infinispan.factories.components.ComponentMetadataRepo;
+import org.infinispan.factories.impl.BasicComponentRegistry;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.interceptors.AsyncInterceptor;
@@ -43,7 +40,7 @@ public class AsyncInterceptorChainImpl implements AsyncInterceptorChain {
          new ImmutableListCopy<>(new AsyncInterceptor[0]);
    private static final Log log = LogFactory.getLog(AsyncInterceptorChainImpl.class);
 
-   private final ComponentMetadataRepo componentMetadataRepo;
+   private final BasicComponentRegistry basicComponentRegistry;
 
    private final ReentrantLock lock = new ReentrantLock();
 
@@ -51,12 +48,12 @@ public class AsyncInterceptorChainImpl implements AsyncInterceptorChain {
    private volatile List<AsyncInterceptor> interceptors = EMPTY_INTERCEPTORS_LIST;
    private volatile AsyncInterceptor firstInterceptor = null;
 
-   public AsyncInterceptorChainImpl(ComponentMetadataRepo componentMetadataRepo) {
-      this.componentMetadataRepo = componentMetadataRepo;
+   public AsyncInterceptorChainImpl(BasicComponentRegistry basicComponentRegistry) {
+      this.basicComponentRegistry = basicComponentRegistry;
    }
 
    @Start
-   private void printChainInfo() {
+   void printChainInfo() {
       if (log.isDebugEnabled()) {
          log.debugf("Interceptor chain size: %d", size());
          log.debugf("Interceptor chain is: %s", toString());
@@ -64,12 +61,7 @@ public class AsyncInterceptorChainImpl implements AsyncInterceptorChain {
    }
 
    private void validateCustomInterceptor(Class<? extends AsyncInterceptor> i) {
-      if ((!ReflectionUtil.getAllMethodsShallow(i, Inject.class).isEmpty() ||
-            !ReflectionUtil.getAllMethodsShallow(i, Start.class).isEmpty() ||
-            !ReflectionUtil.getAllMethodsShallow(i, Stop.class).isEmpty()) &&
-            componentMetadataRepo.findComponentMetadata(i.getName()) == null) {
-         log.customInterceptorExpectsInjection(i.getName());
-      }
+      // Do nothing, custom interceptors extending internal interceptors no longer "inherit" the annotations
    }
 
    /**
@@ -235,6 +227,10 @@ public class AsyncInterceptorChainImpl implements AsyncInterceptorChain {
          if (result instanceof InvocationStage) {
             return ((InvocationStage) result).toCompletableFuture();
          } else {
+            // Don't allocate future if result was already null
+            if (result == null) {
+               return CompletableFutures.completedNull();
+            }
             return CompletableFuture.completedFuture(result);
          }
       } catch (Throwable t) {

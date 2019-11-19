@@ -7,6 +7,7 @@ import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.Flag;
+import org.infinispan.eviction.ActivationManager;
 import org.infinispan.interceptors.AsyncInterceptorChain;
 import org.infinispan.interceptors.impl.CacheLoaderInterceptor;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -17,6 +18,7 @@ import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.concurrent.IsolationLevel;
+import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
 /**
@@ -49,17 +51,25 @@ public class LocalConditionalCommandTest extends SingleCacheManagerTest {
    }
 
    private static ConfigurationBuilder createConfiguration(String storeName, boolean shared, boolean transactional, boolean passivation) {
-      ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.LOCAL, transactional);
+      ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, transactional);
       builder.jmxStatistics().enable();
       builder.persistence()
             .passivation(passivation)
             .addStore(DummyInMemoryStoreConfigurationBuilder.class)
             .storeName(storeName + (shared ? "-shared" : "-private"))
             .fetchPersistentState(false)
-            .purgeOnStartup(true)
             .shared(shared);
       builder.locking().isolationLevel(IsolationLevel.READ_COMMITTED);
       return builder;
+   }
+
+   @AfterMethod
+   public void afterMethod() {
+      if (passivation) {
+         ActivationManager activationManager = TestingUtil.extractComponent(cache(PRIVATE_STORE_CACHE_NAME), ActivationManager.class);
+         // Make sure no passivations are pending, which could leak between tests
+         eventuallyEquals((long) 0, activationManager::getPendingActivationCount);
+      }
    }
 
    private static <K, V> void writeToStore(Cache<K, V> cache, K key, V value) {
@@ -160,7 +170,7 @@ public class LocalConditionalCommandTest extends SingleCacheManagerTest {
 
    @Override
    protected EmbeddedCacheManager createCacheManager() throws Exception {
-      EmbeddedCacheManager embeddedCacheManager = TestCacheManagerFactory.createCacheManager();
+      EmbeddedCacheManager embeddedCacheManager = TestCacheManagerFactory.createClusteredCacheManager();
       embeddedCacheManager.defineConfiguration(PRIVATE_STORE_CACHE_NAME, createConfiguration(getClass().getSimpleName(), false, transactional, passivation).build());
       if (!passivation) {
          embeddedCacheManager.defineConfiguration(SHARED_STORE_CACHE_NAME, createConfiguration(getClass().getSimpleName(), true, transactional, false).build());

@@ -26,8 +26,10 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.interceptors.ExceptionSyncInvocationStage;
 import org.infinispan.interceptors.InvocationStage;
-import org.infinispan.interceptors.SyncInvocationStage;
 import org.infinispan.interceptors.impl.SimpleAsyncInvocationStage;
 import org.infinispan.jmx.annotations.DataType;
 import org.infinispan.jmx.annotations.MBean;
@@ -51,6 +53,7 @@ import org.infinispan.util.logging.LogFactory;
  * @since 8.0
  */
 @MBean(objectName = "LockManager", description = "Manager that handles MVCC locks for entries")
+@Scope(Scopes.NAMED_CACHE)
 public class DefaultLockManager implements LockManager {
 
    private static final Log log = LogFactory.getLog(DefaultLockManager.class);
@@ -58,12 +61,12 @@ public class DefaultLockManager implements LockManager {
    private static final AtomicReferenceFieldUpdater<CompositeLockPromise, LockState> UPDATER =
          newUpdater(CompositeLockPromise.class, LockState.class, "lockState");
 
-   @Inject private LockContainer lockContainer;
-   @Inject private Configuration configuration;
+   @Inject LockContainer lockContainer;
+   @Inject Configuration configuration;
    @Inject @ComponentName(KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR)
-   private ScheduledExecutorService scheduler;
+   ScheduledExecutorService scheduler;
    @Inject @ComponentName(KnownComponentNames.ASYNC_OPERATIONS_EXECUTOR)
-   private Executor executor;
+   Executor executor;
 
    @Override
    public KeyAwareLockPromise lock(Object key, Object lockOwner, long time, TimeUnit unit) {
@@ -125,8 +128,9 @@ public class DefaultLockManager implements LockManager {
             compositeLockPromise.addLock(new KeyAwareExtendedLockPromise(lockContainer.acquire(key, lockOwner, time, unit), key, unit.toMillis(time)));
          }
       }
+      compositeLockPromise.scheduleLockTimeoutTask(scheduler, time, unit);
       compositeLockPromise.markListAsFinal();
-      return compositeLockPromise.scheduleLockTimeoutTask(scheduler, time, unit);
+      return compositeLockPromise;
    }
 
    private Set<Object> filterDistinctKeys(Collection<?> collection) {
@@ -313,6 +317,7 @@ public class DefaultLockManager implements LockManager {
       @SuppressWarnings("CanBeFinal")
       volatile LockState lockState = LockState.ACQUIRED;
       private final AtomicInteger countersLeft = new AtomicInteger();
+      private volatile ScheduledFuture<Void> timeoutTask;
 
       private CompositeLockPromise(int size, Executor executor) {
          lockPromiseList = new ArrayList<>(size);
@@ -375,7 +380,7 @@ public class DefaultLockManager implements LockManager {
       @Override
       public InvocationStage toInvocationStage() {
          if (notifier.isDone()) {
-            return checkState(notifier.getNow(lockState), SyncInvocationStage::new, SimpleAsyncInvocationStage::new);
+            return checkState(notifier.getNow(lockState), InvocationStage::completedNullStage, ExceptionSyncInvocationStage::new);
          } else {
             return new SimpleAsyncInvocationStage(notifier.thenApplyAsync(lockState -> {
                Object rv = checkState(lockState, () -> null, throwable -> throwable);
@@ -399,15 +404,19 @@ public class DefaultLockManager implements LockManager {
             return;
          }
          if (countersLeft.decrementAndGet() == 0) {
+            cancelTimeoutTask();
             notifier.complete(lockState);
          }
       }
 
       private void cancelAll(LockState state) {
          if (UPDATER.compareAndSet(this, LockState.ACQUIRED, state)) {
+            cancelTimeoutTask();
             //complete the future before cancel other locks. the remaining locks will be invoke onEvent()
             notifier.complete(state);
-            lockPromiseList.forEach(promise -> promise.cancel(state));
+            for (KeyAwareExtendedLockPromise promise : lockPromiseList) {
+               promise.cancel(state);
+            }
          }
       }
 
@@ -420,16 +429,19 @@ public class DefaultLockManager implements LockManager {
 
       @Override
       public Void call() throws Exception {
-         lockPromiseList.forEach(promise -> promise.cancel(LockState.TIMED_OUT));
+         for (KeyAwareExtendedLockPromise promise : lockPromiseList) {
+            promise.cancel(LockState.TIMED_OUT);
+         }
          return null;
       }
 
-      CompositeLockPromise scheduleLockTimeoutTask(ScheduledExecutorService executorService, long time, TimeUnit unit) {
-         if (executorService != null && time > 0 && !isAvailable()) {
-            ScheduledFuture<?> future = executorService.schedule(this, time, unit);
-            addListener((state -> future.cancel(false)));
+      /**
+       * Schedule a timeout task. Must be called before {@link #markListAsFinal()}
+       */
+      void scheduleLockTimeoutTask(ScheduledExecutorService executorService, long time, TimeUnit unit) {
+         if (time > 0 && !isAvailable()) {
+            timeoutTask = executorService.schedule(this, time, unit);
          }
-         return this;
       }
 
       private <T> T checkState(LockState state, Supplier<T> acquired, Function<Throwable, T> exception) {
@@ -447,6 +459,12 @@ public class DefaultLockManager implements LockManager {
             }
          }
          return rv;
+      }
+
+      private void cancelTimeoutTask() {
+         if (timeoutTask != null) {
+            timeoutTask.cancel(false);
+         }
       }
    }
 }

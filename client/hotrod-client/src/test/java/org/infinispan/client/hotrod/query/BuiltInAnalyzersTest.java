@@ -7,10 +7,12 @@ import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.Search;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
-import org.infinispan.client.hotrod.marshall.ProtoStreamMarshaller;
+import org.infinispan.client.hotrod.marshall.MarshallerUtil;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.TestEntity;
+import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
 import org.infinispan.client.hotrod.test.InternalRemoteCacheManager;
 import org.infinispan.client.hotrod.test.SingleHotRodServerTest;
+import org.infinispan.commons.marshall.ProtoStreamMarshaller;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.Index;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -47,14 +49,14 @@ public class BuiltInAnalyzersTest extends SingleHotRodServerTest {
       metadataCache.put("analyzers.proto", protoFile);
       RemoteQueryTestUtils.checkSchemaErrors(metadataCache);
 
-      SerializationContext serCtx = ProtoStreamMarshaller.getSerializationContext(remoteCacheManager);
+      SerializationContext serCtx = MarshallerUtil.getSerializationContext(remoteCacheManager);
       serCtx.registerProtoFiles(FileDescriptorSource.fromString("analyzers.proto", protoFile));
       serCtx.registerMarshaller(new TestEntity.TestEntityMarshaller());
    }
 
    @Override
    protected RemoteCacheManager getRemoteCacheManager() {
-      ConfigurationBuilder builder = new ConfigurationBuilder();
+      ConfigurationBuilder builder = HotRodClientTestingUtil.newRemoteConfigurationBuilder();
       builder.addServer().host("127.0.0.1").port(hotrodServer.getPort()).marshaller(new ProtoStreamMarshaller());
       return new InternalRemoteCacheManager(builder.build());
    }

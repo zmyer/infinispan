@@ -7,11 +7,13 @@ import static org.testng.AssertJUnit.assertTrue;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import org.infinispan.Cache;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -77,7 +79,7 @@ public class SharedStoreInvalidationDuringRehashTest extends MultipleCacheManage
    }
 
    private void incrementCounter(ConcurrentMap<Integer, ConcurrentMap<Object, AtomicInteger>> counterMap, int index, Object[] keys) {
-      ConcurrentMap<Object, AtomicInteger> counters = counterMap.computeIfAbsent(index, ignored -> CollectionFactory.makeConcurrentMap());
+      ConcurrentMap<Object, AtomicInteger> counters = counterMap.computeIfAbsent(index, ignored -> new ConcurrentHashMap<>());
       for (Object key : keys) {
          counters.computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
       }
@@ -199,14 +201,15 @@ public class SharedStoreInvalidationDuringRehashTest extends MultipleCacheManage
       for (int i = 0; i < getCacheManagers().size(); i++) {
          Cache<String, String> testCache = manager(i).getCache(TEST_CACHE_NAME);
          DataContainer<String, String> dataContainer = testCache.getAdvancedCache().getDataContainer();
-         log.debugf("DC on %s has %d keys: %s", address(i), dataContainer.size(), dataContainer.keySet());
+         log.debugf("DC on %s has %d keys: %s", address(i), dataContainer.size(),
+               StreamSupport.stream(dataContainer.spliterator(), false).map(Map.Entry::getKey).collect(Collectors.joining(",")));
          Set<String> keySet = testCache.keySet();
          log.debugf("Cache %s has %d keys: %s", address(i), keySet.size(), keySet);
       }
    }
 
    private void printStoreContents() {
-      DummyInMemoryStore store = (DummyInMemoryStore) TestingUtil.getFirstLoader(cache(0, TEST_CACHE_NAME));
+      DummyInMemoryStore store = TestingUtil.getFirstLoader(cache(0, TEST_CACHE_NAME));
       Set<Object> keySet = store.keySet();
       log.debugf("Shared store has %d keys: %s", keySet.size(), keySet);
    }

@@ -21,12 +21,18 @@ class OffHeapMemory {
    static final OffHeapMemory INSTANCE = new OffHeapMemory();
    private static final int BYTE_ARRAY_BASE_OFFSET = Unsafe.ARRAY_BYTE_BASE_OFFSET;
 
-   private static ConcurrentHashMap<Long, Long> allocatedBlocks = new ConcurrentHashMap<>();
+   private static ConcurrentHashMap<Long, Long> allocatedBlocks;
+
+   static {
+      if (trace) {
+         allocatedBlocks = new ConcurrentHashMap<>();
+      }
+   }
 
    private OffHeapMemory() { }
 
    byte getByte(long srcAddress, long offset) {
-      checkAddress(srcAddress, offset + 4);
+      checkAddress(srcAddress, offset + 1);
       byte value = UNSAFE.getByte(srcAddress + offset);
       if (trace) {
          log.tracef("Read byte value 0x%02x from address 0x%016x+%d", value, srcAddress, offset);
@@ -35,7 +41,7 @@ class OffHeapMemory {
    }
 
    void putByte(long destAddress, long offset, byte value) {
-      checkAddress(destAddress, offset + 4);
+      checkAddress(destAddress, offset + 1);
       if (trace) {
          log.tracef("Wrote byte value 0x%02x to address 0x%016x+%d", value, destAddress, offset);
       }
@@ -61,6 +67,25 @@ class OffHeapMemory {
 
    long getLong(long srcAddress, long offset) {
       return getLong(srcAddress, offset, true);
+   }
+
+   long getAndSetLong(long destAddress, long offset, long value) {
+      checkAddress(destAddress, offset + 8);
+      if (trace) {
+         log.tracef("Get and setting long value 0x%016x to address 0x%016x+%d", value, destAddress, offset);
+      }
+      return UNSAFE.getAndSetLong(null, destAddress + offset, value);
+   }
+
+   long getAndSetLongNoTraceIfAbsent(long destAddress, long offset, long value) {
+      checkAddress(destAddress, offset + 8);
+      long previous = UNSAFE.getAndSetLong(null, destAddress + offset, value);
+      if (previous != 0) {
+         if (trace) {
+            log.tracef("Get and set long value 0x%016x to address 0x%016x+%d was 0x%016x", value, destAddress, offset, previous);
+         }
+      }
+      return previous;
    }
 
    long getLongNoTraceIfAbsent(long srcAddress, long offset) {
@@ -133,8 +158,8 @@ class OffHeapMemory {
    }
 
    void free(long address) {
-      Long prev = allocatedBlocks.remove(address);
       if (trace) {
+         Long prev = allocatedBlocks.remove(address);
          if (prev == null) {
             throw new IllegalArgumentException();
          }

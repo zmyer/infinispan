@@ -8,8 +8,9 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.interceptors.DDAsyncInterceptor;
-import org.infinispan.interceptors.InvocationSuccessAction;
+import org.infinispan.interceptors.InvocationSuccessFunction;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
+import org.infinispan.notifications.cachelistener.annotation.TransactionCompleted;
 
 /**
  * The interceptor in charge of firing off notifications to cache listeners
@@ -18,36 +19,44 @@ import org.infinispan.notifications.cachelistener.CacheNotifier;
  * @since 9.0
  */
 public class NotificationInterceptor extends DDAsyncInterceptor {
-   @Inject private CacheNotifier notifier;
-   private final InvocationSuccessAction commitSuccessAction = new InvocationSuccessAction() {
+   @Inject CacheNotifier notifier;
+   private final InvocationSuccessFunction<VisitableCommand> commitSuccessAction = new InvocationSuccessFunction<VisitableCommand>() {
       @Override
-      public void accept(InvocationContext rCtx, VisitableCommand rCommand, Object rv)
+      public Object apply(InvocationContext rCtx, VisitableCommand rCommand, Object rv)
             throws Throwable {
-         notifier.notifyTransactionCompleted(((TxInvocationContext) rCtx).getGlobalTransaction(), true, rCtx);
+         return delayedValue(notifier.notifyTransactionCompleted(((TxInvocationContext) rCtx).getGlobalTransaction(), true, rCtx), rv);
       }
    };
-   private final InvocationSuccessAction rollbackSuccessAction = new InvocationSuccessAction() {
+   private final InvocationSuccessFunction<RollbackCommand> rollbackSuccessAction = new InvocationSuccessFunction<RollbackCommand>() {
       @Override
-      public void accept(InvocationContext rCtx, VisitableCommand rCommand, Object rv)
+      public Object apply(InvocationContext rCtx, RollbackCommand rCommand, Object rv)
             throws Throwable {
-         notifier.notifyTransactionCompleted(((TxInvocationContext) rCtx).getGlobalTransaction(), false, rCtx);
+         return delayedValue(notifier.notifyTransactionCompleted(((TxInvocationContext) rCtx).getGlobalTransaction(), false, rCtx), rv);
       }
    };
 
    @Override
    public Object visitPrepareCommand(TxInvocationContext ctx, PrepareCommand command) throws Throwable {
-      if (!command.isOnePhaseCommit()) return invokeNext(ctx, command);
+      if (!command.isOnePhaseCommit() || !notifier.hasListener(TransactionCompleted.class)) {
+         return invokeNext(ctx, command);
+      }
 
-      return invokeNextThenAccept(ctx, command, commitSuccessAction);
+      return invokeNextThenApply(ctx, command, commitSuccessAction);
    }
 
    @Override
    public Object visitCommitCommand(TxInvocationContext ctx, CommitCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, commitSuccessAction);
+      if (!notifier.hasListener(TransactionCompleted.class)) {
+         return invokeNext(ctx, command);
+      }
+      return invokeNextThenApply(ctx, command, commitSuccessAction);
    }
 
    @Override
    public Object visitRollbackCommand(TxInvocationContext ctx, RollbackCommand command) throws Throwable {
-      return invokeNextThenAccept(ctx, command, rollbackSuccessAction);
+      if (!notifier.hasListener(TransactionCompleted.class)) {
+         return invokeNext(ctx, command);
+      }
+      return invokeNextThenApply(ctx, command, rollbackSuccessAction);
    }
 }

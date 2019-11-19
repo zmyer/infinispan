@@ -2,6 +2,7 @@ package org.infinispan.container.versioning;
 
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertNull;
+import static org.testng.AssertJUnit.assertTrue;
 import static org.testng.AssertJUnit.fail;
 
 import javax.transaction.HeuristicRollbackException;
@@ -17,6 +18,7 @@ import org.infinispan.context.Flag;
 import org.infinispan.distribution.MagicKey;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.test.TestDataSCI;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.util.concurrent.IsolationLevel;
@@ -255,7 +257,7 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
       ConfigurationBuilder builder = defaultConfigurationBuilder();
       decorate(builder);
 
-      createCluster(builder, clusterSize());
+      createCluster(TestDataSCI.INSTANCE, builder, clusterSize());
       waitForClusterToForm();
 
       builder = defaultConfigurationBuilder();
@@ -311,10 +313,10 @@ public abstract class AbstractClusteredWriteSkewTest extends MultipleCacheManage
             executeOnCache.putIfAbsent(key, "v1");
             break;
          case CONDITIONAL_REMOVE:
-            executeOnCache.remove(key, "init");
+            assertTrue(executeOnCache.remove(key, "init"));
             break;
          case CONDITIONAL_REPLACE:
-            executeOnCache.replace(key, "init", "v1");
+            assertTrue(executeOnCache.replace(key, "init", "v1"));
             break;
          default:
             tm.rollback();

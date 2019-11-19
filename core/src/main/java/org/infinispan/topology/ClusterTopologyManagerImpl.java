@@ -4,7 +4,7 @@ package org.infinispan.topology;
 import static java.lang.String.format;
 import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
 import static org.infinispan.factories.KnownComponentNames.STATE_TRANSFER_EXECUTOR;
-import static org.infinispan.util.logging.LogFactory.CLUSTER;
+import static org.infinispan.util.logging.Log.CLUSTER;
 import static org.infinispan.util.logging.events.Messages.MESSAGES;
 
 import java.util.Collections;
@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -30,10 +31,10 @@ import java.util.concurrent.locks.ReentrantLock;
 import net.jcip.annotations.GuardedBy;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.commons.util.ProcessorInfo;
 import org.infinispan.commons.util.Util;
+import org.infinispan.configuration.ConfigurationManager;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.global.GlobalConfiguration;
@@ -44,6 +45,8 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.factories.annotations.Stop;
+import org.infinispan.factories.scopes.Scope;
+import org.infinispan.factories.scopes.Scopes;
 import org.infinispan.globalstate.GlobalStateManager;
 import org.infinispan.globalstate.ScopedPersistentState;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -85,6 +88,7 @@ import org.infinispan.util.logging.events.EventLogger;
  * @author Pedro Ruivo
  * @since 5.2
  */
+@Scope(Scopes.GLOBAL)
 public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
 
    public static final int INITIAL_CONNECTION_ATTEMPTS = 10;
@@ -93,17 +97,18 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
    private static final Log log = LogFactory.getLog(ClusterTopologyManagerImpl.class);
    private static final boolean trace = log.isTraceEnabled();
 
-   @Inject private Transport transport;
-   @Inject private GlobalConfiguration globalConfiguration;
-   @Inject private GlobalComponentRegistry gcr;
-   @Inject private CacheManagerNotifier cacheManagerNotifier;
-   @Inject private EmbeddedCacheManager cacheManager;
+   @Inject Transport transport;
+   @Inject GlobalConfiguration globalConfiguration;
+   @Inject ConfigurationManager configurationManager;
+   @Inject GlobalComponentRegistry gcr;
+   @Inject CacheManagerNotifier cacheManagerNotifier;
+   @Inject EmbeddedCacheManager cacheManager;
    @Inject @ComponentName(ASYNC_TRANSPORT_EXECUTOR)
-   private ExecutorService asyncTransportExecutor;
+   ExecutorService asyncTransportExecutor;
    @Inject @ComponentName(STATE_TRANSFER_EXECUTOR)
-   private ExecutorService stateTransferExecutor;
-   @Inject private EventLogManager eventLogManager;
-   @Inject private PersistentUUIDManager persistentUUIDManager;
+   ExecutorService stateTransferExecutor;
+   @Inject EventLogManager eventLogManager;
+   @Inject PersistentUUIDManager persistentUUIDManager;
 
    // These need to be volatile because they are sometimes read without holding the view handling lock.
    private volatile int viewId = -1;
@@ -111,7 +116,7 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
    private final Lock clusterManagerLock = new ReentrantLock();
    private final Condition clusterStateChanged = clusterManagerLock.newCondition();
 
-   private final ConcurrentMap<String, ClusterCacheStatus> cacheStatusMap = CollectionFactory.makeConcurrentMap();
+   private final ConcurrentMap<String, ClusterCacheStatus> cacheStatusMap = new ConcurrentHashMap<>();
    private ClusterViewListener viewListener;
    private LimitedExecutor viewHandlingExecutor;
 
@@ -150,6 +155,7 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
                if (i == 0 || !(e instanceof TimeoutException)) {
                   log.errorReadingRebalancingStatus(coordinator, e);
                   response = SuccessfulResponse.create(Boolean.TRUE);
+                  break;
                }
                log.debug("Timed out waiting for rebalancing status from coordinator, trying again");
             }
@@ -406,8 +412,9 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
          } else {
             lostDataCheck = ClusterTopologyManagerImpl::distLostDataCheck;
          }
+         // TODO Partition handling config should be part of the join info
          AvailabilityStrategy availabilityStrategy;
-         Configuration config = cacheManager.getCacheConfiguration(cacheName);
+         Configuration config = configurationManager.getConfiguration(cacheName, true);
          PartitionHandling partitionHandling = config != null ? config.clustering().partitionHandling().whenSplit() : null;
          boolean resolveConflictsOnMerge = resolveConflictsOnMerge(config, cacheMode);
          if (partitionHandling != null && partitionHandling != PartitionHandling.ALLOW_READ_WRITES) {
@@ -525,8 +532,8 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
          } else if (throwable instanceof SuspectException) {
             Address leaver = ((SuspectException) throwable).getSuspect();
             log.debugf("Skipping cache members update for view %d, node %s left", viewId, leaver);
-            return;
          }
+         return;
       } catch (Throwable t) {
          throwable = t;
       }
@@ -576,7 +583,7 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
          while ((viewId < joinerViewId || clusterManagerStatus == ClusterManagerStatus.RECOVERING_CLUSTER) &&
                clusterManagerStatus.isRunning()) {
             if (nanosTimeout <= 0) {
-               throw log.coordinatorTimeoutWaitingForView(joinerViewId, transport.getViewId(), clusterManagerStatus);
+               throw CLUSTER.coordinatorTimeoutWaitingForView(joinerViewId, transport.getViewId(), clusterManagerStatus);
             }
             nanosTimeout = clusterStateChanged.awaitNanos(nanosTimeout);
          }
@@ -732,7 +739,8 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
 
    @Override
    public void setInitialCacheTopologyId(String cacheName, int topologyId) {
-      Configuration configuration = cacheManager.getCacheConfiguration(cacheName);
+      // TODO Include cache mode in join info
+      Configuration configuration = configurationManager.getConfiguration(cacheName, true);
       ClusterCacheStatus cacheStatus = initCacheStatusIfAbsent(cacheName, configuration.clustering().cacheMode());
       cacheStatus.setInitialTopologyId(topologyId);
    }

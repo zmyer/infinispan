@@ -6,11 +6,11 @@ import org.infinispan.health.CacheHealth;
 import org.infinispan.health.HealthStatus;
 import org.infinispan.partitionhandling.AvailabilityMode;
 
-public class CacheHealthImpl implements CacheHealth {
+class CacheHealthImpl implements CacheHealth {
 
    private final Cache<?, ?> cache;
 
-   public CacheHealthImpl(Cache<?, ?> cache) {
+   CacheHealthImpl(Cache<?, ?> cache) {
       this.cache = cache;
    }
 
@@ -22,11 +22,11 @@ public class CacheHealthImpl implements CacheHealth {
    @Override
    public HealthStatus getStatus() {
       if (!isComponentHealthy() || cache.getAdvancedCache().getAvailability() == AvailabilityMode.DEGRADED_MODE) {
-         return HealthStatus.UNHEALTHY;
+         return HealthStatus.DEGRADED;
       }
       DistributionManager distributionManager = SecurityActions.getDistributionManager(cache);
       if (distributionManager != null && distributionManager.isRehashInProgress()) {
-         return HealthStatus.REBALANCING;
+         return HealthStatus.HEALTHY_REBALANCING;
       }
       return HealthStatus.HEALTHY;
    }

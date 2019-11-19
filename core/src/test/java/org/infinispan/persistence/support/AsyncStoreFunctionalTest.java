@@ -12,22 +12,22 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.Cache;
+import org.infinispan.commands.module.TestGlobalConfigurationBuilder;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.expiration.ExpirationManager;
-import org.infinispan.factories.AbstractNamedCacheComponentFactory;
-import org.infinispan.factories.AutoInstantiableFactory;
-import org.infinispan.factories.GlobalComponentRegistry;
-import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.async.AdvancedAsyncCacheWriter;
 import org.infinispan.persistence.async.AsyncCacheWriter;
 import org.infinispan.persistence.dummy.DummyInMemoryStore;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
+import org.infinispan.persistence.manager.PassivationPersistenceManager;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.manager.PersistenceManagerImpl;
 import org.infinispan.persistence.modifications.Modification;
 import org.infinispan.persistence.modifications.Remove;
 import org.infinispan.persistence.modifications.Store;
 import org.infinispan.persistence.spi.CacheWriter;
+import org.infinispan.persistence.spi.MarshallableEntry;
 import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.CacheManagerCallable;
@@ -49,19 +49,14 @@ public class AsyncStoreFunctionalTest extends AbstractInfinispanTest {
    private static final Log log = LogFactory.getLog(AsyncStoreFunctionalTest.class);
 
    public void testPutAfterPassivation() {
+      GlobalConfigurationBuilder globalBuilder = globalBuilderWithCustomPersistenceManager();
       ConfigurationBuilder builder = asyncStoreWithEvictionBuilder();
       builder.persistence().passivation(true);
 
       withCacheManager(new CacheManagerCallable(
-            TestCacheManagerFactory.createCacheManager(builder)) {
+            TestCacheManagerFactory.createCacheManager(globalBuilder, builder)) {
          @Override
          public void call() {
-            // Hack the component metadata repository
-            // to inject the custom cache loader manager
-            GlobalComponentRegistry gcr = TestingUtil.extractGlobalComponentRegistry(cm);
-            gcr.getComponentMetadataRepo().injectFactoryForComponent(
-                  PersistenceManager.class, CustomCacheLoaderManagerFactory.class);
-
             Cache<Integer, String> cache = cm.getCache();
 
             MockAsyncCacheWriter cacheStore = TestingUtil.getFirstWriter(cache);
@@ -94,19 +89,23 @@ public class AsyncStoreFunctionalTest extends AbstractInfinispanTest {
       });
    }
 
+   private GlobalConfigurationBuilder globalBuilderWithCustomPersistenceManager() {
+      GlobalConfigurationBuilder globalBuilder = new GlobalConfigurationBuilder();
+      globalBuilder.defaultCacheName("cache");
+      globalBuilder.addModule(TestGlobalConfigurationBuilder.class)
+                   .testCacheComponent("cache", PersistenceManager.class.getName(),
+                                       new PassivationPersistenceManager(new CustomPersistenceManager()));
+      return globalBuilder;
+   }
+
    public void testPutAfterEviction() {
+      GlobalConfigurationBuilder globalBuilder = globalBuilderWithCustomPersistenceManager();
       ConfigurationBuilder builder = asyncStoreWithEvictionBuilder();
 
       withCacheManager(new CacheManagerCallable(
-            TestCacheManagerFactory.createCacheManager(builder)) {
+            TestCacheManagerFactory.createCacheManager(globalBuilder, builder)) {
          @Override
          public void call() {
-            // Hack the component metadata repository
-            // to inject the custom cache loader manager
-            GlobalComponentRegistry gcr = TestingUtil.extractGlobalComponentRegistry(cm);
-            gcr.getComponentMetadataRepo().injectFactoryForComponent(
-                  PersistenceManager.class, CustomCacheLoaderManagerFactory.class);
-
             Cache<Integer, String> cache = cm.getCache();
 
             MockAsyncCacheWriter cacheStore = TestingUtil.getFirstWriter(cache);
@@ -140,21 +139,16 @@ public class AsyncStoreFunctionalTest extends AbstractInfinispanTest {
    }
 
    public void testGetAfterRemove() throws Exception {
+      GlobalConfigurationBuilder globalBuilder = globalBuilderWithCustomPersistenceManager();
       ConfigurationBuilder builder = new ConfigurationBuilder();
       builder.persistence()
                .addStore(DummyInMemoryStoreConfigurationBuilder.class)
                .async().enabled(true);
 
       withCacheManager(new CacheManagerCallable(
-            TestCacheManagerFactory.createCacheManager(builder)) {
+            TestCacheManagerFactory.createCacheManager(globalBuilder, builder)) {
          @Override
          public void call() {
-            // Hack the component metadata repository
-            // to inject the custom cache loader manager
-            GlobalComponentRegistry gcr = TestingUtil.extractGlobalComponentRegistry(cm);
-            gcr.getComponentMetadataRepo().injectFactoryForComponent(
-                  PersistenceManager.class, CustomCacheLoaderManagerFactory.class);
-
             Cache<Integer, String> cache = cm.getCache();
 
             MockAsyncCacheWriter cacheStore = TestingUtil.getFirstWriter(cache);
@@ -233,6 +227,59 @@ public class AsyncStoreFunctionalTest extends AbstractInfinispanTest {
       });
    }
 
+   /**
+    * A test for asynchronous write behind file cache store (passivation true, eviction on). Verifies
+    * https://bugzilla.redhat.com/show_bug.cgi?id=862594
+    */
+   public void testPutRemove() {
+      GlobalConfigurationBuilder globalBuilder = globalBuilderWithCustomPersistenceManager();
+      ConfigurationBuilder builder = asyncStoreWithEvictionBuilder();
+      builder.memory().size(1000L);
+
+      withCacheManager(new CacheManagerCallable(
+            TestCacheManagerFactory.createCacheManager(globalBuilder, builder)) {
+         @Override
+         public void call() {
+
+            Cache<String, String> cache = cm.getCache();
+            MockAsyncCacheWriter cacheStore = TestingUtil.getFirstWriter(cache);
+            DummyInMemoryStore dummyStore = (DummyInMemoryStore) cacheStore.undelegate();
+            CountDownLatch lockedWaitLatch = cacheStore.lockedWaitLatch;
+
+            int number = 200;
+            String key = "key";
+            String value = "value";
+
+            for (int i = 0; i < number; i++) {
+               cache.put(key + i, value + i);
+            }
+
+            for (int i = 0; i < number; i++) {
+               String entry = cache.get((key + i));
+               dummyStore.blockUntilCacheStoreContains(key + i, value + i, 60000);
+               assertEquals(value + i, entry);
+            }
+
+            for (int i = 0; i < 200; i++) {
+               cache.remove(key + i);
+            }
+            for (int i = 0; i < number; i++) {
+               MarshallableEntry entry = dummyStore.load(key + i);
+               while (entry != null) {
+
+                  try {
+                     log.trace("Wait for async store to lock keys");
+                     lockedWaitLatch.await(60, TimeUnit.SECONDS);
+                     entry = dummyStore.load(key + i);
+                  } catch (InterruptedException e) {
+                     Thread.currentThread().interrupt();
+                  }
+               }
+            }
+         }
+      });
+   }
+
    private ConfigurationBuilder asyncStoreWithEvictionBuilder() {
       ConfigurationBuilder builder = new ConfigurationBuilder();
       // Emulate eviction with direct data container eviction
@@ -304,16 +351,6 @@ public class AsyncStoreFunctionalTest extends AbstractInfinispanTest {
             return storedValue.getValue().equals("skip");
          }
          return false;
-      }
-
-   }
-
-   public static class CustomCacheLoaderManagerFactory
-         extends AbstractNamedCacheComponentFactory implements AutoInstantiableFactory {
-
-      @Override
-      public Object construct(String componentName) {
-         return new CustomPersistenceManager();
       }
 
    }
